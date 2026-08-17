@@ -172,6 +172,23 @@ part that now ships with pFMS rather than living in private site config.
   carries no CEC. Do not plan around `cec-utils`.
 - **Wake-on-LAN is the wrong tool.** These TVs stay fully on the network in
   standby; WoL solves a problem they do not have.
+- **pFMS does NOT arbitrate between the modes** (decided 2026-08-16). Cast and
+  wired are presented as two separate options an operator picks between, not a
+  handoff pFMS manages. Nothing tries to reclaim the screen after a cast.
+- **Cast is the harder option to adopt**, and that shapes which is the default
+  path for a new field: it needs additional DNS setup and Google app
+  registration, so it does not scale to other fields as easily as plugging in a
+  cable. Wired should be the low-friction route.
+- **Wired displays must register like cast displays do.** The per-display
+  registry (`castReceiverRegister` → `castReceiverList`, with per-display
+  **name**, **mute** and **swap orientation** controls) rides the **public
+  WebSocket**, not the Cast protocol — it is already transport-agnostic. But
+  registration is gated on `window.__isCastReceiver`
+  (`ScoreboardPage.tsx:260`), so a wired kiosk currently would not appear in
+  the list or get any of those controls. Widening that gate is small and is
+  most of what "first class" actually means here. The `cast*` naming is then
+  misleading and worth revisiting.
+
 - **The two modes fight over one panel.** Observed in practice on a shared shop
   TV: a persistent HDMI display gets knocked off screen whenever someone casts
   to the same TV, and something has to put it back. An unconditional auto-heal
