@@ -15,20 +15,25 @@ has to support both properly.
 
 ## Why this plan exists separately
 
-The hardware investigation lives in the ops repo at
-`Personal Projects/ops/plans/steamboat-kiosk-display.md` — TV identification,
-port behaviour in standby, keycode testing, the Chromium kiosk build for
-steamboat. **Read that for any question about what the TV actually does.**
+This plan is the pFMS-side product design, and it is meant to stand on its own —
+pFMS is a public tool and anyone should be able to act on this without access to
+a particular field's infrastructure. The hardware investigation that produced
+the findings below (TV identification, port behaviour in standby, keycode
+testing, and the host-side kiosk build) was done against one reference field and
+lives in a separate private infrastructure repo. Everything load-bearing from it
+is restated here.
 
-This plan is the pFMS-side product design. Related pFMS plans:
+Related pFMS plans:
 `setup-wizard.md` (where provisioning UI lives), `multi-site-adoption.md` (the
 ship-to-other-fields constraint that rules out HA), `scoreboard-video-mode.md`
 and `scoreboard-display-mute.md` (the page being displayed).
 
 ## Decisions already made (don't re-ask)
 
-- **No Home Assistant dependency.** HA exists at Tom Sawyer Labs but cannot be
-  assumed at any other field. The control path ships inside pFMS.
+- **No Home Assistant dependency.** HA happens to exist at the field this was
+  developed against, but cannot be assumed anywhere else — and pFMS is a public
+  tool installed on networks we know nothing about. The control path ships
+  inside pFMS.
 - **Cast and HDMI are both first class.** Do not let one become the default and
   the other an afterthought.
 - **Android TV Remote protocol (TLS, ports 6466/6467) is the control channel**,
@@ -122,11 +127,11 @@ confirmation while real config lives elsewhere.
   carries no CEC. Do not plan around `cec-utils`.
 - **Wake-on-LAN is the wrong tool.** These TVs stay fully on the network in
   standby; WoL solves a problem they do not have.
-- **The two modes fight over one panel.** Observed in the real world: the
-  `TV Stream` project's `relaunch` command exists precisely because teams cast
-  scores to a TV and knock the HDMI content off screen. That project explicitly
-  **rejected** an auto-heal loop, because re-launching would yank the screen
-  back mid-score.
+- **The two modes fight over one panel.** Observed in practice on a shared shop
+  TV: a persistent HDMI display gets knocked off screen whenever someone casts
+  to the same TV, and something has to put it back. An unconditional auto-heal
+  loop is the wrong answer — it yanks the screen back mid-score, fighting a
+  deliberate cast.
 
 ## Open questions
 
