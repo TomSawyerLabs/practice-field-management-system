@@ -21,7 +21,7 @@ host starts when all required are ready`. Teams **cannot** ready up until the
 
 ## Environment / context
 
-- Repo: `C:\Users\camer\git\practice-field-configurator` (branch: master)
+- Repo: this repo (branch: master)
 - Tooling: **bun** (`bun run typecheck`). Pre-commit lefthook = typecheck +
   prettier --check. No test suite; verify = typecheck + manual.
 - Commit subjects are **user-facing** (posted to pfms-support Slack on deploy) —

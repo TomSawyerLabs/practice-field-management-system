@@ -37,8 +37,7 @@ Answered by the user 2026-07-27:
 
 ## Environment / context
 
-- Repo: `github.com/TomSawyerLabs/practice-field-management-system`
-  (**public**), primary working copy `C:\Users\camer\git\practice-field-configurator`.
+- Repo: `github.com/TomSawyerLabs/practice-field-management-system` (**public**).
 - Reference deployment: host `steamboat`, `/opt/practice-field-management-system`,
   Caddy at `pfms.tsl` / `pfms.tomsawyerlabs.com`, backend port 9005.
 - Docs were just reorganized into `docs/` (commit 0135539) — the new
