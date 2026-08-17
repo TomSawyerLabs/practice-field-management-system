@@ -43,6 +43,13 @@ and `scoreboard-display-mute.md` (the page being displayed).
 - **Pairing UI goes on the admin page**, with the setup wizard linking to it.
   Pairing must be re-runnable (lost certs, factory resets, swapped TVs), so it
   cannot be wizard-only.
+- **The kiosk browser gets its own unprivileged user, chosen at setup**
+  (decided 2026-08-16). Explicitly **not** the daemon's user: pFMS runs as
+  **root** on at least the reference deployment (it manages VLANs, radios and
+  host networking), and rendering arbitrary web content as root is not
+  acceptable. Equally, do not hardcode any real person's account — that is
+  meaningless on someone else's install. Setup should propose a name
+  (`pfms-kiosk`) and create the account if it does not exist.
 - **The host kiosk build ships in pFMS too** (decided 2026-08-16), not as
   private per-site infrastructure config. A field choosing HDMI mode should get
   the whole thing from pFMS: the X server, the browser in kiosk mode, the
