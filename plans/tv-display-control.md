@@ -43,6 +43,13 @@ and `scoreboard-display-mute.md` (the page being displayed).
 - **Pairing UI goes on the admin page**, with the setup wizard linking to it.
   Pairing must be re-runnable (lost certs, factory resets, swapped TVs), so it
   cannot be wizard-only.
+- **The host kiosk build ships in pFMS too** (decided 2026-08-16), not as
+  private per-site infrastructure config. A field choosing HDMI mode should get
+  the whole thing from pFMS: the X server, the browser in kiosk mode, the
+  dedicated user, and screen-blanking control. This is consistent with what
+  pFMS already does at OS level — `networkManager`, `radioManager`, systemd vs
+  docker deployment modes, firmware updates — and it is the only way HDMI mode
+  is genuinely first class for someone who is not us.
 
 ## What is already in the tree
 
@@ -101,6 +108,37 @@ control credential belongs.
 The wizard's `scoreboard` step links to it and records a `tvPaired` flag beside
 `castVerified` — matching the existing pattern where the wizard records operator
 confirmation while real config lives elsewhere.
+
+## HDMI mode: what the host build needs
+
+Measured on a reference field server (Ubuntu 25.04, Intel graphics). This is the
+part that now ships with pFMS rather than living in private site config.
+
+- **A minimal X server pulls in no desktop.** `xserver-xorg-core`,
+  `x11-xserver-utils`, `x11-utils` resolve to ~25 packages with no desktop
+  environment, no display manager, and — importantly — no `xserver-xorg-legacy`.
+  None of them start anything on install.
+- **Run X rootless via logind.** If the host has a seat that owns the GPU, a
+  systemd unit with `PAMName=login` and a `TTYPath` gets DRM master without any
+  setuid wrapper. Do not install `xserver-xorg-legacy` to "fix" permissions.
+- **No window manager is needed** — the browser in kiosk mode on a bare root
+  window is enough.
+- **`--password-store=basic` is not optional.** With no keyring on a headless
+  box the browser can hang at startup waiting on a Secret Service that does not
+  exist. Also `--noerrdialogs`, `--disable-session-crashed-bubble`,
+  `--no-first-run`, `--disable-component-update`.
+- **Screen blanking has two independent layers**: the kernel console blanker
+  (default 60 s on many installs) and X's own DPMS. Both must be handled, and
+  the console one can be changed at runtime with `setterm --blank`, no reboot.
+  Note `setterm` takes minutes while the sysfs parameter reports seconds.
+- **Chromium packaging is distro-dependent and can be hostile.** On Ubuntu
+  25.04 there is no chromium deb at all — the archive package is a snap shim,
+  and snap auto-refresh will restart the kiosk on its own schedule. Whatever
+  pFMS ships must let a field pick a real deb.
+- **A display reporting `connected` with a valid EDID does NOT mean it is on.**
+  The EDID EEPROM stays powered in standby. Do not use connector state as a
+  proxy for "the TV is showing something" — that is exactly what the TV control
+  layer above is for.
 
 ## Findings / gotchas
 
