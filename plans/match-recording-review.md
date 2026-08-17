@@ -18,9 +18,9 @@ Integrate pFMS (this repo) with the balls-counter project so that:
 
 ## Environment / context
 
-- pFMS repo: `C:\Users\camer\git\practice-field-configurator` (branch: master)
-- balls-counter repo: `C:\Users\camer\git\Personal Projects\balls counter`
-  (note the space in the path)
+- pFMS repo: this repo (branch: master)
+- balls-counter repo: a sibling checkout in a separate private repo
+  (note the space in its directory name)
 - Tooling: bun (`bun run typecheck` etc.). Commit subjects are user-facing
   (posted to Slack on deploy) — prose, lead with user-visible effect.
 - Date started: 2026-07-16

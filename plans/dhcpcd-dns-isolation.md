@@ -24,8 +24,8 @@ from field leases; `journalctl -u systemd-resolved` stops accumulating
 - `dhcpcd: [manager]` persists inside `practice-field-management-system.service`
   cgroup (dhcpcd 10 manager model) since the Jul 13 ~11:21 PDT restart.
 - `/etc/dhcpcd.conf` on steamboat has per-interface sections for field VLANs
-  (eno1.10/20/30, …) — ownership unclear (PFMS repo does not ship it; check ops
-  repo at `c:\Users\camer\git\Personal Projects\ops`).
+  (eno1.10/20/30, …) — ownership unclear (PFMS repo does not ship it; check the
+  separate private infrastructure repo).
 - Host config changes go through the ops repo, per-change authorization required.
 
 ## Decisions already made (don't re-ask)
