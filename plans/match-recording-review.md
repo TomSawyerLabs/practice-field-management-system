@@ -226,9 +226,29 @@ the TBA write API. Noted only.
       report-back.
 - [x] Coordination: user requested `./.agent.status` append-only work log
       (repo root, timestamps) — read before repo actions, append when acting.
-- [ ] Deploy notes: balls-counter needs `public_url` added to the live config
-      on sentinel + `uv sync --extra web` (new websockets dep). pFMS deploys
-      via the usual flow.
+- [x] Deployed to the live field (2026-07-19, user-authorized): pFMS was
+      already running the new code (deployed by other means; today's matches
+      have matchIds). Sentinel: pushed branch (8518cea), safety-stash of
+      redundant local packaging edits, checked out
+      `fix/package-for-latest-uv`, `uv sync --all-extras` (websockets 16.1),
+      added `"public_url": "http://sentinel.tsl:8080"` to configs/live.json,
+      restarted service. Verified: /api/match 200, /matches 200, counting
+      alive, ESTAB WebSocket from sentinel→pfms.tsl:80.
+      Gotchas: sentinel service stdout is block-buffered (journal lines lag
+      ~minutes — PYTHONUNBUFFERED apparently not set in current unit env;
+      optional follow-up). Recordings/Review buttons only exist for matches
+      played AFTER this deploy. PR #1 still open (branch not merged to
+      master).
+- [x] Shift-aware review (2026-07-19, committed pFMS `430ded1` + balls
+      `4d18b93`, E2E PASS): MatchState broadcasts `subPeriod` +
+      `inactiveGoalAlliance` (shared `src/shiftState.ts` logic, frozen during
+      pauses); balls-counter records shift changes as timeline events, spans
+      carry `sub`/`active`, tally counts only active-goal marks with the 3s
+      balls-in-flight grace (mirrors scoring engine `GOAL_GRACE_SECONDS`);
+      review UI dims inactive shifts, live badge shows sub-period,
+      `goalInactive` reported separately. NOT YET DEPLOYED — needs pFMS
+      deploy to steamboat (peers' undeployed commits would ride along) and
+      balls-counter push+pull+restart on sentinel.
 - [ ] Stretch (not started): The Blue Alliance reporting.
 
 ## Open questions for the user

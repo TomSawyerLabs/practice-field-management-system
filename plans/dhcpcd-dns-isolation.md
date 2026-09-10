@@ -48,7 +48,12 @@ from field leases; `journalctl -u systemd-resolved` stops accumulating
 5. [x] Implemented in `src/robotTestMonitor.ts`; docs updated
        (README.md "Setting Up the Test Interface", ROBOT-TESTER.md state machine
        section); typecheck passes.
-6. [ ] **(current)** Commit; deploy via `deploy` skill.
+6. [x] Committed as `aa5e8d4` ("Stop robot radios from slowing down name
+       lookups on the field server").
+       6b. [ ] **(current)** Push + deploy via `deploy` skill — BLOCKED on user
+       confirmation: the branch also carries a peer session's unpushed commit
+       `b73a834` (station-chart bandwidth warning line), and the deploy skill
+       requires confirming before pushing unpushed commits.
 7. [ ] Verify success check on steamboat after deploy:
        `resolvectl status eno1.99` shows no DNS scope, degraded-feature-set log
        entries stop, `getent hosts coulomb.tsl` fast in a loop.
@@ -90,7 +95,11 @@ from field leases; `journalctl -u systemd-resolved` stops accumulating
 
 ## Open questions for the user
 
-(none yet)
+1. OK to push (includes peer commit `b73a834`, station-chart bandwidth
+   warning) and deploy to steamboat? Recommendation: yes — the peer commit is
+   self-contained and passed hooks, and the graceful reload keeps robots
+   connected. Until deployed, steamboat's DNS stays degraded (dead 10.0.1.1
+   still registered on eno1.99).
 
 ## Things not to do
 
