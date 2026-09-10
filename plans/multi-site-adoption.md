@@ -110,7 +110,9 @@ the deploy chain.
 - `.claude/skills/update-service/*.service:9` —
   `WorkingDirectory=/home/cameron/...`; `:4` `Conflicts=` a legacy
   service.
-- `.claude/skills/update-caddy/pfms.caddy` — every hostname
+- `pfms.caddy` (now managed in the ops repo at
+  `servers/steamboat/sites.d/pfms.caddy`; the local `update-caddy` skill
+  copy was removed 2026-09-10) — every hostname
   (`pfms.tsl`, `*.tomsawyerlabs.com`), path, and the internal/external
   auth split. Effectively a template to rewrite wholesale.
 - `.claude/skills/{deploy,steamboat}` — SSH host `steamboat` throughout.

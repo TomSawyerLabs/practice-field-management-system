@@ -153,7 +153,8 @@ content stays plain markdown either way):
 - Reverse-proxy examples now use port 9005 and the real
   team-number→control.html rewrite (old examples had a nonexistent
   /slot[1-6]→station.html rewrite). Full production Caddy config lives in
-  .claude/skills/update-caddy/pfms.caddy.
+  the ops repo at servers/steamboat/sites.d/pfms.caddy (the local
+  update-caddy skill copy was removed 2026-09-10).
 - Stray empty dir `CUserscamergitpractice-field-configuratorplans/` at
   repo root (mangled-path accident from some tool) — flagged to user, not
   deleted.
