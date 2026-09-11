@@ -1,6 +1,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { execFileSync } from 'node:child_process';
+import { SiteHealthChecker } from './siteHealth.js';
 import RadioManager from './radioManager.js';
 import {
   isStationUpdate,
@@ -209,6 +210,10 @@ export function setupWebSocket(
 
   const serverStartTime = Date.now();
 
+  // What devices on the field network get when they open LAN_URL — see
+  // src/siteHealth.ts. Unset means /health/site only proves the backend is up.
+  const siteHealth = new SiteHealthChecker(process.env.LAN_URL);
+
   // Looks beside the executable first, then in the repo/deploy layout, so a
   // checkout, a container image and an unzipped binary all behave the same.
   const webRoot = findAssetDir(['web', join('frontend', 'dist')], process.env.WEB_ROOT);
@@ -225,6 +230,24 @@ export function setupWebSocket(
 
     // WHEP (WebRTC) signaling proxy for the scoreboard video view
     if (handleVideoProxy(req, res)) return;
+
+    // Uptime probe, which the reverse proxy publishes as /health. Kept apart
+    // from /health on purpose: update.sh's match guard reads /health with
+    // `curl -f`, and a 503 there would read as "no match running" and let a
+    // deploy reload straight through a live match.
+    if (req.url === '/health/site') {
+      siteHealth
+        .check()
+        .then(result => {
+          res.writeHead(result.ok ? 200 : 503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err: unknown) => {
+          res.writeHead(500, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+        });
+      return;
+    }
 
     // Health/status endpoint — used by update.sh to check for active matches
     if (req.url === '/health') {
