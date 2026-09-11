@@ -175,9 +175,23 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
   - [x] 3. ops `2592db2` (IPv4-only Caddy, `/health` route, uptime entry)
        pushed; CI deploy in progress.
   - [x] 4. ops `2069707` refreshes the as-deployed env snapshot.
-- [ ] **(current)** Verify after CI: Caddy listens on 0.0.0.0 only,
-      `http://pfms.tsl/health` returns the JSON with 200, `curl -6` refused,
-      uptime dashboard shows pFMS green.
+- [x] CI: steamboat deploy succeeded; `http://pfms.tsl/health` now returns
+      the `/health/site` JSON. **But IPv6 still answered**: Go binds
+      `0.0.0.0` dual-stack (`ss` shows `*:80`), so `default_bind 0.0.0.0` changed
+      nothing. Fix staged in ops (`default_bind tcp4/0.0.0.0`, adapts to
+      `tcp4/0.0.0.0:80`), **not pushed** — needs an OK.
+- [x] Side effects of the ops push (fleet-wide deploy): sentinel's deploy
+      rebooted it and the NVIDIA module is now rejected by Secure Boot
+      (restitch down; scoring camera fine) — see ops
+      `plans/sentinel-secure-boot-dkms.md`. Unrelated but found:
+      `pfms.tomsawyerlabs.com` (and ~10 other steamboat names) serve **expired
+      certs** since 2026-09-10 23:00 PDT, Cloudflare answers 526 — already
+      diagnosed by another session in ops `plans/steamboat-expired-certs.md`
+      (fix = `docker restart caddy`, awaiting OK). Until that lands the uptime
+      pFMS check is red for the cert, not for `/health/site`.
+- [ ] **(current)** Waiting on: push ops `tcp4/` fix; cert restart; sentinel
+      DKMS removal. Then verify `curl -6 http://pfms.tsl/` refused,
+      `/health/site` 200, uptime pFMS green.
 
 ## Rollout (order matters; each step needs its own OK)
 
