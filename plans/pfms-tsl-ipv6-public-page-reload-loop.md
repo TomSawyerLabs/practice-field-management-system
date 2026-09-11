@@ -166,7 +166,18 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
       `/health` → `/health/site` route in `pfms.caddy`, steamboat README note,
       pFMS entry in the uptime worker. Full steamboat config assembled and
       adapted locally; worker typecheck + tests pass.
-- [ ] **(current)** Waiting on the user for each of the rollout steps below.
+- [x] User: "do it all" (2026-09-11). Rollout in progress:
+  - [x] 1. `LAN_URL=http://pfms.tsl/` appended to `/etc/pfms/environment`
+       (backup `environment.bak.20260911-115310`).
+  - [x] 2. pFMS master pushed (`9e6a810`), `update.sh` run 11:53 PDT, field
+       idle, clean reload. `/health/site` then reported the true state:
+       503 "IPv6 serves the public-only page; IPv4 serves the internal UI".
+  - [x] 3. ops `2592db2` (IPv4-only Caddy, `/health` route, uptime entry)
+       pushed; CI deploy in progress.
+  - [x] 4. ops `2069707` refreshes the as-deployed env snapshot.
+- [ ] **(current)** Verify after CI: Caddy listens on 0.0.0.0 only,
+      `http://pfms.tsl/health` returns the JSON with 200, `curl -6` refused,
+      uptime dashboard shows pFMS green.
 
 ## Rollout (order matters; each step needs its own OK)
 
