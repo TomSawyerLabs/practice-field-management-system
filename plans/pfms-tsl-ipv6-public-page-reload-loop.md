@@ -195,9 +195,21 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
       diagnosed by another session in ops `plans/steamboat-expired-certs.md`
       (fix = `docker restart caddy`, awaiting OK). Until that lands the uptime
       pFMS check is red for the cert, not for `/health/site`.
-- [ ] **(current)** Waiting on: push ops `tcp4/` fix; cert restart; sentinel
-      DKMS removal. Then verify `curl -6 http://pfms.tsl/` refused,
-      `/health/site` 200, uptime pFMS green.
+- [x] 2026-09-11 12:25 PDT: `docker restart caddy` on steamboat (user OK) —
+      fresh certs for pfms/pfs/steamboat/homeassistant/protect; Cloudflare
+      526s gone. `pfms.tomsawyerlabs.com/health` via Cloudflare = 503 for
+      the right reason (IPv6 public page). IPv6 listening kept (user).
+- [x] 2026-09-11 12:40 PDT: sentinel GPU restored (user OK): signed
+      `linux-modules-nvidia-595-open-generic` in, `nvidia-dkms-595-open`
+      out, `modprobe nvidia` OK, restitch up, health-cache 200.
+- [x] ops working tree: IPv4-only Caddy change reverted (uncommitted);
+      `tcp4/` edit dropped. Staged for review: `DHCP=ipv4` in the managed
+      eno1 drop-in (drops the DHCPv6 lease → no AAAA for steamboat.tsl,
+      SLAAC keeps v6 reachability) and a Secure Boot guard in
+      `servers/lib/setup-nvidia-container.sh`.
+- [ ] **(current)** User to OK the three ops commits (revert, DHCP=ipv4,
+      Secure Boot guard). After the drop-in deploys: expect the AAAA for steamboat.tsl to disappear within the lease lifetime (~17 h, sooner if the
+      release is honoured), then `/health/site` 200 and uptime pFMS green.
 
 ## Rollout (order matters; each step needs its own OK)
 
