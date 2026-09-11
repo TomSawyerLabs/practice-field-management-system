@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Tells the reload probe below, and the backend's /health/site check,
+         that this is the public-only page. Keep it. -->
+    <meta name="pfms-page" content="public" />
     <title>Practice Field Wi-Fi</title>
     <style>
       :root {
@@ -619,34 +622,77 @@
         Make sure your device is using the local DNS provided by DHCP<br />
         Avoid using custom DNS services like Google or Cloudflare
       </p>
-      <p>Refresh your browser once connected</p>
+      <p>
+        VPNs and private-DNS features such as Cloudflare WARP or iCloud Private Relay<br />
+        have the same effect — turn them off while you're at the field
+      </p>
+      <p>This page reloads on its own once your device is on the field network</p>
     </div>
     <script>
       (function () {
+        // Caddy serves this page to visitors it doesn't consider local. Poll the
+        // same URL and reload once it stops returning this page — the device
+        // joined the field network, or picked up an access cookie.
+        //
+        // Compare pages, not "is the backend reachable": /ws is deliberately open
+        // to outside visitors for the external login flow, so a working socket
+        // proves nothing. Probing it made every misclassified visitor reload
+        // forever (plans/pfms-tsl-ipv6-public-page-reload-loop.md).
+        var PUBLIC_PAGE = /<meta\b[^>]*\bname=["']?pfms-page["']?[^>]*\bcontent=["']?public/i;
+
+        // Belt and braces: if the probe and the real navigation ever disagree,
+        // stop after a few reloads rather than loop.
+        var MAX_RELOADS = 3;
+        var RELOAD_WINDOW = 5 * 60_000;
+        var RELOADS_KEY = 'pfms-public-page-reloads';
+
         var retryDelay = 1_000; // 1 second
         var timeout;
+
+        function show(html) {
+          document.getElementById('text').innerHTML = html;
+        }
+        function recentReloads() {
+          try {
+            var now = Date.now();
+            return JSON.parse(sessionStorage.getItem(RELOADS_KEY) || '[]').filter(function (t) {
+              return now - t < RELOAD_WINDOW;
+            });
+          } catch (e) {
+            return [];
+          }
+        }
         function doTimeout() {
           clearTimeout(timeout);
           retryDelay = Math.min(retryDelay * 1.2, 60_000); // max 60 seconds
-          timeout = setTimeout(tryConnect, retryDelay);
+          timeout = setTimeout(check, retryDelay);
         }
-        function tryConnect() {
-          try {
-            var ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-            ws.onopen = function () {
-              document.getElementById('text').innerHTML = '<h1>Backend detected. Reloading...</h1>';
-              ws.close();
-              setTimeout(function () {
-                location.reload();
-              }, 1000);
-            };
-            ws.onerror = ws.onclose = function () {
-              ws.close();
-              doTimeout();
-            };
-          } catch (e) {
-            doTimeout();
-          }
+        function check() {
+          fetch(location.href, { cache: 'no-store', credentials: 'same-origin' })
+            .then(function (res) {
+              // A 5xx says the server is struggling, not who you are.
+              if (res.status >= 500) return doTimeout();
+              return res.text().then(function (html) {
+                if (PUBLIC_PAGE.test(html)) return doTimeout();
+                var reloads = recentReloads();
+                if (reloads.length >= MAX_RELOADS) {
+                  show(
+                    '<h1>The field page keeps sending you back here</h1>' +
+                      '<p>Refresh manually, or ask field staff for an access link</p>',
+                  );
+                  return;
+                }
+                reloads.push(Date.now());
+                try {
+                  sessionStorage.setItem(RELOADS_KEY, JSON.stringify(reloads));
+                } catch (e) {}
+                show('<h1>Field network detected. Reloading...</h1>');
+                setTimeout(function () {
+                  location.reload();
+                }, 1000);
+              });
+            })
+            .catch(doTimeout);
         }
         window.addEventListener('online', function () {
           retryDelay = 1_000; // reset to 1 second
