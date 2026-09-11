@@ -163,15 +163,15 @@ valid access cookie (checked via `forward_auth` against
 `/api/auth/check`), with `/scores` and `/admin` always reachable. See
 [External Access](#external-access).
 
-That split keys off the client's address, which has a trap: if the proxy
-answers on IPv6 and the LAN name gets an AAAA record, devices that prefer
-IPv6 connect from a global address, look external, and get the public page.
-Until pFMS has an internal test that doesn't depend on a fixed prefix, the
-reference deployment binds its proxy to IPv4 only (Caddy's global
-`default_bind 0.0.0.0`) — browsers then fall straight back to IPv4. It also
-publishes the backend's `/health/site` as `/health` ahead of the access
-check, and sets `LAN_URL`, so uptime monitoring goes red if LAN devices are
-ever shut out again:
+That split keys off the client's address, which has a trap: if the LAN name
+gets an AAAA record, devices that prefer IPv6 connect from a global (ISP-
+delegated) address, fail a `private_ranges` test, and get the public page.
+That happened to the reference field in August 2026. There is no good static
+answer yet — hardcoding the delegated prefix rots when the ISP changes it.
+Until pFMS can recognise its own network's IPv6 clients, keep the LAN name
+IPv4-only (no AAAA), and publish the backend's `/health/site` as `/health`
+ahead of the access check with `LAN_URL` set, so uptime monitoring goes red
+if LAN devices are ever shut out again:
 
 ```Caddyfile
         rewrite /health /health/site

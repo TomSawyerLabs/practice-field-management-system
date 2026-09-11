@@ -110,9 +110,15 @@ lets anyone on the internet hit steamboat with a forged Host header.
 
 ## Decisions already made (don't re-ask)
 
-- **IPv6: skip for now, support fully later** (user, 2026-09-11). Steamboat's
-  Caddy goes IPv4-only; real IPv6 support needs an internal test that works
-  without a fixed prefix (see "Future: IPv6" below).
+- **Do NOT disable IPv6 on steamboat** (user, 2026-09-11, after I had
+  wrongly read "skip IPv6 for now" as permission for IPv4-only listeners).
+  "Skip" meant: don't build full IPv6 support yet. The `default_bind`
+  change that shipped was a no-op (Go binds 0.0.0.0 dual-stack) and is
+  being reverted; the `tcp4/` follow-up was never pushed.
+- **Stopping the AAAA for `steamboat.tsl` locally is acceptable** (user,
+  2026-09-10) as the interim way to keep LAN IPv6 devices on the internal
+  UI. Real IPv6 support later needs an internal test that works without a
+  fixed prefix (see "Future: IPv6" below).
 - **No ISP-assigned addresses in config** (user): rules out adding
   `2600:1700:459:8a1f::/64` to Caddy's matchers.
 - **Trusting `Host: pfms.tsl` as internal is unsafe** — the IPv4 port-forward
