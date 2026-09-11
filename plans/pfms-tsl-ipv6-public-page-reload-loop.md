@@ -207,9 +207,24 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
       eno1 drop-in (drops the DHCPv6 lease → no AAAA for steamboat.tsl,
       SLAAC keeps v6 reachability) and a Secure Boot guard in
       `servers/lib/setup-nvidia-container.sh`.
-- [ ] **(current)** User to OK the three ops commits (revert, DHCP=ipv4,
-      Secure Boot guard). After the drop-in deploys: expect the AAAA for steamboat.tsl to disappear within the lease lifetime (~17 h, sooner if the
-      release is honoured), then `/health/site` 200 and uptime pFMS green.
+- [x] ops `4d8fa90` reverted the IPv4-only bind (IPv6 stays on); `51ff069`
+      Secure Boot guard for the NVIDIA installer. CI green on all servers.
+- [x] ops `b0d33f2` (user OK): `pfms.tsl` and `pfms.tomsawyerlabs.com` are
+      static **A** records (10.255.0.5) instead of CNAMEs to `steamboat.tsl`;
+      `steamboat.tsl` keeps its AAAA. Applied by UniFi DNS Sync 20:16Z.
+      Verified on steamboat: `pfms.tsl` A only (AAAA = NODATA), `curl -6`
+      has nothing to connect to, `/health/site` **200** "IPv4 serves the
+      internal UI", public `/health` via Cloudflare **200**.
+- [x] Finding: for `pfms.tomsawyerlabs.com` the UXG resolver answers the
+      local A but **forwards the AAAA query upstream**, returning
+      Cloudflare's AAAAs. Dual-stack LAN clients using the public name
+      therefore reach pFMS via Cloudflare over v6 and still look external
+      (same outcome as before: public page), now with a hairpin through
+      Cloudflare instead of a direct LAN hit. `pfms.tsl` is unaffected
+      (`tsl` has no public zone).
+- [ ] **(current)** Decide whether to keep the `pfms.tomsawyerlabs.com`
+      A pin (no benefit, adds a hairpin for v6 clients) or restore its
+      CNAME. Recommendation: restore the CNAME; keep the `pfms.tsl` pin.
 
 ## Rollout (order matters; each step needs its own OK)
 
