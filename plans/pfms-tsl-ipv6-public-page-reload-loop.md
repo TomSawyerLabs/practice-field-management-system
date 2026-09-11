@@ -108,6 +108,21 @@ falls back to v4 in ~250 ms).
 Also ruled out: trusting `Host: pfms.tsl` as "internal" — the v4 port-forward
 lets anyone on the internet hit steamboat with a forged Host header.
 
+## Decisions already made (don't re-ask)
+
+- **IPv6: skip for now, support fully later** (user, 2026-09-11). Steamboat's
+  Caddy goes IPv4-only; real IPv6 support needs an internal test that works
+  without a fixed prefix (see "Future: IPv6" below).
+- **No ISP-assigned addresses in config** (user): rules out adding
+  `2600:1700:459:8a1f::/64` to Caddy's matchers.
+- **Trusting `Host: pfms.tsl` as internal is unsafe** — the IPv4 port-forward
+  lets anyone forge it. WARP / private-DNS clients can never look local to a
+  network test; the external-access cookie (QR / link) is the robust answer
+  for them.
+- **Public `/health` on `pfms.tomsawyerlabs.com` for uptime** (user approved).
+  It maps to the backend's `/health/site`, not `/health`, because `update.sh`
+  reads `/health` with `curl -f` as its live-match guard.
+
 ## Fix options
 
 A. **App (this repo): make the public page's probe honest.** Replace "`/ws`
@@ -138,7 +153,44 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
 - [x] Onset dated to the 2026-08-05 03:02 PDT gateway reboot (firmware 5.1.26,
       published that day); first victims identified from Caddy logs.
 - [x] Monitoring gap explained (no pFMS check; external checks see a 200).
-- [ ] **(current)** User to choose: A (+D) now, then B or C.
+- [x] **A — public page fixed** (`65e3804`): re-fetches its own URL and reloads
+      only when the answer isn't the public page (`<meta name="pfms-page">`),
+      capped at 3 reloads / 5 min. Verified in a real browser against a local
+      harness: external → stays and polls; flip to internal → one reload;
+      fetch/navigation mismatch → stops after 3 with a message.
+- [x] **D (app side) — `/health/site` + `LAN_URL`** (`bf5bf78`): probes every
+      address of `LAN_URL`, 503 if any serves the public page or a non-pFMS
+      page; refusals tolerated. `scripts/test-site-health.ts`: 20/20 pass.
+- [x] Ops changes written, **uncommitted**, in the ops checkout:
+      `servers/steamboat/global.d/03-ipv4-only.caddy` (`default_bind 0.0.0.0`),
+      `/health` → `/health/site` route in `pfms.caddy`, steamboat README note,
+      pFMS entry in the uptime worker. Full steamboat config assembled and
+      adapted locally; worker typecheck + tests pass.
+- [ ] **(current)** Waiting on the user for each of the rollout steps below.
+
+## Rollout (order matters; each step needs its own OK)
+
+1. **steamboat:** append `LAN_URL=http://pfms.tsl/` to `/etc/pfms/environment`.
+   No restart; step 2's reload picks it up.
+2. **pFMS:** push master, then deploy via `update.sh` (graceful reload, waits
+   out a live match). After this `/health/site` on steamboat reports the true
+   state: 503 "IPv6 serves the public-only page" until step 3.
+3. **ops:** commit + push the staged changes. CI deploys Caddy (IPv4-only +
+   `/health` route) and the uptime worker. Then `/health` should be 200 with
+   "IPv4 serves the internal UI; IPv6 refuses connections".
+4. **ops:** refresh `as-deployed/steamboat/pfms/environment.as-deployed` to
+   include `LAN_URL` (snapshot of live state, so only after step 1).
+
+Pushing ops before step 2 would make the new uptime check red (`/health/site` 404) — hence the order.
+
+## Future: IPv6
+
+To serve pFMS over IPv6 later, the internal test must recognise LAN clients
+without a hardcoded prefix — e.g. the backend compares the client address with
+the prefixes on its own interfaces (read at runtime), and Caddy asks the
+backend via the existing `forward_auth` hop instead of `private_ranges`. Then
+drop `03-ipv4-only.caddy`. `/health/site` already checks IPv6 and will say
+whether it works.
 
 ## Things not to do
 
