@@ -94,6 +94,20 @@ the health-cache pattern already used for sentinel/tuzfal), exposed to the
 worker like the others. Alternative: the external check sends a valid
 external-access cookie and expects the internal `index.html`.
 
+## Finding (2026-09-10 evening): steamboat's Caddy has no legitimate IPv6 traffic
+
+Across every Caddy site log on steamboat since 2026-04-19, **zero** connections
+arrived over IPv6 from anywhere outside the LAN `/64` (link-local excluded).
+Cloudflare reaches the origin via `office.tomsawyerlabs.com`, which is
+**A-only** (108.65.74.188); the `steamboat - TSL` cloudflared tunnel arrives on
+loopback. So IPv6 HTTP on steamboat has exactly one consumer: LAN clients that
+got an AAAA — i.e. this bug. Making Caddy (or the host firewall) IPv4-only for
+:80/:443 breaks nothing known and needs no addresses in config (Happy Eyeballs
+falls back to v4 in ~250 ms).
+
+Also ruled out: trusting `Host: pfms.tsl` as "internal" — the v4 port-forward
+lets anyone on the internet hit steamboat with a forged Host header.
+
 ## Fix options
 
 A. **App (this repo): make the public page's probe honest.** Replace "`/ws`
