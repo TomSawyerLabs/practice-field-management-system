@@ -1,5 +1,15 @@
 import { IncomingMessage, ServerResponse } from 'http';
+import type CIDRMatcher from 'cidr-matcher';
 import type { ExternalAccessStore } from './externalAccessStore.js';
+import type { OnLinkChecker } from './onLink.js';
+import { getRealClientIp } from './utils.js';
+
+export interface ExternalAccessAuthOptions {
+  /** Which peers may vouch for a client address via X-Forwarded-For (the reverse proxy). */
+  trustedProxyMatcher?: CIDRMatcher;
+  /** Answers "is this address on one of this host's own networks?" */
+  onLink?: OnLinkChecker;
+}
 
 const COOKIE_NAME = 'pfms_access';
 const COOKIE_MAX_AGE = 365 * 24 * 60 * 60; // 365 days in seconds
@@ -31,14 +41,22 @@ function buildCookie(token: string): string {
  *   to grant them access from outside the local network.
  *
  * GET /api/auth/check
- *   Validates the pfms_access cookie. Returns 200 + Set-Cookie (refreshed
- *   expiry) if valid, 401 if not. Used by Caddy's forward_auth to gate
- *   external access.
+ *   Used by the reverse proxy to gate anyone it does not already treat as
+ *   local. Returns 200 when the pfms_access cookie is valid (plus a Set-Cookie
+ *   that rolls the expiry forward), or when the client's address is on one of
+ *   this host's own networks (see onLink.ts — this is how devices on the
+ *   field network that arrive over IPv6 get the internal UI). 401 otherwise.
+ *
+ *   The client address comes from X-Forwarded-For only when the socket peer
+ *   is a trusted proxy; the proxy in turn replaces any X-Forwarded-For a
+ *   client sent unless it came from its own trusted upstream. A stranger
+ *   cannot claim an on-link address.
  */
 export function handleExternalAccessAuth(
   req: IncomingMessage,
   res: ServerResponse,
   store: ExternalAccessStore,
+  options: ExternalAccessAuthOptions = {},
 ): boolean {
   const url = req.url;
   if (!url) return false;
@@ -70,12 +88,34 @@ export function handleExternalAccessAuth(
       // Refresh the cookie — Caddy relays this Set-Cookie to the client via
       // handle_response, so the 365-day expiration rolls forward on every page load.
       res.writeHead(200, { 'Set-Cookie': buildCookie(cookieValue), 'Cache-Control': 'no-store' });
-    } else {
-      res.writeHead(401, { 'Cache-Control': 'no-store' });
+      res.end();
+      return true;
     }
+
+    if (options.onLink) {
+      const clientIp = getRealClientIp(req.socket.remoteAddress, req.headers, options.trustedProxyMatcher);
+      if (options.onLink.isOnLink(clientIp)) {
+        noteOnLinkGrant(clientIp);
+        res.writeHead(200, { 'X-Pfms-Access': 'on-link', 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
+      }
+    }
+
+    res.writeHead(401, { 'Cache-Control': 'no-store' });
     res.end();
     return true;
   }
 
   return false;
+}
+
+// One log line per address, so the journal shows which devices needed the
+// on-link rule (the proxy handles private IPv4 itself, so in practice: IPv6).
+const onLinkGrantsLogged = new Set<string>();
+function noteOnLinkGrant(ip: string) {
+  if (onLinkGrantsLogged.has(ip)) return;
+  if (onLinkGrantsLogged.size >= 1000) onLinkGrantsLogged.clear();
+  onLinkGrantsLogged.add(ip);
+  console.log(`External access: ${ip} is on one of our own networks — serving the internal UI without a cookie`);
 }

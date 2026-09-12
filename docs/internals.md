@@ -191,7 +191,7 @@ All HTTP traffic shares the WebSocket server port:
 | `/api/team-avatar/:team` | Cached team avatar PNGs (fetched from the FIRST API)                                                                                                                                                   |
 | `/api/video-proxy/*`     | WHEP signaling proxy for the scoreboard video view                                                                                                                                                     |
 | `/admin/auth/<token>`    | Sets the external-access cookie from a token URL                                                                                                                                                       |
-| `/api/auth/check`        | External-access cookie validation (Caddy `forward_auth`)                                                                                                                                               |
+| `/api/auth/check`        | Proxy access check: `200` for a valid external-access cookie or a client on one of the host's own networks (`src/onLink.ts`), else `401`                                                               |
 
 ## Dry-Run Mode
 

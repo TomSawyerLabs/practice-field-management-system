@@ -163,15 +163,19 @@ valid access cookie (checked via `forward_auth` against
 `/api/auth/check`), with `/scores` and `/admin` always reachable. See
 [External Access](#external-access).
 
-That split keys off the client's address, which has a trap: if the LAN name
-gets an AAAA record, devices that prefer IPv6 connect from a global (ISP-
-delegated) address, fail a `private_ranges` test, and get the public page.
-That happened to the reference field in August 2026. There is no good static
-answer yet — hardcoding the delegated prefix rots when the ISP changes it.
-Until pFMS can recognise its own network's IPv6 clients, keep the LAN name
-IPv4-only (no AAAA), and publish the backend's `/health/site` as `/health`
-ahead of the access check with `LAN_URL` set, so uptime monitoring goes red
-if LAN devices are ever shut out again:
+That split keys off the client's address, which has a trap: a device on the
+field network that connects over IPv6 arrives from a global (ISP-delegated)
+address, fails a `private_ranges` test, and would get the public page. That
+happened to the reference field in August 2026 when the LAN name gained an
+AAAA record. So the backend answers the proxy's `/api/auth/check` with `200`
+not only for a valid access cookie but also for any client whose address is
+inside a prefix on the host's **own interfaces** (read live from the OS —
+nothing to configure, nothing that rots when the ISP renumbers). The proxy
+must pass the client address in `X-Forwarded-For` (Caddy's `reverse_proxy`
+does by default) and the proxy must be listed in `TRUSTED_PROXIES`, or the
+backend ignores the header. Publish the backend's `/health/site` as
+`/health` ahead of the access check with `LAN_URL` set, so uptime monitoring
+goes red if LAN devices are ever shut out again:
 
 ```Caddyfile
         rewrite /health /health/site
@@ -230,3 +234,10 @@ external IPs, the reverse proxy uses `forward_auth` to ask the backend
 whether the cookie is valid — the backend returns `200` (serve internal
 UI) or `401` (serve public page). Revoking a token in the admin UI
 invalidates it immediately.
+
+The same check also answers `200` (no cookie needed) when the client's
+address is on one of the host's own networks — how devices on the field
+network that reach pFMS over IPv6 get the internal UI even though the proxy
+does not consider their address private. Devices whose traffic arrives via a
+VPN or a private-DNS service such as Cloudflare WARP are external from the
+network's point of view and need the access link like anyone else.

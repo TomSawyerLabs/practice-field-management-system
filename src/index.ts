@@ -52,6 +52,7 @@ import { SlackBridge } from './slackBridge.js';
 import { announceDeploy } from './deployAnnouncer.js';
 import { AdminAuth } from './adminAuth.js';
 import { handleExternalAccessAuth } from './externalAccessAuth.js';
+import { OnLinkChecker } from './onLink.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { UsageTracker } from './usageTracker.js';
@@ -119,6 +120,10 @@ const trustedProxyMatcher = process.env.TRUSTED_PROXIES
         .map(toCidr),
     )
   : undefined;
+
+// Devices on this host's own networks get the internal UI without a cookie,
+// whichever address family they arrive on — see src/onLink.ts.
+const onLinkChecker = new OnLinkChecker();
 
 // Scheduled configuration clearing
 const RadioClearSchedule = process.env.RADIO_CLEAR_SCHEDULE;
@@ -308,7 +313,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     trustedProxyMatcher,
     station => onRunTeamChecks?.(station),
     [
-      (req: IncomingMessage, res: ServerResponse) => handleExternalAccessAuth(req, res, externalAccessStore),
+      (req: IncomingMessage, res: ServerResponse) =>
+        handleExternalAccessAuth(req, res, externalAccessStore, { trustedProxyMatcher, onLink: onLinkChecker }),
       (req, res) => handleScoringRequest(req, res, scoringEngine, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleMatchReviewRequest(req, res, matchHistoryStore, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
