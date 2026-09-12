@@ -222,9 +222,25 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
       (same outcome as before: public page), now with a hairpin through
       Cloudflare instead of a direct LAN hit. `pfms.tsl` is unaffected
       (`tsl` has no public zone).
-- [ ] **(current)** Decide whether to keep the `pfms.tomsawyerlabs.com`
-      A pin (no benefit, adds a hairpin for v6 clients) or restore its
-      CNAME. Recommendation: restore the CNAME; keep the `pfms.tsl` pin.
+- [x] User chose **D**. pFMS `aebe3bb` (deployed 2026-09-12 13:04 PDT):
+      `/api/auth/check` answers 200 for any client inside a prefix on the
+      host's own interfaces (`src/onLink.ts`, read live from the OS; the /128
+      DHCPv6 lease and loopback excluded). Verified over IPv6 from steamboat
+      and from Cameron's laptop (`…:5a5b`): `pfms.tsl` and
+      `pfms.tomsawyerlabs.com` (HTTPS) both serve the **internal** page;
+      journal logs the grant. 23/23 checks in
+      `scripts/test-on-link-access.ts`, incl. the untrusted-peer spoof case.
+- [x] Found while verifying: on a cookie-less 200, `pfms.caddy`'s
+      unconditional relay sends the browser a literal
+      `Set-Cookie: {http.reverse_proxy.header.Set-Cookie}`. Fix written in
+      ops (`@refresh` = 2xx **with** Set-Cookie relays; bare 2xx falls
+      through), proven against a local Caddy + mock backend (deny→PUBLIC,
+      cookie→INTERNAL+cookie, on-link→INTERNAL, no header). Uncommitted.
+- [ ] **(current)** Two ops pushes, in order, each needing an OK: 1. the `pfms.caddy` relay fix (Server Deploys); 2. restore the CNAMEs for `pfms.tsl` / `pfms.tomsawyerlabs.com`
+      (UniFi DNS Sync) — the A pins are no longer needed and only
+      steamboat's own AAAA is inherited again.
+      Then: `/health/site` should report "IPv4 serves the internal UI; IPv6
+      serves the internal UI".
 
 ## Rollout (order matters; each step needs its own OK)
 
