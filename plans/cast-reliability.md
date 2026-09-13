@@ -68,6 +68,37 @@ part fails (discovery, session start, session survival) and fix what is ours.
   09-13 (privacy addresses) — not expected to cut an 18-minute-old socket,
   but worth remembering if drops line up with address rotation.
 
+## Cameron's answers (2026-09-13 ~10:20)
+
+1. Usually (a) the TV never appears in Chrome's Cast list. Sometimes (b) slow
+   start, common after restarting. (c) drops eventually happen. Never (d).
+2. Don't touch this computer's adapters.
+
+## Findings, round 2 (2026-09-13 10:20–10:35)
+
+- **Bonjour is NOT the problem.** `C:\Program Files\Bonjour\mDNSResponder.exe`
+  (Bonjour 3.1.0.1, installed 2024-03-18) holds UDP 5353 per-address on
+  every adapter while Chrome holds `0.0.0.0:5353`. Suspected Windows
+  port-sharing starvation, but `scripts/mdns-port-share-test.py` shows a
+  Chrome-style socket (0.0.0.0:5353, SO_REUSEADDR, joined group) receives
+  multicast answers fine on VLAN-3 and vSwitch. Theory dropped.
+- **The TV's Cast daemon goes dark while the receiver keeps running.** At
+  ~09:45 the TV answered mDNS directly, 8008/8009 open, `eureka_info` served.
+  At 10:20–10:33: zero answers to `_googlecast._tcp` (multicast AND unicast,
+  6/6 misses from the workstation and from steamboat), 8009 closed, 8008
+  accepts TCP but never answers HTTP — yet ping, adb 5555, remote 6466/6467,
+  8443 and 7000 are all open, and the receiver's `/ws/scores` socket from
+  09:40:17 is STILL established on steamboat (scores still on screen). The
+  WiiM on the same VLAN answers every query, so multicast delivery is fine.
+  So: Chrome can't list the TV because the TV's Chromecast-built-in service
+  stopped responding, not because of the network or pFMS. This is (a); a TV
+  restart revives it (= "works after restarting", (b)); the daemon dying
+  mid-session is (c).
+- Monitor running on steamboat: `/tmp/tv-cast-monitor.py` (nohup) appends a
+  line to `/tmp/tv-cast-monitor.log` every time the TV's state changes
+  (cast mDNS, remote mDNS, 8009, 8008 HTTP, 6466), polling every 20 s. Use it
+  to time the daemon's death against TV idle/screensaver/standby timers.
+
 ## Open questions for Cameron
 
 1. Which of these is the "unreliable" you see? (a) the TV never appears in
