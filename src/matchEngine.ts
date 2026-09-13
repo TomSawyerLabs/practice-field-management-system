@@ -96,6 +96,14 @@ export class MatchEngine {
   private lastDsHeartbeat = new Map<StationName, number>();
   /** When the FMS last enabled each station — gates the DS-disable re-latch grace */
   private lastFmsEnable = new Map<StationName, number>();
+  /** Whether the DS has reported itself enabled since the last FMS enable.
+   *  The 2027 DS does not set the status "enabled" bit the way the NI DS
+   *  does (2026-09-12: 5940's robot ran, yet every status said disabled),
+   *  so for it a "disabled" report only counts as the team pressing Disable
+   *  if the DS reported enabled first — a real enabled→disabled transition. */
+  private dsEnabledSeen = new Map<StationName, boolean>();
+  /** Which FMS enable (timestamp) the first-status diagnostic was logged for */
+  private dsStatusLoggedFor = new Map<StationName, number>();
   /** Socket control packets are sent from. Replaced by the FMS server's
    *  10.0.100.5:1160 listener at startup (see setUdpSocket); the initial
    *  ephemeral-port socket only exists so tests can run without the server. */
@@ -959,7 +967,7 @@ export class MatchEngine {
     state.mode = this.phase === 'auto' ? 'auto' : 'teleOp';
     state.enabled = true;
     state.disabledBy = null;
-    this.lastFmsEnable.set(station, Date.now());
+    this.markFmsEnabled(station);
     console.log(`Re-enabled: ${station}${byAdmin ? ' (admin)' : ' (self)'}`);
     this.sendDSPacket(station);
     this.broadcast();
@@ -969,9 +977,28 @@ export class MatchEngine {
    *  The team always has the right to disable/e-stop their robot. A-stop
    *  reports are only honored before/during auto — a DS that keeps asserting
    *  the bit into teleop cannot keep the station down. */
-  dsReportedStatus(station: StationName, dsEnabled: boolean, dsEStop: boolean, dsAStop: boolean) {
+  private markFmsEnabled(station: StationName) {
+    this.lastFmsEnable.set(station, Date.now());
+    this.dsEnabledSeen.set(station, false);
+  }
+
+  dsReportedStatus(station: StationName, dsEnabled: boolean, dsEStop: boolean, dsAStop: boolean, rawStatus?: number) {
     const state = this.stationStates.get(station);
     if (!state) return;
+    const ip = this.dsConnections.get(station)?.ip;
+    const protocol = ip ? this.endpointFor(ip).protocol : 'legacy';
+    if (dsEnabled) this.dsEnabledSeen.set(station, true);
+    // Diagnostic: the first status after each FMS enable, with the raw byte,
+    // so a DS generation's enable semantics can be read off the journal.
+    const enabledAt = this.lastFmsEnable.get(station);
+    if (enabledAt !== undefined && state.enabled && this.dsStatusLoggedFor.get(station) !== enabledAt) {
+      this.dsStatusLoggedFor.set(station, enabledAt);
+      const raw = rawStatus === undefined ? '?' : `0x${rawStatus.toString(16).padStart(2, '0')}`;
+      console.log(
+        `DS status after FMS enable: ${station} (${protocol}) raw=${raw} enabled=${dsEnabled} ` +
+          `${Math.round(Date.now() - enabledAt)}ms after enable`,
+      );
+    }
     // Stamp FMS attachment (UDP heartbeats only flow in FMS mode); broadcast
     // the flip so ready gates update promptly when a DS attaches.
     const wasAttached = this.isDsAttached(station);
@@ -996,8 +1023,10 @@ export class MatchEngine {
       // Grace window: right after the FMS enables a station, the DS's 2 Hz
       // status can still carry the pre-enable "disabled" state — honoring it
       // would instantly undo the enable (and make undisable silently fail).
-      const enabledAt = this.lastFmsEnable.get(station);
-      if (enabledAt === undefined || Date.now() - enabledAt > FMS_ENABLE_GRACE_MS) {
+      // For the 2027 DS additionally require a real enabled→disabled
+      // transition (see dsEnabledSeen); E-stop/A-stop above are unaffected.
+      const transition = protocol === 'legacy' || this.dsEnabledSeen.get(station) === true;
+      if (transition && (enabledAt === undefined || Date.now() - enabledAt > FMS_ENABLE_GRACE_MS)) {
         state.enabled = false;
         state.disabledBy = 'ds';
         console.log(`DS disable reported: ${station}`);
@@ -1349,7 +1378,7 @@ export class MatchEngine {
         state.enabled = true;
         state.mode = mode;
         state.disabledBy = null;
-        this.lastFmsEnable.set(station, Date.now());
+        this.markFmsEnabled(station);
       }
     }
   }

@@ -336,6 +336,9 @@ export type UdpMessage = {
   sequence: number;
   commVersion: number;
   status: DsStatus;
+  /** The undecoded status byte, for diagnosing DS generations whose bit
+   *  semantics differ from the NI DS. */
+  rawStatus: number;
   teamNumber: number;
   /** Robot battery voltage, or undefined when the robot isn't connected to the
    *  DS (the DS then reports the 0xFFFF sentinel — see parseBatteryVoltage). */
@@ -352,7 +355,8 @@ function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
   const r = new BufferReader(buff);
   const sequence = r.readNumber(2);
   const commVersion = r.readNumber(1);
-  const status = byteToDsStatus(r.readNumber(1));
+  const rawStatus = r.readNumber(1);
+  const status = byteToDsStatus(rawStatus);
   const teamNumber = r.readNumber(2);
   const BatteryVoltage = parseBatteryVoltage(r.readNumber(2));
   const tags: Tags = [];
@@ -404,6 +408,7 @@ function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
     sequence,
     commVersion,
     status,
+    rawStatus,
     teamNumber,
     BatteryVoltage,
     tags,

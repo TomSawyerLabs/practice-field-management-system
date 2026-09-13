@@ -1214,7 +1214,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           const udp = msg.data as import('./fmsServer.js').UdpMessage;
           const station = radioManager.getStationForTeam(udp.teamNumber);
           if (station) {
-            matchEngine.dsReportedStatus(station, udp.status.enabled, udp.status.EStop, udp.status.AStop);
+            matchEngine.dsReportedStatus(
+              station,
+              udp.status.enabled,
+              udp.status.EStop,
+              udp.status.AStop,
+              udp.rawStatus,
+            );
           }
         }
 
