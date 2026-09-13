@@ -99,21 +99,33 @@ land in the right period automatically.
 7. [x] pFMS tests (`bun test`, 33 tests): timeline interpolation/back-dating,
        shift grace at occurredAt, pause grace, outsideMatch, ageMs vs receive,
        dedup by occurredAt, re-attribution, score timeline.
-8. [ ] Counter: MotionEvent `score_frame` + `mono`; frame time ring in
-       GoalProcessor; stamp in `read_frame`. ← current
-9. [ ] Counter: PfmsForwarder → queued worker, batching, retry with
-       backoff, ageMs at send time, capture latency, log server attribution.
-10. [ ] Counter: `main.py` passes event timing; manual scores = now.
+8. [x] Counter: MotionEvent `lag_frames` + `mono`/`wall`; per-frame read
+       time ring in GoalProcessor; stamped once per frame in
+       `StreamProcessor.process_frame`.
+9. [x] Counter: PfmsForwarder → queued worker, batching, retry with
+       backoff (4xx not retried), ageMs at send time, capture latency, logs
+       the server's receipt per score. Worker survives exceptions.
+10. [x] Counter: `main.py` passes event timing; manual scores = now.
         `match.py` tally gets pause grace. Config key + README.
-11. [ ] Counter smoke test for the forwarder (fake HTTP server).
-12. [ ] Docs: `docs/scoring.md`, counter README. Commit both repos.
+11. [x] Counter smoke test for the forwarder (fake HTTP server):
+        `scripts/smoke_pfms_forwarder.py`. `smoke_match.py` expectation
+        updated for the pause grace.
+12. [x] Docs: `docs/scoring.md`, counter README. Both repos committed.
 
 ## Findings / gotchas
 
 - Threshold detector (`MotionCounter.process_frame`) emits the event on
   the frame where the signal falls below `fall_ratio × peak` — the peak
   (crossing) was 1–N frames earlier. `event.frame` is the detection
-  frame. Clips/sidecars use `event.frame`; keep it, add `score_frame`.
+  frame. Clips/sidecars use `event.frame`; keep it, add `lag_frames` (a
+  delta, so it works whichever detector's frame numbering `frame` is in —
+  YOLO keeps its own counter that resets independently).
+- The forwarder worker thread died on a `→` in a `print` under the
+  Windows cp1252 console. Worker output is ASCII now and the loop body is
+  wrapped so no exception can kill it.
+- A goal that is off through a pause and then off by shift has been off
+  continuously — no fresh 3 s grace at the shift boundary. Both pFMS
+  (`isGoalOff` is one continuous predicate) and the review tally agree.
 - Frame wall-clock in the counter is `datetime.now()` at read time
   (`timestamp_str`), formatted as a string — no numeric per-frame time
   existed. GPU path drains stale frames on read so the read time is close
@@ -155,7 +167,9 @@ land in the right period automatically.
 
 ## Progress log
 
-- 2026-09-13: plan written. Implementation starting with pFMS.
+- 2026-09-13: plan written. pFMS side implemented, tested (33 `bun test`
+  cases) and committed as 6839df2. Counter side implemented, smoke-tested
+  and committed. Neither side is deployed yet.
 
 ## Open questions for the user
 
