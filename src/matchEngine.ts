@@ -550,7 +550,13 @@ export class MatchEngine {
       appWarn(`Cannot change ready check in phase ${this.phase}`);
       return;
     }
-    if (this.readyRequested === requested) return;
+    if (this.readyRequested === requested) {
+      // Asking again while the check is already open is a nudge: everyone
+      // has to confirm again (a driver who readied five minutes ago may have
+      // walked off), but the check itself stays open.
+      if (requested) this.clearTeamReadiness('ready check re-requested');
+      return;
+    }
     this.readyRequested = requested;
     if (!requested) {
       // Retracting clears everyone's ready so re-opening starts clean.
@@ -559,6 +565,25 @@ export class MatchEngine {
     }
     console.log(requested ? 'Ready check opened' : 'Ready check retracted');
     this.broadcast();
+  }
+
+  /** Un-ready every station without closing the ready check, so each drive
+   *  team has to press Ready again. Used by the host's "Get Ready" call: the
+   *  point of the call is a fresh confirmation, not a stale one. Staff
+   *  readiness is left alone — the call is addressed to the teams. */
+  clearTeamReadiness(reason: string) {
+    if (this.phase !== 'created') return;
+    let changed = false;
+    for (const state of this.stationStates.values()) {
+      if (state.ready) {
+        state.ready = false;
+        changed = true;
+      }
+    }
+    if (changed) {
+      console.log(`Station readiness cleared (${reason})`);
+      this.broadcast();
+    }
   }
 
   /** A staff role readies / un-readies. Gated exactly like station ready. */

@@ -77,17 +77,30 @@ one (or more, if performance allows) stream(s) to record.
 
 ## Plan / steps
 
-1. [ ] Types + validators + env seed.
-2. [ ] `matchRecorder.ts` + history store `setRecordings`.
-3. [ ] HTTP: `/api/recordings/…` with Range. WS: state broadcast, test message.
-4. [ ] Frontend: admin card, history/post-match buttons, station card.
-5. [ ] Docs (configuration, match-system, README) and typecheck.
-6. [ ] Deploy, configure `rtsp://sentinel:8554/all-field` in admin, run a
-       match, download the file.
+1. [x] Types + validators + env seed.
+2. [x] `matchRecorder.ts` + history store `setRecordings`.
+3. [x] HTTP: `/api/recordings/…` with Range. WS: state broadcast, test message.
+4. [x] Frontend: admin card, history/post-match buttons, station card.
+5. [x] Docs (configuration, match-system, README) and typecheck. Committed
+       as 091e337 (2026-09-13).
+6. [ ] Deploy (needs an OK — scrimmage in progress), configure
+       `rtsp://10.255.0.20:8554/all-field` in Admin → Match Video Recording,
+       Test, Save, run a match, download the file from /match and a station
+       page. Not runtime-tested yet: only typecheck + an 8 s manual ffmpeg
+       copy of the real stream from steamboat.
 
 ## Findings / gotchas
 
-- (fill in as work proceeds)
+- steamboat cannot resolve the bare name `sentinel`; `sentinel.tsl` resolves
+  only to IPv6 while stitchd listens on IPv4 (`0.0.0.0:8554`). Use the IP
+  `10.255.0.20` in stream URLs.
+- Manual check from steamboat: `ffprobe rtsp://10.255.0.20:8554/all-field`
+  → h264 3686x3290 30 fps; an 8 s `-c copy` capture gave 11 MB at 12.4 Mbps.
+- `isPrivateHostUrl` rejects hostnames by design (radioUrl carries WPA
+  keys); stream URLs use the looser `isStreamSourceUrl` (rtsp/rtsps/http/
+  https/rtmp/srt/udp, any host, no file:/pipe:/concat:).
+- AdminPage already had a `formatBytes` (firmware section) — the recording
+  card uses `formatRecordingBytes`.
 
 ## Open questions for Cameron
 

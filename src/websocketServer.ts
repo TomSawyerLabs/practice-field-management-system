@@ -837,6 +837,9 @@ export function setupWebSocket(
         // or a countdown started mid-announcement loses its 3-2-1 audio.
         matchAudio?.play('getready');
         matchEngine.holdStart(3000);
+        // The call is a request for a fresh confirmation: everyone readies
+        // up again (the ready check stays open).
+        matchEngine.clearTeamReadiness('Get Ready called');
         broadcast(data);
       } else if (isStationSelfDisable(data)) {
         matchEngine.stationDisable(data.station, 'self');

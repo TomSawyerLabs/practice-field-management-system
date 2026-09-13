@@ -37,7 +37,10 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
    ready up until the controller **opens the ready check**. Then teams —
    and every required field-staff role — mark themselves ready. Any roster
    change (a late join/leave/swap/kick, or a config change) re-closes the
-   check, so it always reflects the current lineup.
+   check, so it always reflects the current lineup. Calling **Get Ready**
+   (the attention sound) or asking for ready again while the check is open
+   clears every team's ready flag, so each drive team confirms afresh; the
+   check itself stays open and staff readiness is kept.
 4. **Hold to Start** — once every joined team and every required staff
    role is ready, the controller **holds** the start button through the
    whole 3‑2‑1 countdown. Letting go before the robots enable aborts the
