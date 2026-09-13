@@ -238,9 +238,15 @@ function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean
       >
         {pressed ? 'Hold… release aborts' : 'Hold to Start'}
       </Button>
-      <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
-        {canStart ? 'Hold through the 3-2-1 — let go before the horn to abort.' : holdDisabledReason}
-      </Typography>
+      {canStart ? (
+        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+          Hold through the 3-2-1 — let go before the horn to abort.
+        </Typography>
+      ) : (
+        <Typography variant="body2" sx={{ textAlign: 'center', color: 'warning.main', fontWeight: 600, maxWidth: 360 }}>
+          {holdDisabledReason ?? 'Not ready to start'}
+        </Typography>
+      )}
     </Box>
   );
 }
@@ -349,12 +355,14 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
   const allReady = readyRequested && stationsAllReady && staffAllReady;
 
   const notReadyStaff = requiredStaff.filter(r => !staffStates[r].ready).map(r => StaffRoleLabels[r]);
+  const notReadyTeams = joinedStations.filter(s => !stationStates[s]?.ready).map(s => teamLabel(stationStates[s]));
+  // Spell out exactly who or what is holding the start, right under the button.
   const holdDisabledReason = !readyRequested
-    ? 'Open the ready check first.'
+    ? 'Ask for Ready first — nobody can ready up until the check is open.'
     : joinedStations.length === 0
-      ? 'At least one team must join and ready up.'
+      ? 'No team has joined this match yet.'
       : !stationsAllReady
-        ? 'Waiting for all teams to ready up…'
+        ? `Waiting for ${notReadyTeams.join(', ')} to press Ready`
         : !staffAllReady
           ? `Waiting for staff: ${notReadyStaff.join(', ')}`
           : undefined;
@@ -478,7 +486,12 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
                 <Button variant="outlined" color="warning" onClick={() => sendMatchRequestReady(false)}>
                   Retract Ready Check
                 </Button>
-                <HoldToStartButton canStart={allReady && !getReadyHold} holdDisabledReason={holdDisabledReason} />
+                <HoldToStartButton
+                  canStart={allReady && !getReadyHold}
+                  holdDisabledReason={
+                    holdDisabledReason ?? (getReadyHold ? 'Get-ready announcement playing — a moment…' : undefined)
+                  }
+                />
               </>
             )}
             <Button variant="outlined" color="error" onClick={sendMatchCancel}>
