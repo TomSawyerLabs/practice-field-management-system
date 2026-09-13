@@ -53,6 +53,22 @@ page (local network) should offer the same links.
        deployed 2026-09-13 (LAN works now; internet needs the Caddy change
        and PUBLIC_URL / setup `publicUrl` = https://pfms.tomsawyerlabs.com).
 
+## Findings / gotchas
+
+- 12:03 first recorded match produced no video: ffmpeg rejects the generic
+  `-rw_timeout` on RTSP inputs ("Option rw_timeout not found") although
+  ffprobe (the Test button) accepts it. Fixed in d5c94a9 (`-timeout` for
+  RTSP). Deployed 12:12.
+- Links used `http://pfms.tsl` because no public URL was configured; the
+  Caddy http→https redirect for `/scores` then dropped the query, landing on
+  the plain scoreboard. `PUBLIC_URL=https://pfms.tomsawyerlabs.com` is now
+  in `/etc/pfms/environment` (backup `environment.bak.20260913-121105`),
+  confirmed in the `serverInfo` message. A query-preserving redirect is
+  staged in ops with the other two Caddy lines (all await Cameron's OK).
+- Cameron reports something "flashes at ~2 Hz like it's reloading" after a
+  match; the Caddy log shows no repeated page loads, so it is a client-side
+  render flash — which screen is still unknown.
+
 ## Things not to do
 
 - Don't put the token in the match id or reuse the match id as the token:
