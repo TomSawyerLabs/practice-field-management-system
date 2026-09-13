@@ -26,19 +26,35 @@ translates them into points.
   into one.
 - **Fouls** — elements with `awardToOpponent: true` give points to the
   opposing alliance.
+- **Timing** — match scoring depends on _when the ball scored_: auto or
+  teleop, which shift, whether the goal was on. Detectors lag (video
+  pipelines, peak detection, retries), so a device should report `ageMs`
+  — how many milliseconds before it sent the request the score happened.
+  The server keeps a timeline of the match and judges each event at
+  `receiveTime − ageMs`, so a late report still lands in the right
+  period and the live score is recomputed accordingly. No clock sync is
+  needed. `timestamp` (epoch ms) is accepted as a fallback when it is
+  plausible against the server clock. The response carries a receipt per
+  event saying where it was attributed and whether it counted.
 - **Phase restrictions** — elements can be limited to specific match
-  phases (e.g. auto-only bonuses). A grace window (default 5 s,
-  configurable as `phaseGraceSeconds`) attributes events arriving just
-  after a phase change to the previous phase.
+  phases (e.g. auto-only bonuses). For events with **no** timing
+  information, a grace window (default 5 s, configurable as
+  `phaseGraceSeconds`) assumes a report arriving just after a phase
+  change scored just before it. Timed events ignore this.
 - **Auto-registration** — unknown element names in incoming events are
   auto-created (1 point each) up to `SCORING_AUTO_REGISTER_LIMIT`
   (default 1); beyond the limit they're rejected as `unknown_element`.
   Set the limit to `0` to require explicit configuration.
-- **Goal-active shift scoring (REBUILT)** — in match mode, events scored
-  while the alliance's goal is inactive during teleop shifts don't count
-  toward the match total (with a 3 s grace around shift boundaries).
+- **Goal-active shift scoring (REBUILT)** — in match mode, balls scored
+  while the alliance's goal is off don't count toward the match total.
+  A goal is off during the other alliance's teleop shifts and while the
+  match is paused by the operator; in both cases balls scored within 3 s
+  of the goal turning off still count (they were in flight). Balls that
+  scored before the countdown ended are not part of the match at all.
   Match scores break down by period: auto, transition, shifts 1–4, and
-  endgame.
+  endgame. The auto winner is decided from balls that scored during
+  auto and the pause after it, judged by their own timing — a detector
+  whose lag exceeds the auto pause can still miss that decision.
 
 ## Quick Start for a Scoring Device
 
@@ -47,11 +63,13 @@ POST /api/score?key=YOUR_KEY HTTP/1.1
 Host: pfms.local:3000
 Content-Type: application/json
 
-{"source":"goal-1","alliance":"red","element":"speaker"}
+{"source":"goal-1","alliance":"red","element":"speaker","ageMs":350}
 ```
 
-Multiple events can be submitted in one request; a batch that partially
-succeeds returns HTTP 207 with per-event results.
+`ageMs` is how long before sending the score actually happened; leave it
+out only if the device reports instantly. Multiple events can be
+submitted in one request; a batch that partially succeeds returns HTTP 207. The response lists a receipt per event (`events[]`) with the phase
+and sub-period it was attributed to and whether it counted.
 
 ### Authentication
 

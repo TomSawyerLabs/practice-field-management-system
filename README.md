@@ -75,6 +75,7 @@ starting on a non-Linux host exits immediately with an explanation.
 
 ```bash
 bun run typecheck   # Type-check both backend and frontend
+bun run test        # Unit tests (scoring timeline & attribution)
 bun run format      # Format all files with Prettier
 bun run build       # Compile backend + build frontend
 ```

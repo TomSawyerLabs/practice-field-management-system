@@ -2,8 +2,39 @@ import { IncomingMessage, ServerResponse } from 'http';
 import CIDRMatcher from 'cidr-matcher';
 import { ScoringEngine } from './scoringEngine.js';
 import { ApiKeyStore } from './apiKeyStore.js';
-import { isScoreEvent, ScoringElementConfig, ScoringMode } from './types.js';
+import {
+  isScoreEvent,
+  ProcessedScoreEvent,
+  ScoreEventReceipt,
+  ScoreSubmitResult,
+  ScoringElementConfig,
+  ScoringMode,
+} from './types.js';
 import { readBody, json, checkAuth } from './httpApiUtils.js';
+
+/** Describe how the engine judged one event, for the device's log. */
+function receiptFor(e: ProcessedScoreEvent): ScoreEventReceipt {
+  const reason = e.deduplicated
+    ? 'deduplicated'
+    : e.phaseRestricted
+      ? 'phaseRestricted'
+      : e.outsideMatch
+        ? 'outsideMatch'
+        : e.goalInactive
+          ? 'goalInactive'
+          : undefined;
+  return {
+    status: e.deduplicated || e.phaseRestricted ? 'deduplicated' : 'accepted',
+    id: e.id,
+    occurredAt: e.occurredAt,
+    lagMs: e.lagMs,
+    timing: e.timing,
+    matchPhase: e.matchPhase,
+    matchSubPeriod: e.matchSubPeriod,
+    counted: reason === undefined,
+    reason,
+  };
+}
 
 /**
  * Handle scoring HTTP API requests.
@@ -55,29 +86,36 @@ export function handleScoringRequest(
 
         // Support both single event and array of events
         const events = Array.isArray(data) ? data : [data];
-        const results: { accepted: number; rejected: number; deduplicated: number; errors: string[] } = {
+        const results: ScoreSubmitResult = {
           accepted: 0,
           rejected: 0,
           deduplicated: 0,
           errors: [],
+          events: [],
         };
+        // Every event in the request shares one receive time: `ageMs` is
+        // relative to when the request was sent, which is (near enough) now.
+        const receivedAt = Date.now();
 
         engine.batch(() => {
           for (const event of events) {
             if (!isScoreEvent(event)) {
               results.rejected++;
               results.errors.push(`Invalid event: ${JSON.stringify(event)}`);
+              results.events.push({ status: 'rejected', reason: 'invalid' });
               continue;
             }
-            const result = engine.submitEvent(event);
+            const result = engine.submitEvent(event, receivedAt);
             if (result === 'unknown_element') {
               results.rejected++;
               results.errors.push(`Unknown element "${event.element}" (configure it via PUT /api/score/config first)`);
-            } else if (result === 'deduplicated') {
-              results.deduplicated++;
-            } else {
-              results.accepted++;
+              results.events.push({ status: 'rejected', reason: 'unknownElement' });
+              continue;
             }
+            const receipt = receiptFor(result);
+            results.events.push(receipt);
+            if (receipt.status === 'deduplicated') results.deduplicated++;
+            else results.accepted++;
           }
         });
 
@@ -296,6 +334,10 @@ function buildScoreEventExamples(elements: ScoringElementConfig[]) {
       summary: 'Correction — subtract a miscounted score',
       value: { source: 'ref-tablet', alliance: 'red', element: first, count: -1 },
     },
+    timed: {
+      summary: 'Timed — the ball scored 1.8 s before this request was sent (detector lag)',
+      value: { source: 'ball-counter', alliance: 'blue', element: first, ageMs: 1800 },
+    },
   };
 
   if (foulId) {
@@ -336,7 +378,12 @@ function buildApiSchema(engine: ScoringEngine) {
         '- The server **automatically switches** to match mode when a match starts and back to freePlay when it ends.\n' +
         '- **freePlay mode**: scores use a sliding window — old events age out and the count drops.\n' +
         '- **match mode**: scores accumulate from zero with a per-phase breakdown.\n' +
-        '- **Fouls**: configure an element with `awardToOpponent: true`. Send the event with the offending alliance — points go to the other side.\n\n' +
+        '- **Fouls**: configure an element with `awardToOpponent: true`. Send the event with the offending alliance — points go to the other side.\n' +
+        '- **Timing matters.** Match scoring depends on *when the ball scored* — auto vs teleop, which shift, ' +
+        'whether the goal was on. Detectors lag (video pipelines, peak detection, retries), so report `ageMs`: ' +
+        'how many milliseconds before you sent the request the score happened. The server judges the event at ' +
+        '`receiveTime − ageMs`, so a late report still lands in the right period. No clock sync is needed. ' +
+        'Events without timing are judged at arrival (with a short grace after each phase change).\n\n' +
         '## Configured Elements\n\n' +
         (elementIds.length > 0
           ? 'The following scoring elements are currently configured. Use these exact IDs in the `element` field:\n\n' +
@@ -411,12 +458,51 @@ function buildApiSchema(engine: ScoringEngine) {
               default: 1,
               description: 'Number of scores. Default 1. Use negative values for corrections.',
             },
+            ageMs: {
+              type: 'number',
+              minimum: 0,
+              description:
+                'Milliseconds between the score happening and this request being sent. Preferred timing field: ' +
+                'needs no clock agreement with the server, and a device that queues or retries just recomputes it ' +
+                'at each send. The event is judged (phase, shift, goal on/off, dedup) at receiveTime − ageMs.',
+            },
             timestamp: {
               type: 'number',
               description:
-                'Device-side timestamp (ms since epoch). Optional — the server always records its own receive time. ' +
-                'Useful when the device buffers events or has network latency. Used for display/ordering; ' +
-                'deduplication uses server receive time.',
+                'Device-side time the score happened (ms since epoch). Used only when ageMs is absent, and only if ' +
+                'plausible against the server clock (not in the future, not hours old); otherwise the receive time ' +
+                'is used. Prefer ageMs.',
+            },
+          },
+        },
+        ScoreEventReceipt: {
+          type: 'object',
+          description: 'How the server judged one submitted event.',
+          properties: {
+            status: { type: 'string', enum: ['accepted', 'deduplicated', 'rejected'] },
+            id: { type: 'string', description: 'Server-side event id.' },
+            occurredAt: {
+              type: 'number',
+              description: 'When the server believes the ball scored (ms since epoch, server clock).',
+            },
+            lagMs: { type: 'number', description: 'How late the report was: receive time − occurredAt.' },
+            timing: {
+              type: 'string',
+              enum: ['age', 'timestamp', 'receive'],
+              description: 'Which field established occurredAt.',
+            },
+            matchPhase: { type: 'string', description: 'Match phase at occurredAt (match mode only).' },
+            matchSubPeriod: {
+              type: 'string',
+              description: 'Sub-period at occurredAt: auto, transition, shift1–4, endgame.',
+            },
+            counted: { type: 'boolean', description: 'Whether the event adds to the displayed score.' },
+            reason: {
+              type: 'string',
+              enum: ['deduplicated', 'phaseRestricted', 'outsideMatch', 'goalInactive', 'invalid', 'unknownElement'],
+              description:
+                'Why it did not count. goalInactive: the goal had been off (shift or pause) for longer than the 3 s grace. ' +
+                'outsideMatch: scored before the match started.',
             },
           },
         },
@@ -433,6 +519,12 @@ function buildApiSchema(engine: ScoringEngine) {
               type: 'array',
               items: { type: 'string' },
               description: 'Human-readable error messages for rejected events.',
+            },
+            events: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/ScoreEventReceipt' },
+              description:
+                'One receipt per submitted event, in order — where each was attributed and whether it counted.',
             },
           },
         },
@@ -462,6 +554,12 @@ function buildApiSchema(engine: ScoringEngine) {
             eventCount: { type: 'integer', description: 'Total events received from this source.' },
             lastElement: { type: 'string', description: 'Element ID of the last event.' },
             lastAlliance: { type: 'string', enum: ['red', 'blue'], description: 'Alliance of the last event.' },
+            lastLagMs: { type: 'number', description: 'How late the last event from this source was reported (ms).' },
+            lastTiming: {
+              type: 'string',
+              enum: ['age', 'timestamp', 'receive'],
+              description: 'How the last event’s timing was established. "receive" means the source sends no timing.',
+            },
           },
         },
         ScoringElementConfig: {
@@ -554,6 +652,21 @@ function buildApiSchema(engine: ScoringEngine) {
                 'Max elements that can be auto-registered from incoming events. ' +
                 'When a device sends an unknown element and the limit has not been reached, ' +
                 'the element is created with pointValue: 1. Set to 0 to require explicit configuration. Default: 1.',
+            },
+            phaseGraceSeconds: {
+              type: 'number',
+              minimum: 0,
+              maximum: 30,
+              description:
+                'For events with no timing information only: a report arriving within this many seconds of a phase ' +
+                'change is assumed to have scored just before it. Events that carry ageMs are judged at their own time ' +
+                'and ignore this. Default: 5.',
+            },
+            batchTimeoutSeconds: {
+              type: 'number',
+              minimum: 1,
+              maximum: 600,
+              description: 'Seconds of inactivity before a free-play scoring batch is considered finished.',
             },
           },
         },

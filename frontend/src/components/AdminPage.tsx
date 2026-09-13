@@ -844,6 +844,11 @@ function formatAge(ts: number): string {
   return `${Math.round(s / 3600)}h ago`;
 }
 
+function formatLag(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function ScoringSection() {
   const score = useScoreState();
   const castReceivers = useCastReceivers();
@@ -991,14 +996,23 @@ function ScoringSection() {
             <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
               {sources.map(([id, src]) => {
                 const stale = Date.now() - src.lastSeen > 30_000;
+                // A source that reports how old each score is gets judged at
+                // the moment the ball scored, so lag is harmless. One that
+                // doesn't is only as accurate as its delivery delay.
+                const lag =
+                  src.lastLagMs === undefined
+                    ? ''
+                    : src.lastTiming === 'receive'
+                      ? ' · no timing'
+                      : ` · lag ${formatLag(src.lastLagMs)}`;
+                const last = src.lastElement ? ` · ${src.lastAlliance} ${src.lastElement}` : '';
                 return (
                   <Chip
                     key={id}
-                    label={`${id} (${src.eventCount})`}
+                    label={`${id} · ${src.eventCount} · ${formatAge(src.lastSeen)}${lag}${last}`}
                     size="small"
                     variant="outlined"
-                    color={stale ? 'default' : 'success'}
-                    title={`Last seen: ${formatAge(src.lastSeen)}${src.lastElement ? ` — ${src.lastAlliance} ${src.lastElement}` : ''}`}
+                    color={stale ? 'default' : src.lastTiming === 'receive' ? 'warning' : 'success'}
                   />
                 );
               })}

@@ -21,9 +21,8 @@ export class MatchHistoryStore {
   private filePath: string;
   private listeners: ((state: MatchHistoryState) => void)[] = [];
   private matchStartTime = 0;
-  /** Score samples collected during the current match (reset at each start). */
-  private scoreTimeline: { t: number; red: number; blue: number }[] = [];
-  private lastSampleAt = 0;
+  /** The entry for the match now in its post-match count, still receiving late balls. */
+  private openEntry: MatchHistoryEntry | null = null;
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? DEFAULT_FILE;
@@ -33,21 +32,30 @@ export class MatchHistoryStore {
   /** Attach to match engine and scoring engine to capture match results. */
   attach(matchEngine: MatchEngine, scoringEngine: ScoringEngine): void {
     let lastPhase = 'idle';
-    // Phases in which the score is worth charting over time.
-    const running = new Set(['auto', 'autoPause', 'paused', 'teleop', 'endgame']);
 
-    // Sample the running total (at most ~1/s) whenever scores change during a
-    // match, so the summary can chart how the match unfolded.
-    scoringEngine.addStateListener(sc => {
-      if (!running.has(lastPhase) || !this.matchStartTime) return;
-      const now = Date.now();
-      if (now - this.lastSampleAt < 1000) return;
-      this.lastSampleAt = now;
-      this.scoreTimeline.push({
-        t: Math.max(0, Math.round((now - this.matchStartTime) / 1000)),
-        red: sc.red.total,
-        blue: sc.blue.total,
-      });
+    /** Refresh an entry's scores from the engine: totals, period breakdown,
+     *  and the score-over-time series built from when each ball scored. */
+    const fillScores = (entry: MatchHistoryEntry) => {
+      const scoreState = scoringEngine.getState();
+      entry.redScore = Object.values(scoreState.red.elements).reduce((sum, e) => sum + e.points, 0);
+      entry.blueScore = Object.values(scoreState.blue.elements).reduce((sum, e) => sum + e.points, 0);
+      entry.periodBreakdown = scoreState.periodBreakdown;
+      const series = scoringEngine.getMatchScoreTimeline(entry.startedAt);
+      // Close the series at match end with the final totals so the chart ends at the score.
+      const endT = Math.max(0, Math.round((entry.endedAt - entry.startedAt) / 1000));
+      const last = series[series.length - 1];
+      if (last && last.t < endT) series.push({ t: endT, red: entry.redScore, blue: entry.blueScore });
+      entry.scoreTimeline = series;
+    };
+
+    // Balls still in flight at the final buzzer land during the post-match
+    // count, and a lagging detector reports them later still. Keep the open
+    // entry's scores current until the match clears.
+    scoringEngine.addStateListener(() => {
+      if (!this.openEntry) return;
+      fillScores(this.openEntry);
+      this.persist();
+      this.notifyListeners();
     });
 
     matchEngine.addStateListener(state => {
@@ -59,14 +67,17 @@ export class MatchHistoryStore {
       // Record match start time
       if (phase === 'auto' || (phase === 'teleop' && prevPhase === 'countdown')) {
         this.matchStartTime = Date.now();
-        this.scoreTimeline = [];
-        this.lastSampleAt = 0;
+      }
+
+      // The scoring engine drops the match's events once the field clears,
+      // so the entry is final from here.
+      if (phase !== 'postMatch' && this.openEntry) {
+        this.openEntry = null;
       }
 
       // Capture match result on transition to postMatch
       if (phase === 'postMatch' && prevPhase !== 'postMatch') {
         const now = Date.now();
-        const scoreState = scoringEngine.getState();
 
         // Collect participating teams
         const teams: MatchHistoryTeam[] = [];
@@ -83,10 +94,6 @@ export class MatchHistoryStore {
 
         if (teams.length === 0) return; // Nothing worth recording
 
-        // Sum total scores per alliance
-        const redScore = Object.values(scoreState.red.elements).reduce((sum, e) => sum + e.points, 0);
-        const blueScore = Object.values(scoreState.blue.elements).reduce((sum, e) => sum + e.points, 0);
-
         const entry: MatchHistoryEntry = {
           matchNumber: this.matches.length + 1,
           matchId: state.matchId,
@@ -97,20 +104,16 @@ export class MatchHistoryStore {
           endReason: state.endReason ?? 'normal',
           autoWinner: state.autoWinnerAlliance ?? null,
           teams,
-          redScore,
-          blueScore,
-          periodBreakdown: scoreState.periodBreakdown,
-          // Close the series with the final totals so the chart ends at the score.
-          scoreTimeline: [
-            ...this.scoreTimeline,
-            { t: Math.max(0, Math.round((now - (this.matchStartTime || now)) / 1000)), red: redScore, blue: blueScore },
-          ],
+          redScore: 0,
+          blueScore: 0,
         };
+        fillScores(entry);
 
         this.matches.push(entry);
         if (this.matches.length > MAX_ENTRIES) {
           this.matches = this.matches.slice(-MAX_ENTRIES);
         }
+        this.openEntry = entry;
 
         this.persist();
         this.notifyListeners();

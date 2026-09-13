@@ -35,6 +35,8 @@ async function main() {
   // Scoring stub: no scoring hardware in this test — live scores are 0
   const scoringStub = {
     getState: () => ({ red: { elements: {} }, blue: { elements: {} } }),
+    getMatchScoreTimeline: () => [{ t: 0, red: 0, blue: 0 }],
+    addStateListener: () => () => {},
   } as unknown as ScoringEngine;
   history.attach(engine, scoringStub);
   const apiKeys = new ApiKeyStore(path.join(dir, 'api-keys.json')); // no keys -> open access

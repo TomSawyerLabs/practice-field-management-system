@@ -316,10 +316,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Wire up auto score resolver so match engine can determine auto winner from scoring data
   matchEngine.setAutoScoreResolver(() => {
     const scoreState = scoringEngine.getState();
-    // Use the auto phase breakdown if available, otherwise fall back to current totals
-    const autoBreakdown = scoreState.phaseBreakdown?.['auto'];
-    if (autoBreakdown) {
-      return { red: autoBreakdown.red.total, blue: autoBreakdown.blue.total };
+    // The 'auto' sub-period covers the auto phase and the pause after it —
+    // balls in flight at the auto buzzer count. Judged by when each ball
+    // scored, so a lagging detector still lands them in auto.
+    const auto = scoreState.periodBreakdown?.['auto'];
+    if (auto) {
+      return { red: auto.red, blue: auto.blue };
     }
     return { red: scoreState.red.total, blue: scoreState.blue.total };
   });

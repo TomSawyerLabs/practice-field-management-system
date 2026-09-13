@@ -1,7 +1,6 @@
 import {
   Alliance,
   MatchPhase,
-  MatchConfig,
   MatchState,
   ScoreEvent,
   ScoreState,
@@ -12,14 +11,21 @@ import {
   ProcessedScoreEvent,
   AllianceScore,
   ElementScore,
+  ScoreSample,
+  ScoreTiming,
 } from './types.js';
-import { getAllianceShiftState, getMatchSubPeriod } from './shiftState.js';
+import { getMatchSubPeriod } from './shiftState.js';
+import { MatchTimeline, type MatchMoment } from './matchTimeline.js';
 
 const DEFAULT_WINDOW_SECONDS = 30;
 const DEFAULT_PHASE_GRACE_SECONDS = 5;
 const DEFAULT_BATCH_TIMEOUT_SECONDS = 100;
-/** After a goal turns off, scores still count for this many seconds */
-const GOAL_GRACE_SECONDS = 3;
+/** A device `timestamp` this far ahead of the server clock is treated as skew and ignored. */
+const MAX_FUTURE_TIMESTAMP_MS = 2000;
+/** A device `timestamp` older than this is treated as a bogus clock and ignored. */
+const MAX_TIMESTAMP_AGE_MS = 60 * 60 * 1000;
+
+const PRE_MATCH_PHASES: ReadonlySet<MatchPhase> = new Set(['idle', 'created', 'countdown']);
 
 function oppositeAlliance(alliance: Alliance): Alliance {
   return alliance === 'red' ? 'blue' : 'red';
@@ -29,12 +35,40 @@ function emptyAllianceScore(): AllianceScore {
   return { total: 0, elements: {} };
 }
 
+/**
+ * Work out when a score actually happened from what the device told us.
+ * `ageMs` wins (no clock agreement needed); a plausible `timestamp` is next;
+ * otherwise the receive time.
+ */
+export function resolveOccurredAt(event: ScoreEvent, receivedAt: number): { occurredAt: number; timing: ScoreTiming } {
+  if (typeof event.ageMs === 'number' && Number.isFinite(event.ageMs)) {
+    return { occurredAt: receivedAt - Math.max(0, event.ageMs), timing: 'age' };
+  }
+  if (typeof event.timestamp === 'number' && Number.isFinite(event.timestamp)) {
+    const lag = receivedAt - event.timestamp;
+    if (lag >= -MAX_FUTURE_TIMESTAMP_MS && lag <= MAX_TIMESTAMP_AGE_MS) {
+      return { occurredAt: Math.min(event.timestamp, receivedAt), timing: 'timestamp' };
+    }
+  }
+  return { occurredAt: receivedAt, timing: 'receive' };
+}
+
 let nextEventId = 1;
 
 interface ActiveBatch {
   events: ProcessedScoreEvent[];
   startedAt: number;
   active: boolean; // false = timed out (desaturated on frontend)
+}
+
+/** Does this event add to the match score for its alliance? */
+function countsForMatch(e: ProcessedScoreEvent): boolean {
+  return !e.deduplicated && !e.phaseRestricted && !e.goalInactive && !e.outsideMatch;
+}
+
+/** Does this event add to a free-play tally? */
+function countsForFreePlay(e: ProcessedScoreEvent): boolean {
+  return !e.deduplicated && !e.phaseRestricted;
 }
 
 export class ScoringEngine {
@@ -46,9 +80,7 @@ export class ScoringEngine {
   private phaseGraceSeconds = DEFAULT_PHASE_GRACE_SECONDS;
   private batchTimeoutSeconds = DEFAULT_BATCH_TIMEOUT_SECONDS;
   private currentMatchPhase: MatchPhase = 'idle';
-  /** The previous match phase and when it ended — used for grace period attribution */
-  private previousPhase: { phase: MatchPhase; endedAt: number } | null = null;
-  /** Key: `${element}:${alliance}`, value: timestamp of last counted event */
+  /** Key: `${element}:${alliance}`, value: occurredAt of last counted event */
   private lastDedupTimestamp = new Map<string, number>();
   private windowTimer: NodeJS.Timeout | null = null;
   private windowTimerTarget: number | undefined;
@@ -65,14 +97,9 @@ export class ScoringEngine {
   /** Which alliances are in match mode. Empty = all follow the top-level mode. */
   private matchAlliances = new Set<Alliance>();
 
-  // ── Goal-active tracking (REBUILT shift scoring) ────────────────
-  /** Last match state received — used to compute shift state at event time */
-  private lastMatchRemainingTime = 0;
-  private lastMatchStateTime = 0;
-  private lastMatchConfig: MatchConfig | null = null;
-  private lastAutoWinnerAlliance: Alliance | null = null;
-  /** The "game-meaningful" phase for shift computation (survives pauses) */
-  private effectivePhaseForShift: MatchPhase = 'idle';
+  // ── Match timeline (REBUILT shift scoring at the time the ball scored) ──
+  /** Record of the match engine's state over wall-clock time */
+  private timeline = new MatchTimeline();
 
   private autoRegisterLimit = 1;
   private suppressBroadcast = false;
@@ -87,8 +114,13 @@ export class ScoringEngine {
     return this.autoRegisterLimit;
   }
 
-  /** Submit a score event. Returns the processed event, or 'unknown_element'/'deduplicated' on rejection. */
-  submitEvent(event: ScoreEvent): ProcessedScoreEvent | 'unknown_element' | 'deduplicated' {
+  /**
+   * Submit a score event. Returns the processed event (check `deduplicated`,
+   * `phaseRestricted`, `goalInactive`, `outsideMatch` to see whether it
+   * counted), or 'unknown_element' if the element isn't configured and
+   * can't be auto-registered.
+   */
+  submitEvent(event: ScoreEvent, receivedAt: number = Date.now()): ProcessedScoreEvent | 'unknown_element' {
     let elementConfig = this.elements.get(event.element);
     if (!elementConfig) {
       // Auto-register if under the limit
@@ -106,65 +138,33 @@ export class ScoringEngine {
     }
 
     const count = event.count ?? 1;
-    const now = Date.now();
+    const { occurredAt, timing } = resolveOccurredAt(event, receivedAt);
 
     // Update source tracking
     const sourceStatus = this.sources.get(event.source) ?? {
       lastSeen: 0,
       eventCount: 0,
     };
-    sourceStatus.lastSeen = now;
+    sourceStatus.lastSeen = receivedAt;
     sourceStatus.eventCount++;
     sourceStatus.lastElement = event.element;
     sourceStatus.lastAlliance = event.alliance;
+    sourceStatus.lastLagMs = Math.max(0, receivedAt - occurredAt);
+    sourceStatus.lastTiming = timing;
     this.sources.set(event.source, sourceStatus);
 
-    // Check deduplication
+    // Check deduplication — against when the balls scored, not when we heard
     const dedupKey = `${event.element}:${event.alliance}`;
     const dedupWindow = elementConfig.deduplicationWindowMs ?? 0;
     let deduplicated = false;
     if (dedupWindow > 0 && count > 0) {
       const lastTime = this.lastDedupTimestamp.get(dedupKey);
-      if (lastTime !== undefined && now - lastTime < dedupWindow) {
+      if (lastTime !== undefined && Math.abs(occurredAt - lastTime) < dedupWindow) {
         deduplicated = true;
       }
     }
 
-    // Check active phases (match mode only)
-    let phaseInactive = false;
-    if (this.mode === 'match' && elementConfig.activePhases && elementConfig.activePhases.length > 0) {
-      phaseInactive = !elementConfig.activePhases.includes(this.currentMatchPhase);
-    }
-
     const awardedTo = elementConfig.awardToOpponent ? oppositeAlliance(event.alliance) : event.alliance;
-
-    // During the grace period after a phase change, attribute events to the previous phase
-    let effectivePhase = this.currentMatchPhase;
-    if (
-      this.mode === 'match' &&
-      this.previousPhase &&
-      now - this.previousPhase.endedAt < this.phaseGraceSeconds * 1000
-    ) {
-      effectivePhase = this.previousPhase.phase;
-      if (elementConfig.activePhases && elementConfig.activePhases.length > 0) {
-        phaseInactive = !elementConfig.activePhases.includes(effectivePhase);
-      }
-    }
-
-    // Check goal-active state for match alliances (REBUILT shift scoring)
-    let goalInactive = false;
-    if (this.matchAlliances.has(awardedTo)) {
-      goalInactive = !this.isGoalActive(awardedTo, now);
-    }
-
-    // Compute sub-period for period breakdown
-    let matchSubPeriod: string | undefined;
-    if (this.mode === 'match' && this.matchAlliances.has(awardedTo)) {
-      const currentRemaining = this.estimateRemainingTime(now);
-      matchSubPeriod =
-        getMatchSubPeriod(this.effectivePhaseForShift, currentRemaining, this.lastMatchConfig?.teleopDuration ?? 0) ??
-        undefined;
-    }
 
     const processed: ProcessedScoreEvent = {
       id: `evt-${nextEventId++}`,
@@ -174,29 +174,108 @@ export class ScoringEngine {
       count,
       pointValue: elementConfig.pointValue,
       awardedTo,
-      timestamp: now,
+      timestamp: receivedAt,
+      occurredAt,
+      lagMs: Math.max(0, receivedAt - occurredAt),
+      timing,
       deviceTimestamp: event.timestamp,
-      matchPhase: this.mode === 'match' ? effectivePhase : undefined,
-      matchSubPeriod,
-      deduplicated: deduplicated || phaseInactive,
-      goalInactive,
+      deduplicated,
     };
+    this.attribute(processed, elementConfig);
 
     this.events.push(processed);
 
     // Update dedup timestamp (only for counted, non-negative events)
     if (!deduplicated && count > 0) {
-      this.lastDedupTimestamp.set(dedupKey, now);
+      this.lastDedupTimestamp.set(dedupKey, occurredAt);
     }
 
     // Handle free play tracking for non-match alliances (or when fully in freePlay)
-    if (!this.matchAlliances.has(awardedTo) && !processed.deduplicated) {
-      this.addToBatch(awardedTo, processed, now);
+    if (!this.matchAlliances.has(awardedTo) && countsForFreePlay(processed)) {
+      this.addToBatch(awardedTo, processed, receivedAt);
       this.ensureWindowTimer();
     }
 
     this.broadcast();
-    return processed.deduplicated ? 'deduplicated' : processed;
+    return processed;
+  }
+
+  /**
+   * Decide which phase / sub-period the event belongs to and whether the goal
+   * counted it, judged at the instant the ball scored. Re-run when the
+   * timeline learns something new about that instant (a back-dated phase
+   * boundary), so `deduplicated` is left alone apart from phase restriction.
+   */
+  private attribute(e: ProcessedScoreEvent, elementConfig: ScoringElementConfig | undefined): void {
+    const inMatchAlliance = this.matchAlliances.has(e.awardedTo);
+    const evalAt = this.attributionInstant(e);
+    const moment = this.timeline.at(evalAt);
+
+    let matchPhase: MatchPhase | undefined;
+    let matchSubPeriod: string | undefined;
+    let goalInactive = false;
+    let outsideMatch = false;
+
+    if (this.mode === 'match' || inMatchAlliance) {
+      matchPhase = moment?.phase ?? this.currentMatchPhase;
+    }
+
+    if (inMatchAlliance) {
+      const verdict = this.timeline.classifyGoal(e.awardedTo, evalAt);
+      if (verdict === 'inactive') goalInactive = true;
+      else if (verdict === 'outsideMatch') outsideMatch = true;
+      else if (verdict === null && this.timeline.size > 0) {
+        // The record starts at this match's countdown; anything earlier
+        // scored before the match existed.
+        outsideMatch = true;
+      }
+
+      if (moment?.config) {
+        matchSubPeriod =
+          getMatchSubPeriod(moment.gamePhase, moment.remaining, moment.config.teleopDuration) ?? undefined;
+      }
+    }
+
+    // Phase restrictions on the element (match mode only)
+    let phaseRestricted = false;
+    if (this.mode === 'match' && elementConfig?.activePhases && elementConfig.activePhases.length > 0 && matchPhase) {
+      phaseRestricted = !elementConfig.activePhases.includes(matchPhase);
+    }
+
+    e.matchPhase = matchPhase;
+    e.matchSubPeriod = matchSubPeriod;
+    e.goalInactive = goalInactive || undefined;
+    e.outsideMatch = outsideMatch || undefined;
+    e.phaseRestricted = phaseRestricted || undefined;
+  }
+
+  /**
+   * The instant an event is judged at. Normally when the ball scored. For
+   * events with no timing information, keep the old phase-grace behaviour:
+   * a report arriving within `phaseGraceSeconds` of a phase change is
+   * assumed to have scored just before it (the report was probably lagging).
+   */
+  private attributionInstant(e: ProcessedScoreEvent): number {
+    if (e.timing !== 'receive' || this.phaseGraceSeconds <= 0) return e.occurredAt;
+    const now = this.timeline.at(e.timestamp);
+    if (!now || e.timestamp - now.phaseStartedAt >= this.phaseGraceSeconds * 1000) return e.occurredAt;
+    const justBefore = now.phaseStartedAt - 1;
+    const prev = this.timeline.at(justBefore);
+    if (!prev || PRE_MATCH_PHASES.has(prev.phase)) return e.occurredAt;
+    return justBefore;
+  }
+
+  /** Re-judge events that scored at or after `since` (the timeline changed there). */
+  private reattributeSince(since: number): void {
+    let changed = false;
+    for (const e of this.events) {
+      if (e.occurredAt < since) continue;
+      const before = `${e.matchPhase}|${e.matchSubPeriod}|${e.goalInactive}|${e.outsideMatch}|${e.phaseRestricted}`;
+      this.attribute(e, this.elements.get(e.element));
+      const after = `${e.matchPhase}|${e.matchSubPeriod}|${e.goalInactive}|${e.outsideMatch}|${e.phaseRestricted}`;
+      if (before !== after) changed = true;
+    }
+    if (changed) this.broadcast();
   }
 
   /** Process multiple events with a single broadcast at the end (if any changed state). */
@@ -257,7 +336,7 @@ export class ScoringEngine {
     this.broadcast();
   }
 
-  /** Set the grace period (seconds) for attributing events to the previous match phase. */
+  /** Set the grace period (seconds) for attributing untimed events to the previous match phase. */
   setPhaseGraceSeconds(seconds: number): void {
     this.phaseGraceSeconds = Math.max(0, Math.min(30, seconds));
     this.broadcast();
@@ -300,25 +379,17 @@ export class ScoringEngine {
   }
 
   /** Called by the match engine listener when match state changes. */
-  onMatchStateChange(state: MatchState): void {
+  onMatchStateChange(state: MatchState, now: number = Date.now()): void {
     const prevPhase = this.currentMatchPhase;
     this.currentMatchPhase = state.phase;
 
-    // Record when the previous phase ended for grace period attribution
-    if (prevPhase !== state.phase && prevPhase !== 'idle' && prevPhase !== 'countdown') {
-      this.previousPhase = { phase: prevPhase, endedAt: Date.now() };
-    }
-
-    // Track match state for shift/goal-active computation
-    this.lastMatchRemainingTime = state.remainingTime;
-    this.lastMatchStateTime = Date.now();
-    this.lastMatchConfig = state.config;
-    this.lastAutoWinnerAlliance = state.autoWinnerAlliance ?? null;
-
-    // Track the effective phase for shift computation (survives pauses)
-    if (state.phase !== 'paused') {
-      this.effectivePhaseForShift = state.phase;
-    }
+    // Record this broadcast in the timeline. If it revealed a phase boundary
+    // earlier than we had assumed (timer-driven transitions are back-dated
+    // to when the clock ran out), events already judged in that window need
+    // another look.
+    this.timeline.record(state, now);
+    const boundaryAt = this.timeline.latestAt;
+    const boundaryMoved = prevPhase !== state.phase && boundaryAt !== undefined && boundaryAt < now;
 
     // Auto-switch to match mode when a match starts
     if ((prevPhase === 'idle' || prevPhase === 'created') && state.phase === 'countdown') {
@@ -359,6 +430,10 @@ export class ScoringEngine {
       this.mode = 'freePlay';
       this.broadcast();
       return;
+    }
+
+    if (boundaryMoved) {
+      this.reattributeSince(boundaryAt);
     }
 
     // Broadcast on any phase change so clients see updated phase info
@@ -439,60 +514,36 @@ export class ScoringEngine {
     return state;
   }
 
-  // ── Goal-active computation (REBUILT shift scoring) ─────────────
-
-  /** Estimate the current remaining time by interpolating from the last server update. */
-  private estimateRemainingTime(now: number): number {
-    const elapsed = (now - this.lastMatchStateTime) / 1000;
-    return this.currentMatchPhase === 'paused'
-      ? this.lastMatchRemainingTime
-      : Math.max(0, this.lastMatchRemainingTime - elapsed);
+  /**
+   * The match score over time, built from when each ball actually scored
+   * (not when it was reported): one point per second in which the total
+   * changed, plus an opening zero. `startAt` is the wall-clock match start.
+   */
+  getMatchScoreTimeline(startAt: number): ScoreSample[] {
+    const counted = this.events
+      .filter(e => this.matchAlliances.has(e.awardedTo) && countsForMatch(e))
+      .sort((a, b) => a.occurredAt - b.occurredAt);
+    const samples: ScoreSample[] = [{ t: 0, red: 0, blue: 0 }];
+    let red = 0;
+    let blue = 0;
+    for (const e of counted) {
+      if (e.awardedTo === 'red') red += e.count * e.pointValue;
+      else blue += e.count * e.pointValue;
+      const t = Math.max(0, Math.round((e.occurredAt - startAt) / 1000));
+      const last = samples[samples.length - 1];
+      if (last.t === t) {
+        last.red = red;
+        last.blue = blue;
+      } else {
+        samples.push({ t, red, blue });
+      }
+    }
+    return samples;
   }
 
-  /**
-   * Determine if an alliance's goal is currently active (scores should count).
-   * Returns true if:
-   * - Not in teleop shift territory, OR
-   * - This alliance's goal is the active one, OR
-   * - The goal turned off within the last GOAL_GRACE_SECONDS
-   */
-  private isGoalActive(alliance: Alliance, now: number): boolean {
-    const phase = this.effectivePhaseForShift;
-    const config = this.lastMatchConfig;
-    if (!config) return true;
-
-    // During non-teleop phases, both goals are active
-    if (phase !== 'teleop') return true;
-
-    const currentRemaining = this.estimateRemainingTime(now);
-
-    // Check if this alliance's goal is currently inactive
-    const inactiveNow = getAllianceShiftState(
-      'teleop',
-      currentRemaining,
-      config.teleopDuration,
-      config.endgameDuration,
-      this.lastAutoWinnerAlliance,
-    );
-
-    // If both active or this alliance is not the inactive one, goal is active
-    if (inactiveNow !== alliance) return true;
-
-    // This alliance's goal is currently inactive — check 3-second grace period.
-    // Look at what the shift state was GOAL_GRACE_SECONDS ago:
-    // if this alliance wasn't inactive then, we're within the grace window.
-    const graceRemaining = currentRemaining + GOAL_GRACE_SECONDS;
-    const inactiveAtGrace = getAllianceShiftState(
-      'teleop',
-      graceRemaining,
-      config.teleopDuration,
-      config.endgameDuration,
-      this.lastAutoWinnerAlliance,
-    );
-
-    // If this alliance wasn't inactive at the grace point, the deactivation
-    // happened less than GOAL_GRACE_SECONDS ago — scores still count.
-    return inactiveAtGrace !== alliance;
+  /** The match state at an instant, as the engine understands it (for diagnostics/tests). */
+  momentAt(t: number): MatchMoment | null {
+    return this.timeline.at(t);
   }
 
   // ── Batch management (free play) ────────────────────────────────
@@ -508,7 +559,7 @@ export class ScoringEngine {
 
     // Start a new batch if empty
     if (batch.events.length === 0) {
-      batch.startedAt = now;
+      batch.startedAt = event.occurredAt;
     }
 
     batch.events.push(event);
@@ -573,90 +624,47 @@ export class ScoringEngine {
     this.recentBatches[alliance] = [];
   }
 
-  /** Calculate score for the active batch of an alliance. */
-  private calculateBatchScore(alliance: Alliance): AllianceScore {
-    const batch = this.activeBatches[alliance];
+  /** Sum a set of events into per-element totals for one alliance. */
+  private sumEvents(events: Iterable<ProcessedScoreEvent>, alliance: Alliance): AllianceScore {
     const elements: Record<string, ElementScore> = {};
     let total = 0;
-
-    for (const event of batch.events) {
-      if (event.deduplicated) continue;
+    for (const event of events) {
       if (event.awardedTo !== alliance) continue;
-
       const el = elements[event.element] ?? { count: 0, points: 0, lastEventTime: 0 };
       el.count += event.count;
       el.points += event.count * event.pointValue;
-      el.lastEventTime = Math.max(el.lastEventTime, event.timestamp);
+      el.lastEventTime = Math.max(el.lastEventTime, event.occurredAt);
       elements[event.element] = el;
       total += event.count * event.pointValue;
     }
-
     return { total, elements };
+  }
+
+  /** Calculate score for the active batch of an alliance. */
+  private calculateBatchScore(alliance: Alliance): AllianceScore {
+    return this.sumEvents(this.activeBatches[alliance].events.filter(countsForFreePlay), alliance);
   }
 
   /** Calculate sliding window score for secondary display. */
   private calculateSlidingWindowScore(alliance: Alliance): AllianceScore {
-    const now = Date.now();
-    const windowMs = this.windowSeconds * 1000;
-    const elements: Record<string, ElementScore> = {};
-    let total = 0;
-
-    for (const event of this.events) {
-      if (event.deduplicated) continue;
-      if (event.awardedTo !== alliance) continue;
-      if (now - event.timestamp > windowMs) continue;
-
-      const el = elements[event.element] ?? { count: 0, points: 0, lastEventTime: 0 };
-      el.count += event.count;
-      el.points += event.count * event.pointValue;
-      el.lastEventTime = Math.max(el.lastEventTime, event.timestamp);
-      elements[event.element] = el;
-      total += event.count * event.pointValue;
-    }
-
-    return { total, elements };
+    const cutoff = Date.now() - this.windowSeconds * 1000;
+    return this.sumEvents(
+      this.events.filter(e => countsForFreePlay(e) && e.occurredAt > cutoff),
+      alliance,
+    );
   }
 
-  /** Calculate cumulative match score for an alliance (excluding goalInactive events). */
+  /** Calculate cumulative match score for an alliance (counted events only). */
   private calculateMatchScore(alliance: Alliance): AllianceScore {
-    const elements: Record<string, ElementScore> = {};
-    let total = 0;
-
-    for (const event of this.events) {
-      if (event.deduplicated) continue;
-      if (event.goalInactive) continue;
-      if (event.awardedTo !== alliance) continue;
-
-      const el = elements[event.element] ?? { count: 0, points: 0, lastEventTime: 0 };
-      el.count += event.count;
-      el.points += event.count * event.pointValue;
-      el.lastEventTime = Math.max(el.lastEventTime, event.timestamp);
-      elements[event.element] = el;
-      total += event.count * event.pointValue;
-    }
-
-    return { total, elements };
+    return this.sumEvents(this.events.filter(countsForMatch), alliance);
   }
 
-  /** Calculate scores from events where the alliance's goal was inactive (for display). */
+  /** Calculate scores from events where the alliance's goal was off (for display). */
   private calculateInactiveScore(alliance: Alliance): AllianceScore {
-    const elements: Record<string, ElementScore> = {};
-    let total = 0;
-
-    for (const event of this.events) {
-      if (event.deduplicated) continue;
-      if (!event.goalInactive) continue;
-      if (event.awardedTo !== alliance) continue;
-
-      const el = elements[event.element] ?? { count: 0, points: 0, lastEventTime: 0 };
-      el.count += event.count;
-      el.points += event.count * event.pointValue;
-      el.lastEventTime = Math.max(el.lastEventTime, event.timestamp);
-      elements[event.element] = el;
-      total += event.count * event.pointValue;
-    }
-
-    return { total, elements };
+    return this.sumEvents(
+      this.events.filter(e => countsForFreePlay(e) && e.goalInactive),
+      alliance,
+    );
   }
 
   private calculatePhaseBreakdown(): Record<string, { red: AllianceScore; blue: AllianceScore }> {
@@ -667,30 +675,10 @@ export class ScoringEngine {
 
     const breakdown: Record<string, { red: AllianceScore; blue: AllianceScore }> = {};
     for (const phase of phases) {
-      const redElements: Record<string, ElementScore> = {};
-      const blueElements: Record<string, ElementScore> = {};
-      let redTotal = 0;
-      let blueTotal = 0;
-
-      for (const event of this.events) {
-        if (event.deduplicated) continue;
-        if (event.goalInactive) continue;
-        if (event.matchPhase !== phase) continue;
-
-        const elems = event.awardedTo === 'red' ? redElements : blueElements;
-        const el = elems[event.element] ?? { count: 0, points: 0, lastEventTime: 0 };
-        el.count += event.count;
-        el.points += event.count * event.pointValue;
-        el.lastEventTime = Math.max(el.lastEventTime, event.timestamp);
-        elems[event.element] = el;
-
-        if (event.awardedTo === 'red') redTotal += event.count * event.pointValue;
-        else blueTotal += event.count * event.pointValue;
-      }
-
+      const inPhase = this.events.filter(e => countsForMatch(e) && e.matchPhase === phase);
       breakdown[phase] = {
-        red: { total: redTotal, elements: redElements },
-        blue: { total: blueTotal, elements: blueElements },
+        red: this.sumEvents(inPhase, 'red'),
+        blue: this.sumEvents(inPhase, 'blue'),
       };
     }
 
@@ -706,8 +694,7 @@ export class ScoringEngine {
     }
 
     for (const event of this.events) {
-      if (event.deduplicated) continue;
-      if (event.goalInactive) continue;
+      if (!countsForMatch(event)) continue;
       if (!event.matchSubPeriod) continue;
 
       const period = breakdown[event.matchSubPeriod];
@@ -725,7 +712,7 @@ export class ScoringEngine {
     const now = Date.now();
     const windowMs = this.windowSeconds * 1000;
 
-    const oldest = this.events.find(e => !e.deduplicated && now - e.timestamp < windowMs);
+    const oldest = this.events.find(e => countsForFreePlay(e) && now - e.occurredAt < windowMs);
     if (!oldest) {
       this.pruneExpiredEvents();
       if (this.windowTimer) {
@@ -735,7 +722,7 @@ export class ScoringEngine {
       return;
     }
 
-    const expiresAt = oldest.timestamp + windowMs;
+    const expiresAt = oldest.occurredAt + windowMs;
     const delay = expiresAt - now + 50;
 
     if (this.windowTimer && this.windowTimerTarget !== undefined && this.windowTimerTarget <= expiresAt) {
@@ -761,7 +748,7 @@ export class ScoringEngine {
     if (this.mode !== 'freePlay' && this.matchAlliances.size === 0) return;
     const cutoff = Date.now() - this.windowSeconds * 1000;
     // Only prune freeplay alliance events — match events are kept for the match duration
-    this.events = this.events.filter(e => this.matchAlliances.has(e.awardedTo) || e.timestamp > cutoff);
+    this.events = this.events.filter(e => this.matchAlliances.has(e.awardedTo) || e.occurredAt > cutoff);
   }
 
   /** Broadcasts are coalesced on a trailing edge: bursts of scoring events

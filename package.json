@@ -9,6 +9,7 @@
     "prepare": "lefthook install",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p frontend",
+    "test": "bun test",
     "build": "tsc && cd frontend && bun run build",
     "package": "bun run build && bun scripts/package-binary.ts",
     "dev": "tsx --watch src/index.ts",
@@ -41,6 +42,7 @@
     "ws": "^8.18.1"
   },
   "devDependencies": {
+    "@types/bun": "^1.4.2",
     "@types/cidr-matcher": "^2.1.2",
     "@types/node": "^22.13.13",
     "@types/ws": "^8.18.0",

@@ -1656,10 +1656,17 @@ export interface ScoreEvent {
   /** Number of scores. Default 1. Negative values for corrections. */
   count?: number;
   /**
-   * Device-side timestamp (ms since epoch). Optional — the server always records
-   * its own receive time, but this lets devices report *when* the score actually
-   * happened (e.g. if the device buffers events offline or has network latency).
-   * Used for display and ordering; deduplication still uses server receive time.
+   * How long before this request was sent the score actually happened, in
+   * milliseconds. The preferred way to report timing: it needs no clock
+   * agreement between device and server, and a device that queues or retries
+   * just recomputes it at each send. The server attributes the score to the
+   * match phase, sub-period and goal-active state at `receiveTime - ageMs`.
+   */
+  ageMs?: number;
+  /**
+   * Device-side time the score happened (ms since epoch). Used only when
+   * `ageMs` is absent, and only if it is plausible against the server clock
+   * (not in the future, not absurdly old); otherwise the receive time is used.
    */
   timestamp?: number;
 }
@@ -1671,9 +1678,13 @@ export function isScoreEvent(msg: unknown): msg is ScoreEvent {
   if (m.alliance !== 'red' && m.alliance !== 'blue') return false;
   if (typeof m.element !== 'string' || !m.element) return false;
   if (m.count !== undefined && typeof m.count !== 'number') return false;
+  if (m.ageMs !== undefined && typeof m.ageMs !== 'number') return false;
   if (m.timestamp !== undefined && typeof m.timestamp !== 'number') return false;
   return true;
 }
+
+/** How a score event's occurrence time was established. */
+export type ScoreTiming = 'age' | 'timestamp' | 'receive';
 
 /** Internal record of a processed score event */
 export interface ProcessedScoreEvent {
@@ -1685,8 +1696,15 @@ export interface ProcessedScoreEvent {
   pointValue: number;
   /** Alliance that actually receives the points (differs from alliance if awardToOpponent) */
   awardedTo: Alliance;
-  /** Server receive time (ms since epoch) — used for dedup and sliding window */
+  /** Server receive time (ms since epoch) */
   timestamp: number;
+  /** Best estimate of when the score actually happened (server clock, ms since epoch).
+   *  Drives phase/sub-period/goal-active attribution, dedup, and the free-play window. */
+  occurredAt: number;
+  /** timestamp − occurredAt: how late the report was */
+  lagMs: number;
+  /** Where occurredAt came from */
+  timing: ScoreTiming;
   /** Device-reported time (ms since epoch), if provided */
   deviceTimestamp?: number;
   matchPhase?: MatchPhase;
@@ -1694,8 +1712,37 @@ export interface ProcessedScoreEvent {
   matchSubPeriod?: string;
   /** True if this event was deduplicated (not counted) */
   deduplicated: boolean;
-  /** True if the alliance's goal was inactive (past grace period) when this event arrived */
+  /** True if the element is restricted to other match phases than the one the ball scored in (not counted) */
+  phaseRestricted?: boolean;
+  /** True if the alliance's goal was off (shift or pause, past the grace) when the ball scored */
   goalInactive?: boolean;
+  /** True if the ball scored before the match started (idle/created/countdown) — not part of the match at all */
+  outsideMatch?: boolean;
+}
+
+/** Per-event outcome returned from POST /api/score so devices can see how each report was attributed. */
+export interface ScoreEventReceipt {
+  status: 'accepted' | 'deduplicated' | 'rejected';
+  /** Server-side event id (accepted/deduplicated only) */
+  id?: string;
+  occurredAt?: number;
+  lagMs?: number;
+  timing?: ScoreTiming;
+  matchPhase?: MatchPhase;
+  matchSubPeriod?: string;
+  /** Whether the event contributes to the score shown */
+  counted?: boolean;
+  /** Why it didn't count / was rejected */
+  reason?: string;
+}
+
+export interface ScoreSubmitResult {
+  accepted: number;
+  rejected: number;
+  deduplicated: number;
+  errors: string[];
+  /** One entry per submitted event, in order */
+  events: ScoreEventReceipt[];
 }
 
 /** Per-element score breakdown */
@@ -1717,6 +1764,10 @@ export interface ScoringSourceStatus {
   eventCount: number;
   lastElement?: string;
   lastAlliance?: Alliance;
+  /** How late the most recent event from this source was reported (ms) */
+  lastLagMs?: number;
+  /** How the most recent event's timing was established */
+  lastTiming?: ScoreTiming;
 }
 
 export type ScoringMode = 'freePlay' | 'match';

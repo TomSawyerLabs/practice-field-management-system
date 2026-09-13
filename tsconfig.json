@@ -15,7 +15,10 @@
     "declaration": false,
     // "noUnusedLocals": true,
     "removeComments": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    // bun-types (for `bun test`) tracks a newer @types/node than we pin;
+    // its own .d.ts files don't type-check against ours. Our code still does.
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts"]
 }
