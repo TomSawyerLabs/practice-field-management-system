@@ -127,6 +127,14 @@ Chromecast built-in service under memory pressure. Try casting with the
 video view off (🎥 toggle on the receiver's /scores) for an afternoon and
 see whether 8009 stays open.
 
+## Lite mode (built 2026-09-13 12:07, commit b017fa3)
+
+🪶 on the scoreboard controls or `?lite=1` turns off the freeplay glow, the
+background transitions and the battery charts (static bars instead).
+Per-browser, persisted. Test: recast with the receiver in lite mode and
+watch `/tmp/tv-cast-monitor.log` on steamboat — if 8009 stays open for an
+afternoon, the TV was OOM-killing its Cast service under the full page.
+
 ## Open questions for Cameron
 
 1. Is the TV showing the scoreboard right now (10:36) even though Chrome can't

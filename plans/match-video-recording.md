@@ -45,9 +45,12 @@ one (or more, if performance allows) stream(s) to record.
 ## Design
 
 - `src/matchRecorder.ts` — `MatchRecorder` attaches to the match engine.
-  - Starts one ffmpeg per enabled stream when the phase enters `countdown`
-    (or any active phase, if countdown was skipped). Stops 3 s after the
-    phase leaves the active set (`postMatch`, `idle`, `created`).
+  - Starts one ffmpeg per enabled stream as soon as the field is startable
+    (ready check open, all joined teams + required staff ready) as a
+    pre-roll, adopts the match id when the countdown starts (directory
+    renamed; ffmpeg keeps writing), runs through pauses, stops 5 s after the
+    phase leaves the active set. Pre-rolls whose match never runs are
+    discarded (commit 86c1248, 2026-09-13).
   - ffmpeg: `-rtsp_transport tcp -rw_timeout 10s -i URL -c copy -f mp4
 -movflags +frag_keyframe+empty_moov+default_base_moof` into
     `<dir>/<matchId>/<slug>.partN.mp4` (fragmented = playable even if the

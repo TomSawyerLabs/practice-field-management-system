@@ -53,6 +53,15 @@ overflowed … drained 222 messages` — noise from the same neighbor churn.
    return — which is how the official FMS behaves. A disable with comms
    intact is still honored as before.
 
+## Monitoring (2026-09-13 12:07, commit 4e700eb)
+
+`networkStats` (5 s) now carries `neighborTable` (entries, limit, per
+interface, overflows since start); the network page shows a gauge (amber
+≥70%, red ≥90%) and the backend warns in the log at ≥80%, at most every
+5 minutes. Per-team accounting is not meaningful: the scanner's ~250
+entries per configured slot dominate; a slot far above that has a chatty
+network.
+
 ## Things not to do
 
 - Don't disable the subnet scanner to "fix" this — the network page's
