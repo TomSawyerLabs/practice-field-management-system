@@ -395,22 +395,30 @@ function evaluateRadioFirmware(data: { version?: string }): CheckResult {
  * what took 6238 down at the 2026-09-13 scrimmage. The practice field applies
  * no limit of its own, so the setting only hurts here.
  */
-function evaluateQosLimit(data: { qosEnabled?: boolean }): CheckResult {
+const QOS_CAP_MBPS = 4;
+const QOS_NEAR_MBPS = 3.5;
+
+function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: number): CheckResult {
   if (data.qosEnabled === undefined) {
     return { name: 'Radio QoS BW Limit', status: 'pass', message: 'Not reported by firmware' };
   }
   if (!data.qosEnabled) {
     return { name: 'Radio QoS BW Limit', status: 'pass', actual: 'disabled' };
   }
+  const usage = usedMbps !== undefined ? `, using ${usedMbps.toFixed(1)} Mbps` : '';
+  const hitting = usedMbps !== undefined && usedMbps >= QOS_NEAR_MBPS;
   return {
     name: 'Radio QoS BW Limit',
     status: 'warn',
     expected: 'disabled',
-    actual: 'enabled',
-    message:
-      'The radio is throttling the robot to the competition bandwidth cap. With camera streams above the cap this adds ' +
-      'latency and packet loss (NetworkTables timeouts). The practice field sets no limit — untick "Enable QoS BW Limit" ' +
-      'in the radio configuration unless the 2.4 GHz network is needed.',
+    actual: `enabled${usage}`,
+    message: hitting
+      ? `Enabled and you are at the ~${QOS_CAP_MBPS} Mbps cap right now (${usedMbps!.toFixed(1)} Mbps) — the radio is ` +
+        `throttling the robot, which is what causes the lag and NetworkTables/Driver Station dropouts. Untick ` +
+        `"Enable QoS BW Limit" on the radio, or cut what the robot streams (camera resolution/FPS).`
+      : `The radio is throttling the robot to the ~${QOS_CAP_MBPS} Mbps competition cap. With camera streams above the ` +
+        `cap this adds latency and packet loss (NetworkTables timeouts). The practice field sets no limit — untick ` +
+        `"Enable QoS BW Limit" in the radio configuration unless the 2.4 GHz network is needed.`,
     helpUrl: HELP_URLS.radioFirmware,
   };
 }
@@ -433,12 +441,18 @@ export async function checkRadio(
         { name: 'Radio SystemCore', status: 'error', message: msg, helpUrl: HELP_URLS.radioSystemCore },
       ];
     }
+    type BandStatus = { isLinked?: boolean; bandwidthUsedMbps?: number };
     const data = (await res.json()) as {
       systemcoreEnabled?: boolean;
       qosEnabled?: boolean;
       version?: string;
       teamNumber?: number;
+      networkStatus6?: BandStatus;
+      networkStatus24?: BandStatus;
     };
+    const linkedUsedMbps =
+      (data.networkStatus6?.isLinked ? data.networkStatus6.bandwidthUsedMbps : undefined) ??
+      (data.networkStatus24?.isLinked ? data.networkStatus24.bandwidthUsedMbps : undefined);
     const fwCheck = evaluateRadioFirmware(data);
     results.push(fwCheck);
     if (fwCheck.status === 'fail') {
@@ -446,7 +460,7 @@ export async function checkRadio(
     } else {
       results.push(evaluateSystemCore(data, controller));
     }
-    results.push(evaluateQosLimit(data));
+    results.push(evaluateQosLimit(data, linkedUsedMbps));
     // Report detected team number for consistency checking
     if (data.teamNumber !== undefined) {
       results.push({
