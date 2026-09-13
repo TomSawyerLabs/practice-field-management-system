@@ -101,14 +101,16 @@ part fails (discovery, session start, session survival) and fix what is ours.
 
 ## Open questions for Cameron
 
-1. Which of these is the "unreliable" you see? (a) the TV never appears in
-   Chrome's Cast list, (b) it appears but takes a minute+ to start, (c) it
-   starts but the TV drops the scoreboard later, (d) Chrome says "available
-   for specific video sites" / greyed out.
-2. Does Chrome show the TV when the PC is on only one network (e.g. disable
-   the vEthernet adapters except vSwitch)? Multi-homed Windows boxes are a
-   known Cast discovery pain point.
-3. OK to push the Caddy `/cast-config.js` proxy change?
+1. Is the TV showing the scoreboard right now (10:36) even though Chrome can't
+   see it? (The receiver socket from 09:40 is still open, so it should be.)
+2. Next time it works, note the time so the monitor log can bracket when the
+   Cast service dies — and whether the TV had just been restarted.
+3. Worth checking on the TV: Settings → Apps → Chromecast built-in (force
+   stop / clear cache) and any "network standby" / "Cast in standby" toggle.
+   A reboot revives it, but a per-service restart would confirm the daemon,
+   not the TV, is what fails.
+4. Yes/no on the ops Caddy change (`/cast-config.js` proxy line) — separate
+   from this failure, but a real bug for fields that set their own Cast ID.
 
 ## Things not to do
 
