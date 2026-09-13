@@ -122,7 +122,10 @@ useful until you register your own:
 3. Set `CAST_RECEIVER_APP_ID` to the ID you're issued and restart.
 
 The backend serves these values at `/cast-config.js`, so no rebuild is
-needed.
+needed. If a reverse proxy serves the built frontend as static files (the
+Caddy setup in `docs/network.md`), it must forward `/cast-config.js` to the
+backend alongside `/ws` and `/api/*` — otherwise the scoreboard silently
+falls back to the built-in IDs.
 
 ## Setup Wizard
 
