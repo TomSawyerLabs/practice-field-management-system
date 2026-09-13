@@ -20,6 +20,10 @@ export class PortBridgeManager {
   private readonly portConfigs: PortConfig[];
   /** portVlanId → station currently bridged to */
   private readonly activeBridges = new Map<number, StationName>();
+  /** Ports with a bridge/unbridge in flight — a double-click (or several
+   *  station pages sending the same request) must not run the ip commands
+   *  twice in parallel. */
+  private readonly busy = new Set<number>();
   private onChange: (() => void) | null = null;
 
   constructor(net: NetworkBackend, physicalInterface: string, portConfigs: PortConfig[]) {
@@ -73,7 +77,19 @@ export class PortBridgeManager {
       if (existingStation === station) return; // Already bridged to this station
       await this.unbridgePort(portVlanId);
     }
+    if (this.busy.has(portVlanId)) {
+      appInfo(`Port "${port.name}" is already being reconfigured — ignoring duplicate request`);
+      return;
+    }
+    this.busy.add(portVlanId);
+    try {
+      await this.attach(station, port, portVlanId);
+    } finally {
+      this.busy.delete(portVlanId);
+    }
+  }
 
+  private async attach(station: StationName, port: PortConfig, portVlanId: number): Promise<void> {
     const portIf = this.portIfName(portVlanId);
     const brName = bridgeName(station);
 
@@ -82,6 +98,11 @@ export class PortBridgeManager {
     await this.net.createVlan({ parent: this.physicalInterface, vlanId: portVlanId, name: portIf });
     await this.net.addBridgeMember(brName, portIf);
     await this.net.setInterfaceUp(portIf);
+    // Record it now that the kernel side is in place: this is what the UI
+    // shows as "connected" and what a later click disconnects. (Until
+    // 2026-09-13 this was never set, so the button never changed and every
+    // click re-bridged instead of toggling.)
+    this.activeBridges.set(portVlanId, station);
 
     // Enable hairpin mode on both the port interface and the station's radio
     // VLAN interface. Both are sub-interfaces of the same physical NIC, so
@@ -115,6 +136,8 @@ export class PortBridgeManager {
   async unbridgePort(portVlanId: number): Promise<void> {
     const station = this.activeBridges.get(portVlanId);
     if (!station) return;
+    if (this.busy.has(portVlanId)) return;
+    this.busy.add(portVlanId);
 
     const portIf = this.portIfName(portVlanId);
     const port = this.portConfigs.find(p => p.vlanId === portVlanId);
@@ -125,6 +148,8 @@ export class PortBridgeManager {
       await this.net.deleteInterface(portIf);
     } catch (err) {
       appWarn(`Error unbridging port ${portVlanId} from ${station}: ${(err as Error).message}`);
+    } finally {
+      this.busy.delete(portVlanId);
     }
 
     this.activeBridges.delete(portVlanId);
