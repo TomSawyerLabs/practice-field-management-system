@@ -129,6 +129,12 @@ type DSPingMessage = {
   type: 0x1c;
 };
 
+/** 2027 DS TCP keepalive, sent every ~3 s with a single 0x00 byte. Cheesy
+ *  Arena ignores it; pFMS only uses it as proof the DS is alive. */
+type Ds2027KeepAliveMessage = {
+  type: 0x1d;
+};
+
 export type DSMessage =
   | TeamNumberMessage
   | Ds2027TeamNumberMessage
@@ -144,7 +150,8 @@ export type DSMessage =
   | LogDataMessage
   | ErrorAndEventDataMessage
   | ChallengeResponseMessage
-  | DSPingMessage;
+  | DSPingMessage
+  | Ds2027KeepAliveMessage;
 
 /**
  * Convert the raw 16-bit battery-voltage field (fixed-point, /256) to volts.
@@ -176,8 +183,8 @@ function byteToStatus(byte: number): Status {
 
 // Unknown DS TCP message types are skipped — frames are length-prefixed, so
 // parsing stays in sync. Log each new type once with its payload so it can be
-// identified later (a DS started sending type 0x1d on 2026-07-17, which used
-// to raise a parse error every ~3s).
+// identified later (the 2027 DS keepalive 0x1d was first seen this way on
+// 2026-07-17, when it raised a parse error every ~3s).
 const loggedUnknownTypes = new Set<number>();
 
 export function parseIncomingTcpMessage(data: Buffer): DSMessage | null {
@@ -232,6 +239,7 @@ export function parseIncomingTcpMessage(data: Buffer): DSMessage | null {
     case 0x1b:
       return { type, response: r.readString() };
     case 0x1c:
+    case 0x1d:
       return { type };
     default:
       if (!loggedUnknownTypes.has(type)) {
@@ -413,6 +421,14 @@ type Events = {
   disconnectDS: [{ address: string }];
 };
 
+/** The FMS server: DS events plus the UDP socket bound to 10.0.100.5:1160.
+ *  Control packets MUST be sent from that socket — the 2027 DS only accepts
+ *  control packets that come from the FMS address and port it talks to
+ *  (Cheesy Arena shares one socket for receive and send for the same reason;
+ *  pFMS sending from an ephemeral port left 5940's DS "connected" but never
+ *  enabled on 2026-09-12). */
+export type FmsServer = EventEmitter<Events> & { udpSocket: Socket };
+
 export async function startFMSServer({
   address = DefaultAddress,
   tcp = DefaultTcpPort,
@@ -429,7 +445,7 @@ export async function startFMSServer({
    *  test that lockout hypothesis on a single robot. */
   resolveTeamSlot?: (teamNumber: number) => MatchSlot | undefined;
 } = {}) {
-  return new Promise<EventEmitter<Events>>((resolve, reject) => {
+  return new Promise<FmsServer>((resolve, reject) => {
     let udpServer: Socket;
 
     // Track active TCP connections per IP so we only emit dsDisconnected when the
@@ -543,7 +559,7 @@ export async function startFMSServer({
       reject(err);
     }
 
-    const emitter = new EventEmitter<Events>();
+    const emitter = new EventEmitter<Events>() as FmsServer;
 
     emitter.on('disconnectDS', ({ address }) => {
       const sockets = socketsByAddr.get(address);
@@ -557,6 +573,7 @@ export async function startFMSServer({
     tcpServer.listen(tcp, address, () => {
       console.log(`FMS server listening on TCP ${address}:${tcp}`);
       udpServer = dgram.createSocket('udp4');
+      emitter.udpSocket = udpServer;
 
       udpServer.on('message', (msg, rinfo) => {
         if (process.env.FMS_LOG_DS_MESSAGES) {

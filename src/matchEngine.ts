@@ -96,6 +96,9 @@ export class MatchEngine {
   private lastDsHeartbeat = new Map<StationName, number>();
   /** When the FMS last enabled each station — gates the DS-disable re-latch grace */
   private lastFmsEnable = new Map<StationName, number>();
+  /** Socket control packets are sent from. Replaced by the FMS server's
+   *  10.0.100.5:1160 listener at startup (see setUdpSocket); the initial
+   *  ephemeral-port socket only exists so tests can run without the server. */
   private udpSocket: dgram.Socket;
   private listeners: ((state: MatchState) => void)[] = [];
   private matchNumber = 0;
@@ -168,6 +171,20 @@ export class MatchEngine {
       }
       if (changed) this.broadcast();
     }, 5_000);
+  }
+
+  /** Send control packets from the FMS server's UDP 1160 socket so they
+   *  arrive from 10.0.100.5:1160 — the 2027 DS ignores them otherwise. */
+  setUdpSocket(socket: dgram.Socket) {
+    if (socket === this.udpSocket) return;
+    const old = this.udpSocket;
+    this.udpSocket = socket;
+    try {
+      old.close();
+    } catch {
+      // already closed
+    }
+    console.log('Match control packets now sent from the FMS UDP 1160 socket');
   }
 
   setDSAddress(station: StationName, ip: string) {

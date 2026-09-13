@@ -1097,6 +1097,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       },
     }).then(fms => {
       if (!fms) return;
+      matchEngine.setUdpSocket(fms.udpSocket);
 
       // Joining a match hands the DS to the FMS: the 0x19 station-assignment
       // reply locks out local enable, and the join heartbeat keeps the robot
