@@ -83,11 +83,12 @@ one (or more, if performance allows) stream(s) to record.
 4. [x] Frontend: admin card, history/post-match buttons, station card.
 5. [x] Docs (configuration, match-system, README) and typecheck. Committed
        as 091e337 (2026-09-13).
-6. [ ] Deploy (needs an OK — scrimmage in progress), configure
-       `rtsp://10.255.0.20:8554/all-field` in Admin → Match Video Recording,
-       Test, Save, run a match, download the file from /match and a station
-       page. Not runtime-tested yet: only typecheck + an 8 s manual ffmpeg
-       copy of the real stream from steamboat.
+6. [~] Deployed to steamboat 2026-09-13 11:24 (recorder reports "ready, 0
+   streams enabled"). Admin card restyled 11:38 (action button + state
+   chip, commit 106e6ef). Still to do by hand: Admin → Match Video
+   Recording → add `all-field` = `rtsp://10.255.0.20:8554/all-field`,
+   Test, Enable, Save (admin passphrase needed — not done by Claude), then
+   run a match and download from /match and a station page.
 
 ## Findings / gotchas
 
