@@ -203,6 +203,8 @@ export function setupWebSocket(
     runProbe: () => Promise<SetupProbeState>;
     /** Match video recorder — configured through the same admin-gated settings. */
     matchRecorder?: MatchRecorder;
+    /** Public address of the field for share links (undefined = use the page's own origin). */
+    publicUrl?: () => string | undefined;
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -350,6 +352,7 @@ export function setupWebSocket(
       startTime: serverStartTime,
       version: serverVersion,
       now: Date.now(),
+      publicUrl: setup?.publicUrl?.(),
     } satisfies ServerInfo);
     wss.clients.forEach(client => {
       if (client.readyState !== WebSocket.OPEN) return;
@@ -516,6 +519,7 @@ export function setupWebSocket(
           startTime: serverStartTime,
           version: serverVersion,
           now: Date.now(),
+          publicUrl: setup?.publicUrl?.(),
         } satisfies ServerInfo),
       );
       // Cast receivers (Chromecast TVs) load the public scores page, so their
@@ -595,6 +599,7 @@ export function setupWebSocket(
         startTime: serverStartTime,
         version: serverVersion,
         now: Date.now(),
+        publicUrl: setup?.publicUrl?.(),
       } satisfies ServerInfo),
     );
 

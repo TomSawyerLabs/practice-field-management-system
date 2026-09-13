@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Box from '@mui/material/Box';
+import { QRCodeSVG } from 'qrcode.react';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -43,9 +44,12 @@ import {
   sendAdminClearEStop,
   sendClearMatchHistory,
   useMatchRecordingState,
+  usePublicUrl,
+  matchSummaryUrl,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { RecordingButtons } from './MatchVideoCard';
+import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
@@ -1075,7 +1079,7 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
         </Card>
       )}
 
-      <PostMatchRecordings matchId={matchState.matchId} />
+      <PostMatchRecordings matchId={matchState.matchId} shareToken={matchState.shareToken} />
 
       {/* Actions — only when counting period is done */}
       {!isCounting && (
@@ -1102,28 +1106,64 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
   );
 }
 
-/** Video of the match that just ended: "still finalizing" until the recorder
- *  attaches the files to the history entry, then one download per stream. */
-function PostMatchRecordings({ matchId }: { matchId?: string }) {
+/** "Summary" opens the public page for this match; the copy button puts its
+ *  URL (with the share token) on the clipboard to text to a team. */
+function ShareLinkButtons({ token, size = 'small' }: { token: string; size?: 'small' | 'medium' }) {
+  const publicUrl = usePublicUrl();
+  const url = matchSummaryUrl(publicUrl, token);
+  return (
+    <>
+      <Button size={size} variant="outlined" href={url} target="_blank" rel="noopener">
+        Summary
+      </Button>
+      <CopyToClipboard text={url} tooltipText="Copy the summary link">
+        <Button size={size} variant="outlined">
+          Copy link
+        </Button>
+      </CopyToClipboard>
+    </>
+  );
+}
+
+/** After the match: the QR code teams scan off the TV, the same link for
+ *  copying, and one download per recorded stream ("still finalizing" until
+ *  the recorder attaches the files to the history entry). */
+function PostMatchRecordings({ matchId, shareToken }: { matchId?: string; shareToken?: string }) {
   const history = useMatchHistory();
   const recording = useMatchRecordingState();
+  const publicUrl = usePublicUrl();
   if (!matchId) return null;
   const entry = history?.matches.find(m => m.matchId === matchId);
   const busy = recording?.activeMatchId === matchId;
-  if (!entry?.recordings?.length && !busy) return null;
+  const token = shareToken ?? entry?.shareToken;
+  if (!entry?.recordings?.length && !busy && !token) return null;
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
         <Typography variant="h6" sx={{ mb: 1 }}>
-          Match Video
+          Match Summary &amp; Video
         </Typography>
-        {busy && !entry?.recordings?.length ? (
-          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-            Finalizing the recording…
-          </Typography>
-        ) : (
-          <RecordingButtons match={entry!} size="medium" />
-        )}
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {token && (
+            <Box sx={{ bgcolor: '#fff', p: 1, borderRadius: 1, lineHeight: 0 }}>
+              <QRCodeSVG value={matchSummaryUrl(publicUrl, token)} size={112} marginSize={0} />
+            </Box>
+          )}
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, minWidth: 220 }}>
+            {token && (
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <ShareLinkButtons token={token} size="medium" />
+              </Box>
+            )}
+            {busy && !entry?.recordings?.length ? (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Finalizing the recording…
+              </Typography>
+            ) : entry?.recordings?.length ? (
+              <RecordingButtons match={entry} size="medium" />
+            ) : null}
+          </Box>
+        </Box>
       </CardContent>
     </Card>
   );
@@ -1290,6 +1330,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
           {formatDuration(match.durationSeconds)}
         </Typography>
         <RecordingButtons match={match} />
+        {match.shareToken && <ShareLinkButtons token={match.shareToken} />}
         {match.reviewUrl && (
           <Button
             size="small"

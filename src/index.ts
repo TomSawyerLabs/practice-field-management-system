@@ -57,6 +57,7 @@ import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
+import { handlePublicMatchRequest } from './publicMatchApi.js';
 import { UsageTracker } from './usageTracker.js';
 import { HostnameResolver } from './hostnameResolver.js';
 import {
@@ -375,6 +376,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleScoringRequest(req, res, scoringEngine, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleMatchReviewRequest(req, res, matchHistoryStore, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleRecordingsRequest(req, res, matchRecorder),
+      (req, res) => handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder),
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
     ],
@@ -434,6 +436,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     {
       configStore: setupConfigStore,
       matchRecorder,
+      // Where this field is reachable from the internet, for the post-match
+      // QR link. Setup UI value wins over PUBLIC_URL; both optional.
+      publicUrl: () => setupConfigStore.get().settings.publicUrl ?? process.env.PUBLIC_URL,
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose
       // rather than what was on the command line.

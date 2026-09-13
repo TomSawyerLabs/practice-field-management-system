@@ -11,6 +11,7 @@ import type {
   StationName,
 } from './types.js';
 import { StationNameList } from './types.js';
+import { mintShareToken } from './matchEngine.js';
 
 const DEFAULT_FILE = 'match-history.json';
 const MAX_ENTRIES = 100;
@@ -68,6 +69,7 @@ export class MatchHistoryStore {
         const entry: MatchHistoryEntry = {
           matchNumber: this.matches.length + 1,
           matchId: state.matchId,
+          shareToken: state.shareToken ?? mintShareToken(),
           startedAt: this.matchStartTime || now,
           endedAt: now,
           durationSeconds: Math.round((now - (this.matchStartTime || now)) / 1000),
@@ -135,6 +137,11 @@ export class MatchHistoryStore {
     return this.matches.find(m => m.matchId === matchId);
   }
 
+  /** The history entry a share token unlocks, if any. */
+  findByToken(token: string): MatchHistoryEntry | undefined {
+    return this.matches.find(m => m.shareToken === token);
+  }
+
   clear(): void {
     this.matches = [];
     this.persist();
@@ -168,6 +175,16 @@ export class MatchHistoryStore {
       if (Array.isArray(parsed)) {
         this.matches = parsed;
         console.log(`Loaded ${this.matches.length} match history entries from ${this.filePath}`);
+        // Entries recorded before share tokens existed get one now, so their
+        // summary/video can be linked too.
+        let backfilled = 0;
+        for (const m of this.matches) {
+          if (!m.shareToken) {
+            m.shareToken = mintShareToken();
+            backfilled++;
+          }
+        }
+        if (backfilled > 0) this.persist();
       }
     } catch (err) {
       console.warn(`Failed to load match history from ${this.filePath}:`, (err as Error).message);

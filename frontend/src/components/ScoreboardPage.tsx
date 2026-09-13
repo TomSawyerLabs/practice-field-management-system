@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useMemo, useRef, useSyncExternalStore, memo } from 'react';
 import type { ReactNode } from 'react';
 import Box from '@mui/material/Box';
+import { QRCodeSVG } from 'qrcode.react';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
@@ -13,6 +14,8 @@ import {
   useTelemetryCallback,
   useWsConnected,
   sendCastReceiverRegister,
+  usePublicUrl,
+  matchSummaryUrl,
 } from '../hooks/useBackend';
 import type { Alliance, ScoreBatch, StationName, TelemetryUpdate } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
@@ -879,6 +882,40 @@ export function ScoreboardPage() {
           <BatteryPanel stationKey={stationKey} leftAlliance={left} matchAlliancesKey={matchAlliancesKey} />
         </>
       )}
+      {matchState?.phase === 'postMatch' && matchState.shareToken && (
+        <PostMatchShareCard token={matchState.shareToken} />
+      )}
+    </Box>
+  );
+}
+
+/** After the match: a QR code to this match's summary + video, so a drive
+ *  team can scan it off the TV with any phone (works from the internet too). */
+function PostMatchShareCard({ token }: { token: string }) {
+  const publicUrl = usePublicUrl();
+  const url = matchSummaryUrl(publicUrl, token);
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        right: 16,
+        bottom: 16,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1.5,
+        p: 1.5,
+        borderRadius: 2,
+        bgcolor: '#fff',
+        color: '#000',
+        boxShadow: 6,
+        zIndex: 10,
+      }}
+    >
+      <QRCodeSVG value={url} size={132} marginSize={0} />
+      <Box sx={{ maxWidth: 180, lineHeight: 1.25 }}>
+        <Box sx={{ fontWeight: 800, fontSize: '1.05rem', mb: 0.5 }}>Match summary &amp; video</Box>
+        <Box sx={{ fontSize: '0.85rem', color: '#333' }}>Scan to see the result and download this match's video.</Box>
+      </Box>
     </Box>
   );
 }

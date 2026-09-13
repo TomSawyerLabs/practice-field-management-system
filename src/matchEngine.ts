@@ -1,5 +1,5 @@
 import dgram from 'dgram';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { makeDSPacket, Control, UdpSendPort, type OutboundTag, type DsProtocol } from './fmsServer.js';
 import {
   Alliance,
@@ -59,6 +59,11 @@ const OFFICIAL_CONFIG: MatchConfig = {
 
 export type TeamResolver = (station: StationName) => number | null;
 
+/** 24 random bytes as base64url (32 chars): unguessable, URL- and QR-safe. */
+export function mintShareToken(): string {
+  return randomBytes(24).toString('base64url');
+}
+
 export class MatchEngine {
   private phase: MatchPhase = 'idle';
   private config: MatchConfig | null = null;
@@ -114,6 +119,8 @@ export class MatchEngine {
   private matchNumber = 0;
   /** Unique id for the current match — assigned at startMatch, cleared when the field returns to idle/created. */
   private matchId: string | null = null;
+  /** Share token for the current match's public summary page (see publicMatchApi). */
+  private shareToken: string | null = null;
   private endReason: MatchEndReason | undefined;
   private teamResolver: TeamResolver;
   /** Maps physical station → alliance match slot during an active match */
@@ -694,6 +701,7 @@ export class MatchEngine {
     this.config = { ...this.pendingConfig };
     this.matchNumber++;
     this.matchId = randomUUID();
+    this.shareToken = mintShareToken();
     this.totalMatchTime = 0;
     this.endReason = undefined;
 
@@ -757,6 +765,7 @@ export class MatchEngine {
     this.remainingTime = 0;
     // This match never happened — a re-start gets a fresh id
     this.matchId = null;
+    this.shareToken = null;
     this.stopTick();
     // Keep stations joined and ready so the operator can re-start immediately
     for (const state of this.stationStates.values()) {
@@ -1155,6 +1164,7 @@ export class MatchEngine {
       type: 'matchState',
       // Kept after the match ends (postMatch/idle) so late consumers can still link to it
       matchId: this.matchId ?? undefined,
+      shareToken: this.shareToken ?? undefined,
       matchNumber: this.matchNumber || undefined,
       subPeriod,
       inactiveGoalAlliance,

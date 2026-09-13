@@ -17,7 +17,7 @@ import { json } from './httpApiUtils.js';
  * station page. Externally, Caddy's cookie check already guards /api/*.
  */
 export function handleRecordingsRequest(req: IncomingMessage, res: ServerResponse, recorder: MatchRecorder): boolean {
-  const [path, query = ''] = (req.url ?? '').split('?');
+  const [path] = (req.url ?? '').split('?');
   if (!path.startsWith('/api/recordings')) return false;
   const method = req.method ?? 'GET';
 
@@ -39,13 +39,26 @@ export function handleRecordingsRequest(req: IncomingMessage, res: ServerRespons
     json(res, 405, { error: 'Method not allowed' });
     return true;
   }
-  const matchId = decodeURIComponent(m[1]);
-  const file = decodeURIComponent(m[2]);
+  serveRecordingFile(req, res, recorder, decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  return true;
+}
+
+/** Stream one recording with Range support; `?download=1` sends an attachment
+ *  with a friendly name. Shared by the LAN route and the share-token route. */
+export function serveRecordingFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  recorder: MatchRecorder,
+  matchId: string,
+  file: string,
+): void {
+  const query = (req.url ?? '').split('?')[1] ?? '';
+  const method = req.method ?? 'GET';
   const dir = recorder.matchDirectory(matchId);
   // Only plain MP4 names inside the match directory — no traversal, no sidecars.
   if (!dir || !/^[A-Za-z0-9._-]{1,120}\.mp4$/.test(file) || file.includes('..')) {
     json(res, 404, { error: 'No such recording' });
-    return true;
+    return;
   }
   const full = join(dir, file);
   let size: number;
@@ -55,7 +68,7 @@ export function handleRecordingsRequest(req: IncomingMessage, res: ServerRespons
     size = st.size;
   } catch {
     json(res, 404, { error: 'No such recording' });
-    return true;
+    return;
   }
 
   const headers: Record<string, string> = {
@@ -85,7 +98,7 @@ export function handleRecordingsRequest(req: IncomingMessage, res: ServerRespons
     if (start > end || start >= size) {
       res.writeHead(416, { 'Content-Range': `bytes */${size}` });
       res.end();
-      return true;
+      return;
     }
     status = 206;
     headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
@@ -94,13 +107,12 @@ export function handleRecordingsRequest(req: IncomingMessage, res: ServerRespons
   res.writeHead(status, headers);
   if (method === 'HEAD' || size === 0) {
     res.end();
-    return true;
+    return;
   }
   const stream = createReadStream(full, { start, end });
   stream.on('error', () => res.destroy());
   res.on('close', () => stream.destroy());
   stream.pipe(res);
-  return true;
 }
 
 /** match-12_2026-09-13_14-05_all-field.mp4 */

@@ -229,6 +229,19 @@ Environment seeds (`MATCH_RECORDING_STREAMS`, `MATCH_RECORDINGS_DIR`,
 `MATCH_RECORDING_RETENTION_DAYS`) are in [configuration.md](configuration.md#scoring--scoreboard);
 values saved in the admin panel win.
 
+### Post-match QR code and match summary
+
+When a match ends, the scoreboard shows a QR code in its corner. It opens
+`/scores?match=<token>` — a summary of that match (teams, scores including
+any human review, auto winner, duration) with a player and download button
+for each recorded stream. The token is 32 random characters minted when the
+match started; it grants read access to that one match and nothing else, so
+the page needs no login and works from a phone on cellular as long as
+`PUBLIC_URL` points at an address the field is reachable at (the reverse
+proxy must expose `/scores`, `/assets/*` and `/api/public/*` without its
+access check). The `/match` page offers the same link ("Summary", "Copy
+link") for every match in history and shows the QR code after each match.
+
 ## WebSocket Message Reference
 
 Match control happens over the app WebSocket. The main message types

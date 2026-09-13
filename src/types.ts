@@ -234,6 +234,9 @@ export interface SetupSettings {
   recordingStreams?: RecordingStreamConfig[];
   /** Days to keep match recordings before the sweep deletes them. */
   recordingRetentionDays?: number;
+  /** Address this field is reachable at from anywhere, e.g.
+   *  `https://pfms.example.org` — used to build the post-match QR link. */
+  publicUrl?: string;
 }
 
 /** One video source pFMS records during matches. Anything ffmpeg can read
@@ -404,6 +407,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   deploymentMode: v => v === 'systemd' || v === 'docker',
   recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
+  publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
 };
 
 export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings {
@@ -787,6 +791,10 @@ export type MatchState = {
   /** Unique id for this match, assigned when the match starts (countdown).
    *  Links external systems (video recording, score review) to the match. */
   matchId?: string;
+  /** Share token for this match's public summary/video page (see
+   *  publicMatchApi). Minted with matchId; the scoreboard shows it as a QR
+   *  code after the match. */
+  shareToken?: string;
   /** Sequential match counter (since server start) for display purposes. */
   matchNumber?: number;
   /** Current sub-period (auto/transition/shift1-4/endgame) for REBUILT shift
@@ -1462,6 +1470,8 @@ export interface ServerInfo {
   type: 'serverInfo';
   startTime: number;
   version: string;
+  /** Public address of this field (PUBLIC_URL / setup `publicUrl`), for share links. */
+  publicUrl?: string;
   /** Server's Date.now() when the message was sent — lets clients seed their
    *  server↔client clock-offset estimate immediately on connect. */
   now?: number;
@@ -2586,6 +2596,34 @@ export interface MatchHistoryEntry {
   reviewUrl?: string;
   /** Video files pFMS itself recorded for this match (one per configured stream). */
   recordings?: MatchRecording[];
+  /** Capability token for the public summary page (`/scores?match=<token>`)
+   *  and `/api/public/match/<token>/…`. Backfilled for older entries. */
+  shareToken?: string;
+}
+
+/** What `/api/public/match/<token>` returns — everything the post-match
+ *  summary page shows, with token-scoped URLs for video and avatars. */
+export interface PublicMatchSummary {
+  matchNumber: number;
+  startedAt: number;
+  endedAt: number;
+  durationSeconds: number;
+  endReason: MatchEndReason;
+  autoWinner: Alliance | null;
+  teams: (MatchHistoryTeam & { avatarUrl: string })[];
+  redScore: number;
+  blueScore: number;
+  review?: Partial<Record<Alliance, MatchReviewResult>>;
+  reviewUrl?: string;
+  recordings: {
+    name: string;
+    file: string;
+    bytes: number;
+    durationSeconds?: number;
+    status: 'ok' | 'partial';
+    url: string;
+    downloadUrl: string;
+  }[];
 }
 
 /** One recorded video file for a match, produced by MatchRecorder. */

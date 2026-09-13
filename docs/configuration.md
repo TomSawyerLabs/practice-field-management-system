@@ -71,6 +71,7 @@ service restart — no `systemctl daemon-reload` needed.
 | `MATCH_RECORDINGS_DIR`           | `recordings`                        | Where recorded matches are stored (one directory per match id).                                                                                                                                                                                        |
 | `MATCH_RECORDING_RETENTION_DAYS` | `30`                                | Recordings older than this are deleted by a daily sweep. The admin panel value wins.                                                                                                                                                                   |
 | `FFMPEG_PATH` / `FFPROBE_PATH`   | `ffmpeg` / `ffprobe`                | Binaries used by the recorder. Recording is disabled (and says so in the admin panel) when ffmpeg can't be run.                                                                                                                                        |
+| `PUBLIC_URL`                     | _(page's own origin)_               | Address the field is reachable at from anywhere, e.g. `https://pfms.example.org`. Used for the post-match QR code and share links (`/scores?match=<token>`). The setup UI value wins.                                                                  |
 
 ## Integrations
 

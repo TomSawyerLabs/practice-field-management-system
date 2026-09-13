@@ -2020,6 +2020,25 @@ export function useServerVersion(): string | null {
   return version;
 }
 
+/** Base URL for share links: the configured public address, else this page's origin. */
+export function usePublicUrl(): string {
+  const [url, setUrl] = useState<string | undefined>(currentServerInfo?.publicUrl);
+
+  useEffect(() => {
+    setUrl(currentServerInfo?.publicUrl);
+    const handler = (e: Event) => setUrl((e as CustomEvent<ServerInfo>).detail.publicUrl);
+    events.addEventListener('serverInfo', handler);
+    return () => events.removeEventListener('serverInfo', handler);
+  }, []);
+
+  return (url ?? window.location.origin).replace(/\/$/, '');
+}
+
+/** Public summary/video page for a match, by share token. */
+export function matchSummaryUrl(publicUrl: string, shareToken: string): string {
+  return `${publicUrl}/scores?match=${encodeURIComponent(shareToken)}`;
+}
+
 export function useServerStartTime(): number | null {
   const [startTime, setStartTime] = useState<number | null>(currentServerInfo?.startTime ?? null);
 
