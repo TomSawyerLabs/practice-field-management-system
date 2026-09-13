@@ -22,6 +22,7 @@ import {
   StationName,
   StationNameList,
   StationNetworkStats,
+  NetworkStats,
   StationSubnetScan,
 } from '../../../src/types';
 import { describeIp, formatAge, formatBytes, formatDuration, prettyStationName } from '../../../src/utils';
@@ -288,6 +289,40 @@ export function StationNetworkCard({
   );
 }
 
+/** Kernel ARP table fill level — the thing that silently black-holed three
+ *  robots at the 2026-09-13 scrimmage when it hit its ceiling. */
+function NeighborTableGauge({ stats }: { stats: NetworkStats['neighborTable'] }) {
+  if (!stats || stats.limit === 0) return null;
+  const pct = Math.round((stats.entries / stats.limit) * 100);
+  const color = pct >= 90 ? 'error' : pct >= 70 ? 'warning' : 'success';
+  const top = Object.entries(stats.byInterface)
+    .slice(0, 6)
+    .map(([dev, n]) => `${dev} ${n}`)
+    .join(' · ');
+  return (
+    <Card variant="outlined" sx={{ mb: 2, p: 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          ARP table
+        </Typography>
+        <Chip size="small" color={color} label={`${stats.entries} / ${stats.limit} (${pct}%)`} />
+        {stats.overflows > 0 && (
+          <Chip size="small" color="error" label={`${stats.overflows} overflow(s) since start`} />
+        )}
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          {top}
+        </Typography>
+      </Box>
+      {pct >= 70 && (
+        <Typography variant="caption" sx={{ color: 'warning.main', display: 'block', mt: 0.5 }}>
+          Above the limit the kernel drops packets to hosts without an entry — robots lose their Driver Stations. The
+          device scanner accounts for about 250 entries per configured slot.
+        </Typography>
+      )}
+    </Card>
+  );
+}
+
 export function NetworkPage() {
   const networkStats = useNetworkStats();
   const subnetScan = useSubnetScan();
@@ -302,6 +337,7 @@ export function NetworkPage() {
       <Typography variant="h3" gutterBottom>
         Network Status
       </Typography>
+      <NeighborTableGauge stats={networkStats?.neighborTable} />
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 6 }}>
           {StationNameList.slice(0, 3).map(s => (

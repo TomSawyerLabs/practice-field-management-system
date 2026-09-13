@@ -1147,6 +1147,21 @@ export interface StationNetworkStats {
 export interface NetworkStats {
   type: 'networkStats';
   stations: Partial<Record<StationName, StationNetworkStats>>;
+  /** Kernel neighbor (ARP) table occupancy — a full table silently drops
+   *  packets to any host without an entry (2026-09-13 scrimmage). */
+  neighborTable?: NeighborTableStats;
+}
+
+export interface NeighborTableStats {
+  /** IPv4 entries currently in the table (all states). */
+  entries: number;
+  /** Hard ceiling (`net.ipv4.neigh.default.gc_thresh3`); new entries fail above it. */
+  limit: number;
+  /** Entries per interface, largest first. The device scanner accounts for
+   *  ~250 per configured team slot; a slot far above that has a chatty network. */
+  byInterface: Record<string, number>;
+  /** Times the kernel reported "neighbor table overflow" since pFMS started. */
+  overflows: number;
 }
 
 export function isNetworkStats(msg: unknown): msg is NetworkStats {
