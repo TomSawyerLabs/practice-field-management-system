@@ -33,7 +33,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
-import type { RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
+import type { MatchRecordingStreamStatus, RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
 import {
   useMatchState,
   useLatest,
@@ -352,6 +352,38 @@ function formatRecordingBytes(bytes: number | undefined): string {
   return `${Math.round(bytes / 1e3)} kB`;
 }
 
+/** The stream's state, separate from the Enable/Disable action: is it saved on
+ *  the server, is it recording right now, did its last run fail. */
+function StreamStateChip({
+  stream,
+  savedStream,
+  live,
+}: {
+  stream: RecordingStreamConfig;
+  savedStream: RecordingStreamConfig | undefined;
+  live: MatchRecordingStreamStatus | undefined;
+}) {
+  if (live?.status === 'recording') {
+    return (
+      <Chip
+        size="small"
+        color="error"
+        label={`● Recording${live.bytes ? ` · ${formatRecordingBytes(live.bytes)}` : ''}`}
+      />
+    );
+  }
+  if (live?.status === 'finalizing') return <Chip size="small" color="info" label="Finalizing…" />;
+  if (!savedStream) return <Chip size="small" variant="outlined" label="Not saved" />;
+  if (savedStream.enabled !== stream.enabled)
+    return <Chip size="small" color="warning" variant="outlined" label="Unsaved change" />;
+  if (!stream.enabled) return <Chip size="small" variant="outlined" label="Disabled" />;
+  if (live?.error && live.status !== 'idle')
+    return <Chip size="small" color="error" variant="outlined" label="Error" />;
+  if (live?.error)
+    return <Chip size="small" color="warning" variant="outlined" label="Enabled · last run had errors" />;
+  return <Chip size="small" color="success" variant="outlined" label="Enabled" />;
+}
+
 /**
  * Which video streams pFMS records for every match. Streams are saved as a
  * setup setting (admin-gated, persisted, env-seeded); the recorder picks them
@@ -446,13 +478,18 @@ function MatchRecordingSection() {
                     onChange={e => edit(i, { url: e.target.value })}
                     sx={{ flex: 1, minWidth: 260 }}
                   />
+                  <StreamStateChip
+                    stream={s}
+                    savedStream={saved?.find(x => x.name === s.name && x.url === s.url)}
+                    live={live}
+                  />
                   <Button
                     size="small"
-                    variant={s.enabled ? 'contained' : 'outlined'}
-                    color={s.enabled ? 'success' : 'inherit'}
+                    variant="outlined"
+                    color={s.enabled ? 'warning' : 'success'}
                     onClick={() => edit(i, { enabled: !s.enabled })}
                   >
-                    {s.enabled ? 'Enabled' : 'Disabled'}
+                    {s.enabled ? 'Disable' : 'Enable'}
                   </Button>
                   <Button size="small" variant="outlined" onClick={() => test(s.url)} disabled={t === 'pending'}>
                     {t === 'pending' ? 'Testing…' : 'Test'}
@@ -474,13 +511,14 @@ function MatchRecordingSection() {
                       }
                     />
                   )}
-                  {live && live.status !== 'idle' && (
+                  {live?.reconnects ? (
                     <Chip
                       size="small"
-                      color={live.status === 'error' ? 'error' : 'info'}
-                      label={`${live.status}${live.bytes ? ` · ${formatRecordingBytes(live.bytes)}` : ''}${live.reconnects ? ` · ${live.reconnects} reconnect(s)` : ''}`}
+                      color="warning"
+                      variant="outlined"
+                      label={`${live.reconnects} reconnect(s) this match`}
                     />
-                  )}
+                  ) : null}
                   {live?.error && live.status !== 'recording' && (
                     <Typography variant="caption" sx={{ color: 'warning.main' }}>
                       Last error: {live.error}
