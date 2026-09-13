@@ -87,7 +87,7 @@ function stationRoutes(): Plugin {
         if (url?.split('?')[0] === '/staff') {
           req.url = '/staff.html';
         }
-        if (url === '/scores') {
+        if (url === '/scores' || url?.startsWith('/matches/')) {
           req.url = '/scores.html';
         }
         if (url === '/overview') {

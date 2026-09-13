@@ -2036,7 +2036,7 @@ export function usePublicUrl(): string {
 
 /** Public summary/video page for a match, by share token. */
 export function matchSummaryUrl(publicUrl: string, shareToken: string): string {
-  return `${publicUrl}/scores?match=${encodeURIComponent(shareToken)}`;
+  return `${publicUrl}/matches/${encodeURIComponent(shareToken)}`;
 }
 
 export function useServerStartTime(): number | null {

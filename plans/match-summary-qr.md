@@ -23,7 +23,7 @@ page (local network) should offer the same links.
   - `GET /api/public/match/<token>/video/<file>` → the MP4 (Range,
     `?download=1` friendly name) — same code path as `/api/recordings`.
   - `GET /api/public/match/<token>/avatar/<team>` → cached team avatar PNG.
-- **Summary page** lives in the scores bundle: `/scores?match=<token>`
+- **Summary page** lives in the scores bundle: `/matches/<token>`
   renders `MatchSummaryPage` instead of the scoreboard. Chosen because Caddy
   already lets external visitors reach `/scores` and `/assets/*` without the
   access cookie; a new HTML entry point would need a Caddy change.

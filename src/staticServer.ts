@@ -131,6 +131,9 @@ export function createStaticHandler(
       candidates.push(join(webRoot, 'index.html'));
     } else if (TEAM_URL.test(urlPath)) {
       candidates.push(join(webRoot, 'control.html'));
+    } else if (urlPath.startsWith('/matches/')) {
+      // Post-match summary: /matches/<share token> → the scores bundle
+      candidates.push(join(webRoot, 'scores.html'));
     } else {
       const direct = resolveWithin(webRoot, urlPath);
       if (!direct) return false;

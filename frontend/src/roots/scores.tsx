@@ -5,9 +5,12 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { ScoreboardPage } from '../components/ScoreboardPage';
 import { MatchSummaryPage } from '../components/MatchSummaryPage';
 
-// `/scores?match=<token>` is the post-match summary a team scanned off the TV;
-// it shares this bundle because the reverse proxy already lets everyone reach /scores.
-const summaryToken = new URLSearchParams(window.location.search).get('match');
+// `/matches/<token>` is the post-match summary a team scanned off the TV. It
+// shares this bundle (the server maps that path to scores.html); the older
+// `/scores?match=<token>` form still works.
+const summaryToken =
+  /^\/matches\/([^/?#]+)/.exec(window.location.pathname)?.[1] ??
+  new URLSearchParams(window.location.search).get('match');
 
 const theme = createTheme({
   colorSchemes: { dark: true },
