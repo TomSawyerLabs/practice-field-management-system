@@ -22,7 +22,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { statfs } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { MatchEngine } from './matchEngine.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
 import type {
@@ -443,6 +443,14 @@ export class MatchRecorder {
     }
     const part = join(session.dir, `${job.slug}.part${job.parts.length + 1}.mp4`);
     job.parts.push(part);
+    // The session directory can be renamed (pre-roll adopt) or, in a rapid
+    // start/abort burst, briefly not exist yet; make sure it is there before
+    // ffmpeg opens its output (2026-09-13: "Error opening output files").
+    try {
+      mkdirSync(dirname(part), { recursive: true });
+    } catch {
+      // best effort; ffmpeg will report if it still can't open the file
+    }
     const args = [
       '-hide_banner',
       '-loglevel',

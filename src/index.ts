@@ -1177,18 +1177,31 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // away on a long-lived connection, so force a reconnect the moment a
       // station joins or leaves (also covers kick and post-match release).
       const prevJoined = new Map<StationName, boolean>();
+      // Track alliance too: switching red<->blue while staying joined does not
+      // change `joined`, but the DS must re-handshake to pick up the new
+      // station colour promptly (else the 2027 DS can hold the old field side
+      // until its next reconnect).
+      const prevAlliance = new Map<StationName, string | null>();
       matchEngine.addStateListener(state => {
         for (const station of StationNameList) {
           const joined = state.stationStates[station]?.joined ?? false;
           const prev = prevJoined.get(station) ?? false;
-          if (joined === prev) continue;
+          const alliance = state.stationStates[station]?.alliance ?? null;
+          const prevAll = prevAlliance.get(station) ?? null;
+          const joinedChanged = joined !== prev;
+          // A colour change on an already-joined station (no join/leave edge).
+          const allianceChanged = joined && prev && alliance !== prevAll;
           prevJoined.set(station, joined);
+          prevAlliance.set(station, alliance);
+          if (!joinedChanged && !allianceChanged) continue;
           const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
           if (dsIp) {
             appInfo(
-              joined
-                ? `${station} joined — handing DS ${dsIp} to FMS control (disabled until match start)`
-                : `${station} left — releasing DS ${dsIp} back to local control`,
+              joinedChanged
+                ? joined
+                  ? `${station} joined — handing DS ${dsIp} to FMS control (disabled until match start)`
+                  : `${station} left — releasing DS ${dsIp} back to local control`
+                : `${station} changed to ${alliance} — re-handshaking DS ${dsIp} so it gets the new field side`,
             );
             fms.emit('disconnectDS', { address: dsIp });
           }

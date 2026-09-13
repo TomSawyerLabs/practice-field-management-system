@@ -21,7 +21,23 @@ steamboat journal; no code changed yet — each needs a decision.
   decoupled from physical driver-station side**. Fixing it needs a field-side
   decision (below), not a code correction to the current logic.
 
-### Open question 1 (blocking a fix)
+### What the logs proved (2026-09-13, follow-up)
+
+- 5940/slot1 was assigned **red1 in every match that started** (all day). The
+  only blue moment was a stray `join blue` at 12:20:34, corrected to red at
+  12:20:40, before any match. No controller alliance-swap was ever used.
+- So no started match ran with 5940 on blue. A match that felt reversed was
+  not a wrong pFMS assignment in that match. Video should confirm what colour
+  5940's **DS actually displayed**; if it showed blue while pFMS logged red1,
+  that is a 2027-DS propagation issue.
+- Found and fixed a latent propagation gap: switching a joined station's
+  alliance (red<->blue) did **not** force the DS to re-handshake, so the new
+  colour reached the DS only via the next UDP tick or the DS's own ~3 s
+  reconnect. Now an alliance change emits `disconnectDS` exactly like
+  join/leave, so the DS reconnects and gets the new 0x1f immediately. (Not
+  the cause of 5940's match — four minutes elapsed — but removes the window.)
+
+### Open question 1 (blocking a full field-side policy)
 
 How are the six driver-station positions physically laid out, and what should
 drive the robot's field side?
@@ -63,6 +79,12 @@ When the partners "got E-Stopped", did their Driver Stations show a red
 physical loop, or only the pFMS station-page button? That distinguishes a
 field-wiring issue from a coincidental comms drop.
 
+slot4/972's drop (12:25:49) had no pFMS network event (no DNAT/takeover/
+duplicate/block); its status went to radio-ping-only while the AP kept the
+radio associated — a robot-side/RF drop. 972 also has the radio QoS
+bandwidth limit ON (see the robot-tester warning), a known latency/loss
+risk with camera streams; worth turning off on their radio.
+
 ## 3. Side finding (my recent code): recorder pre-roll dir race
 
 During the 12:24 rapid triple hold/abort, the recorder logged `Error opening
@@ -70,8 +92,9 @@ output files: No such file or directory` once and recovered. The pre-roll
 adopt/discard (commit 86c1248) can `rmSync` or rename a session directory
 while a just-spawned ffmpeg is opening a part in it. Low severity (only under
 repeated start/abort within ~2 s; it self-reconnected) but worth hardening:
-guard `finishSession`'s discard and `adopt`'s rename against a session that is
-no longer `this.session`, and create the part's directory in `spawnPart`.
+create the part's directory in `spawnPart` before ffmpeg opens it (done —
+`mkdirSync` guard). Further hardening of `finishSession`/`adopt` against a
+stale session is still worth doing but the "No such file" symptom is fixed.
 
 ## Things not to do
 
