@@ -980,7 +980,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
               </Button>
             )}
             <Button size="small" variant="contained" color="error" onClick={() => sendAdminStationEStop(station)}>
-              E-Stop
+              E-Stop One
             </Button>
           </>
         )}

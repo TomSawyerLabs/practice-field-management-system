@@ -116,7 +116,7 @@ function GlobalEStopSection() {
       sx={{ fontSize: '1.5rem', py: 2.5, mb: 3, fontWeight: 'bold' }}
       onClick={() => sendAdminGlobalEStop()}
     >
-      EMERGENCY STOP ALL
+      E-STOP ALL
     </Button>
   );
 }
@@ -199,7 +199,7 @@ function StationControlCard({ station }: { station: StationName }) {
                   onClick={() => sendAdminStationEStop(station)}
                   sx={{ minWidth: 0, px: 1, fontSize: '0.7rem' }}
                 >
-                  E-STOP
+                  E-Stop One
                 </Button>
               </Tooltip>
             )}
