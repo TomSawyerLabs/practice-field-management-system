@@ -160,7 +160,11 @@ export type DSMessage =
  * in that case so downstream telemetry omits the value rather than charting it.
  */
 function parseBatteryVoltage(raw: number): number | undefined {
-  if (raw === 0xffff) return undefined;
+  // 0xFFFF is the "no reading" sentinel; an exact 0 is a frame that simply
+  // didn't carry a voltage (seen during brief comms hiccups) — a connected
+  // robot battery is never 0.00V. Treat both as no reading so the chart holds
+  // rather than diving to 0.
+  if (raw === 0xffff || raw === 0) return undefined;
   return raw / 256;
 }
 

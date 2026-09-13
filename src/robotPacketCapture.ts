@@ -144,13 +144,16 @@ export class RobotPacketCapture {
     const statusByte = data[payloadOffset + 3];
     const traceByte = data[payloadOffset + 4];
     // 0xFFFF is the DS "no reading" sentinel (robot not connected); it would
-    // decode to 255.996V and display as "256.0V". Report undefined instead.
-    // This packet-driven path only fires when the robot IS connected, so this
-    // is defensive, but it keeps the sentinel handling consistent everywhere.
+    // decode to 255.996V and display as "256.0V". An exact 0 is a frame that
+    // carried no voltage (a brief telemetry hiccup) — a connected robot battery
+    // is never 0.00V. Report undefined for both so the chart holds instead of
+    // flapping to 0.
+    const battByte = data[payloadOffset + 5];
+    const battFrac = data[payloadOffset + 6];
     const batteryVoltage =
-      data[payloadOffset + 5] === 0xff && data[payloadOffset + 6] === 0xff
+      (battByte === 0xff && battFrac === 0xff) || (battByte === 0 && battFrac === 0)
         ? undefined
-        : data[payloadOffset + 5] + data[payloadOffset + 6] / 256;
+        : battByte + battFrac / 256;
 
     // Extract team number from source IP (10.TE.AM.x)
     const team = teamFromIp(srcIp);
