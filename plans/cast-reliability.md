@@ -99,6 +99,34 @@ part fails (discovery, session start, session survival) and fix what is ours.
   (cast mDNS, remote mDNS, 8009, 8008 HTTP, 6466), polling every 20 s. Use it
   to time the daemon's death against TV idle/screensaver/standby timers.
 
+## Timeline 2026-09-13 (monitor + Caddy + journal)
+
+| Time        | Event                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 09:40       | Cast started; receiver `/ws/scores` open                                                                                                                                                    |
+| ~09:45      | 8009 open, TV answers discovery (Cameron's cast "finally" worked around here)                                                                                                               |
+| 10:20–10:43 | Cast daemon dead: 8009 closed, 8008 HTTP dead, no discovery answers; receiver still on screen                                                                                               |
+| 10:42:51    | receiver socket closed; 10:44:38 new cast (Cameron recast once the TV was findable again)                                                                                                   |
+| 10:43:08    | 8009 open again (daemon recovered on its own)                                                                                                                                               |
+| 11:20:01    | 8008 HTTP dead; 11:20:28 8009 closed — daemon dead again, receiver still running                                                                                                            |
+| 11:24:17    | pFMS deploy restart; receiver reconnected (0 s + 34 s sessions) then **died** — with the TV's Cast daemon already dead, the TV dropped the receiver instead of the usual watchdog reconnect |
+| 11:24–11:43 | Chrome cannot find the TV (daemon dead)                                                                                                                                                     |
+| 11:43:06    | 8009 open again; 11:43:43 Cameron's cast succeeds ("it finally found it")                                                                                                                   |
+
+So: the disconnect at 11:24 was triggered by the restart, but only because
+the TV's Cast daemon had already died at 11:20; a healthy receiver rides
+through restarts (see 09:40 → 10:42 across nothing, and the 30 s watchdog).
+The daemon dies roughly hourly and revives 20–60 min later by itself.
+`cast-mdns` in the monitor is always 0 — the TV evidently doesn't answer
+unicast `_googlecast` queries even when healthy (multicast works); use the
+8009 column as the health signal.
+
+**Hypothesis worth testing next:** the receiver page runs the scoreboard
+with its video view on a TV with limited RAM; Android may be killing the
+Chromecast built-in service under memory pressure. Try casting with the
+video view off (🎥 toggle on the receiver's /scores) for an afternoon and
+see whether 8009 stays open.
+
 ## Open questions for Cameron
 
 1. Is the TV showing the scoreboard right now (10:36) even though Chrome can't
