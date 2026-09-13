@@ -858,11 +858,27 @@ function ActiveMatchView({
               </Box>
             )}
 
-            {/* Pause (not during countdown, autoPause, or already paused) */}
-            {!isPaused && phase !== 'countdown' && phase !== 'autoPause' && (
-              <Button variant="outlined" color="warning" onClick={sendStationPauseMatch}>
-                Pause Match
-              </Button>
+            {/* Pause — stays put through the whole running match so it doesn't
+                jump around; just disabled when you can't pause yet (during the
+                start countdown) or when auto is already paused for the
+                transition. Hidden only while paused, where Resume/Abandon
+                replace it. */}
+            {!isPaused && !isResuming && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  disabled={phase === 'countdown' || phase === 'autoPause'}
+                  onClick={sendStationPauseMatch}
+                >
+                  Pause Match
+                </Button>
+                {phase === 'autoPause' && (
+                  <Typography variant="caption" color="text.secondary">
+                    Auto is already paused for the transition.
+                  </Typography>
+                )}
+              </Box>
             )}
 
             {/* Paused: resume / abandon */}
