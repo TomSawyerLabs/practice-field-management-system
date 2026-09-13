@@ -236,35 +236,31 @@ makes Caddy serve the internal UI — or turn off IPv6 on that device.
       ops (`@refresh` = 2xx **with** Set-Cookie relays; bare 2xx falls
       through), proven against a local Caddy + mock backend (deny→PUBLIC,
       cookie→INTERNAL+cookie, on-link→INTERNAL, no header). Uncommitted.
-- [ ] **(current)** Two ops pushes, in order, each needing an OK: 1. the `pfms.caddy` relay fix (Server Deploys); 2. restore the CNAMEs for `pfms.tsl` / `pfms.tomsawyerlabs.com`
-      (UniFi DNS Sync) — the A pins are no longer needed and only
-      steamboat's own AAAA is inherited again.
-      Then: `/health/site` should report "IPv4 serves the internal UI; IPv6
-      serves the internal UI".
+- [x] **Steamboat-level fix (2026-09-12, user's choice over per-app rules):**
+      ops `caddy-custom` gained an `onlink` request matcher
+      (`containers/caddy-custom/onlink`) — client address vs the host's own
+      interface prefixes, read at runtime, no addresses in config,
+      `ipv6_prefix 60` so TSL's sibling VLAN /64s count like the IPv4 private
+      ranges. `pfms`, `tomsawyerlabs.com`, `coulomb`, `farm`, `store` now use
+      `@external { not client_ip private_ranges fe80::/10; not onlink }`
+      (ops `48ca706`, `b610902`, `880f3ab`). pfms.caddy also relays
+      `Set-Cookie` only when present. pFMS keeps its own on-link rule as
+      defence in depth; since the Caddy deploy it has not had to grant once.
+- [x] CNAMEs restored (ops `25cb6c0`, applied 2026-09-13 00:02Z):
+      `pfms.tsl` → CNAME `steamboat.tsl` → A + **AAAA** again. Verified:
+      `/health/site` **200** "IPv6 serves the internal UI; IPv4 serves the
+      internal UI"; from Cameron's laptop by name (IPv6 preferred, connects
+      to `…:1a5`) → internal page; public `/health` via Cloudflare 200.
+- [x] Side quest, same day: a GitHub API hiccup made the ops deploy workflow
+      deregister four self-hosted runners; re-registered, and the workflow no
+      longer deletes registrations (ops `74af1c9`,
+      `plans/runner-deregistration-2026-09-12.md`).
 
-## Rollout (order matters; each step needs its own OK)
+## Outcome
 
-1. **steamboat:** append `LAN_URL=http://pfms.tsl/` to `/etc/pfms/environment`.
-   No restart; step 2's reload picks it up.
-2. **pFMS:** push master, then deploy via `update.sh` (graceful reload, waits
-   out a live match). After this `/health/site` on steamboat reports the true
-   state: 503 "IPv6 serves the public-only page" until step 3.
-3. **ops:** commit + push the staged changes. CI deploys Caddy (IPv4-only +
-   `/health` route) and the uptime worker. Then `/health` should be 200 with
-   "IPv4 serves the internal UI; IPv6 refuses connections".
-4. **ops:** refresh `as-deployed/steamboat/pfms/environment.as-deployed` to
-   include `LAN_URL` (snapshot of live state, so only after step 1).
-
-Pushing ops before step 2 would make the new uptime check red (`/health/site` 404) — hence the order.
-
-## Future: IPv6
-
-To serve pFMS over IPv6 later, the internal test must recognise LAN clients
-without a hardcoded prefix — e.g. the backend compares the client address with
-the prefixes on its own interfaces (read at runtime), and Caddy asks the
-backend via the existing `forward_auth` hop instead of `private_ranges`. Then
-drop `03-ipv4-only.caddy`. `/health/site` already checks IPv6 and will say
-whether it works.
+Devices on the field network get the real pFMS page over IPv4 **and** IPv6,
+by either name, with nothing ISP-specific in any config. The public page no
+longer loops. `/health/site` proves both families on every uptime poll.
 
 ## Things not to do
 
