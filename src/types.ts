@@ -701,6 +701,9 @@ export type DSConnectionInfo = {
   /** Driver Station generation: legacy NI DS (roboRIO) or the 2027 FIRST
    *  Driver Station (SystemCore), learned from its FMS handshake. */
   protocol?: 'legacy' | 'ds2027';
+  /** UDP port match control packets are sent to (1121 for the legacy DS; the
+   *  2027 DS names its own, changing on every reconnect) */
+  udpPort?: number;
   /** If set, these DS IPs are trying to connect and are being blocked */
   blockedDsIps?: string[];
 };

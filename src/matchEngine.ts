@@ -87,6 +87,11 @@ export class MatchEngine {
    *  DS names an ephemeral UDP port (new one on every reconnect); the legacy
    *  DS is addressed at the fixed UdpSendPort. Absent = legacy. */
   private dsEndpoints = new Map<string, { protocol: DsProtocol; udpPort: number }>();
+  /** Dampens the per-reconnect control-port change log for the 2027 DS */
+  private endpointChurn = new Map<string, { count: number; lastReport: number }>();
+  /** Last "ip:port/protocol" match control was sent to, per station, so the
+   *  first packet to a new destination is logged (proves the FMS→DS path). */
+  private lastControlTarget = new Map<StationName, string>();
   /** Last FMS UDP status heartbeat per station — only an FMS-attached DS sends these */
   private lastDsHeartbeat = new Map<StationName, number>();
   /** When the FMS last enabled each station — gates the DS-disable re-latch grace */
@@ -183,7 +188,23 @@ export class MatchEngine {
     const existing = this.dsEndpoints.get(ip);
     if (existing?.protocol === protocol && existing.udpPort === udpPort) return;
     this.dsEndpoints.set(ip, { protocol, udpPort });
-    if (existing?.protocol !== protocol) this.broadcast();
+    if (existing?.protocol !== protocol) {
+      console.log(
+        `DS ${ip} is a ${protocol === 'ds2027' ? '2027 (SystemCore)' : 'legacy NI'} Driver Station, control UDP ${udpPort}`,
+      );
+      this.broadcast();
+    } else {
+      // The 2027 DS picks a new port on every TCP reconnect (~6 s while it
+      // is not assigned a station). Summarize instead of logging each one.
+      const d = this.endpointChurn.get(ip) ?? { count: 0, lastReport: 0 };
+      d.count++;
+      if (Date.now() - d.lastReport >= 60_000) {
+        console.log(`DS ${ip} control UDP port now ${udpPort} (${d.count} change(s) in the last minute)`);
+        d.count = 0;
+        d.lastReport = Date.now();
+      }
+      this.endpointChurn.set(ip, d);
+    }
   }
 
   /** UDP destination + protocol for control packets to a DS address. */
@@ -938,7 +959,11 @@ export class MatchEngine {
     // the flip so ready gates update promptly when a DS attaches.
     const wasAttached = this.isDsAttached(station);
     this.lastDsHeartbeat.set(station, Date.now());
-    if (!wasAttached) this.broadcast();
+    if (!wasAttached) {
+      const ip = this.dsConnections.get(station)?.ip;
+      console.log(`DS attached to FMS: ${station}${ip ? ` (${ip}, ${this.endpointFor(ip).protocol})` : ''}`);
+      this.broadcast();
+    }
     let changed = false;
     if (dsEStop && !state.eStop) {
       state.eStop = true;
@@ -1043,10 +1068,7 @@ export class MatchEngine {
       config: this.config ?? this.pendingConfig,
       stationStates,
       connectedStations: Object.fromEntries(
-        [...this.dsConnections].map(([station, conn]) => [
-          station,
-          { ...conn, protocol: this.endpointFor(conn.ip).protocol },
-        ]),
+        [...this.dsConnections].map(([station, conn]) => [station, { ...conn, ...this.endpointFor(conn.ip) }]),
       ),
       endReason: this.phase === 'postMatch' ? this.endReason : undefined,
       portToSlot: this.portToSlot.size > 0 ? Object.fromEntries(this.portToSlot) : undefined,
@@ -1394,6 +1416,11 @@ export class MatchEngine {
     }
 
     const endpoint = this.endpointFor(ip);
+    const target = `${ip}:${endpoint.udpPort}/${endpoint.protocol}`;
+    if (this.lastControlTarget.get(station) !== target) {
+      this.lastControlTarget.set(station, target);
+      console.log(`Match control for ${station} now sent to ${target} as ${allianceStation}`);
+    }
     const packet = makeDSPacket({
       sequence: seq & 0xffff,
       control,

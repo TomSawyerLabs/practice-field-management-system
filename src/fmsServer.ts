@@ -335,6 +335,11 @@ export type UdpMessage = {
   tags: Tags;
 };
 
+// Log each unknown / oversized UDP status tag once with its payload so a new
+// DS generation's extra tags can be identified without flooding journald.
+const loggedUnknownUdpTags = new Set<number>();
+const loggedTrailingUdpTags = new Set<number>();
+
 function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
   const r = new BufferReader(buff);
   const sequence = r.readNumber(2);
@@ -375,10 +380,16 @@ function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
         tags.push({ type: 'pd' });
         break;
       default:
-        console.log('Unknown tag type:', tagType, buff.toString('hex'));
+        if (!loggedUnknownUdpTags.has(tagType)) {
+          loggedUnknownUdpTags.add(tagType);
+          console.log(`Unknown DS UDP status tag ${tagType} (0x${tagType.toString(16)}): ${buff.toString('hex')}`);
+        }
     }
 
-    if (t.remaining) console.log('Remaining bytes in tag:', t.remaining, buff.toString('hex'));
+    if (t.remaining && !loggedTrailingUdpTags.has(tagType)) {
+      loggedTrailingUdpTags.add(tagType);
+      console.log(`${t.remaining} trailing byte(s) in DS UDP status tag ${tagType}: ${buff.toString('hex')}`);
+    }
   }
 
   return {
@@ -435,8 +446,11 @@ export async function startFMSServer({
     const CHURN_WINDOW_MS = 30_000;
     const CHURN_SUMMARY_MS = 5 * 60_000;
     const churnByAddr = new Map<string, { lastClose: number; suppressed: number; lastReport: number }>();
-    // Last team number logged per address, so steady 0x18 packets aren't re-logged
-    const lastLoggedTeam = new Map<string, number>();
+    // Last handshake outcome logged per address (team, DS generation, reply
+    // slot), so steady re-handshakes aren't re-logged but every change is.
+    const lastLoggedHandshake = new Map<string, string>();
+    // Unparseable UDP status packets per source address (first one is logged)
+    const badUdpByAddr = new Map<string, number>();
 
     const tcpServer = net.createServer(socket => {
       const rawAddr = socket.remoteAddress || '';
@@ -482,10 +496,14 @@ export async function startFMSServer({
           if (slot) {
             socket.write(makeStationAssignment(obj, slot));
           }
-          if (lastLoggedTeam.get(addr) !== obj.teamNumber) {
-            lastLoggedTeam.set(addr, obj.teamNumber);
-            const gen = obj.type === 0x1e ? ` (2027 DS, control UDP ${obj.udpPort})` : '';
-            console.log(`DS at ${addr}: team ${obj.teamNumber}${gen}${slot ? ` → ${slot}` : ''}`);
+          const key = `${obj.teamNumber}|${obj.type}|${slot ?? ''}`;
+          if (lastLoggedHandshake.get(addr) !== key) {
+            lastLoggedHandshake.set(addr, key);
+            const gen = obj.type === 0x1e ? ` (2027 DS, control UDP ${obj.udpPort}, flags ${obj.flags})` : '';
+            const reply = slot
+              ? ` → assigned ${slot} (reply 0x${obj.type === 0x1e ? '1f' : '19'})`
+              : ' (no reply: not joined)';
+            console.log(`DS at ${addr}: team ${obj.teamNumber}${gen}${reply}`);
           }
         } else if (process.env.FMS_LOG_DS_MESSAGES) {
           // Full per-message dumps flood journald into rate-limiting (~11k
@@ -545,7 +563,23 @@ export async function startFMSServer({
           console.log(`UDP message from ${rinfo.address}:${rinfo.port}:`, msg.toString('hex'));
         }
 
-        const message = parseIncomingUdpMessage(msg);
+        let message: UdpMessage;
+        try {
+          message = parseIncomingUdpMessage(msg);
+        } catch (err) {
+          // A DS generation we don't fully understand must not take the FMS
+          // down. Log the first bad packet per address with its payload.
+          const bad = badUdpByAddr.get(rinfo.address) ?? 0;
+          badUdpByAddr.set(rinfo.address, bad + 1);
+          if (bad === 0) {
+            console.log(
+              `Unparseable DS UDP status from ${rinfo.address}:${rinfo.port} (${(err as Error).message}): ${msg.toString('hex')}`,
+            );
+          } else if (bad % 1000 === 0) {
+            console.log(`Unparseable DS UDP status from ${rinfo.address}: ${bad} so far`);
+          }
+          return;
+        }
 
         emitter.emit('message', { address: rinfo.address, port: udp, data: message });
       });
