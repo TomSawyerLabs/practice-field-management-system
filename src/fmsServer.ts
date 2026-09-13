@@ -7,16 +7,36 @@ import { MatchSlot, StationName, Mode } from './types.js';
 
 const DefaultTcpPort = 1750;
 const DefaultUdpPort = 1160;
-// DS control port. 1121 = official FMS: DS enters FMS control immediately.
-// 1120 = offseason FMS: DS prompts the operator to approve FMS control first.
-// https://frcture.readthedocs.io/en/latest/driverstation/fms_to_ds.html
+// Legacy NI DS control port. 1121 = official FMS: DS enters FMS control
+// immediately. 1120 = offseason FMS: DS prompts the operator to approve FMS
+// control first. https://frcture.readthedocs.io/en/latest/driverstation/fms_to_ds.html
+// The 2027 FIRST Driver Station (SystemCore) instead advertises an ephemeral
+// UDP port in its TCP handshake (0x1e) — see Ds2027TeamNumberMessage.
 export const UdpSendPort = 1121;
+
+/** Which Driver Station generation is on the other end of a DS address.
+ *  - legacy: NI FRC Driver Station (roboRIO era). Handshake 0x18/0x19, control
+ *    packets to fixed UDP 1121, game data as UDP tag 0x07.
+ *  - ds2027: FIRST Driver Station 2027 (SystemCore). Handshake 0x1e/0x1f, the DS
+ *    names its own UDP control port, game data as UDP tag 0x20.
+ *  Reference: Team254/cheesy-arena field/driver_station_connection.go (PR #284). */
+export type DsProtocol = 'legacy' | 'ds2027';
 
 const DefaultAddress = '10.0.100.5';
 
 type TeamNumberMessage = {
   type: 0x18;
   teamNumber: number;
+};
+
+/** 2027 FIRST Driver Station handshake. The DS tells the FMS which UDP port to
+ *  send control packets to (it changes on every TCP reconnect) and sends its
+ *  team number as length-prefixed ASCII. flags are currently always 0. */
+type Ds2027TeamNumberMessage = {
+  type: 0x1e;
+  teamNumber: number;
+  udpPort: number;
+  flags: number;
 };
 
 type WPILibVersionMessage = {
@@ -111,6 +131,7 @@ type DSPingMessage = {
 
 export type DSMessage =
   | TeamNumberMessage
+  | Ds2027TeamNumberMessage
   | WPILibVersionMessage
   | RIOVersionMessage
   | DSVersionMessage
@@ -159,7 +180,7 @@ function byteToStatus(byte: number): Status {
 // to raise a parse error every ~3s).
 const loggedUnknownTypes = new Set<number>();
 
-function parseIncomingTcpMessage(data: Buffer): DSMessage | null {
+export function parseIncomingTcpMessage(data: Buffer): DSMessage | null {
   const r = new BufferReader(data);
 
   const type = r.readNumber(1);
@@ -197,6 +218,17 @@ function parseIncomingTcpMessage(data: Buffer): DSMessage | null {
       };
     case 0x18:
       return { type, teamNumber: r.readNumber(2) };
+    case 0x1e: {
+      // [udpPort:2] [flags:1] [teamLen:1] [team ASCII…]
+      const udpPort = r.readNumber(2);
+      const flags = r.readNumber(1);
+      const teamNumber = Number.parseInt(r.readString(r.readNumber(1)), 10);
+      if (!Number.isInteger(teamNumber) || teamNumber < 0 || teamNumber > 0xffff || udpPort === 0) {
+        console.log(`Malformed 2027 DS handshake: ${data.toString('hex')}`);
+        return null;
+      }
+      return { type, teamNumber, udpPort, flags };
+    }
     case 0x1b:
       return { type, response: r.readString() };
     case 0x1c:
@@ -439,19 +471,21 @@ export async function startFMSServer({
 
       const transformer = new ByteToObjectTransform();
       socket.pipe(transformer).on('data', (obj: DSMessage) => {
-        if (obj.type === 0x18) {
-          // Team number handshake. Only reply with the station assignment (0x19)
-          // when the resolver grants one (station joined a match): the reply puts
-          // the DS in FMS-controlled mode, locking out local enable. Freeplay DSes
-          // get no reply and keep local control — they retry TCP every ~6s, which
-          // the churn dampener below keeps out of the logs.
+        if (obj.type === 0x18 || obj.type === 0x1e) {
+          // Team number handshake. Only reply with the station assignment (0x19,
+          // or 0x1f for the 2027 DS) when the resolver grants one (station joined
+          // a match): the reply puts the DS in FMS-controlled mode, locking out
+          // local enable. Freeplay DSes get no reply and keep local control —
+          // they retry TCP every ~6s, which the churn dampener below keeps out
+          // of the logs.
           const slot = resolveTeamSlot?.(obj.teamNumber);
           if (slot) {
-            socket.write(Buffer.from([0x00, 0x03, 0x19, allianceStationFromName(slot), 0]));
+            socket.write(makeStationAssignment(obj, slot));
           }
           if (lastLoggedTeam.get(addr) !== obj.teamNumber) {
             lastLoggedTeam.set(addr, obj.teamNumber);
-            console.log(`DS at ${addr}: team ${obj.teamNumber}${slot ? ` → ${slot}` : ''}`);
+            const gen = obj.type === 0x1e ? ` (2027 DS, control UDP ${obj.udpPort})` : '';
+            console.log(`DS at ${addr}: team ${obj.teamNumber}${gen}${slot ? ` → ${slot}` : ''}`);
           }
         } else if (process.env.FMS_LOG_DS_MESSAGES) {
           // Full per-message dumps flood journald into rate-limiting (~11k
@@ -570,10 +604,26 @@ type DsPacket = {
   matchTime: Date;
   remainingTime: number;
   tags: OutboundTag[];
+  /** Which DS generation the packet is for — selects the game data tag id. */
+  protocol?: DsProtocol;
 };
 
 function allianceStationFromName(station: MatchSlot): number {
   return ['red1', 'red2', 'red3', 'blue1', 'blue2', 'blue3'].indexOf(station);
+}
+
+/**
+ * Station-assignment reply to a DS team-number handshake. Status 0 = accepted.
+ *  - legacy 0x18 → 0x19: [size:2=3] [0x19] [station] [status]
+ *  - 2027   0x1e → 0x1f: [size:2=6] [0x1f] [station] [status] [flags] [team:2]
+ * flags bit0 = "lite" (DS asks the operator before handing control to the
+ * FMS). Left clear: pFMS asserts control the same way the official FMS does.
+ */
+export function makeStationAssignment(handshake: TeamNumberMessage | Ds2027TeamNumberMessage, slot: MatchSlot): Buffer {
+  const station = allianceStationFromName(slot);
+  if (handshake.type === 0x18) return Buffer.from([0x00, 0x03, 0x19, station, 0]);
+  const team = handshake.teamNumber;
+  return Buffer.from([0x00, 0x06, 0x1f, station, 0, 0, (team >> 8) & 0xff, team & 0xff]);
 }
 
 function tournamentLevelToByte(level: TournamentLevel): number {
@@ -592,16 +642,20 @@ function dateToBuffer(date: Date): Buffer {
   return buff.buffer;
 }
 
-function makeTagsBuffers(tags: OutboundTag[]): Buffer[] {
+/** The 2027 DS reads at most this many game data characters (per Cheesy Arena). */
+const Ds2027GameDataMaxBytes = 8;
+
+function makeTagsBuffers(tags: OutboundTag[], protocol: DsProtocol): Buffer[] {
   const buffers: Buffer[] = [];
   for (const tag of tags) {
     if (tag.type === 'gameData') {
-      const data = Buffer.from(tag.data, 'utf-8');
-      // Format: [size] [tag_id=0x07] [data...]
-      // size includes the tag_id byte
+      let data = Buffer.from(tag.data, 'utf-8');
+      if (protocol === 'ds2027') data = data.subarray(0, Ds2027GameDataMaxBytes);
+      // Format: [size] [tag_id] [data...]
+      // size includes the tag_id byte. Tag id 0x07 for the legacy DS, 0x20 for the 2027 DS.
       const header = Buffer.alloc(2);
       header[0] = data.length + 1; // size = tag_id + data
-      header[1] = 0x07; // Game Data tag ID
+      header[1] = protocol === 'ds2027' ? 0x20 : 0x07;
       buffers.push(header, data);
     }
   }
@@ -627,5 +681,5 @@ export function makeDSPacket(data: DsPacket): Buffer {
 
   if (main.remaining) throw new Error(`Main buffer has ${main.remaining} bytes remaining`);
 
-  return Buffer.concat([main.buffer, ...makeTagsBuffers(data.tags)]);
+  return Buffer.concat([main.buffer, ...makeTagsBuffers(data.tags, data.protocol ?? 'legacy')]);
 }

@@ -4,7 +4,7 @@ import './platformGuard.js';
 import RadioManager from './radioManager.js';
 import { runSyslogServer } from './runSyslogServer.js';
 import { setupWebSocket } from './websocketServer.js';
-import { runFMS } from './fmsServer.js';
+import { runFMS, UdpSendPort } from './fmsServer.js';
 import { startConfigurationScheduler } from './scheduler.js';
 import { waitForRadio, detectFirmwareMode, checkInterfaceIps, checkRequiredTools } from './startupChecks.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
@@ -1234,11 +1234,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         }
 
         // Auto-discover DS addresses and set up drive sessions.
-        // Match on any message carrying teamNumber — TCP 0x18 and UDP both do.
+        // Match on any message carrying teamNumber — TCP 0x18/0x1e and UDP all do.
         if ('teamNumber' in msg.data) {
           const { teamNumber } = msg.data;
           // TCP remoteAddress may be IPv6-mapped (::ffff:10.x.x.x) — normalize to plain IPv4
           const address = msg.address.replace(/^::ffff:/, '');
+
+          // Learn where to send control packets: the 2027 DS (SystemCore) names
+          // its own UDP port in every handshake; the legacy NI DS uses 1121.
+          if ('type' in msg.data) {
+            if (msg.data.type === 0x1e) matchEngine.setDsEndpoint(address, 'ds2027', msg.data.udpPort);
+            else if (msg.data.type === 0x18) matchEngine.setDsEndpoint(address, 'legacy', UdpSendPort);
+          }
 
           // Track activity for staleness detection
           touchDsActivity(address);

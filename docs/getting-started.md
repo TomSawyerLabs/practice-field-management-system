@@ -18,7 +18,8 @@ detail, [configuration.md](configuration.md) for every setting,
 pFMS is a Linux host sitting between your site network and a Vivid-Hosting
 field AP. The AP broadcasts one Wi-Fi network per team; the host puts each
 team on its own VLAN, routes between those VLANs and your site network,
-and speaks the FRC FMS protocol to Driver Stations.
+and speaks the FRC FMS protocol to Driver Stations (both the NI Driver
+Station and the 2027 FIRST Driver Station used with SystemCore).
 
 ```
 Team laptops ── site network ── [ pFMS host ] ══ VLAN trunk ══ [ field AP ] ))) robots

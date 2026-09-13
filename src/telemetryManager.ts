@@ -47,9 +47,10 @@ export class TelemetryManager {
 
     if (!isDsMessage(data)) return;
 
-    // TeamNumberMessage (0x18) — learn team for this TCP address.
-    // Evict any stale entry for this team (DS reconnected from a new IP).
-    if (data.type === 0x18) {
+    // Team-number handshake (0x18 legacy DS, 0x1e 2027 DS) — learn team for
+    // this TCP address. Evict any stale entry for this team (DS reconnected
+    // from a new IP).
+    if (data.type === 0x18 || data.type === 0x1e) {
       for (const [addr, team] of this.tcpTeamByAddress) {
         if (team === data.teamNumber && addr !== address) {
           this.tcpTeamByAddress.delete(addr);

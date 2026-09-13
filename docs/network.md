@@ -74,6 +74,24 @@ subnets (`10.TE.AM.x`):
 3. **Teams** use hardcoded IPs (e.g. `10.12.34.2` for roboRIO) — no DNS
    needed
 
+## Driver Station generations
+
+pFMS speaks to both Driver Station generations on the same ports (TCP 1750
+in, UDP 1160 in), telling them apart by the team-number handshake each one
+sends when it connects:
+
+|                          | NI FRC Driver Station (roboRIO)   | 2027 FIRST Driver Station (SystemCore)                             |
+| ------------------------ | --------------------------------- | ------------------------------------------------------------------ |
+| Handshake DS → FMS       | tag `0x18`, team as 2 bytes       | tag `0x1e`: UDP reply port, flags, team as ASCII                   |
+| Assignment FMS → DS      | tag `0x19` (station, status)      | tag `0x1f` (station, status, flags, team)                          |
+| Control packets FMS → DS | UDP **1121** (1120 = "ask first") | the UDP port named in the handshake — a new one on every reconnect |
+| Game data                | UDP tag `0x07`                    | UDP tag `0x20`, max 8 characters                                   |
+
+The station-assignment reply is still only sent to stations joined to a
+match (it puts the DS in FMS-controlled mode). The 2027 DS only includes
+FMS support in its Windows build. Reference for the new format: Cheesy
+Arena `field/driver_station_connection.go`.
+
 ## DS ↔ RIO UDP and Dynamic DNAT
 
 The FRC Driver Station ↔ roboRIO UDP protocol uses **asymmetric ports**:

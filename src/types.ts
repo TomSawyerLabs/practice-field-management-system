@@ -698,6 +698,9 @@ export type DSConnectionInfo = {
   ip: string;
   /** Server timestamp (Date.now()) of the last packet received from this DS */
   lastSeen: number;
+  /** Driver Station generation: legacy NI DS (roboRIO) or the 2027 FIRST
+   *  Driver Station (SystemCore), learned from its FMS handshake. */
+  protocol?: 'legacy' | 'ds2027';
   /** If set, these DS IPs are trying to connect and are being blocked */
   blockedDsIps?: string[];
 };

@@ -1,6 +1,6 @@
 import dgram from 'dgram';
 import { randomUUID } from 'node:crypto';
-import { makeDSPacket, Control, UdpSendPort, type OutboundTag } from './fmsServer.js';
+import { makeDSPacket, Control, UdpSendPort, type OutboundTag, type DsProtocol } from './fmsServer.js';
 import {
   Alliance,
   MatchPhase,
@@ -83,6 +83,10 @@ export class MatchEngine {
   private sequenceNumbers = new Map<StationName, number>();
   private stationStates = new Map<StationName, StationControlState>();
   private dsConnections = new Map<StationName, { ip: string; lastSeen: number }>();
+  /** Per-DS-address control endpoint, learned from the TCP handshake. The 2027
+   *  DS names an ephemeral UDP port (new one on every reconnect); the legacy
+   *  DS is addressed at the fixed UdpSendPort. Absent = legacy. */
+  private dsEndpoints = new Map<string, { protocol: DsProtocol; udpPort: number }>();
   /** Last FMS UDP status heartbeat per station — only an FMS-attached DS sends these */
   private lastDsHeartbeat = new Map<StationName, number>();
   /** When the FMS last enabled each station — gates the DS-disable re-latch grace */
@@ -171,6 +175,20 @@ export class MatchEngine {
     if (ipChanged || !existing || now - existing.lastSeen >= 2_000) {
       this.broadcast();
     }
+  }
+
+  /** Record which DS generation (and, for the 2027 DS, which UDP control port)
+   *  lives at a DS address. Called on every team-number handshake. */
+  setDsEndpoint(ip: string, protocol: DsProtocol, udpPort: number) {
+    const existing = this.dsEndpoints.get(ip);
+    if (existing?.protocol === protocol && existing.udpPort === udpPort) return;
+    this.dsEndpoints.set(ip, { protocol, udpPort });
+    if (existing?.protocol !== protocol) this.broadcast();
+  }
+
+  /** UDP destination + protocol for control packets to a DS address. */
+  private endpointFor(ip: string): { protocol: DsProtocol; udpPort: number } {
+    return this.dsEndpoints.get(ip) ?? { protocol: 'legacy', udpPort: UdpSendPort };
   }
 
   clearDSAddress(station: StationName) {
@@ -1024,7 +1042,12 @@ export class MatchEngine {
       // Always expose config so clients can show/edit pending timing
       config: this.config ?? this.pendingConfig,
       stationStates,
-      connectedStations: Object.fromEntries(this.dsConnections),
+      connectedStations: Object.fromEntries(
+        [...this.dsConnections].map(([station, conn]) => [
+          station,
+          { ...conn, protocol: this.endpointFor(conn.ip).protocol },
+        ]),
+      ),
       endReason: this.phase === 'postMatch' ? this.endReason : undefined,
       portToSlot: this.portToSlot.size > 0 ? Object.fromEntries(this.portToSlot) : undefined,
       autoWinnerAlliance: this.autoWinnerAlliance,
@@ -1302,6 +1325,7 @@ export class MatchEngine {
     // Alliance-aware slot (falls back to the physical default for unjoined
     // stations, e.g. duplicate DS blocking outside of match context).
     const allianceStation = this.slotForStation(station);
+    const endpoint = this.endpointFor(ip);
     const packet = makeDSPacket({
       sequence: seq & 0xffff,
       control,
@@ -1312,9 +1336,10 @@ export class MatchEngine {
       matchTime: new Date(),
       remainingTime: 0,
       tags,
+      protocol: endpoint.protocol,
     });
 
-    this.udpSocket.send(packet, 0, packet.length, UdpSendPort, ip, err => {
+    this.udpSocket.send(packet, 0, packet.length, endpoint.udpPort, ip, err => {
       if (err) appError(`Failed to send control packet to ${ip}: ${err.message}`);
     });
   }
@@ -1368,6 +1393,7 @@ export class MatchEngine {
       tags.push({ type: 'gameData', data: this.autoWinnerAlliance === 'red' ? 'R' : 'B' });
     }
 
+    const endpoint = this.endpointFor(ip);
     const packet = makeDSPacket({
       sequence: seq & 0xffff,
       control,
@@ -1378,9 +1404,10 @@ export class MatchEngine {
       matchTime: new Date(),
       remainingTime: Math.max(0, Math.round(this.remainingTime)),
       tags,
+      protocol: endpoint.protocol,
     });
 
-    this.udpSocket.send(packet, 0, packet.length, UdpSendPort, ip, err => {
+    this.udpSocket.send(packet, 0, packet.length, endpoint.udpPort, ip, err => {
       if (err) appError(`Failed to send DS packet to ${station} (${ip}): ${err.message}`);
     });
   }
