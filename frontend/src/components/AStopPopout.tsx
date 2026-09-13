@@ -120,10 +120,6 @@ let estopBtn: HTMLButtonElement | null = null;
 let footerEl: HTMLElement | null = null;
 let closeBox: HTMLInputElement | null = null;
 
-// Two-tap E-Stop confirmation
-let estopArmed = false;
-let estopArmTimer: ReturnType<typeof setTimeout> | null = null;
-
 function popupIsOpen(): boolean {
   return !!popupWin && !popupWin.closed;
 }
@@ -142,11 +138,6 @@ function closePopup() {
   if (popupWin && !popupWin.closed) popupWin.close();
   popupWin = null;
   phaseEl = null;
-  estopArmed = false;
-  if (estopArmTimer) {
-    clearTimeout(estopArmTimer);
-    estopArmTimer = null;
-  }
 }
 
 const phaseLabels: Partial<Record<MatchPhase, string>> = {
@@ -169,7 +160,7 @@ const phaseColors: Partial<Record<MatchPhase, string>> = {
   endgame: '#ffb300',
 };
 
-function mkBtn(doc: Document, onClick: () => void): HTMLButtonElement {
+function mkBtn(doc: Document, onClick: (ev: MouseEvent) => void): HTMLButtonElement {
   const b = doc.createElement('button');
   b.style.cssText =
     'border:none;border-radius:10px;cursor:pointer;font-family:inherit;font-weight:800;letter-spacing:0.04em;';
@@ -237,28 +228,15 @@ function buildConsole(w: Window) {
   reenableBtn.style.flex = '1';
   reenableBtn.style.fontSize = '22px';
 
-  estopBtn = mkBtn(doc, () => {
-    // Blur on every tap: an armed-and-still-focused E-Stop would otherwise be
-    // confirmed by a stray Space/Enter meant for the Driver Station — the
-    // browser "clicks" the focused button on those keys (no key listeners here).
+  estopBtn = mkBtn(doc, ev => {
+    // A real tap fires the E-Stop immediately — an E-Stop must never wait, and
+    // an admin can clear an accidental one. Blur so the button never holds
+    // focus, and ignore keyboard-synthesized clicks (detail === 0): a
+    // Space/Enter meant for the Driver Station "clicks" a focused button, and
+    // that must not trip the E-Stop.
     estopBtn?.blur();
     if (!lastState || lastState.eStop) return;
-    if (!estopArmed) {
-      estopArmed = true;
-      if (estopArmTimer) clearTimeout(estopArmTimer);
-      estopArmTimer = setTimeout(() => {
-        estopArmed = false;
-        estopArmTimer = null;
-        refreshConsole();
-      }, 3000);
-      refreshConsole();
-      return;
-    }
-    estopArmed = false;
-    if (estopArmTimer) {
-      clearTimeout(estopArmTimer);
-      estopArmTimer = null;
-    }
+    if (ev.detail === 0) return;
     sendStationSelfEStop(lastState.station);
   });
   estopBtn.style.cssText +=
@@ -418,7 +396,7 @@ function updateConsole(state: ConsoleState) {
     }
   }
 
-  // E-Stop — always present, two-tap confirm, latched once tripped
+  // E-Stop — always present, fires on the first tap, latched once tripped
   if (eStop) {
     estopBtn.textContent = 'E-STOPPED — see field staff to clear';
     estopBtn.disabled = true;
@@ -428,15 +406,6 @@ function updateConsole(state: ConsoleState) {
     estopBtn.style.cursor = 'default';
     estopBtn.style.flex = '1';
     estopBtn.style.fontSize = '22px';
-  } else if (estopArmed) {
-    estopBtn.textContent = 'TAP AGAIN TO E-STOP';
-    estopBtn.disabled = false;
-    estopBtn.style.background = '#f44336';
-    estopBtn.style.border = 'none';
-    estopBtn.style.color = '#fff';
-    estopBtn.style.cursor = 'pointer';
-    estopBtn.style.flex = '0 0 46px';
-    estopBtn.style.fontSize = '16px';
   } else {
     estopBtn.textContent = 'E-STOP';
     estopBtn.disabled = false;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent } from 'react';
+import { useMemo, type MouseEvent } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -115,11 +115,11 @@ function computeBarProgress(
  * Those controls are only on the /match controller page.
  */
 /** Self-service controls while a match is running: disable / re-enable,
- *  A-Stop, and E-Stop. The E-Stop needs a second tap to fire (same arm step
- *  as the pop-out console) — a single stray click next to the A-Stop button
- *  must not latch a match-long e-stop. Re-enable is the recovery path after
- *  an accidental disable (console button or DS Enter key), and after field
- *  staff clear an e-stop. */
+ *  A-Stop, and E-Stop. E-Stop fires on the first tap — an emergency stop must
+ *  never wait, and field staff can clear an accidental one. The `blurring`
+ *  wrapper still drops focus so a later stray Space/Enter meant for the Driver
+ *  Station can't re-fire it. Re-enable is the recovery path after an accidental
+ *  disable (console button or DS Enter key), and after staff clear an e-stop. */
 function SelfServiceControls({
   station,
   phase,
@@ -129,13 +129,6 @@ function SelfServiceControls({
   phase: MatchPhase;
   myState: StationControlState | undefined;
 }) {
-  const [estopArmed, setEstopArmed] = useState(false);
-  useEffect(() => {
-    if (!estopArmed) return;
-    const t = setTimeout(() => setEstopArmed(false), 3000);
-    return () => clearTimeout(t);
-  }, [estopArmed]);
-
   const robotsRunning = phase === 'auto' || phase === 'teleop' || phase === 'endgame';
   const staffDisabled = myState?.disabledBy === 'admin';
 
@@ -197,20 +190,8 @@ function SelfServiceControls({
       {myState?.eStop ? (
         <Chip label="E-Stopped — field staff can clear it" size="small" color="error" />
       ) : (
-        <Button
-          variant={estopArmed ? 'contained' : 'outlined'}
-          color="error"
-          size="small"
-          onClick={blurring(() => {
-            if (!estopArmed) {
-              setEstopArmed(true);
-              return;
-            }
-            setEstopArmed(false);
-            sendStationSelfEStop(station);
-          })}
-        >
-          {estopArmed ? 'Tap again to E-Stop' : 'E-Stop'}
+        <Button variant="contained" color="error" size="small" onClick={blurring(() => sendStationSelfEStop(station))}>
+          E-Stop
         </Button>
       )}
       <Button variant="outlined" onClick={() => sendStationLeave(station)}>
