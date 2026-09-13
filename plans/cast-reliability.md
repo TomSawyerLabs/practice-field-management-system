@@ -135,6 +135,42 @@ Per-browser, persisted. Test: recast with the receiver in lite mode and
 watch `/tmp/tv-cast-monitor.log` on steamboat — if 8009 stays open for an
 afternoon, the TV was OOM-killing its Cast service under the full page.
 
+## ROOT CAUSE (2026-09-13, via adb to the TV)
+
+Connected adb to the Warehouse TV (TCL G10 4K, 10.255.11.11:5555) and caught it:
+
+- The Cast receiver process was killed:
+  `ActivityManager: Killing 22481:com.google.android.apps.mediashell (adj 915):
+Sync transaction while in frozen state`. adj 915 = the receiver had been
+  pushed to **cached/background**; Android's app freezer froze it, then a sync
+  binder call to the frozen process made ActivityManager kill it. When
+  mediashell dies, the Cast control socket (8009) drops and the scoreboard
+  disconnects until it restarts — exactly the observed "drops and goes
+  undiscoverable, then comes back."
+- Why it goes to background: the TV's **screensaver/sleep is on** —
+  `screensaver_enabled=1`, `screen_off_timeout=600000` (10 min),
+  `sleep_timeout≈1139000` (19 min). After the timeout the screensaver/ambient
+  screen takes foreground, caching the receiver → frozen → killed. Matches the
+  "after a while / roughly hourly" pattern far better than pure OOM.
+- Memory makes it worse but isn't the trigger: 1.8 GB total RAM, ~61 MB free,
+  ~390 MB into swap — a backgrounded receiver is reclaimed fast. Lite mode
+  (commit b017fa3) reduces the footprint but does NOT stop the screensaver
+  from backgrounding it.
+
+### Fix (on the TV — needs Cameron's OK to change the device)
+
+Keep the receiver foreground so it is never cached/frozen:
+
+1. TV Settings → System/Device Preferences → **Screen saver**: set "When to
+   start" / put-to-sleep to **Off / Never**. Also disable any Energy Saver
+   "switch off screen after".
+2. Equivalent over adb (I can run these; they change the TV's settings):
+   `adb shell settings put secure screensaver_enabled 0`
+   `adb shell settings put system screen_off_timeout 2147483647`
+   `adb shell settings put secure sleep_timeout 2147483647`
+3. Longer term: a dedicated always-on cast device or the wired HDMI kiosk
+   avoids the low-RAM TV's freezer entirely.
+
 ## Open questions for Cameron
 
 1. Is the TV showing the scoreboard right now (10:36) even though Chrome can't
