@@ -164,10 +164,11 @@ Keep the receiver foreground so it is never cached/frozen:
 1. TV Settings → System/Device Preferences → **Screen saver**: set "When to
    start" / put-to-sleep to **Off / Never**. Also disable any Energy Saver
    "switch off screen after".
-2. Equivalent over adb (I can run these; they change the TV's settings):
-   `adb shell settings put secure screensaver_enabled 0`
-   `adb shell settings put system screen_off_timeout 2147483647`
-   `adb shell settings put secure sleep_timeout 2147483647`
+2. **APPLIED 2026-09-13 over adb** and read back on the TV:
+   `screensaver_enabled=0`, `screen_off_timeout=2147483647`,
+   `sleep_timeout=2147483647`. Verify it held via steamboat's
+   `/tmp/tv-cast-monitor.log` — 8009 should now stay open (no more
+   `Killing ... mediashell ... frozen state`).
 3. Longer term: a dedicated always-on cast device or the wired HDMI kiosk
    avoids the low-RAM TV's freezer entirely.
 
