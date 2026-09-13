@@ -169,7 +169,7 @@ land in the right period automatically.
 
 - 2026-09-13: plan written. pFMS side implemented, tested (33 `bun test`
   cases) and committed as 6839df2. Counter side implemented, smoke-tested
-  and committed. Neither side is deployed yet.
+  and committed. Both deployed 2026-09-13 ~15:12 PDT: pFMS on steamboat (origin/master 7840156, cherry-picked onto the remote tip from a temp worktree because a peer session had this tree dirty), counter on sentinel (897046d on branch fix/package-for-latest-uv, PR #1 still unmerged). Verified: new API live via pfms.tsl, counter holds a WebSocket to pFMS. Steamboat gotcha: its bun.lock had a `configVersion` line added by a newer bun that blocked `git pull`; discarded (metadata only).
 
 ## Open questions for the user
 
