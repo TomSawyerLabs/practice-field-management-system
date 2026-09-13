@@ -123,6 +123,22 @@ export function MatchSummaryPage({ token }: { token: string }) {
         </CardContent>
       </Card>
 
+      {(summary.periodBreakdown || (summary.scoreTimeline && summary.scoreTimeline.length > 1)) && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ mb: 1 }}>
+              Scoring breakdown
+            </Typography>
+            {summary.periodBreakdown && <PeriodTable breakdown={summary.periodBreakdown} />}
+            {summary.scoreTimeline && summary.scoreTimeline.length > 1 && (
+              <Box sx={{ mt: 2 }}>
+                <ScoreChart data={summary.scoreTimeline} />
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent>
           <Typography variant="h6" sx={{ mb: 1 }}>
@@ -141,7 +157,7 @@ export function MatchSummaryPage({ token }: { token: string }) {
                       {rec.durationSeconds ? ` · ${formatDuration(Math.round(rec.durationSeconds))}` : ''}
                     </Typography>
                     {rec.status === 'partial' && (
-                      <Chip size="small" color="warning" variant="outlined" label="source dropped mid-match" />
+                      <Chip size="small" color="warning" variant="outlined" label="video has a gap" />
                     )}
                     <Button variant="contained" size="small" href={rec.downloadUrl} download>
                       Download
@@ -172,6 +188,75 @@ export function MatchSummaryPage({ token }: { token: string }) {
         </CardContent>
       </Card>
     </Container>
+  );
+}
+
+/** Final points per period (auto/teleop/endgame or shift periods). */
+function PeriodTable({ breakdown }: { breakdown: Record<string, { red: number; blue: number }> }) {
+  const rows = Object.entries(breakdown);
+  if (rows.length === 0) return null;
+  const pretty = (k: string) =>
+    k
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/[_-]/g, ' ')
+      .replace(/^\w/, c => c.toUpperCase());
+  return (
+    <Box
+      component="table"
+      sx={{
+        width: '100%',
+        borderCollapse: 'collapse',
+        '& td, & th': { py: 0.5, px: 1, textAlign: 'right', fontSize: '0.85rem' },
+        '& th:first-of-type, & td:first-of-type': { textAlign: 'left', color: 'text.secondary' },
+      }}
+    >
+      <thead>
+        <tr>
+          <th />
+          <th style={{ color: '#ef5350' }}>Red</th>
+          <th style={{ color: '#42a5f5' }}>Blue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([k, v]) => (
+          <tr key={k}>
+            <td>{pretty(k)}</td>
+            <td>{v.red}</td>
+            <td>{v.blue}</td>
+          </tr>
+        ))}
+      </tbody>
+    </Box>
+  );
+}
+
+/** Running score for each alliance across the match, as a small inline SVG
+ *  line chart (no chart dependency). x = seconds into the match. */
+function ScoreChart({ data }: { data: { t: number; red: number; blue: number }[] }) {
+  if (data.length < 2) return null;
+  const W = 320;
+  const H = 140;
+  const pad = 22;
+  const maxT = Math.max(...data.map(d => d.t), 1);
+  const maxS = Math.max(...data.map(d => Math.max(d.red, d.blue)), 1);
+  const x = (t: number) => pad + (t / maxT) * (W - pad * 2);
+  const y = (v: number) => H - pad - (v / maxS) * (H - pad * 2);
+  const poly = (key: 'red' | 'blue') => data.map(d => `${x(d.t).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  return (
+    <Box sx={{ width: '100%' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Score over the match">
+        <line x1={pad} y1={H - pad} x2={W - pad} y2={H - pad} stroke="#444" strokeWidth="1" />
+        <line x1={pad} y1={pad} x2={pad} y2={H - pad} stroke="#444" strokeWidth="1" />
+        <polyline fill="none" stroke="#ef5350" strokeWidth="2" points={poly('red')} />
+        <polyline fill="none" stroke="#42a5f5" strokeWidth="2" points={poly('blue')} />
+        <text x={pad - 4} y={pad + 3} fill="#888" fontSize="9" textAnchor="end">
+          {maxS}
+        </text>
+        <text x={W - pad} y={H - 6} fill="#888" fontSize="9" textAnchor="end">
+          {maxT}s
+        </text>
+      </svg>
+    </Box>
   );
 }
 

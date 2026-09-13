@@ -645,12 +645,22 @@ export class MatchRecorder {
     }
     const bytes = statSync(out).size;
     const durationSeconds = await this.probeDuration(out);
+    // A reconnect only means the video has a GAP if the captured footage is
+    // meaningfully shorter than the match. A sub-second blip that was joined
+    // back seamlessly (e.g. the pre-roll directory rename) leaves a complete
+    // recording, so don't cry "source dropped" over it — compare the captured
+    // duration to how long the session actually ran.
+    const sessionSeconds = (endedAt - session.startedAt) / 1000;
+    const covered = durationSeconds !== undefined && durationSeconds >= sessionSeconds - 3;
+    const hasGap = job.reconnects > 0 && !covered;
     return {
       ...base,
       bytes,
       durationSeconds,
-      status: job.reconnects > 0 ? 'partial' : 'ok',
-      error: job.reconnects > 0 ? `Source dropped ${job.reconnects} time(s); parts joined` : undefined,
+      status: hasGap ? 'partial' : 'ok',
+      error: hasGap
+        ? `Source dropped ${job.reconnects} time(s); ~${Math.max(0, Math.round(sessionSeconds - (durationSeconds ?? 0)))}s missing`
+        : undefined,
     };
   }
 

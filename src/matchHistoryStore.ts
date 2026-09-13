@@ -21,6 +21,9 @@ export class MatchHistoryStore {
   private filePath: string;
   private listeners: ((state: MatchHistoryState) => void)[] = [];
   private matchStartTime = 0;
+  /** Score samples collected during the current match (reset at each start). */
+  private scoreTimeline: { t: number; red: number; blue: number }[] = [];
+  private lastSampleAt = 0;
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? DEFAULT_FILE;
@@ -30,6 +33,22 @@ export class MatchHistoryStore {
   /** Attach to match engine and scoring engine to capture match results. */
   attach(matchEngine: MatchEngine, scoringEngine: ScoringEngine): void {
     let lastPhase = 'idle';
+    // Phases in which the score is worth charting over time.
+    const running = new Set(['auto', 'autoPause', 'paused', 'teleop', 'endgame']);
+
+    // Sample the running total (at most ~1/s) whenever scores change during a
+    // match, so the summary can chart how the match unfolded.
+    scoringEngine.addStateListener(sc => {
+      if (!running.has(lastPhase) || !this.matchStartTime) return;
+      const now = Date.now();
+      if (now - this.lastSampleAt < 1000) return;
+      this.lastSampleAt = now;
+      this.scoreTimeline.push({
+        t: Math.max(0, Math.round((now - this.matchStartTime) / 1000)),
+        red: sc.red.total,
+        blue: sc.blue.total,
+      });
+    });
 
     matchEngine.addStateListener(state => {
       const phase = state.phase;
@@ -40,6 +59,8 @@ export class MatchHistoryStore {
       // Record match start time
       if (phase === 'auto' || (phase === 'teleop' && prevPhase === 'countdown')) {
         this.matchStartTime = Date.now();
+        this.scoreTimeline = [];
+        this.lastSampleAt = 0;
       }
 
       // Capture match result on transition to postMatch
@@ -78,6 +99,12 @@ export class MatchHistoryStore {
           teams,
           redScore,
           blueScore,
+          periodBreakdown: scoreState.periodBreakdown,
+          // Close the series with the final totals so the chart ends at the score.
+          scoreTimeline: [
+            ...this.scoreTimeline,
+            { t: Math.max(0, Math.round((now - (this.matchStartTime || now)) / 1000)), red: redScore, blue: blueScore },
+          ],
         };
 
         this.matches.push(entry);

@@ -2614,6 +2614,18 @@ export interface MatchHistoryEntry {
   /** Capability token for the public summary page (`/scores?match=<token>`)
    *  and `/api/public/match/<token>/…`. Backfilled for older entries. */
   shareToken?: string;
+  /** Final per-period points per alliance (auto/teleop/endgame or shift
+   *  periods), snapshotted from the scoring engine at match end. */
+  periodBreakdown?: Record<string, { red: number; blue: number }>;
+  /** Running total score sampled through the match, for the summary chart.
+   *  `t` is seconds since the match started. */
+  scoreTimeline?: ScoreSample[];
+}
+
+export interface ScoreSample {
+  t: number;
+  red: number;
+  blue: number;
 }
 
 /** What `/api/public/match/<token>` returns — everything the post-match
@@ -2630,6 +2642,8 @@ export interface PublicMatchSummary {
   blueScore: number;
   review?: Partial<Record<Alliance, MatchReviewResult>>;
   reviewUrl?: string;
+  periodBreakdown?: Record<string, { red: number; blue: number }>;
+  scoreTimeline?: ScoreSample[];
   recordings: {
     name: string;
     file: string;

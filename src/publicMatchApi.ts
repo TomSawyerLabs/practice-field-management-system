@@ -110,6 +110,8 @@ function summarize(entry: MatchHistoryEntry, token: string): PublicMatchSummary 
     blueScore: entry.blueScore,
     review: entry.review,
     reviewUrl: entry.reviewUrl,
+    periodBreakdown: entry.periodBreakdown,
+    scoreTimeline: entry.scoreTimeline,
     recordings: (entry.recordings ?? [])
       .filter(r => r.status !== 'failed')
       .map(r => ({
