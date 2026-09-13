@@ -199,6 +199,26 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
     // Enable IP forwarding once at startup (required for inter-VLAN routing)
     await net.setSysctl({ key: 'net.ipv4.ip_forward', value: '1' });
+
+    // Size the kernel neighbor (ARP/NDP) table for what this host does: the
+    // subnet scanner sweeps every configured team /24 every 10 s, and each
+    // sweep parks ~250 INCOMPLETE/FAILED entries per slot for ~60 s. Ubuntu's
+    // default gc_thresh3 of 1024 overflowed with the 4th team at the
+    // 2026-09-13 scrimmage ("neighbour: arp_cache: neighbor table overflow!"),
+    // and a full table black-holes packets to any host without an entry —
+    // three Driver Stations lost their robots in the same second mid-match.
+    // 6 slots × 254 + guest network + headroom comfortably fits in 8192.
+    for (const family of ['ipv4', 'ipv6']) {
+      for (const [key, value] of [
+        ['gc_thresh1', '2048'],
+        ['gc_thresh2', '4096'],
+        ['gc_thresh3', '8192'],
+      ] as const) {
+        await net.setSysctl({ key: `net.${family}.neigh.default.${key}`, value }).catch(err => {
+          console.warn(`Could not set net.${family}.neigh.default.${key}: ${(err as Error).message}`);
+        });
+      }
+    }
   }
 
   // Initialize port bridge manager (physical Ethernet port → station bridge mapping)
@@ -1265,6 +1285,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
               udp.status.EStop,
               udp.status.AStop,
               udp.rawStatus,
+              udp.status.robotComms,
             );
           }
         }

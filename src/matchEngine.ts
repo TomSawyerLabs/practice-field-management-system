@@ -102,6 +102,8 @@ export class MatchEngine {
    *  so for it a "disabled" report only counts as the team pressing Disable
    *  if the DS reported enabled first — a real enabled→disabled transition. */
   private dsEnabledSeen = new Map<StationName, boolean>();
+  /** Stations whose comms-loss "disabled" report has been logged this match (log once, not at 2 Hz). */
+  private commsLossLogged = new Set<StationName>();
   /** Which FMS enable (timestamp) the first-status diagnostic was logged for */
   private dsStatusLoggedFor = new Map<StationName, number>();
   /** Socket control packets are sent from. Replaced by the FMS server's
@@ -1005,9 +1007,17 @@ export class MatchEngine {
   private markFmsEnabled(station: StationName) {
     this.lastFmsEnable.set(station, Date.now());
     this.dsEnabledSeen.set(station, false);
+    this.commsLossLogged.delete(station);
   }
 
-  dsReportedStatus(station: StationName, dsEnabled: boolean, dsEStop: boolean, dsAStop: boolean, rawStatus?: number) {
+  dsReportedStatus(
+    station: StationName,
+    dsEnabled: boolean,
+    dsEStop: boolean,
+    dsAStop: boolean,
+    rawStatus?: number,
+    robotComms?: boolean,
+  ) {
     const state = this.stationStates.get(station);
     if (!state) return;
     const ip = this.dsConnections.get(station)?.ip;
@@ -1052,10 +1062,26 @@ export class MatchEngine {
       // transition (see dsEnabledSeen); E-stop/A-stop above are unaffected.
       const transition = protocol === 'legacy' || this.dsEnabledSeen.get(station) === true;
       if (transition && (enabledAt === undefined || Date.now() - enabledAt > FMS_ENABLE_GRACE_MS)) {
-        state.enabled = false;
-        state.disabledBy = 'ds';
-        console.log(`DS disable reported: ${station}`);
-        changed = true;
+        if (robotComms === false) {
+          // "Disabled" with no robot link is the DS reacting to a comms
+          // drop, not the driver pressing Disable. Keep the station enabled
+          // so the DS re-enables on its own when the link returns — the
+          // official FMS does the same. (2026-09-13: three legacy DSes were
+          // latched off in the same second by a network blip on the host.)
+          if (!this.commsLossLogged.has(station)) {
+            this.commsLossLogged.add(station);
+            const raw = rawStatus === undefined ? '?' : `0x${rawStatus.toString(16).padStart(2, '0')}`;
+            console.log(
+              `DS lost robot comms: ${station} (raw=${raw}) — keeping the field enable, not a driver disable`,
+            );
+          }
+        } else {
+          state.enabled = false;
+          state.disabledBy = 'ds';
+          const raw = rawStatus === undefined ? '?' : `0x${rawStatus.toString(16).padStart(2, '0')}`;
+          console.log(`DS disable reported: ${station} (raw=${raw})`);
+          changed = true;
+        }
       }
     }
     if (changed) {

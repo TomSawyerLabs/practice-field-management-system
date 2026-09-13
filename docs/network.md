@@ -92,6 +92,17 @@ match (it puts the DS in FMS-controlled mode). The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
 Arena `field/driver_station_connection.go`.
 
+## Host tuning pFMS applies
+
+At startup pFMS enables IP forwarding and raises the kernel neighbor (ARP)
+table limits (`net.ipv4.neigh.default.gc_thresh1/2/3` = 2048/4096/8192, and
+the IPv6 equivalents). The device-discovery scanner sweeps every configured
+team /24 every 10 s, which parks ~250 unresolved entries per slot for a
+minute; Ubuntu's default ceiling of 1024 overflowed with four teams and a
+full table silently drops packets to any host without an entry (2026-09-13:
+three Driver Stations lost their robots mid-match). If `dmesg` shows
+`neighbour: arp_cache: neighbor table overflow!`, this is what it means.
+
 ## DS ↔ RIO UDP and Dynamic DNAT
 
 The FRC Driver Station ↔ roboRIO UDP protocol uses **asymmetric ports**:
