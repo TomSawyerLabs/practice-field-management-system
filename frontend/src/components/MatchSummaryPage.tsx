@@ -6,6 +6,8 @@ import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import BoltIcon from '@mui/icons-material/Bolt';
 import type { Alliance, PublicMatchSummary } from '../../../src/types';
 import { formatBytes } from './MatchVideoCard';
 
@@ -17,6 +19,17 @@ import { formatBytes } from './MatchVideoCard';
 export function MatchSummaryPage({ token }: { token: string }) {
   const [summary, setSummary] = useState<PublicMatchSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // This page shares the scoreboard bundle, whose scores.html sets
+  // `body { overflow: hidden }` for the full-screen TV display. The summary is
+  // a normal scrolling page (especially on a phone), so allow scrolling here.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'auto';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,14 +104,22 @@ export function MatchSummaryPage({ token }: { token: string }) {
             </Typography>
             <AllianceColumn summary={summary} alliance="blue" won={blueWon} />
           </Box>
-          {summary.autoWinner && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 1 }}>
             <Typography
-              variant="body2"
-              sx={{ mt: 1.5, textAlign: 'center', color: summary.autoWinner === 'red' ? 'error.main' : 'info.main' }}
+              variant="caption"
+              sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}
             >
-              Auto winner: {summary.autoWinner === 'red' ? 'Red' : 'Blue'}
+              <EmojiEventsIcon sx={{ fontSize: 16 }} /> winner
             </Typography>
-          )}
+            {summary.autoWinner && (
+              <Typography
+                variant="caption"
+                sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}
+              >
+                <BoltIcon sx={{ fontSize: 16 }} /> auto winner
+              </Typography>
+            )}
+          </Box>
         </CardContent>
       </Card>
 
@@ -159,14 +180,20 @@ function AllianceColumn({ summary, alliance, won }: { summary: PublicMatchSummar
   const teams = summary.teams.filter(t => t.alliance === alliance);
   const live = alliance === 'red' ? summary.redScore : summary.blueScore;
   const review = summary.review?.[alliance];
+  const isAutoWinner = summary.autoWinner === alliance;
   return (
     <Box sx={{ flex: 1, textAlign: 'center' }}>
       <Typography variant="overline" sx={{ color, fontWeight: 700 }}>
         {alliance === 'red' ? 'Red' : 'Blue'} alliance
       </Typography>
+      {/* Fixed-height badge row so the winner/auto icons never shift the score
+          up or down — the trophy no longer rides on the big number. */}
+      <Box sx={{ height: 22, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+        {won && <EmojiEventsIcon sx={{ fontSize: 20, color }} />}
+        {isAutoWinner && <BoltIcon sx={{ fontSize: 20, color }} />}
+      </Box>
       <Typography variant="h2" sx={{ color, fontWeight: 800, lineHeight: 1 }}>
         {review ? review.score : live}
-        {won && ' 🏆'}
       </Typography>
       {review && review.score !== live && (
         <Typography variant="caption" color="text.secondary">

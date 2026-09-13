@@ -639,7 +639,8 @@ export function ScoreboardPage() {
                     {titleText}
                   </Typography>
                   {isMatchMode && matchState && matchProgress !== null && (
-                    <MatchTimer
+                    <CenterMatchDisplay
+                      matchState={matchState}
                       remainingTime={displayRemaining}
                       color={activeColor}
                       pulse={shouldPulse}
@@ -727,7 +728,8 @@ export function ScoreboardPage() {
                     transition: 'opacity 0.8s ease',
                   }}
                 >
-                  <MatchTimer
+                  <CenterMatchDisplay
+                    matchState={matchState}
                     remainingTime={displayRemaining}
                     color={activeColor}
                     pulse={shouldPulse}
@@ -855,7 +857,8 @@ export function ScoreboardPage() {
             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, minWidth: 120 }}>
               {/* Match countdown timer */}
               {isMatchMode && matchState && matchProgress !== null && (
-                <MatchTimer
+                <CenterMatchDisplay
+                  matchState={matchState}
                   remainingTime={displayRemaining}
                   color={activeColor}
                   pulse={shouldPulse}
@@ -905,39 +908,55 @@ export function ScoreboardPage() {
           <BatteryPanel stationKey={stationKey} leftAlliance={left} matchAlliancesKey={matchAlliancesKey} />
         </>
       )}
-      {matchState?.phase === 'postMatch' && matchState.shareToken && (
-        <PostMatchShareCard token={matchState.shareToken} />
-      )}
     </Box>
   );
 }
 
-/** After the match: a QR code to this match's summary + video, so a drive
- *  team can scan it off the TV with any phone (works from the internet too). */
-function PostMatchShareCard({ token }: { token: string }) {
+/** The center of the scoreboard: the running match timer, or — once the match
+ *  is over — the QR code to this match's summary and video, in the same spot
+ *  (no point showing a timer sitting at 0). */
+function CenterMatchDisplay({
+  matchState,
+  remainingTime,
+  color,
+  pulse,
+  fontSize,
+}: {
+  matchState: ReturnType<typeof useMatchState>;
+  remainingTime: number;
+  color: string;
+  pulse: boolean;
+  fontSize: string;
+}) {
+  if (matchState?.phase === 'postMatch' && matchState.shareToken) {
+    return <PostMatchQR token={matchState.shareToken} />;
+  }
+  return <MatchTimer remainingTime={remainingTime} color={color} pulse={pulse} fontSize={fontSize} />;
+}
+
+/** After the match: a QR code to this match's summary + video, so a drive team
+ *  can scan it off the TV with any phone (works from the internet too). Shown
+ *  centered where the timer was. */
+function PostMatchQR({ token }: { token: string }) {
   const publicUrl = usePublicUrl();
   const url = matchSummaryUrl(publicUrl, token);
   return (
     <Box
       sx={{
-        position: 'fixed',
-        right: 16,
-        bottom: 16,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
-        gap: 1.5,
-        p: 1.5,
-        borderRadius: 2,
+        gap: 0.75,
         bgcolor: '#fff',
         color: '#000',
+        p: 1.5,
+        borderRadius: 2,
         boxShadow: 6,
-        zIndex: 10,
       }}
     >
-      <QRCodeSVG value={url} size={132} marginSize={0} />
-      <Box sx={{ maxWidth: 180, lineHeight: 1.25 }}>
-        <Box sx={{ fontWeight: 800, fontSize: '1.05rem', mb: 0.5 }}>Match summary &amp; video</Box>
-        <Box sx={{ fontSize: '0.85rem', color: '#333' }}>Scan to see the result and download this match's video.</Box>
+      <QRCodeSVG value={url} size={150} marginSize={0} />
+      <Box sx={{ fontWeight: 700, fontSize: '0.85rem', textAlign: 'center', maxWidth: 200 }}>
+        Scan for match summary &amp; video
       </Box>
     </Box>
   );
