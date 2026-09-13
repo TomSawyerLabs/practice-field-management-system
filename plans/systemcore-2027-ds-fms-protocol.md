@@ -92,10 +92,33 @@ New 2027 DS:
        the legacy vs ds2027 game data tags.
 6. [x] Docs: `docs/network.md` "Driver Station generations" table,
        `docs/getting-started.md` mention.
-7. [ ] Commit. Deploy to steamboat — needs user OK (team on the field).
-8. [ ] Verify live: after deploy + 5940 joins a match, tcpdump should show an
-       8-byte `00 06 1f …` reply on 1750 and control packets to the advertised
-       UDP port; DS status heartbeats should start arriving on 1160.
+7. [x] Committed (845c94a protocol, 6a5d8d7 instrumentation, d967126
+       local-bind fix) and deployed to steamboat 2026-09-12 19:20 and 19:24
+       PDT via `./update.sh`; service active.
+8. [~] Live verification — see "Live results" below.
+9. [ ] Scrimmage 2026-09-13: watch the journal for the three expected lines
+       (see "Live results") and for any unparseable-status or unknown-tag lines.
+
+## Live results (2026-09-12 evening, team 5940)
+
+- 19:22 simulated 2027 handshake (team 9999, unassigned) against production:
+  parsed and logged correctly, no reply (not joined), service stayed up.
+- Local end-to-end test on the dev machine (real `startFMSServer` +
+  `MatchEngine`): joined team gets the 8-byte 0x1f reply, unjoined gets
+  none, legacy still gets the 5-byte 0x19, control packets go to the
+  DS-advertised UDP port with game data tag 0x20.
+- 19:24 5940 joined and started a match on the deployed build. DS showed
+  "FMS connected" (TCP handshake + 0x1f reply worked) but the robot never
+  enabled: no UDP status ever arrived on 1160, and the DS re-handshaked
+  with a new control port every 3 s. pFMS was sending control packets from
+  an ephemeral source port; Cheesy Arena sends them from its 1160 listener.
+  Fix: match engine now sends from the FMS 10.0.100.5:1160 socket. Also
+  0x1d is the 2027 DS TCP keepalive (Cheesy ignores it) — now parsed.
+- Expected journal sequence when it works: `DS at <ip>: team N (2027 DS,
+control UDP P, flags 0) → assigned <slot> (reply 0x1f)`, then `Match
+control for slotX now sent to <ip>:P/ds2027 as <slot>` (once, not every
+  3 s), then `DS attached to FMS: slotX`. Capture if needed:
+  `sudo tcpdump -i eno1 -nn -X "host <ip> and udp"`.
 
 ## Not verified / residual risk
 
@@ -107,9 +130,16 @@ New 2027 DS:
 
 ## Open questions for the user
 
-1. OK to deploy to steamboat now, while 5940 is on the field? (Resolved the
-   earlier questions: 5940DS is Windows and is already attempting the FMS
-   connection, so no DS-side change is needed.)
+None — deploy authorized and done. Remaining proof is a real 2027 DS joining
+a match (step 9).
+
+## Unrelated issue noticed during deploy (pre-existing)
+
+`Error setting route preference: Command failed: ip rule add from
+2600:1700:…:5a5b to 10.59.40.0/24 table 10 — Invalid source address`,
+logged on every backend start: a browser on an IPv6 address has slot1 route
+preference selected and the ip rule is IPv4-only. Harmless error log, but
+route preference (and mDNS reflection) doesn't work for IPv6 clients.
 
 ## Things not to do
 
