@@ -58,22 +58,35 @@ On a VLAN interface, if both the radio and roboRIO are unreachable and no factor
 
 ## Diagnostic Checks
 
-When a team number is detected via DHCP, the tester runs three groups of checks in parallel every 1.5 seconds:
+When a team number is detected via DHCP, the tester runs three groups of checks every 1.5 seconds. The robot controller is identified first (roboRIO or SystemCore), because the radio's SystemCore mode is judged against it:
 
 ### Radio Checks
 
 Fetches `GET http://10.TE.AM.1/status` and verifies:
 
-| Check                | What it verifies                         | Pass condition                                                |
-| -------------------- | ---------------------------------------- | ------------------------------------------------------------- |
-| **Radio Firmware**   | Firmware version string                  | Version starts with `2.0.1` (2026 season)                     |
-| **Radio SystemCore** | SystemCore mode                          | `systemcoreEnabled` is `false` (skipped if firmware outdated) |
-| **Radio Team**       | Team number reported by radio            | Matches DHCP-derived team number                              |
-| **Radio mDNS**       | `radio.local` resolves via multicast DNS | Resolves to `10.TE.AM.1`                                      |
+| Check                  | What it verifies                              | Pass condition                                                                                                                                                                                 |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Radio Firmware**     | Firmware version string                       | Version starts with `2.0.1` (2026 season)                                                                                                                                                      |
+| **Radio SystemCore**   | SystemCore mode                               | `systemcoreEnabled` matches the controller found: `true` for a SystemCore, `false` for a roboRIO; reported without judgement when no controller was found (skipped if firmware outdated)       |
+| **Radio QoS BW Limit** | "Enable QoS BW Limit" checkbox (`qosEnabled`) | `false`. When enabled the radio throttles the robot to the competition cap, which adds latency and loss once camera streams exceed it; the practice field sets no limit, so this is a **warn** |
+| **Radio Team**         | Team number reported by radio                 | Matches DHCP-derived team number                                                                                                                                                               |
+| **Radio mDNS**         | `radio.local` resolves via multicast DNS      | Resolves to `10.TE.AM.1`                                                                                                                                                                       |
 
-### roboRIO Checks
+### Robot Controller Checks
 
-Probes the NI SysAPI endpoint at `http://10.TE.AM.2/nisysapi/server` (POST request). Parses the XML response to extract system properties:
+Probes the NI SysAPI endpoint at `http://10.TE.AM.2/nisysapi/server` (POST request) for a roboRIO. If nothing answers, the same addresses get a **unicast** mDNS query for `_SystemCore._tcp` — a SystemCore answers with an SRV record (`robot.local`, port 1740) and its A record. Unicast matters: a robot behind its radio does not reliably receive multicast from the wired side.
+
+For a **SystemCore**:
+
+| Check                | What it verifies                        | Pass condition                                                      |
+| -------------------- | --------------------------------------- | ------------------------------------------------------------------- |
+| **Robot Controller** | A SystemCore answered the service probe | Always pass when found (reports hostname and port)                  |
+| **SystemCore IP**    | Address the SRV/A records point at      | Equals `10.TE.AM.2` (the static IP WPILib recommends for field use) |
+| **SystemCore mDNS**  | Its hostname resolves via multicast DNS | Resolves to the SystemCore's IP                                     |
+
+If neither answers, a single **Robot Controller** error is reported.
+
+For a **roboRIO**, the XML response is parsed to extract system properties:
 
 | Check                | What it verifies                                    | Pass condition                   |
 | -------------------- | --------------------------------------------------- | -------------------------------- |

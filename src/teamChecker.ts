@@ -14,7 +14,11 @@ const HELP_URLS = {
   roboRIOHostname: 'https://docs.wpilib.org/en/stable/docs/zero-to-robot/step-3/roborio2-setup.html',
   roboRIOIP: 'https://docs.wpilib.org/en/stable/docs/networking/networking-introduction/ip-configurations.html',
   roboRIOImage: 'https://docs.wpilib.org/en/stable/docs/zero-to-robot/step-3/imaging-your-roborio.html',
+  systemCore: 'https://github.com/wpilibsuite/SystemcoreTesting/blob/main/README.md',
 } as const;
+
+/** Which robot controller answered on the team subnet. */
+export type RobotController = 'roboRIO' | 'systemcore';
 
 // ── NI SysAPI property tags ─────────────────────────────────────────
 
@@ -158,8 +162,8 @@ function mdnsQuery(hostname: string, sourceIp: string, timeoutMs: number): Promi
   });
 }
 
-/** Build a minimal DNS query packet for an A record. */
-function buildMdnsQuery(hostname: string): Buffer {
+/** Build a minimal DNS query packet (A record by default, or `qtype`). */
+function buildMdnsQuery(hostname: string, qtype = 1): Buffer {
   // DNS header: ID=0, flags=0, 1 question, 0 answers
   const header = Buffer.from([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
   // Encode hostname labels (e.g. "roboRIO-1234-FRC.local" → \x12roboRIO-1234-FRC\x05local\x00)
@@ -170,9 +174,9 @@ function buildMdnsQuery(hostname: string): Buffer {
     return buf;
   });
   const name = Buffer.concat([...labels, Buffer.from([0])]);
-  // Type A (1), Class IN (1) with unicast-response bit
-  const qtype = Buffer.from([0, 1, 0x80, 1]);
-  return Buffer.concat([header, name, qtype]);
+  // Type, Class IN (1) with unicast-response bit
+  const question = Buffer.from([(qtype >> 8) & 0xff, qtype & 0xff, 0x80, 1]);
+  return Buffer.concat([header, name, question]);
 }
 
 /**
@@ -314,7 +318,15 @@ export async function checkFactoryDefault(team: number): Promise<CheckResult[]> 
   ];
 }
 
-function evaluateSystemCore(data: { systemcoreEnabled?: boolean; version?: string }): CheckResult {
+/**
+ * The radio's SystemCore mode has to match the robot controller: on for a
+ * SystemCore, off for a roboRIO. When no controller was found the mode is
+ * reported but not judged.
+ */
+function evaluateSystemCore(
+  data: { systemcoreEnabled?: boolean; version?: string },
+  controller: RobotController | null | undefined,
+): CheckResult {
   if (data.systemcoreEnabled === undefined) {
     // Older firmware doesn't report systemcoreEnabled — skip the check
     return {
@@ -323,15 +335,29 @@ function evaluateSystemCore(data: { systemcoreEnabled?: boolean; version?: strin
       message: `Not reported by firmware${data.version ? ` (${data.version})` : ''} — update radio firmware to enable this check`,
     };
   }
-  if (data.systemcoreEnabled === false) {
-    return { name: 'Radio SystemCore', status: 'pass', expected: 'disabled', actual: 'disabled' };
+  const actual = data.systemcoreEnabled ? 'enabled' : 'disabled';
+  if (!controller) {
+    return {
+      name: 'Radio SystemCore',
+      status: 'pass',
+      actual,
+      message:
+        'No robot controller found to compare against — must be enabled for a SystemCore, disabled for a roboRIO',
+    };
+  }
+  const expectedEnabled = controller === 'systemcore';
+  const expected = expectedEnabled ? 'enabled' : 'disabled';
+  if (data.systemcoreEnabled === expectedEnabled) {
+    return { name: 'Radio SystemCore', status: 'pass', expected, actual };
   }
   return {
     name: 'Radio SystemCore',
     status: 'fail',
-    expected: 'disabled',
-    actual: 'enabled',
-    message: 'SystemCore mode must be disabled for competition use',
+    expected,
+    actual,
+    message: expectedEnabled
+      ? 'A SystemCore is connected but the radio is not in SystemCore mode'
+      : 'SystemCore mode must be disabled for a roboRIO',
     helpUrl: HELP_URLS.radioSystemCore,
   };
 }
@@ -361,8 +387,41 @@ function evaluateRadioFirmware(data: { version?: string }): CheckResult {
   };
 }
 
-/** Fetch radio /status and run all radio checks. Firmware first; SystemCore skipped if outdated. Includes detected team number. */
-export async function checkRadio(team: number, sourceIp?: string): Promise<CheckResult[]> {
+/**
+ * The radio's "Enable QoS BW Limit" checkbox (`qosEnabled`). Its own help text:
+ * bandwidth limiting protects control packets when cameras share the link. In
+ * practice it throttles the robot to the competition cap, and a robot pushing
+ * camera streams past that cap sees ~130 ms latency and packet loss — exactly
+ * what took 6238 down at the 2026-09-13 scrimmage. The practice field applies
+ * no limit of its own, so the setting only hurts here.
+ */
+function evaluateQosLimit(data: { qosEnabled?: boolean }): CheckResult {
+  if (data.qosEnabled === undefined) {
+    return { name: 'Radio QoS BW Limit', status: 'pass', message: 'Not reported by firmware' };
+  }
+  if (!data.qosEnabled) {
+    return { name: 'Radio QoS BW Limit', status: 'pass', actual: 'disabled' };
+  }
+  return {
+    name: 'Radio QoS BW Limit',
+    status: 'warn',
+    expected: 'disabled',
+    actual: 'enabled',
+    message:
+      'The radio is throttling the robot to the competition bandwidth cap. With camera streams above the cap this adds ' +
+      'latency and packet loss (NetworkTables timeouts). The practice field sets no limit — untick "Enable QoS BW Limit" ' +
+      'in the radio configuration unless the 2.4 GHz network is needed.',
+    helpUrl: HELP_URLS.radioFirmware,
+  };
+}
+
+/** Fetch radio /status and run all radio checks. Firmware first; SystemCore skipped if outdated. Includes detected team number.
+ *  `controller` (from checkRobotController) decides what the SystemCore mode should be. */
+export async function checkRadio(
+  team: number,
+  sourceIp?: string,
+  controller?: RobotController | null,
+): Promise<CheckResult[]> {
   const radioIp = `${teamSubnet(team)}.1`;
   const results: CheckResult[] = [];
   try {
@@ -374,14 +433,20 @@ export async function checkRadio(team: number, sourceIp?: string): Promise<Check
         { name: 'Radio SystemCore', status: 'error', message: msg, helpUrl: HELP_URLS.radioSystemCore },
       ];
     }
-    const data = (await res.json()) as { systemcoreEnabled?: boolean; version?: string; teamNumber?: number };
+    const data = (await res.json()) as {
+      systemcoreEnabled?: boolean;
+      qosEnabled?: boolean;
+      version?: string;
+      teamNumber?: number;
+    };
     const fwCheck = evaluateRadioFirmware(data);
     results.push(fwCheck);
     if (fwCheck.status === 'fail') {
       results.push({ name: 'Radio SystemCore', status: 'warn', message: 'Skipped — update firmware first' });
     } else {
-      results.push(evaluateSystemCore(data));
+      results.push(evaluateSystemCore(data, controller));
     }
+    results.push(evaluateQosLimit(data));
     // Report detected team number for consistency checking
     if (data.teamNumber !== undefined) {
       results.push({
@@ -446,6 +511,151 @@ async function findRoboRIO(team: number, extraIps: string[]): Promise<{ ip: stri
   return null;
 }
 
+// ── SystemCore ──────────────────────────────────────────────────────
+
+const SYSTEMCORE_SERVICE = '_SystemCore._tcp.local';
+
+interface SystemCoreInfo {
+  ip: string;
+  hostname: string;
+  port: number;
+}
+
+/**
+ * Ask a host directly (unicast mDNS, RFC 6762 §5.5) whether it is a
+ * SystemCore: one advertises `_SystemCore._tcp` with an SRV pointing at its
+ * hostname (`robot.local` by default, port 1740) plus that name's A record.
+ * Unicast on purpose — a robot behind its radio does not reliably receive
+ * multicast from the wired side, but answers a query sent to its address
+ * (verified with 5940's SystemCore on 2026-09-13).
+ */
+function probeSystemCore(ip: string, timeoutMs = FETCH_TIMEOUT): Promise<SystemCoreInfo | null> {
+  return new Promise(resolve => {
+    const sock = dgram.createSocket('udp4');
+    const finish = (result: SystemCoreInfo | null) => {
+      clearTimeout(timer);
+      try {
+        sock.close();
+      } catch {
+        // already closed
+      }
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    sock.on('error', () => finish(null));
+    sock.on('message', (msg, rinfo) => {
+      if (rinfo.address !== ip) return;
+      const answers = parseMdnsAnswers(msg);
+      const srv = answers.find(
+        a => a.type === 'SRV' && a.name.toLowerCase().endsWith(SYSTEMCORE_SERVICE.toLowerCase()),
+      );
+      if (!srv || srv.type !== 'SRV') return;
+      const a = answers.find(r => r.type === 'A' && r.name.toLowerCase() === srv.target.toLowerCase());
+      finish({ ip: a?.type === 'A' ? a.address : ip, hostname: srv.target, port: srv.port });
+    });
+    const query = buildMdnsQuery(SYSTEMCORE_SERVICE, 12);
+    sock.send(query, 0, query.length, MDNS_PORT, ip, err => {
+      if (err) finish(null);
+    });
+  });
+}
+
+type MdnsAnswer =
+  | { type: 'A'; name: string; address: string }
+  | { type: 'PTR'; name: string; target: string }
+  | { type: 'SRV'; name: string; target: string; port: number };
+
+/** All A/PTR/SRV records in a DNS response (answers + additionals). */
+function parseMdnsAnswers(msg: Buffer): MdnsAnswer[] {
+  const out: MdnsAnswer[] = [];
+  if (msg.length < 12) return out;
+  const qdcount = msg.readUInt16BE(4);
+  const total = msg.readUInt16BE(6) + msg.readUInt16BE(8) + msg.readUInt16BE(10);
+  let offset = 12;
+  for (let i = 0; i < qdcount && offset < msg.length; i++) {
+    offset = readDnsName(msg, offset).endOffset + 4;
+  }
+  for (let i = 0; i < total && offset < msg.length; i++) {
+    const { name, endOffset } = readDnsName(msg, offset);
+    offset = endOffset;
+    if (offset + 10 > msg.length) break;
+    const rtype = msg.readUInt16BE(offset);
+    const rdlength = msg.readUInt16BE(offset + 8);
+    offset += 10;
+    if (offset + rdlength > msg.length) break;
+    if (rtype === 1 && rdlength === 4) {
+      out.push({ type: 'A', name, address: `${msg[offset]}.${msg[offset + 1]}.${msg[offset + 2]}.${msg[offset + 3]}` });
+    } else if (rtype === 12) {
+      out.push({ type: 'PTR', name, target: readDnsName(msg, offset).name });
+    } else if (rtype === 33 && rdlength >= 6) {
+      out.push({ type: 'SRV', name, port: msg.readUInt16BE(offset + 4), target: readDnsName(msg, offset + 6).name });
+    }
+    offset += rdlength;
+  }
+  return out;
+}
+
+/**
+ * Identify the robot controller on the team subnet and run its checks.
+ * A roboRIO answers the NI SysAPI; a SystemCore answers the mDNS service
+ * probe. Returns which one was found so the radio's SystemCore mode can be
+ * judged against it.
+ */
+export async function checkRobotController(
+  team: number,
+  extraIps: string[] = [],
+  sourceIp?: string,
+): Promise<{ controller: RobotController | null; checks: CheckResult[] }> {
+  const rio = await findRoboRIO(team, extraIps);
+  if (rio) return { controller: 'roboRIO', checks: await roboRIOChecks(team, rio, sourceIp) };
+
+  const standardIp = expectedIP(team);
+  const ipsToTry = [standardIp, ...extraIps.filter(ip => ip !== standardIp)];
+  for (const ip of ipsToTry) {
+    const core = await probeSystemCore(ip);
+    if (core) return { controller: 'systemcore', checks: await systemCoreChecks(team, core, sourceIp) };
+  }
+
+  return {
+    controller: null,
+    checks: [
+      {
+        name: 'Robot Controller',
+        status: 'error',
+        message: 'No roboRIO or SystemCore found on team subnet',
+        helpUrl: HELP_URLS.roboRIOIP,
+      },
+    ],
+  };
+}
+
+async function systemCoreChecks(team: number, core: SystemCoreInfo, sourceIp?: string): Promise<CheckResult[]> {
+  const checks: CheckResult[] = [
+    {
+      name: 'Robot Controller',
+      status: 'pass',
+      actual: `SystemCore (${core.hostname}, port ${core.port})`,
+    },
+  ];
+  const expectedIpAddr = expectedIP(team);
+  checks.push({
+    name: 'SystemCore IP',
+    status: core.ip === expectedIpAddr ? 'pass' : 'fail',
+    expected: expectedIpAddr,
+    actual: core.ip,
+    ...(core.ip !== expectedIpAddr && {
+      message:
+        'Set a static IP of 10.TE.AM.2 on eth0 in the SystemCore web UI (Gear tab) so the Driver Station finds it reliably',
+      helpUrl: HELP_URLS.systemCore,
+    }),
+  });
+  // The SystemCore keeps the default "robot.local" name; there is no per-team
+  // hostname convention to enforce, so this only proves the name resolves.
+  const mdns = await checkMdns('SystemCore mDNS', core.hostname, core.ip, sourceIp);
+  checks.push(...mdns);
+  return checks;
+}
+
 /** Run roboRIO checks. `extraIps` are additional addresses to probe beyond the standard .2. */
 export async function checkRoboRIO(team: number, extraIps: string[] = [], sourceIp?: string): Promise<CheckResult[]> {
   const result = await findRoboRIO(team, extraIps);
@@ -460,6 +670,14 @@ export async function checkRoboRIO(team: number, extraIps: string[] = [], source
     ];
   }
 
+  return roboRIOChecks(team, result, sourceIp);
+}
+
+async function roboRIOChecks(
+  team: number,
+  result: { ip: string; bags: NISysAPIBag[] },
+  sourceIp?: string,
+): Promise<CheckResult[]> {
   const { ip, bags } = result;
   const systemBag = bags.find(b => b.itemName.endsWith('/system'));
   const eth0Bag = bags.find(b => b.itemName.endsWith('/eth0'));

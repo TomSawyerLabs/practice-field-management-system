@@ -7,7 +7,7 @@ import type {
   FirmwareUpdateProgress,
   RadioConfigureProgress,
 } from './types.js';
-import { checkRadio, checkRoboRIO, checkFactoryDefault } from './teamChecker.js';
+import { checkRadio, checkRobotController, checkFactoryDefault } from './teamChecker.js';
 import { updateRadioFirmware } from './firmwareUpdater.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import type { NetworkBackend } from './node-ip/index.js';
@@ -436,11 +436,14 @@ export class RobotTestMonitor {
     this.broadcast();
 
     try {
-      const [factoryResult, radioResults, rioResults] = await Promise.all([
+      // The controller (roboRIO or SystemCore) is identified first so the
+      // radio's SystemCore mode can be judged against what is actually there.
+      const [factoryResult, controllerResult] = await Promise.all([
         checkFactoryDefault(this.teamNumber),
-        checkRadio(this.teamNumber, this.leasedIp),
-        checkRoboRIO(this.teamNumber, [], this.leasedIp),
+        checkRobotController(this.teamNumber, [], this.leasedIp),
       ]);
+      const radioResults = await checkRadio(this.teamNumber, this.leasedIp, controllerResult.controller);
+      const rioResults = controllerResult.checks;
       this.checks = [...factoryResult, ...radioResults, ...rioResults];
 
       // Clear the settling state once the radio is reachable (at least one non-error check).
