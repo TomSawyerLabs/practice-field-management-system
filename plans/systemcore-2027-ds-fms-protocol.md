@@ -114,6 +114,26 @@ New 2027 DS:
   an ephemeral source port; Cheesy Arena sends them from its 1160 listener.
   Fix: match engine now sends from the FMS 10.0.100.5:1160 socket. Also
   0x1d is the 2027 DS TCP keepalive (Cheesy ignores it) — now parsed.
+- 19:34–19:36 second attempt (build 3f24293, control packets from port
+  1160): handshake → assigned red1 (0x1f), one empty UDP packet from the DS
+  control port to 1160 (firewall punch; the try/catch logged it instead of
+  crashing), "DS attached to FMS: slot1", match started, robot ENABLED at
+  auto start — then disabled ~1 s later. Journal: "DS disable reported:
+  slot1" 2 s after every enable. DS status byte during the match was 0x3a
+  (robotComms/radio/rio, mode auto, enabled bit CLEAR) even while running:
+  the 2027 DS doesn't set the enabled bit, pFMS read it as a team Disable
+  press and started sending disabled packets. Fix 6cafd40 (deployed 19:39):
+  for ds2027 only honour a disabled report after an enabled report since
+  the FMS enable (real transition). First status after each enable is now
+  logged with the raw byte ("DS status after FMS enable").
+- The 2027 DS closes and reopens TCP 1750 every 3 s while assigned (5 s
+  while not), advertising a new control port each time; pFMS follows the
+  port on every handshake. Cheesy Arena has no special handling, so this is
+  presumed inherent. Harmless so far but keep an eye on it.
+- Open: does a Disable press on the 2027 DS reach pFMS at all (station page
+  state)? If its status never sets the enabled bit, pFMS can't see it; the
+  DS itself still stops the robot. Candidate: the TCP 0x16 status byte
+  (Cheesy reads "DS disabled" from 0x08 there).
 - Expected journal sequence when it works: `DS at <ip>: team N (2027 DS,
 control UDP P, flags 0) → assigned <slot> (reply 0x1f)`, then `Match
 control for slotX now sent to <ip>:P/ds2027 as <slot>` (once, not every
