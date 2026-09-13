@@ -33,6 +33,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
+import type { RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
 import {
   useMatchState,
   useLatest,
@@ -69,6 +70,10 @@ import {
   sendSaveAudioDeviceConfig,
   sendTestAudioDevice,
   sendRefreshAudioDevices,
+  useSetupConfig,
+  useMatchRecordingState,
+  sendUpdateSetupSettings,
+  testRecordingStream,
 } from '../hooks/useBackend';
 
 import Select from '@mui/material/Select';
@@ -332,8 +337,186 @@ export function AdminPage() {
       <StationControlSection />
       <AudioDeviceSection />
       <SlackConfigSection />
+      <MatchRecordingSection />
       <FirmwareSection />
     </Container>
+  );
+}
+
+// ── Match Video Recording ───────────────────────────────────────────
+
+function formatRecordingBytes(bytes: number | undefined): string {
+  if (bytes === undefined) return '—';
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.round(bytes / 1e3)} kB`;
+}
+
+/**
+ * Which video streams pFMS records for every match. Streams are saved as a
+ * setup setting (admin-gated, persisted, env-seeded); the recorder picks them
+ * up on the next match. A stream can be probed before it is saved.
+ */
+function MatchRecordingSection() {
+  const setupConfig = useSetupConfig();
+  const recording = useMatchRecordingState();
+  const saved = setupConfig?.config.settings.recordingStreams;
+  const [streams, setStreams] = useState<RecordingStreamConfig[]>([]);
+  const [retention, setRetention] = useState<string>('');
+  const [dirty, setDirty] = useState(false);
+  const [testing, setTesting] = useState<Record<string, RecordingStreamTestResult | 'pending'>>({});
+
+  // Follow the server until the operator starts editing.
+  useEffect(() => {
+    if (dirty) return;
+    setStreams(saved ?? recording?.streams.map(s => ({ name: s.name, url: s.url, enabled: s.enabled })) ?? []);
+    setRetention(String(setupConfig?.config.settings.recordingRetentionDays ?? recording?.retentionDays ?? 30));
+  }, [saved, recording, setupConfig, dirty]);
+
+  const edit = (i: number, patch: Partial<RecordingStreamConfig>) => {
+    setDirty(true);
+    setStreams(prev => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  };
+  const remove = (i: number) => {
+    setDirty(true);
+    setStreams(prev => prev.filter((_, j) => j !== i));
+  };
+  const add = () => {
+    setDirty(true);
+    setStreams(prev => [...prev, { name: prev.length === 0 ? 'all-field' : '', url: 'rtsp://', enabled: true }]);
+  };
+  const save = () => {
+    const days = Number.parseInt(retention, 10);
+    sendUpdateSetupSettings({
+      recordingStreams: streams.map(s => ({ ...s, name: s.name.trim(), url: s.url.trim() })),
+      recordingRetentionDays: Number.isInteger(days) && days >= 1 && days <= 365 ? days : undefined,
+    });
+    setDirty(false);
+  };
+  const test = async (url: string) => {
+    setTesting(prev => ({ ...prev, [url]: 'pending' }));
+    const result = await testRecordingStream(url);
+    setTesting(prev => ({ ...prev, [url]: result }));
+  };
+
+  const invalid = streams.some(s => !s.name.trim() || !/^(rtsps?|https?|rtmp|srt|udp):\/\/.+/.test(s.url.trim()));
+  const statusFor = (name: string) => recording?.streams.find(s => s.name === name);
+
+  return (
+    <Card sx={{ mt: 2 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+          <Typography variant="h5">Match Video Recording</Typography>
+          {recording && !recording.available && (
+            <Chip size="small" color="error" label={recording.unavailableReason ?? 'ffmpeg not available'} />
+          )}
+          {recording?.activeMatchId && <Chip size="small" color="error" label="● Recording" />}
+        </Box>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+          Every match is captured from these streams (copied as-is, no transcoding) and offered for download on the
+          station pages and in match history. Anything ffmpeg can read works — for stitchd/MediaMTX that is{' '}
+          <code>rtsp://host:8554/&lt;stream&gt;</code>.
+          {recording && (
+            <>
+              {' '}
+              Files live in <code>{recording.directory}</code>: {formatRecordingBytes(recording.usedBytes)} used,{' '}
+              {formatRecordingBytes(recording.diskFreeBytes)} free, kept {recording.retentionDays} days.
+            </>
+          )}
+        </Typography>
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          {streams.map((s, i) => {
+            const live = statusFor(s.name);
+            const t = testing[s.url];
+            return (
+              <Box key={i} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <TextField
+                    size="small"
+                    label="Name"
+                    value={s.name}
+                    onChange={e => edit(i, { name: e.target.value })}
+                    sx={{ width: 160 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Stream URL"
+                    value={s.url}
+                    onChange={e => edit(i, { url: e.target.value })}
+                    sx={{ flex: 1, minWidth: 260 }}
+                  />
+                  <Button
+                    size="small"
+                    variant={s.enabled ? 'contained' : 'outlined'}
+                    color={s.enabled ? 'success' : 'inherit'}
+                    onClick={() => edit(i, { enabled: !s.enabled })}
+                  >
+                    {s.enabled ? 'Enabled' : 'Disabled'}
+                  </Button>
+                  <Button size="small" variant="outlined" onClick={() => test(s.url)} disabled={t === 'pending'}>
+                    {t === 'pending' ? 'Testing…' : 'Test'}
+                  </Button>
+                  <Button size="small" color="inherit" onClick={() => remove(i)} sx={{ opacity: 0.6 }}>
+                    Remove
+                  </Button>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap', pl: 0.5 }}>
+                  {t && t !== 'pending' && (
+                    <Chip
+                      size="small"
+                      color={t.ok ? 'success' : 'error'}
+                      variant="outlined"
+                      label={
+                        t.ok
+                          ? `OK: ${t.codec} ${t.width}×${t.height} @ ${t.fps ?? '?'} fps (${(t.ms / 1000).toFixed(1)} s to first frame)`
+                          : `Failed: ${t.error}`
+                      }
+                    />
+                  )}
+                  {live && live.status !== 'idle' && (
+                    <Chip
+                      size="small"
+                      color={live.status === 'error' ? 'error' : 'info'}
+                      label={`${live.status}${live.bytes ? ` · ${formatRecordingBytes(live.bytes)}` : ''}${live.reconnects ? ` · ${live.reconnects} reconnect(s)` : ''}`}
+                    />
+                  )}
+                  {live?.error && live.status !== 'recording' && (
+                    <Typography variant="caption" sx={{ color: 'warning.main' }}>
+                      Last error: {live.error}
+                    </Typography>
+                  )}
+                </Box>
+              </Box>
+            );
+          })}
+
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button size="small" variant="outlined" onClick={add}>
+              Add stream
+            </Button>
+            <TextField
+              size="small"
+              label="Keep recordings (days)"
+              value={retention}
+              onChange={e => {
+                setDirty(true);
+                setRetention(e.target.value.replace(/[^0-9]/g, ''));
+              }}
+              sx={{ width: 190 }}
+            />
+            <Button size="small" variant="contained" onClick={save} disabled={!dirty || invalid}>
+              Save
+            </Button>
+            {dirty && (
+              <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                Unsaved changes — applies from the next match.
+              </Typography>
+            )}
+          </Box>
+        </Box>
+      </CardContent>
+    </Card>
   );
 }
 

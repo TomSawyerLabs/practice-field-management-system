@@ -34,6 +34,7 @@ import {
   sendPortBridge,
 } from '../hooks/useBackend';
 import { MatchPanelForControl } from './MatchPanel';
+import { MatchVideoCard } from './MatchVideoCard';
 import { TeamChecksModal } from './TeamChecksModal';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
@@ -343,6 +344,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
                 {isSelected && (
                   <>
                     <MatchPanelForControl station={station} ssid={ssid} />
+                    <MatchVideoCard station={station} teamNumber={teamNumber} />
                     <PortSelector station={station} ssid={ssid} />
                   </>
                 )}

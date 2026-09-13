@@ -6,6 +6,7 @@ import type {
   MatchHistoryEntry,
   MatchHistoryState,
   MatchHistoryTeam,
+  MatchRecording,
   MatchReviewResult,
   StationName,
 } from './types.js';
@@ -116,6 +117,22 @@ export class MatchHistoryStore {
     this.persist();
     this.notifyListeners();
     return true;
+  }
+
+  /** Attach pFMS's own video recordings to a match. Returns false when no
+   *  match with this id exists (e.g. no team had joined, so nothing was kept). */
+  setRecordings(matchId: string, recordings: MatchRecording[]): boolean {
+    const entry = this.matches.find(m => m.matchId === matchId);
+    if (!entry) return false;
+    entry.recordings = recordings;
+    this.persist();
+    this.notifyListeners();
+    return true;
+  }
+
+  /** The history entry for a match id, if any. */
+  find(matchId: string): MatchHistoryEntry | undefined {
+    return this.matches.find(m => m.matchId === matchId);
   }
 
   clear(): void {

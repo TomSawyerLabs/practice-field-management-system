@@ -42,8 +42,10 @@ import {
   sendAdminGlobalEStop,
   sendAdminClearEStop,
   sendClearMatchHistory,
+  useMatchRecordingState,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
+import { RecordingButtons } from './MatchVideoCard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
@@ -1073,6 +1075,8 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
         </Card>
       )}
 
+      <PostMatchRecordings matchId={matchState.matchId} />
+
       {/* Actions — only when counting period is done */}
       {!isCounting && (
         <Card>
@@ -1095,6 +1099,33 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
         </Card>
       )}
     </>
+  );
+}
+
+/** Video of the match that just ended: "still finalizing" until the recorder
+ *  attaches the files to the history entry, then one download per stream. */
+function PostMatchRecordings({ matchId }: { matchId?: string }) {
+  const history = useMatchHistory();
+  const recording = useMatchRecordingState();
+  if (!matchId) return null;
+  const entry = history?.matches.find(m => m.matchId === matchId);
+  const busy = recording?.activeMatchId === matchId;
+  if (!entry?.recordings?.length && !busy) return null;
+  return (
+    <Card sx={{ mb: 2 }}>
+      <CardContent>
+        <Typography variant="h6" sx={{ mb: 1 }}>
+          Match Video
+        </Typography>
+        {busy && !entry?.recordings?.length ? (
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            Finalizing the recording…
+          </Typography>
+        ) : (
+          <RecordingButtons match={entry!} size="medium" />
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1258,6 +1289,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
         <Typography variant="caption" sx={{ color: 'text.secondary' }}>
           {formatDuration(match.durationSeconds)}
         </Typography>
+        <RecordingButtons match={match} />
         {match.reviewUrl && (
           <Button
             size="small"

@@ -55,9 +55,19 @@ import { handleExternalAccessAuth } from './externalAccessAuth.js';
 import { OnLinkChecker } from './onLink.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
+import { MatchRecorder } from './matchRecorder.js';
+import { handleRecordingsRequest } from './recordingsApi.js';
 import { UsageTracker } from './usageTracker.js';
 import { HostnameResolver } from './hostnameResolver.js';
-import { StationName, StationNameList, StationNameRegex, TeamCheckResults, DriveSessionState } from './types.js';
+import {
+  StationName,
+  StationNameList,
+  StationNameRegex,
+  TeamCheckResults,
+  DriveSessionState,
+  RecordingStreamConfig,
+  isRecordingStreamConfig,
+} from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
 import { SetupConfigStore } from './setupConfigStore.js';
@@ -93,6 +103,22 @@ const KeepNetwork = keepNetworkFlagExists || process.env.KEEP_NETWORK === 'true'
 // read once at startup — which is also why changing them in the UI only takes
 // effect on the next restart.
 const setupConfigStore = new SetupConfigStore();
+
+/** `name=url,name=url` → recording stream list (all enabled). Bad entries are
+ *  logged and skipped rather than taking the whole list down. */
+function parseRecordingStreamsEnv(raw: string | undefined): RecordingStreamConfig[] {
+  if (!raw?.trim()) return [];
+  const streams: RecordingStreamConfig[] = [];
+  for (const entry of raw.split(',')) {
+    const eq = entry.indexOf('=');
+    const name = eq > 0 ? entry.slice(0, eq).trim() : '';
+    const url = eq > 0 ? entry.slice(eq + 1).trim() : entry.trim();
+    const candidate = { name: name || `stream-${streams.length + 1}`, url, enabled: true };
+    if (isRecordingStreamConfig(candidate)) streams.push(candidate);
+    else console.warn(`MATCH_RECORDING_STREAMS: ignoring "${entry.trim()}" (expected name=rtsp://host/path)`);
+  }
+  return streams;
+}
 
 // resolveSetting() is the single precedence rule (saved value, then env), so
 // it's also what the tests exercise — see scripts/test-setup-config.ts.
@@ -284,6 +310,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const matchHistoryStore = new MatchHistoryStore();
   matchHistoryStore.attach(matchEngine, scoringEngine);
 
+  // Match video recorder. Streams saved in the admin panel win over the
+  // environment seed (`MATCH_RECORDING_STREAMS="all-field=rtsp://…,…"`),
+  // read per match so a change applies to the next match without a restart.
+  const envRecordingStreams = parseRecordingStreamsEnv(process.env.MATCH_RECORDING_STREAMS);
+  const matchRecorder = new MatchRecorder({
+    getStreams: () => setupConfigStore.get().settings.recordingStreams ?? envRecordingStreams,
+    getRetentionDays: () =>
+      setupConfigStore.get().settings.recordingRetentionDays ??
+      (Number(process.env.MATCH_RECORDING_RETENTION_DAYS) || undefined),
+  });
+
   // Initialize field usage tracker (tracks robot connection hours per team)
   const usageTracker = new UsageTracker();
   usageTracker.attach(radioManager);
@@ -317,6 +354,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         handleExternalAccessAuth(req, res, externalAccessStore, { trustedProxyMatcher, onLink: onLinkChecker }),
       (req, res) => handleScoringRequest(req, res, scoringEngine, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleMatchReviewRequest(req, res, matchHistoryStore, apiKeyStore, trustedProxyMatcher),
+      (req, res) => handleRecordingsRequest(req, res, matchRecorder),
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
     ],
@@ -375,6 +413,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     hostnameResolver,
     {
       configStore: setupConfigStore,
+      matchRecorder,
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose
       // rather than what was on the command line.
@@ -395,6 +434,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     },
   );
   setBroadcast(broadcast);
+
+  // Starts listening to match phases; verifies ffmpeg first and says so in
+  // the log if recording can't work on this host.
+  matchRecorder.start(matchEngine, matchHistoryStore).catch(err => {
+    console.error('Match recorder failed to start:', err);
+  });
 
   // Broadcast score state changes to all WebSocket clients
   scoringEngine.addStateListener(broadcast);

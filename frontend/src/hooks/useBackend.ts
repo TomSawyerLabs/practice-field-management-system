@@ -47,6 +47,10 @@ import {
   AudioDeviceState,
   isMatchHistoryState,
   MatchHistoryState,
+  isMatchRecordingState,
+  MatchRecordingState,
+  isRecordingStreamTestResult,
+  RecordingStreamTestResult,
   isUsageState,
   UsageState,
   isDriveSessionState,
@@ -505,6 +509,13 @@ function handleMatchHistoryState(state: MatchHistoryState) {
   events.dispatchEvent(new CustomEvent('matchHistoryState', { detail: state }));
 }
 
+let currentMatchRecordingState: MatchRecordingState | null = null;
+
+function handleMatchRecordingState(state: MatchRecordingState) {
+  currentMatchRecordingState = state;
+  events.dispatchEvent(new CustomEvent('matchRecordingState', { detail: state }));
+}
+
 function handleUsageState(state: UsageState) {
   currentUsageState = state;
   events.dispatchEvent(new CustomEvent('usageState', { detail: state }));
@@ -729,6 +740,16 @@ function receiveMessage(detail: Message) {
 
   if (isMatchHistoryState(detail)) {
     handleMatchHistoryState(detail);
+    return;
+  }
+
+  if (isMatchRecordingState(detail)) {
+    handleMatchRecordingState(detail);
+    return;
+  }
+
+  if (isRecordingStreamTestResult(detail)) {
+    events.dispatchEvent(new CustomEvent('recordingStreamTestResult', { detail }));
     return;
   }
 
@@ -1851,6 +1872,40 @@ export function sendUpdateSetupSettings(settings: Partial<SetupSettings>) {
 
 export function sendMarkSetupStep(step: SetupStepId, status: 'pending' | 'done' | 'skipped') {
   sendWhenOpen({ type: 'markSetupStep', step, status });
+}
+
+/** Live status of pFMS's match video recorder (streams, active match, disk). */
+export function useMatchRecordingState(): MatchRecordingState | null {
+  const [state, setState] = useState<MatchRecordingState | null>(currentMatchRecordingState);
+
+  useEffect(() => {
+    setState(currentMatchRecordingState);
+    const handler = (e: Event) => setState((e as CustomEvent<MatchRecordingState>).detail);
+    events.addEventListener('matchRecordingState', handler);
+    return () => events.removeEventListener('matchRecordingState', handler);
+  }, []);
+
+  return state;
+}
+
+/** Ask the server to probe a stream URL; resolves with the result (or a
+ *  timeout error after 20 s if the server never answers). */
+export function testRecordingStream(url: string): Promise<RecordingStreamTestResult> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      events.removeEventListener('recordingStreamTestResult', handler);
+      resolve({ type: 'recordingStreamTestResult', url, ok: false, error: 'No answer from the server', ms: 20_000 });
+    }, 20_000);
+    const handler = (e: Event) => {
+      const result = (e as CustomEvent<RecordingStreamTestResult>).detail;
+      if (result.url !== url) return;
+      clearTimeout(timer);
+      events.removeEventListener('recordingStreamTestResult', handler);
+      resolve(result);
+    };
+    events.addEventListener('recordingStreamTestResult', handler);
+    sendWhenOpen({ type: 'testRecordingStream', url });
+  });
 }
 
 export function sendSaveSlackConfig(botToken: string, appToken: string, channelId: string) {

@@ -230,6 +230,52 @@ export interface SetupSettings {
   castVerified?: boolean;
   /** Operator confirmed they heard the test sound on the field speaker. */
   audioVerified?: boolean;
+  /** Video streams pFMS records for every match (see MatchRecorder). */
+  recordingStreams?: RecordingStreamConfig[];
+  /** Days to keep match recordings before the sweep deletes them. */
+  recordingRetentionDays?: number;
+}
+
+/** One video source pFMS records during matches. Anything ffmpeg can read
+ *  (RTSP from the field's stitchd/MediaMTX, an HLS or HTTP stream, …). */
+export interface RecordingStreamConfig {
+  /** Short label, also used in file names ("all-field", "Field cam"). */
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
+export function isRecordingStreamConfig(v: unknown): v is RecordingStreamConfig {
+  const c = v as RecordingStreamConfig;
+  return (
+    typeof c === 'object' &&
+    c !== null &&
+    typeof c.name === 'string' &&
+    c.name.trim().length > 0 &&
+    c.name.length <= 40 &&
+    typeof c.url === 'string' &&
+    isStreamSourceUrl(c.url) &&
+    typeof c.enabled === 'boolean'
+  );
+}
+
+/**
+ * URLs a match recording may be pulled from. Unlike `isPrivateHostUrl` this
+ * accepts hostnames: the setting is admin-gated, and the only thing pFMS does
+ * with it is open an outbound ffmpeg pull — nothing secret is sent to it.
+ * Non-network schemes (file:, pipe:, concat:) are refused so a stream entry
+ * can't be turned into a local file read.
+ */
+export function isStreamSourceUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (!['rtsp:', 'rtsps:', 'http:', 'https:', 'rtmp:', 'srt:', 'udp:'].includes(url.protocol)) return false;
+  if (!url.hostname) return false;
+  return value.length <= 512;
 }
 
 export interface SetupConfig {
@@ -356,6 +402,8 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   castVerified: v => typeof v === 'boolean',
   audioVerified: v => typeof v === 'boolean',
   deploymentMode: v => v === 'systemd' || v === 'docker',
+  recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
+  recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
 };
 
 export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings {
@@ -2525,6 +2573,92 @@ export interface MatchHistoryEntry {
   review?: Partial<Record<Alliance, MatchReviewResult>>;
   /** URL of the external video-review page for this match, registered when a recording is available. */
   reviewUrl?: string;
+  /** Video files pFMS itself recorded for this match (one per configured stream). */
+  recordings?: MatchRecording[];
+}
+
+/** One recorded video file for a match, produced by MatchRecorder. */
+export interface MatchRecording {
+  /** Stream name from RecordingStreamConfig at the time of recording. */
+  name: string;
+  /** File name inside the match's recording directory (`<slug>.mp4`). */
+  file: string;
+  bytes: number;
+  /** Media duration as reported by ffprobe, when it could be read. */
+  durationSeconds?: number;
+  startedAt: number;
+  endedAt: number;
+  /** ok = clean capture; partial = the source dropped at least once mid-match
+   *  (parts were joined); failed = nothing usable was captured. */
+  status: 'ok' | 'partial' | 'failed';
+  error?: string;
+}
+
+/** Live status of the match recorder, broadcast to internal clients. */
+export interface MatchRecordingState {
+  type: 'matchRecordingState';
+  /** Recorder available at all (ffmpeg found on this host). */
+  available: boolean;
+  /** Why the recorder is unavailable, when it is. */
+  unavailableReason?: string;
+  /** Match currently being recorded, if any. */
+  activeMatchId?: string;
+  streams: MatchRecordingStreamStatus[];
+  retentionDays: number;
+  /** Free space on the recordings volume, when readable. */
+  diskFreeBytes?: number;
+  /** Total size of everything under the recordings directory. */
+  usedBytes?: number;
+  directory: string;
+}
+
+export interface MatchRecordingStreamStatus {
+  name: string;
+  url: string;
+  enabled: boolean;
+  status: 'idle' | 'recording' | 'finalizing' | 'error';
+  /** Bytes written so far for the active match (recording) or last match. */
+  bytes?: number;
+  /** Last error from ffmpeg for this stream (cleared on the next clean start). */
+  error?: string;
+  /** How many times the source dropped and was reconnected in the active match. */
+  reconnects?: number;
+}
+
+export function isMatchRecordingState(msg: unknown): msg is MatchRecordingState {
+  if (!msg || typeof msg !== 'object') return false;
+  return (msg as MatchRecordingState).type === 'matchRecordingState';
+}
+
+/** Admin asks the server to ffprobe a candidate stream URL before saving it. */
+export interface TestRecordingStream {
+  type: 'testRecordingStream';
+  url: string;
+}
+
+export function isTestRecordingStream(msg: unknown): msg is TestRecordingStream {
+  const m = msg as TestRecordingStream;
+  return m?.type === 'testRecordingStream' && typeof m.url === 'string' && isStreamSourceUrl(m.url);
+}
+
+export interface RecordingStreamTestResult {
+  type: 'recordingStreamTestResult';
+  url: string;
+  ok: boolean;
+  /** Video codec / size / frame rate when the probe succeeded. */
+  codec?: string;
+  width?: number;
+  height?: number;
+  fps?: number;
+  /** ffprobe's complaint when it failed. */
+  error?: string;
+  /** How long the probe took — a slow first frame hints at a slow match start. */
+  ms: number;
+}
+
+export function isRecordingStreamTestResult(msg: unknown): msg is RecordingStreamTestResult {
+  if (!msg || typeof msg !== 'object') return false;
+  return (msg as RecordingStreamTestResult).type === 'recordingStreamTestResult';
 }
 
 export interface MatchHistoryState {

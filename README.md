@@ -15,6 +15,9 @@ and provides:
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review
   ([details](docs/scoring.md))
+- **Match video** — every match recorded from the field's video streams,
+  downloadable by each drive team right after the match
+  ([details](docs/match-system.md#match-video-recording))
 - **Laptop ↔ robot routing** — laptops on the site network reach robots on
   their team VLANs, including duplicate-team disambiguation
   ([details](docs/network.md))
@@ -85,7 +88,7 @@ bun run build       # Compile backend + build frontend
 | `/overview`         | Admin station overview — status for all six stations                                                                                |
 | `/match`            | Match control — dedicated controller page for match lifecycle and history                                                           |
 | `/staff?role=…`     | Field-staff ready-up — a referee / scorekeeper / safety monitor marks ready before a match                                          |
-| `/admin`            | Admin page — global/per-station e-stop, match status, force stop, API keys, Slack, external access                                  |
+| `/admin`            | Admin page — global/per-station e-stop, match status, force stop, API keys, Slack, external access, match video recording           |
 | `/network`          | Network page — discovered devices, VLAN status, network stats                                                                       |
 | `/route`            | Route page — choose which robot to talk to when a team has duplicate stations                                                       |
 | `/logs`             | Logs page — live backend log stream                                                                                                 |

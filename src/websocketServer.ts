@@ -70,6 +70,7 @@ import {
   isSaveSlackConfig,
   isRequestSetupProbe,
   isUpdateSetupSettings,
+  isTestRecordingStream,
   isMarkSetupStep,
   type SetupConfigState,
   type SetupProbeState,
@@ -110,6 +111,7 @@ import type { MatchHistoryStore } from './matchHistoryStore.js';
 import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
+import type { MatchRecorder } from './matchRecorder.js';
 import { createStaticHandler, findAssetDir } from './staticServer.js';
 import { join } from 'node:path';
 import {
@@ -199,6 +201,8 @@ export function setupWebSocket(
   setup?: {
     configStore: SetupConfigStore;
     runProbe: () => Promise<SetupProbeState>;
+    /** Match video recorder — configured through the same admin-gated settings. */
+    matchRecorder?: MatchRecorder;
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -445,6 +449,10 @@ export function setupWebSocket(
     }
   }
 
+  if (setup?.matchRecorder) {
+    setup.matchRecorder.addListener(state => broadcast(state));
+  }
+
   if (setup) {
     setup.configStore.addListener(() => broadcast(setupConfigMessage()));
     // Live re-check, so a step goes green the moment the operator fixes it.
@@ -631,6 +639,11 @@ export function setupWebSocket(
     // Send match history state
     if (matchHistoryStore) {
       ws.send(JSON.stringify(matchHistoryStore.getState()));
+    }
+
+    // Send match video recorder state
+    if (setup?.matchRecorder) {
+      ws.send(JSON.stringify(setup.matchRecorder.getState()));
     }
 
     // Send usage tracking state
@@ -1207,6 +1220,19 @@ export function setupWebSocket(
             ws.send(JSON.stringify({ error: 'Admin authentication required to change setup progress' }));
           } else {
             setup.configStore.markStep(data.step, data.status);
+          }
+        }
+      } else if (isTestRecordingStream(data)) {
+        // Probing makes the server open a connection to whatever URL was
+        // typed, so it is gated exactly like saving the setting would be.
+        if (setup?.matchRecorder) {
+          if (!setupWritesAllowed(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required to test a stream' }));
+          } else {
+            const recorder = setup.matchRecorder;
+            void recorder.testStream(data.url).then(result => {
+              if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(result));
+            });
           }
         }
 

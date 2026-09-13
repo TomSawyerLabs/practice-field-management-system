@@ -200,6 +200,32 @@ reviewed scores when a match has been re-scored through the
 the live sensor count, and disagreements are highlighted, with a link to
 the recording review page when one was registered.
 
+## Match Video Recording
+
+pFMS can keep a full video of every match, independent of the score-review
+integration. In **Admin → Match Video Recording**, list one or more stream
+URLs (anything ffmpeg can pull — for the field's stitchd/MediaMTX that is
+`rtsp://<host>:8554/<stream>`), enable the ones to record, and **Test** each
+before saving. From the next match on:
+
+- One ffmpeg per enabled stream starts at the match countdown and stops a few
+  seconds after the match ends. The video is copied as-is (no transcoding),
+  so the only cost is disk: roughly 1 MB/s per stream at 8–12 Mbps.
+- Capture goes to fragmented MP4 parts, which stay playable if anything dies
+  mid-match. If the source drops, recording resumes into a new part; at the
+  end the parts are joined and remuxed into a normal `+faststart` MP4.
+- The files are attached to the match in **Match History** (`/match`) and on
+  each participating team's **station page** (last five matches), with one
+  download button per stream. Downloads are served by the backend at
+  `/api/recordings/<matchId>/<file>` with a friendly attachment name and
+  Range support, so a browser can also scrub through them.
+- Each match directory carries a `recording.json` sidecar, and a daily sweep
+  deletes matches older than the configured retention (default 30 days).
+
+Environment seeds (`MATCH_RECORDING_STREAMS`, `MATCH_RECORDINGS_DIR`,
+`MATCH_RECORDING_RETENTION_DAYS`) are in [configuration.md](configuration.md#scoring--scoreboard);
+values saved in the admin panel win.
+
 ## WebSocket Message Reference
 
 Match control happens over the app WebSocket. The main message types
