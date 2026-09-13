@@ -20,7 +20,7 @@
  *    number of days (default 30) at startup and daily.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { MatchEngine } from './matchEngine.js';
@@ -43,9 +43,16 @@ const ACTIVE_PHASES: ReadonlySet<MatchPhase> = new Set([
   'teleop',
   'endgame',
 ]);
+/** Phases in which robots have actually run — a session that never reaches
+ *  one of these (hold released, countdown aborted) is discarded at the end. */
+const PLAY_PHASES: ReadonlySet<MatchPhase> = new Set(['auto', 'autoPause', 'paused', 'teleop', 'endgame']);
 /** Keep rolling this long after the match leaves its active phases, so the
  *  final buzzer and any post-match scoring action is on tape. */
-const POST_ROLL_MS = 3000;
+const POST_ROLL_MS = 5000;
+/** A pre-roll that was armed (everyone ready) but whose match never started
+ *  is kept alive this long after the field stops being startable, then
+ *  discarded — a re-ready within that window just keeps rolling. */
+const PREROLL_ABANDON_MS = 20_000;
 /** How long a `q` gets to finish the file before SIGKILL. */
 const STOP_GRACE_MS = 10_000;
 const RECONNECT_DELAY_MS = 1000;
@@ -89,7 +96,8 @@ interface StreamJob {
 }
 
 interface Session {
-  matchId: string;
+  /** Provisional (pre-roll) sessions have no match yet; `adopt` fills it in. */
+  matchId: string | null;
   matchNumber?: number;
   dir: string;
   startedAt: number;
@@ -97,6 +105,25 @@ interface Session {
   jobs: StreamJob[];
   stopping: boolean;
   stopTimer?: NodeJS.Timeout;
+  /** Robots ran at some point — otherwise the files are discarded at the end. */
+  sawPlay: boolean;
+}
+
+/** The field is one hold-to-start away from a match: check open, every
+ *  joined team ready, every required staff role ready. This is when the
+ *  pre-roll starts, so the hold, the countdown and the first seconds of
+ *  auto are all on tape (ffmpeg needs a keyframe or two to get going). */
+function isStartable(state: MatchState): boolean {
+  if (state.phase !== 'created' || !state.readyRequested) return false;
+  const joined = Object.values(state.stationStates).filter(s => s?.joined);
+  if (joined.length === 0 || !joined.every(s => s?.ready)) return false;
+  return Object.values(state.staffStates ?? {}).every(s => s.ignored || s.ready);
+}
+
+function teamsOf(state: MatchState): RecordingManifest['teams'] {
+  return Object.entries(state.stationStates)
+    .filter(([, s]) => s?.joined)
+    .map(([station, s]) => ({ station, teamNumber: s?.teamNumber ?? null, alliance: s?.alliance ?? null }));
 }
 
 /** "All Field cam" → "all-field-cam" */
@@ -207,7 +234,7 @@ export class MatchRecorder {
       type: 'matchRecordingState',
       available: this.available,
       unavailableReason: this.unavailableReason,
-      activeMatchId: this.session?.matchId,
+      activeMatchId: this.session?.matchId ?? undefined,
       streams,
       retentionDays: this.retentionDays(),
       diskFreeBytes: this.diskFreeBytes,
@@ -284,26 +311,80 @@ export class MatchRecorder {
 
   private onMatchState(state: MatchState): void {
     const active = ACTIVE_PHASES.has(state.phase);
+    const session = this.session;
     if (active && state.matchId) {
-      if (this.session && this.session.matchId !== state.matchId) {
-        // A new match started before the previous one's post-roll ended.
-        this.stopSession('next match started', 0);
+      if (session && !session.stopping) {
+        if (session.matchId === null) {
+          this.adopt(session, state);
+        } else if (session.matchId !== state.matchId) {
+          // A new match started before the previous one's post-roll ended.
+          this.stopSession('next match started', 0);
+        } else if (session.stopTimer) {
+          // Back into an active phase (e.g. resumed) before the post-roll fired.
+          clearTimeout(session.stopTimer);
+          session.stopTimer = undefined;
+        }
       }
-      if (!this.session) this.startSession(state);
+      if (!this.session) this.startSession(state, state.matchId);
+      if (this.session && PLAY_PHASES.has(state.phase)) this.session.sawPlay = true;
       return;
     }
-    if (!active && this.session && !this.session.stopping && !this.session.stopTimer) {
-      const reason = state.phase === 'postMatch' ? (state.endReason ?? 'ended') : state.phase;
-      this.session.stopTimer = setTimeout(() => this.stopSession(reason, 0), POST_ROLL_MS);
+
+    // Not in a match. Either wind down the current session, keep a pre-roll
+    // alive while the field is still startable, or arm a new pre-roll.
+    if (session && !session.stopping) {
+      const provisional = session.matchId === null;
+      if (provisional && isStartable(state)) {
+        if (session.stopTimer) {
+          clearTimeout(session.stopTimer);
+          session.stopTimer = undefined;
+        }
+        return;
+      }
+      if (!session.stopTimer) {
+        const reason = provisional
+          ? 'match never started'
+          : state.phase === 'postMatch'
+            ? (state.endReason ?? 'ended')
+            : state.phase;
+        session.stopTimer = setTimeout(
+          () => this.stopSession(reason, 0),
+          provisional ? PREROLL_ABANDON_MS : POST_ROLL_MS,
+        );
+      }
+      return;
     }
+    if (!session && isStartable(state)) this.startSession(state, null);
   }
 
-  private startSession(state: MatchState): void {
+  /** A pre-roll session's match has started: move its files under the match
+   *  id and record what we now know. ffmpeg keeps writing through the rename
+   *  (open file descriptors follow the directory). */
+  private adopt(session: Session, state: MatchState): void {
+    const matchId = state.matchId!;
+    const newDir = this.matchDirectory(matchId);
+    if (!newDir) return;
+    try {
+      renameSync(session.dir, newDir);
+    } catch (err) {
+      console.error(`Match recorder: could not move pre-roll ${session.dir} → ${newDir}: ${(err as Error).message}`);
+      return;
+    }
+    for (const job of session.jobs) job.parts = job.parts.map(p => newDir + p.slice(session.dir.length));
+    session.dir = newDir;
+    session.matchId = matchId;
+    session.matchNumber = state.matchNumber;
+    session.teams = teamsOf(state);
+    this.writeManifest(session, []);
+    console.log(`Match recording continues as match ${state.matchNumber ?? '?'} (${matchId})`);
+    this.emit();
+  }
+
+  private startSession(state: MatchState, matchId: string | null): void {
     if (!this.available) return;
     const streams = this.getStreams().filter(s => s.enabled);
     if (streams.length === 0) return;
-    const matchId = state.matchId!;
-    const dir = this.matchDirectory(matchId);
+    const dir = matchId ? this.matchDirectory(matchId) : join(this.directory, `pending-${Date.now()}`);
     if (!dir) {
       console.warn(`Match recorder: refusing odd match id ${JSON.stringify(matchId)}`);
       return;
@@ -314,15 +395,13 @@ export class MatchRecorder {
       console.error(`Match recorder: cannot create ${dir}: ${(err as Error).message}`);
       return;
     }
-    const teams = Object.entries(state.stationStates)
-      .filter(([, s]) => s?.joined)
-      .map(([station, s]) => ({ station, teamNumber: s?.teamNumber ?? null, alliance: s?.alliance ?? null }));
     const session: Session = {
       matchId,
-      matchNumber: state.matchNumber,
+      matchNumber: matchId ? state.matchNumber : undefined,
       dir,
       startedAt: Date.now(),
-      teams,
+      teams: teamsOf(state),
+      sawPlay: false,
       jobs: streams.map(config => ({
         config,
         slug: slugify(config.name),
@@ -342,9 +421,11 @@ export class MatchRecorder {
       if (n > 1) job.slug = `${job.slug}-${n}`;
     }
     this.session = session;
-    this.writeManifest(session, []);
+    if (matchId) this.writeManifest(session, []);
     console.log(
-      `Match recording started: match ${state.matchNumber ?? '?'} (${matchId}) → ${session.jobs.map(j => j.config.name).join(', ')}`,
+      matchId
+        ? `Match recording started: match ${state.matchNumber ?? '?'} (${matchId}) → ${session.jobs.map(j => j.config.name).join(', ')}`
+        : `Match recording pre-roll started (field is startable) → ${session.jobs.map(j => j.config.name).join(', ')}`,
     );
     for (const job of session.jobs) this.spawnPart(session, job);
     this.statusTimer = setInterval(() => this.emit(), STATUS_INTERVAL_MS);
@@ -434,6 +515,16 @@ export class MatchRecorder {
 
   private async finishSession(session: Session): Promise<void> {
     await Promise.all(session.jobs.map(job => this.stopJob(job)));
+    if (session.matchId === null || !session.sawPlay) {
+      // Nothing worth keeping: the hold was released, the countdown aborted,
+      // or the field stopped being startable before anyone pressed start.
+      rmSync(session.dir, { recursive: true, force: true });
+      if (this.session === session) this.session = null;
+      console.log(`Match recording discarded (${session.matchId ? 'match never ran' : 'match never started'})`);
+      this.emit();
+      return;
+    }
+    const matchId = session.matchId;
     const endedAt = Date.now();
     const recordings: MatchRecording[] = [];
     for (const job of session.jobs) {
@@ -451,10 +542,10 @@ export class MatchRecorder {
       });
     }
     if (this.session === session) this.session = null;
-    const attached = this.historyStore?.setRecordings(session.matchId, recordings) ?? false;
+    const attached = this.historyStore?.setRecordings(matchId, recordings) ?? false;
     const summary = recordings.map(r => `${r.name}: ${r.status} ${(r.bytes / 1e6).toFixed(0)} MB`).join(', ');
     console.log(
-      `Match recording finished for ${session.matchId} (${summary})${attached ? '' : ' — no history entry to attach to'}`,
+      `Match recording finished for ${matchId} (${summary})${attached ? '' : ' — no history entry to attach to'}`,
     );
     void this.refreshDiskStats();
     this.emit();
@@ -568,6 +659,7 @@ export class MatchRecorder {
   }
 
   private writeManifest(session: Session, recordings: MatchRecording[], endedAt?: number): void {
+    if (session.matchId === null) return;
     const manifest: RecordingManifest = {
       matchId: session.matchId,
       matchNumber: session.matchNumber,
@@ -602,7 +694,9 @@ export class MatchRecorder {
         if (!statSync(dir).isDirectory()) continue;
         const manifest = this.readManifest(name);
         const age = manifest?.endedAt ?? manifest?.startedAt ?? statSync(dir).mtimeMs;
-        if (age < cutoff) {
+        // A pre-roll left behind by a crash is junk after an hour.
+        const stalePreroll = name.startsWith('pending-') && Date.now() - age > 60 * 60 * 1000;
+        if (age < cutoff || stalePreroll) {
           rmSync(dir, { recursive: true, force: true });
           removed++;
         }

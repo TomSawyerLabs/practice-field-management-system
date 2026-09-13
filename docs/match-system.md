@@ -211,9 +211,13 @@ URLs (anything ffmpeg can pull — for the field's stitchd/MediaMTX that is
 `rtsp://<host>:8554/<stream>`), enable the ones to record, and **Test** each
 before saving. From the next match on:
 
-- One ffmpeg per enabled stream starts at the match countdown and stops a few
-  seconds after the match ends. The video is copied as-is (no transcoding),
-  so the only cost is disk: roughly 1 MB/s per stream at 8–12 Mbps.
+- One ffmpeg per enabled stream starts as soon as the field is startable
+  (ready check open, every team and required staff role ready) — so the
+  hold-to-start, the countdown and the first seconds of auto are on tape —
+  keeps running through pauses, and stops 5 s after the match ends. A
+  pre-roll whose match never starts (or is aborted in the countdown) is
+  discarded. The video is copied as-is (no transcoding), so the only cost is
+  disk: roughly 1 MB/s per stream at 8–12 Mbps.
 - Capture goes to fragmented MP4 parts, which stay playable if anything dies
   mid-match. If the source drops, recording resumes into a new part; at the
   end the parts are joined and remuxed into a normal `+faststart` MP4.
