@@ -586,8 +586,8 @@ export async function startFMSServer({
 
       udpServer.on('error', error);
 
-      udpServer.bind(DefaultUdpPort, DefaultAddress, () => {
-        console.log(`UDP server listening on port ${DefaultUdpPort}`);
+      udpServer.bind(udp, address, () => {
+        console.log(`UDP server listening on ${address}:${udp}`);
 
         tcpServer.removeListener('error', error);
         tcpServer.on('error', err => {
