@@ -7,6 +7,16 @@ import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
+import CancelIcon from '@mui/icons-material/Cancel';
+import DangerousIcon from '@mui/icons-material/Dangerous';
+import StopCircleIcon from '@mui/icons-material/StopCircle';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import TaskAltIcon from '@mui/icons-material/TaskAlt';
+import RateReviewIcon from '@mui/icons-material/RateReview';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import Tooltip from '@mui/material/Tooltip';
+import IconButton from '@mui/material/IconButton';
 import { TeamAvatar } from './TeamAvatar';
 import {
   Alliance,
@@ -18,6 +28,7 @@ import {
   StaffRole,
   StaffRoleList,
   StaffRoleLabels,
+  MatchHistoryTeam,
 } from '../../../src/types';
 import {
   useMatchState,
@@ -48,7 +59,7 @@ import {
   matchSummaryUrl,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
-import { RecordingButtons } from './MatchVideoCard';
+import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
@@ -1125,6 +1136,26 @@ function ShareLinkButtons({ token, size = 'small' }: { token: string; size?: 'sm
   );
 }
 
+/** Icon-only share controls for the history list. */
+function ShareLinkIcons({ token }: { token: string }) {
+  const publicUrl = usePublicUrl();
+  const url = matchSummaryUrl(publicUrl, token);
+  return (
+    <>
+      <Tooltip title="Open the match summary">
+        <IconButton size="small" color="primary" href={url} target="_blank" rel="noopener">
+          <OpenInNewIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <CopyToClipboard text={url} tooltipText="Copy the summary link">
+        <IconButton size="small" color="primary">
+          <ContentCopyIcon fontSize="small" />
+        </IconButton>
+      </CopyToClipboard>
+    </>
+  );
+}
+
 /** After the match: the QR code teams scan off the TV, the same link for
  *  copying, and one download per recorded stream ("still finalizing" until
  *  the recorder attaches the files to the history entry). */
@@ -1193,6 +1224,53 @@ const endReasonChip: Record<string, { label: string; color: 'success' | 'warning
   abandoned: { label: 'Abandoned', color: 'default' },
 };
 
+/** How the match ended, as one icon (label on hover/long-press). */
+function EndReasonIcon({ reason }: { reason: string }) {
+  const info = endReasonChip[reason] ?? endReasonChip.normal;
+  const sx = { fontSize: 20, color: info.color === 'default' ? 'text.disabled' : `${info.color}.main` };
+  const icon =
+    reason === 'estop' ? (
+      <DangerousIcon sx={sx} />
+    ) : reason === 'stopped' ? (
+      <StopCircleIcon sx={sx} />
+    ) : reason === 'abandoned' ? (
+      <CancelIcon sx={sx} />
+    ) : (
+      <CheckCircleIcon sx={sx} />
+    );
+  return (
+    <Tooltip title={info.label}>
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>{icon}</Box>
+    </Tooltip>
+  );
+}
+
+/** One alliance's teams for the history grid: avatars + numbers, in the
+ *  alliance colour, anchored toward the score so the red|blue split lines up
+ *  on every row regardless of how many teams played. */
+function HistoryTeams({ teams, color, align }: { teams: MatchHistoryTeam[]; color: string; align: 'left' | 'right' }) {
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        gap: 1,
+        minWidth: 0,
+        overflow: 'hidden',
+        justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+      }}
+    >
+      {teams.map(t => (
+        <Box key={t.station} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, whiteSpace: 'nowrap' }}>
+          <TeamAvatar teamNumber={t.teamNumber} size={16} />
+          <Typography variant="body2" sx={{ fontWeight: 500, color }}>
+            {t.teamNumber}
+          </Typography>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 function MatchHistorySection({ matches }: { matches: MatchHistoryEntry[] }) {
   // Show most recent first
   const reversed = [...matches].reverse();
@@ -1257,7 +1335,6 @@ function HistoryScore({
 function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: number }) {
   const redTeams = match.teams.filter(t => t.alliance === 'red');
   const blueTeams = match.teams.filter(t => t.alliance === 'blue');
-  const chipInfo = endReasonChip[match.endReason] ?? endReasonChip.normal;
   // Winner from the best-known score: human review beats the sensor count
   const redFinal = match.review?.red?.score ?? match.redScore;
   const blueFinal = match.review?.blue?.score ?? match.blueScore;
@@ -1268,43 +1345,31 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
   return (
     <Box
       sx={{
-        display: 'flex',
+        display: 'grid',
+        // #  | red teams | red score | — | blue score | blue teams | duration | actions | end | ago
+        // The two team columns share the leftover width equally and the score
+        // columns are fixed, so the red|blue split sits at the same x on every row.
+        gridTemplateColumns: '36px minmax(0, 1fr) 64px 16px 64px minmax(0, 1fr) 44px auto 28px 56px',
         alignItems: 'center',
-        gap: 2,
-        px: 2,
-        py: 1,
+        columnGap: 1,
+        px: 1.5,
+        py: 0.75,
         borderRadius: 1,
         border: 1,
         borderColor: 'divider',
       }}
     >
-      {/* Match number */}
-      <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary', minWidth: 24 }}>
+      <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary' }}>
         #{index}
       </Typography>
-
-      {/* Red alliance teams + score */}
-      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          {redTeams.map(t => (
-            <Box key={t.station} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <TeamAvatar teamNumber={t.teamNumber} size={16} />
-              <Typography variant="body2" sx={{ fontWeight: 500, color: 'error.main' }}>
-                {t.teamNumber}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
+      <HistoryTeams teams={redTeams} color="error.main" align="right" />
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
         <HistoryScore score={match.redScore} review={match.review?.red} color="error.main" align="right" won={redWon} />
       </Box>
-
-      {/* Separator */}
-      <Typography variant="body2" sx={{ color: 'text.disabled', fontWeight: 300 }}>
+      <Typography variant="body2" sx={{ color: 'text.disabled', fontWeight: 300, textAlign: 'center' }}>
         —
       </Typography>
-
-      {/* Blue alliance teams + score */}
-      <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
         <HistoryScore
           score={match.blueScore}
           review={match.review?.blue}
@@ -1312,42 +1377,32 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
           align="left"
           won={blueWon}
         />
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          {blueTeams.map(t => (
-            <Box key={t.station} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <TeamAvatar teamNumber={t.teamNumber} size={16} />
-              <Typography variant="body2" sx={{ fontWeight: 500, color: 'info.main' }}>
-                {t.teamNumber}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
       </Box>
-
-      {/* Duration + review link + end reason + time ago */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 160, justifyContent: 'flex-end' }}>
-        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-          {formatDuration(match.durationSeconds)}
-        </Typography>
-        <RecordingButtons match={match} />
-        {match.shareToken && <ShareLinkButtons token={match.shareToken} />}
+      <HistoryTeams teams={blueTeams} color="info.main" align="left" />
+      <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {formatDuration(match.durationSeconds)}
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+        <RecordingIconButtons match={match} />
+        {match.shareToken && <ShareLinkIcons token={match.shareToken} />}
         {match.reviewUrl && (
-          <Button
-            size="small"
-            variant="outlined"
-            color={fullyReviewed ? 'success' : 'primary'}
-            href={match.reviewUrl}
-            target="_blank"
-            rel="noopener"
-          >
-            {fullyReviewed ? 'Reviewed ✓' : 'Review'}
-          </Button>
+          <Tooltip title={fullyReviewed ? 'Reviewed — open the review' : 'Review the video and scores'}>
+            <IconButton
+              size="small"
+              color={fullyReviewed ? 'success' : 'primary'}
+              href={match.reviewUrl}
+              target="_blank"
+              rel="noopener"
+            >
+              {fullyReviewed ? <TaskAltIcon fontSize="small" /> : <RateReviewIcon fontSize="small" />}
+            </IconButton>
+          </Tooltip>
         )}
-        <Chip label={chipInfo.label} color={chipInfo.color} size="small" variant="outlined" />
-        <Typography variant="caption" sx={{ color: 'text.disabled', minWidth: 50, textAlign: 'right' }}>
-          {formatTimeAgo(match.endedAt)}
-        </Typography>
       </Box>
+      <EndReasonIcon reason={match.endReason} />
+      <Typography variant="caption" sx={{ color: 'text.disabled', textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {formatTimeAgo(match.endedAt)}
+      </Typography>
     </Box>
   );
 }

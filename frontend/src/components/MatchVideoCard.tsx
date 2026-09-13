@@ -3,6 +3,10 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import VideocamIcon from '@mui/icons-material/Videocam';
+import VideocamOffIcon from '@mui/icons-material/VideocamOff';
 import Typography from '@mui/material/Typography';
 import type { MatchHistoryEntry, MatchRecording, StationName } from '../../../src/types';
 import { useMatchHistory, useMatchRecordingState } from '../hooks/useBackend';
@@ -55,6 +59,40 @@ export function RecordingButtons({
         ),
       )}
     </Box>
+  );
+}
+
+/** Icon-only variant for dense lists: one 🎥 per recorded stream. */
+export function RecordingIconButtons({ match }: { match: Pick<MatchHistoryEntry, 'matchId' | 'recordings'> }) {
+  if (!match.matchId || !match.recordings?.length) return null;
+  return (
+    <>
+      {match.recordings.map(rec =>
+        rec.status === 'failed' ? (
+          <Tooltip key={rec.name} title={`${rec.name}: no video was captured`}>
+            <span>
+              <IconButton size="small" disabled>
+                <VideocamOffIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip
+            key={rec.name}
+            title={`Download ${rec.name} video · ${formatBytes(rec.bytes)}${rec.status === 'partial' ? ' (has gaps)' : ''}`}
+          >
+            <IconButton
+              size="small"
+              color={rec.status === 'partial' ? 'warning' : 'primary'}
+              href={recordingUrl(match.matchId!, rec)}
+              download
+            >
+              <VideocamIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        ),
+      )}
+    </>
   );
 }
 
