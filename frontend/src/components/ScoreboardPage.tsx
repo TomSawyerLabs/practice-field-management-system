@@ -147,6 +147,28 @@ function getInitialVideoLayout(): VideoLayout {
   return param === 'square' ? 'square' : 'landscape';
 }
 
+// ── Lite mode (browser-local) ───────────────────────────────────────
+// For displays with little memory or GPU (an Android TV running the Cast
+// receiver): no glow/gradient backgrounds, no colour transitions, no battery
+// charts. Toggled with ?lite=1 or the "lite" control chip; persisted per
+// browser. Read once — it changes what gets mounted, so a toggle reloads.
+
+function getInitialLite(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const param = params.get('lite');
+  if (param !== null) return param === '1' || param === 'true';
+  return localStorage.getItem('scoreboard-lite') === '1';
+}
+
+const LITE = getInitialLite();
+
+function toggleLite() {
+  localStorage.setItem('scoreboard-lite', LITE ? '0' : '1');
+  const url = new URL(window.location.href);
+  url.searchParams.delete('lite');
+  window.location.replace(url.toString());
+}
+
 /** Phases where the countdown timer is actively counting down. */
 const COUNTING_PHASES = new Set(['countdown', 'auto', 'autoPause', 'teleop', 'endgame']);
 
@@ -459,14 +481,14 @@ export function ScoreboardPage() {
         background: scoreboardBg,
         color: '#fff',
         userSelect: 'none',
-        transition: 'background 1s ease',
+        transition: LITE ? 'none' : 'background 1s ease',
       }}
     >
       {/* Match sounds — unmounted entirely while this display is muted */}
       {!muted && <MatchAudioBridge />}
 
-      {/* Freeplay score-reactive glow backgrounds */}
-      {isFreePlay && (
+      {/* Freeplay score-reactive glow backgrounds (skipped in lite mode) */}
+      {isFreePlay && !LITE && (
         <FreeplayGlow
           leftScore={score[left].total}
           rightScore={score[right].total}
@@ -504,6 +526,7 @@ export function ScoreboardPage() {
             />
           )}
           <ControlChip icon="⇄" label="swap" onClick={toggleSwap} />
+          <ControlChip icon="🪶" label={LITE ? 'lite on' : 'lite'} active={LITE} onClick={toggleLite} />
           <ControlChip
             icon={muted ? '🔇' : '🔊'}
             label={muted ? 'muted' : 'sound'}
@@ -1234,24 +1257,38 @@ function BatteryCard({
           )}
         </Typography>
       </Box>
-      <Box sx={{ '& canvas': { display: 'block', height: `${chartHeight}px !important` } }}>
-        <SmoothieComponent
-          responsive
-          height={chartHeight}
-          streamDelay={-1000}
-          millisPerPixel={200}
-          minValue={5}
-          maxValue={14}
-          limitFPS={15}
-          grid={BATTERY_CHART_GRID}
-          labels={BATTERY_CHART_LABELS}
-          title={BATTERY_CHART_TITLE}
-          yMinFormatter={emptyChartLabel}
-          yMaxFormatter={emptyChartLabel}
-          yIntermediateFormatter={emptyChartLabel}
-          series={series}
-        />
-      </Box>
+      {LITE ? (
+        <Box sx={{ height: chartHeight, display: 'flex', alignItems: 'flex-end', px: 0.75 }}>
+          <Box
+            sx={{
+              height: '60%',
+              width: `${Math.max(0, Math.min(100, (((robot.battery?.current ?? 0) - 5) / 9) * 100))}%`,
+              bgcolor: color,
+              opacity: 0.6,
+              borderRadius: 0.5,
+            }}
+          />
+        </Box>
+      ) : (
+        <Box sx={{ '& canvas': { display: 'block', height: `${chartHeight}px !important` } }}>
+          <SmoothieComponent
+            responsive
+            height={chartHeight}
+            streamDelay={-1000}
+            millisPerPixel={200}
+            minValue={5}
+            maxValue={14}
+            limitFPS={15}
+            grid={BATTERY_CHART_GRID}
+            labels={BATTERY_CHART_LABELS}
+            title={BATTERY_CHART_TITLE}
+            yMinFormatter={emptyChartLabel}
+            yMaxFormatter={emptyChartLabel}
+            yIntermediateFormatter={emptyChartLabel}
+            series={series}
+          />
+        </Box>
+      )}
       <Box
         sx={{
           display: 'flex',

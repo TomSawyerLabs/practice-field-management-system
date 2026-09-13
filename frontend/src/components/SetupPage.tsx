@@ -85,10 +85,12 @@ function StepActions({ step }: { step: SetupStepId }) {
 
   const [radioUrl, setRadioUrl] = useState('');
   const [videoTarget, setVideoTarget] = useState('');
+  const [publicUrl, setPublicUrl] = useState('');
 
   // Keep local fields in step with the server, but don't fight the user's typing.
   useEffect(() => setRadioUrl(settings?.radioUrl ?? ''), [settings?.radioUrl]);
   useEffect(() => setVideoTarget(settings?.videoProxyTarget ?? ''), [settings?.videoProxyTarget]);
+  useEffect(() => setPublicUrl(settings?.publicUrl ?? ''), [settings?.publicUrl]);
 
   if (step === 'interfaces') {
     return (
@@ -225,6 +227,24 @@ function StepActions({ step }: { step: SetupStepId }) {
           <Button
             variant="outlined"
             onClick={() => sendUpdateSetupSettings({ videoProxyTarget: videoTarget || undefined })}
+            sx={{ mt: 0.25 }}
+          >
+            Save
+          </Button>
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="flex-start">
+          <TextField
+            size="small"
+            label="Public address (for the post-match QR code)"
+            placeholder="https://pfms.example.org"
+            helperText="Where this field is reachable from the internet. Share links and the scoreboard's post-match QR code use it; blank = each screen's own address."
+            value={publicUrl}
+            onChange={e => setPublicUrl(e.target.value)}
+            sx={{ minWidth: 320 }}
+          />
+          <Button
+            variant="outlined"
+            onClick={() => sendUpdateSetupSettings({ publicUrl: publicUrl.trim().replace(/\/+$/, '') || undefined })}
             sx={{ mt: 0.25 }}
           >
             Save
