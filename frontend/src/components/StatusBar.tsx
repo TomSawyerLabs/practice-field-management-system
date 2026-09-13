@@ -9,7 +9,16 @@ import GitHubIcon from '@mui/icons-material/GitHub';
 import ScoreboardIcon from '@mui/icons-material/Scoreboard';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import { useConnectivity, ConnectivityState } from '../hooks/useConnectivity';
-import { usePendingCommit, sendApplyConfig, useServerStartTime, serverToBrowserTime } from '../hooks/useBackend';
+import {
+  usePendingCommit,
+  usePendingCommitState,
+  useLatest,
+  sendApplyConfig,
+  useServerStartTime,
+  serverToBrowserTime,
+} from '../hooks/useBackend';
+import { StationNameList, type StationName } from '../../../src/types';
+import { prettyStationName } from '../../../src/utils';
 import { useSupportWidget } from './SupportChatWidget';
 
 type DotColor = 'success.main' | 'error.main' | 'warning.main' | 'text.disabled';
@@ -184,6 +193,44 @@ function SupportButton() {
   }
 }
 
+/** One line per staged station change, plus the deferred re-apply if owed.
+ *  High level only: which slot, which SSID goes/comes — never a passphrase. */
+function PendingChangeList() {
+  const pending = usePendingCommitState();
+  const latest = useLatest();
+  const active = latest?.radioUpdate?.stationStatuses;
+  const lines: string[] = [];
+  for (const station of StationNameList) {
+    const staged = pending.stagedChanges?.[station as StationName];
+    if (staged === undefined) continue;
+    const label = prettyStationName(station);
+    const current = active?.[station as StationName]?.ssid || undefined;
+    if (staged === null) {
+      lines.push(`${label}: clear${current ? ` ${current}` : ''}`);
+      continue;
+    }
+    let text: string;
+    if (!current) text = `${label}: configure ${staged.ssid}`;
+    else if (current === staged.ssid) text = `${label}: re-apply ${staged.ssid}`;
+    else text = `${label}: ${current} → ${staged.ssid}`;
+    if (staged.internetAccess !== undefined) text += ` · internet ${staged.internetAccess ? 'on' : 'off'}`;
+    lines.push(text);
+  }
+  if (pending.deferred) lines.push('Re-apply the current configuration (held back while a match was running)');
+  return (
+    <Box sx={{ fontSize: '0.75rem' }}>
+      <Box sx={{ fontWeight: 700, mb: lines.length ? 0.5 : 0 }}>
+        {lines.length ? 'Apply to the radio:' : 'Configuration changes are staged but not yet applied to the radio.'}
+      </Box>
+      {lines.map(l => (
+        <Box key={l} sx={{ whiteSpace: 'nowrap' }}>
+          • {l}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 export function StatusBar() {
   const connectivity = useConnectivity();
   const internet = getInternetIndicator(connectivity);
@@ -216,7 +263,7 @@ export function StatusBar() {
       <StatusDot color={pfms.color} label="PFMS" tooltip={pfms.tooltip} />
       {serverStartTime != null && <UptimeDisplay serverStartTime={serverStartTime} />}
       {showApply && (
-        <Tooltip title="Configuration changes are staged but not yet applied to the radio. Click to apply now." arrow>
+        <Tooltip title={<PendingChangeList />} arrow enterTouchDelay={0} leaveTouchDelay={4000}>
           <Button
             size="small"
             variant="contained"

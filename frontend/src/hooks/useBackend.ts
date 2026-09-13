@@ -97,6 +97,7 @@ import {
   SetupConfigState,
   SetupSettings,
   SetupStepId,
+  StagedStationChange,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -318,7 +319,7 @@ let currentSavedTeams: SavedTeamsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
 let currentPendingCommit = false;
-let currentStagedChanges: Record<string, { ssid: string; wpaKey: string } | null> = {};
+let currentStagedChanges: Record<string, StagedStationChange | null> = {};
 let currentLastLinked: Partial<Record<StationName, number>> = {};
 let currentServerInfo: ServerInfo | null = null;
 const currentTeamCheckResults = new Map<StationName, TeamCheckResults>();
@@ -419,8 +420,11 @@ function handleRoutePreferenceState(state: RoutePreferenceState) {
   events.dispatchEvent(new CustomEvent('routePreferenceState', { detail: state }));
 }
 
+let currentPendingCommitState: PendingCommitState = { type: 'pendingCommitState', pending: false };
+
 function handlePendingCommitState(state: PendingCommitState) {
   currentPendingCommit = state.pending;
+  currentPendingCommitState = state;
   currentStagedChanges = state.stagedChanges ?? {};
   events.dispatchEvent(new CustomEvent('pendingCommitState', { detail: state }));
 }
@@ -1139,8 +1143,23 @@ export function usePendingCommit(): boolean {
   return pending;
 }
 
+/** The whole pending-commit message: what is staged, and whether a deferred
+ *  re-apply is owed. For the status bar's summary of what "Apply" will do. */
+export function usePendingCommitState(): PendingCommitState {
+  const [state, setState] = useState<PendingCommitState>(currentPendingCommitState);
+
+  useEffect(() => {
+    setState(currentPendingCommitState);
+    const handler = (e: Event) => setState((e as CustomEvent<PendingCommitState>).detail);
+    events.addEventListener('pendingCommitState', handler);
+    return () => events.removeEventListener('pendingCommitState', handler);
+  }, []);
+
+  return state;
+}
+
 /** Get the backend's staged changes (not yet committed). */
-export function useBackendStagedChanges(): Record<string, { ssid: string; wpaKey: string } | null> {
+export function useBackendStagedChanges(): Record<string, StagedStationChange | null> {
   const [staged, setStaged] = useState(currentStagedChanges);
 
   useEffect(() => {

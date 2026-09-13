@@ -402,6 +402,7 @@ export function setupWebSocket(
       type: 'pendingCommitState',
       pending,
       stagedChanges: pending ? radioManager.getStagedChanges() : undefined,
+      deferred: pending ? radioManager.deferredCommit : undefined,
     } satisfies PendingCommitState);
   });
 
@@ -575,6 +576,7 @@ export function setupWebSocket(
         type: 'pendingCommitState',
         pending: radioManager.pendingCommit,
         stagedChanges: radioManager.pendingCommit ? radioManager.getStagedChanges() : undefined,
+        deferred: radioManager.pendingCommit ? radioManager.deferredCommit : undefined,
       } satisfies PendingCommitState),
     );
 

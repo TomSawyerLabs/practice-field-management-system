@@ -19,6 +19,7 @@ import {
   Status,
   StatusEntry,
   translateRadioUpdate,
+  StagedStationChange,
 } from './types.js';
 
 type StatusListener = (entry: StatusEntry) => void;
@@ -925,13 +926,22 @@ class RadioManager {
   }
 
   /** Get all staged changes. */
-  getStagedChanges(): Record<string, { ssid: string; wpaKey: string; internetAccess?: boolean } | null> {
-    const result: Record<string, { ssid: string; wpaKey: string; internetAccess?: boolean } | null> = {};
+  /** Staged changes for clients — SSID and internet flag only, never the WPA key. */
+  getStagedChanges(): Record<string, StagedStationChange | null> {
+    const result: Record<string, StagedStationChange | null> = {};
     for (const station of StationNameList) {
       const staged = this.stagedChanges[station];
-      if (staged !== undefined) result[station] = staged;
+      if (staged === undefined) continue;
+      result[station] = staged
+        ? { ssid: staged.ssid, internetAccess: staged.internetAccess, secured: staged.wpaKey.length > 0 }
+        : null;
     }
     return result;
+  }
+
+  /** An immediate commit was deferred (see setShouldDefer) and is still owed. */
+  get deferredCommit(): boolean {
+    return this._deferredCommit;
   }
 
   getTeamForStation(station: StationName): number | null {

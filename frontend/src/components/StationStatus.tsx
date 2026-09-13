@@ -312,7 +312,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                 <>
                   <span style={{ userSelect: 'none' }}> → </span>
                   {stagedChanges[station]?.ssid ? (
-                    <SSIDDisplay ssid={stagedChanges[station]?.ssid} hashedWpaKey={stagedChanges[station]?.wpaKey} />
+                    <SSIDDisplay ssid={stagedChanges[station]?.ssid} secure={stagedChanges[station]?.secured} />
                   ) : (
                     <Chip label="(clear)" size="small" variant="outlined" color="warning" sx={{ height: 20 }} />
                   )}
@@ -1189,14 +1189,14 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
 
 export default StationStatus;
 
-function SSIDDisplay({ ssid, hashedWpaKey }: { ssid?: string; hashedWpaKey?: string }) {
+function SSIDDisplay({ ssid, hashedWpaKey, secure }: { ssid?: string; hashedWpaKey?: string; secure?: boolean }) {
   if (!ssid) {
     return null;
   }
 
   return (
     <>
-      {ssid && <SecureStatus secure={!!hashedWpaKey} />}
+      {ssid && <SecureStatus secure={secure ?? !!hashedWpaKey} />}
       <CopyToClipboard text={ssid} tooltipText="Click to copy SSID">
         <Typography
           variant="h6"
