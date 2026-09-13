@@ -60,6 +60,14 @@ part fails (discovery, session start, session survival) and fix what is ours.
 - Deploys restart the backend; the receiver's 30 s watchdog reconnects. Not a
   problem unless deploys land mid-match.
 
+- **The TV's path to pFMS is direct, not via Cloudflare.** LAN DNS resolves
+  `pfms.tomsawyerlabs.com` to steamboat (10.255.0.5 / `…8a1f::1a5`); the
+  receiver's requests carry no `Cf-Connecting-Ip`/`X-Forwarded-For` and
+  `remote_ip` is the TV's own global IPv6. So Cloudflare's WebSocket limits
+  are not in play. The TV's IPv6 source address rotated between 09-12 and
+  09-13 (privacy addresses) — not expected to cut an 18-minute-old socket,
+  but worth remembering if drops line up with address rotation.
+
 ## Open questions for Cameron
 
 1. Which of these is the "unreliable" you see? (a) the TV never appears in
