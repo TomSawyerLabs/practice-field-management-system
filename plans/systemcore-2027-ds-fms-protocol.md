@@ -134,6 +134,18 @@ New 2027 DS:
   state)? If its status never sets the enabled bit, pFMS can't see it; the
   DS itself still stops the robot. Candidate: the TCP 0x16 status byte
   (Cheesy reads "DS disabled" from 0x08 there).
+- 19:45–19:46 third attempt (build 6cafd40): match started, auto and
+  teleop ran with NO "DS disable reported" lines. The team exercised
+  A-stop (auto), E-stop + clear, re-enable from the station page and from
+  admin, pause/resume — all from pFMS pages, all logged as expected. Every
+  "DS status after FMS enable" line read raw=0x3a (auto) / 0x38 (teleop),
+  enabled bit clear, confirming the 2027 DS never sets it. Decoded 60 s of
+  the match: DS TCP traffic is only 0x1e handshakes + 0x1d keepalives
+  (~every 3.5 s) — no 0x16 log/status packets — so there is no TCP signal
+  for a DS-side Disable press either. A Disable pressed on the 2027 DS
+  therefore stops the robot locally but is invisible to pFMS; stops from
+  the station page are the visible path. The DS's E-stop bit (0x80) in the
+  UDP status was not observed in this session (untested).
 - Expected journal sequence when it works: `DS at <ip>: team N (2027 DS,
 control UDP P, flags 0) → assigned <slot> (reply 0x1f)`, then `Match
 control for slotX now sent to <ip>:P/ds2027 as <slot>` (once, not every
