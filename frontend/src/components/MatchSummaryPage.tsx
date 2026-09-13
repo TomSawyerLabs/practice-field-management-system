@@ -104,22 +104,6 @@ export function MatchSummaryPage({ token }: { token: string }) {
             </Typography>
             <AllianceColumn summary={summary} alliance="blue" won={blueWon} />
           </Box>
-          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 1 }}>
-            <Typography
-              variant="caption"
-              sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}
-            >
-              <EmojiEventsIcon sx={{ fontSize: 16 }} /> winner
-            </Typography>
-            {summary.autoWinner && (
-              <Typography
-                variant="caption"
-                sx={{ color: 'text.secondary', display: 'flex', alignItems: 'center', gap: 0.5 }}
-              >
-                <BoltIcon sx={{ fontSize: 16 }} /> auto winner
-              </Typography>
-            )}
-          </Box>
         </CardContent>
       </Card>
 
@@ -273,9 +257,9 @@ function AllianceColumn({ summary, alliance, won }: { summary: PublicMatchSummar
       </Typography>
       {/* Fixed-height badge row so the winner/auto icons never shift the score
           up or down — the trophy no longer rides on the big number. */}
-      <Box sx={{ height: 22, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
-        {won && <EmojiEventsIcon sx={{ fontSize: 20, color }} />}
-        {isAutoWinner && <BoltIcon sx={{ fontSize: 20, color }} />}
+      <Box sx={{ height: 30, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 0.75 }}>
+        {won && <EmojiEventsIcon sx={{ fontSize: 28, color }} />}
+        {isAutoWinner && <BoltIcon sx={{ fontSize: 24, color }} />}
       </Box>
       <Typography variant="h2" sx={{ color, fontWeight: 800, lineHeight: 1 }}>
         {review ? review.score : live}
