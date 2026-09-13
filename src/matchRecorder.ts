@@ -142,10 +142,12 @@ function isRtsp(url: string): boolean {
 }
 
 function inputArgs(url: string): string[] {
-  // -rw_timeout is a generic protocol option (µs): give up on a stalled
-  // source instead of hanging forever, so the reconnect logic can kick in.
-  const args = ['-rw_timeout', '10000000'];
-  if (isRtsp(url)) args.unshift('-rtsp_transport', 'tcp');
+  // Give up on a stalled source instead of hanging forever, so the reconnect
+  // logic can kick in. The RTSP demuxer takes `-timeout` (µs) and REJECTS the
+  // generic `-rw_timeout` ("Option rw_timeout not found" — ffprobe tolerates
+  // it, ffmpeg 7.1 does not; that cost the first recorded match on
+  // 2026-09-13). HTTP/other inputs take the generic protocol option.
+  const args = isRtsp(url) ? ['-rtsp_transport', 'tcp', '-timeout', '10000000'] : ['-rw_timeout', '10000000'];
   return [...args, '-i', url];
 }
 
