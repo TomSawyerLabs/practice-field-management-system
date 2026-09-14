@@ -452,7 +452,7 @@ export async function startFMSServer({
    *  FMS-controlled mode (local enable locked out), so only resolve teams whose
    *  station has joined a match — or is opted in via FMS_TCP_REPLY_STATIONS to
    *  test that lockout hypothesis on a single robot. */
-  resolveTeamSlot?: (teamNumber: number) => MatchSlot | undefined;
+  resolveTeamSlot?: (teamNumber: number) => MatchSlot | 'release' | undefined;
 } = {}) {
   return new Promise<FmsServer>((resolve, reject) => {
     let udpServer: Socket;
@@ -517,17 +517,28 @@ export async function startFMSServer({
           // local enable. Freeplay DSes get no reply and keep local control —
           // they retry TCP every ~6s, which the churn dampener below keeps out
           // of the logs.
-          const slot = resolveTeamSlot?.(obj.teamNumber);
-          if (slot) {
-            socket.write(makeStationAssignment(obj, slot));
+          const resolved = resolveTeamSlot?.(obj.teamNumber);
+          if (resolved === 'release') {
+            // Known team, not in a match: tell the DS explicitly it is NOT in
+            // the current match (status 2), so it drops FMS-controlled mode and
+            // returns to local control instead of staying locked until the app
+            // is restarted. Opt-in (FMS_RELEASE_NOT_IN_MATCH) until verified on
+            // a real DS — a wrong guess could park every freeplay DS in
+            // "waiting" instead.
+            socket.write(makeNotInMatchReply(obj));
+          } else if (resolved) {
+            socket.write(makeStationAssignment(obj, resolved));
           }
-          const key = `${obj.teamNumber}|${obj.type}|${slot ?? ''}`;
+          const key = `${obj.teamNumber}|${obj.type}|${resolved ?? ''}`;
           if (lastLoggedHandshake.get(addr) !== key) {
             lastLoggedHandshake.set(addr, key);
             const gen = obj.type === 0x1e ? ` (2027 DS, control UDP ${obj.udpPort}, flags ${obj.flags})` : '';
-            const reply = slot
-              ? ` → assigned ${slot} (reply 0x${obj.type === 0x1e ? '1f' : '19'})`
-              : ' (no reply: not joined)';
+            const reply =
+              resolved === 'release'
+                ? ` → not in match (release reply 0x${obj.type === 0x1e ? '1f' : '19'} status 2)`
+                : resolved
+                  ? ` → assigned ${resolved} (reply 0x${obj.type === 0x1e ? '1f' : '19'})`
+                  : ' (no reply: not joined)';
             console.log(`DS at ${addr}: team ${obj.teamNumber}${gen}${reply}`);
           }
         } else if (process.env.FMS_LOG_DS_MESSAGES) {
@@ -684,6 +695,18 @@ export function makeStationAssignment(handshake: TeamNumberMessage | Ds2027TeamN
   if (handshake.type === 0x18) return Buffer.from([0x00, 0x03, 0x19, station, 0]);
   const team = handshake.teamNumber;
   return Buffer.from([0x00, 0x06, 0x1f, station, 0, 0, (team >> 8) & 0xff, team & 0xff]);
+}
+
+/**
+ * Tell a DS it is known but NOT in the current match (status byte 2), so it
+ * leaves FMS-controlled mode and returns to local control rather than staying
+ * locked until the operator closes and reopens the app. Same frame shape as the
+ * assignment reply, station 0. (Cheesy Arena sends status 2 for the same case.)
+ */
+export function makeNotInMatchReply(handshake: TeamNumberMessage | Ds2027TeamNumberMessage): Buffer {
+  if (handshake.type === 0x18) return Buffer.from([0x00, 0x03, 0x19, 0, 2]);
+  const team = handshake.teamNumber;
+  return Buffer.from([0x00, 0x06, 0x1f, 0, 2, 0, (team >> 8) & 0xff, team & 0xff]);
 }
 
 function tournamentLevelToByte(level: TournamentLevel): number {

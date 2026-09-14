@@ -38,12 +38,13 @@ service restart — no `systemctl daemon-reload` needed.
 
 ## FMS Protocol
 
-| Variable                 | Default   | Description                                                                                                                                                                      |
-| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FMS_ENDPOINT`           | `false`   | Set to `true` to enable the FMS server (TCP/1750 + UDP/1160)                                                                                                                     |
-| `FMS_TCP_REPLY_STATIONS` | _(none)_  | Experimental: stations whose DS gets the FMS TCP station-assignment reply outside a match (`slot1,slot2` or `all`). For testing whether a TCP-only reply locks out local enable. |
-| `FMS_LOG_DS_MESSAGES`    | _(unset)_ | Set to log verbose per-message DS TCP/UDP hex dumps (debugging)                                                                                                                  |
-| `SYSLOG_ENDPOINT`        | `false`   | Set to `true` to enable the syslog server (radio log collection)                                                                                                                 |
+| Variable                   | Default   | Description                                                                                                                                                                                                              |
+| -------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FMS_ENDPOINT`             | `false`   | Set to `true` to enable the FMS server (TCP/1750 + UDP/1160)                                                                                                                                                             |
+| `FMS_TCP_REPLY_STATIONS`   | _(none)_  | Experimental: stations whose DS gets the FMS TCP station-assignment reply outside a match (`slot1,slot2` or `all`). For testing whether a TCP-only reply locks out local enable.                                         |
+| `FMS_RELEASE_NOT_IN_MATCH` | `false`   | Experimental: when a known team's station is not in a match, reply to its DS handshake with a "not in match" status so the DS returns to local control without a close/reopen. Verify on a real DS before relying on it. |
+| `FMS_LOG_DS_MESSAGES`      | _(unset)_ | Set to log verbose per-message DS TCP/UDP hex dumps (debugging)                                                                                                                                                          |
+| `SYSLOG_ENDPOINT`          | `false`   | Set to `true` to enable the syslog server (radio log collection)                                                                                                                                                         |
 
 ## Robot Tester
 
