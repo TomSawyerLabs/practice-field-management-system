@@ -130,11 +130,6 @@ const StartFMS = process.env.FMS_ENDPOINT === 'true';
 // outside a match ("slot1,slot2" or "all") — for testing whether a TCP-only
 // reply locks the DS out of local enable before defaulting it on for everyone.
 const FmsTcpReplyStations = process.env.FMS_TCP_REPLY_STATIONS ?? '';
-// Experimental: when a known team's station is NOT in a match, reply to its DS
-// handshake with a "not in match" status so the DS returns to local control
-// without a close/reopen, instead of pFMS staying silent. Opt-in until verified
-// on a real DS (a wrong guess could park freeplay DSes in "waiting").
-const ReleaseNotInMatch = process.env.FMS_RELEASE_NOT_IN_MATCH === 'true';
 const StartSyslog = process.env.SYSLOG_ENDPOINT === 'true';
 const StartMdnsReflector = process.env.MDNS_REFLECTOR === 'true';
 const TestInterface = process.env.TEST_INTERFACE;
@@ -1167,9 +1162,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         const state = matchEngine.getState();
         const joined = state.stationStates[station]?.joined ?? false;
         if (!joined && !tcpReplyAll && !tcpReplyOptIn.has(station)) {
-          // Not in a match: actively release the DS to local control (opt-in),
-          // else stay silent as before.
-          return ReleaseNotInMatch ? 'release' : undefined;
+          // Not in a match: unless an admin has turned it off, actively release
+          // the DS to local control (a "not in match" reply) so a driver can
+          // enable for freeplay without closing/reopening the DS. Read live so
+          // the admin switch takes effect without a restart. Default on.
+          return setupConfigStore.get().settings.outOfMatchControl !== false ? 'release' : undefined;
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
         // (which side of the field it shows), not the physical-port default,

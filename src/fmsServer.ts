@@ -522,9 +522,8 @@ export async function startFMSServer({
             // Known team, not in a match: tell the DS explicitly it is NOT in
             // the current match (status 2), so it drops FMS-controlled mode and
             // returns to local control instead of staying locked until the app
-            // is restarted. Opt-in (FMS_RELEASE_NOT_IN_MATCH) until verified on
-            // a real DS — a wrong guess could park every freeplay DS in
-            // "waiting" instead.
+            // is restarted. On by default; an admin can turn it off (the
+            // gating lives in index.ts's resolver).
             socket.write(makeNotInMatchReply(obj));
           } else if (resolved) {
             socket.write(makeStationAssignment(obj, resolved));

@@ -320,6 +320,39 @@ function MatchStatusSection() {
   );
 }
 
+/** Admin switch: may robots that aren't in a match be enabled from their own
+ *  Driver Station? On by default. The button is the action; the chip is state. */
+function OutOfMatchControlSection() {
+  const setupConfig = useSetupConfig();
+  const enabled = setupConfig?.config.settings.outOfMatchControl !== false;
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent
+        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}
+      >
+        <Box sx={{ minWidth: 260, flex: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h6">Out-of-match robot control</Typography>
+            <Chip size="small" color={enabled ? 'success' : 'default'} label={enabled ? 'Enabled' : 'Disabled'} />
+          </Box>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5 }}>
+            {enabled
+              ? 'Robots that are not in a match can be enabled from their own Driver Station for freeplay.'
+              : 'Robots that are not in a match are held disabled until they join a match.'}
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          color={enabled ? 'warning' : 'success'}
+          onClick={() => sendUpdateSetupSettings({ outOfMatchControl: !enabled })}
+        >
+          {enabled ? 'Turn off' : 'Turn on'}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Admin Page ──────────────────────────────────────────────────────
 
 export function AdminPage() {
@@ -331,6 +364,7 @@ export function AdminPage() {
 
       <GlobalEStopSection />
       <MatchStatusSection />
+      <OutOfMatchControlSection />
       <ScoringSection />
       <ApiKeySection />
       <ExternalAccessSection />

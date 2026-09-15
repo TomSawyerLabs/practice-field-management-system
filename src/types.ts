@@ -234,6 +234,11 @@ export interface SetupSettings {
   recordingStreams?: RecordingStreamConfig[];
   /** Days to keep match recordings before the sweep deletes them. */
   recordingRetentionDays?: number;
+  /** Whether robots NOT in a match can be enabled from their own Driver
+   *  Station (pFMS sends a "not in match" release so the DS keeps local
+   *  control). Absent/true = on; set false via the admin switch to hold
+   *  not-in-match robots disabled. */
+  outOfMatchControl?: boolean;
   /** Address this field is reachable at from anywhere, e.g.
    *  `https://pfms.example.org` — used to build the post-match QR link. */
   publicUrl?: string;
@@ -407,6 +412,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   deploymentMode: v => v === 'systemd' || v === 'docker',
   recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
+  outOfMatchControl: v => typeof v === 'boolean',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
 };
 
