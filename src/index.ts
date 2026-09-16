@@ -34,7 +34,7 @@ import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
 import { SubnetScanner } from './subnetScanner.js';
 import { MdnsReflector } from './mdnsReflector.js';
-import { TeamChecker } from './teamChecker.js';
+import { TeamChecker, setControllerPolicyResolver } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
@@ -306,6 +306,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // A stream server saved in the setup UI wins over the environment, and is
   // read per-request so it applies without a restart.
   setVideoProxyTargetResolver(() => setupConfigStore.get().settings.videoProxyTarget ?? process.env.VIDEO_PROXY_TARGET);
+
+  // Field policy on robot control systems — read live so an admin change
+  // shows up in the next robot check without a restart.
+  setControllerPolicyResolver(() => setupConfigStore.get().settings.controllerPolicy);
 
   // Initialize scoring engine and API key store
   const ScoringAutoRegisterLimit = Number(process.env.SCORING_AUTO_REGISTER_LIMIT) || 1;

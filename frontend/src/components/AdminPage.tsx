@@ -17,7 +17,7 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 
-import type { MatchPhase, StationName } from '../../../src/types';
+import type { MatchPhase, StationName, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
 import { prettyStationName } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
@@ -353,6 +353,63 @@ function OutOfMatchControlSection() {
   );
 }
 
+/** Field policy on robot control systems. Advisory: it changes what a team
+ *  sees in their robot check, it does not stop a robot connecting. */
+function ControllerPolicySection() {
+  const setupConfig = useSetupConfig();
+  const policy: ControllerPolicy = setupConfig?.config.settings.controllerPolicy ?? 'none';
+  const options: { value: ControllerPolicy; label: string; help: string }[] = [
+    { value: 'none', label: 'No preference', help: 'Both control systems are fine. Teams see nothing about this.' },
+    {
+      value: 'preferSystemCore',
+      label: 'Encourage SystemCore',
+      help: 'Teams still on the roboRIO get a warning in their robot check. They are still allowed to play.',
+    },
+    {
+      value: 'blockRoboRIO',
+      label: 'SystemCore only',
+      help: 'roboRIO robots fail their robot check and are told to see field staff.',
+    },
+    {
+      value: 'blockSystemCore',
+      label: 'No SystemCore',
+      help: 'SystemCore robots fail their robot check and are told to see field staff.',
+    },
+  ];
+  const current = options.find(o => o.value === policy) ?? options[0];
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
+          <Typography variant="h6">Robot control system</Typography>
+          <Chip
+            size="small"
+            color={policy === 'none' ? 'default' : policy === 'preferSystemCore' ? 'info' : 'warning'}
+            label={current.label}
+          />
+        </Box>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          {current.help} A blocked robot still connects and can drive — the check turns red so the team and field staff
+          see it.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          {options.map(o => (
+            <Button
+              key={o.value}
+              size="small"
+              variant={o.value === policy ? 'contained' : 'outlined'}
+              color={o.value === policy ? 'primary' : 'inherit'}
+              onClick={() => sendUpdateSetupSettings({ controllerPolicy: o.value })}
+            >
+              {o.label}
+            </Button>
+          ))}
+        </Box>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Admin Page ──────────────────────────────────────────────────────
 
 export function AdminPage() {
@@ -365,6 +422,7 @@ export function AdminPage() {
       <GlobalEStopSection />
       <MatchStatusSection />
       <OutOfMatchControlSection />
+      <ControllerPolicySection />
       <ScoringSection />
       <ApiKeySection />
       <ExternalAccessSection />

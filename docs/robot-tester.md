@@ -98,6 +98,25 @@ For a **roboRIO**, the XML response is parsed to extract system properties:
 
 The roboRIO probe has a longer timeout (3s vs 1.5s) because the NI SysAPI is slower than the radio's HTTP server.
 
+### Control System Policy (optional)
+
+A field can state which robot control system it wants, from **Admin → Robot
+control system**. Default is **No preference**, which adds nothing to the
+checks. The other modes add a **Control System Policy** check:
+
+| Mode                    | roboRIO robot                                                  | SystemCore robot                   |
+| ----------------------- | -------------------------------------------------------------- | ---------------------------------- |
+| No preference (default) | no check                                                       | no check                           |
+| Encourage SystemCore    | **warn** — allowed, but told the field is moving to SystemCore | pass                               |
+| SystemCore only         | **fail** — told to see field staff                             | pass                               |
+| No SystemCore           | pass                                                           | **fail** — told to see field staff |
+
+This is advisory: a failed check tells the team and field staff, it does not
+stop the robot connecting or joining a match. Controller detection can miss
+transiently (a dropped mDNS probe), and hard-blocking on that would strand a
+legitimate robot mid-event. The check is skipped entirely when no controller
+was found, since the "no controller" error already covers that.
+
 ### Factory Default Check
 
 Probes `http://192.168.69.1/status` in parallel with the team-IP checks. If the radio responds at the factory IP but **not** at the team IP, the radio hasn't been configured — this produces a **fail** result prompting configuration. If both respond, it's normal (the radio always keeps the factory IP alive as a recovery fallback).

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { evaluateSystemCore, parseMdnsAnswers } from './teamChecker.js';
+import { evaluateControllerPolicy, evaluateSystemCore, parseMdnsAnswers } from './teamChecker.js';
 
 /**
  * Covers the SystemCore half of the robot tester without a robot on the field:
@@ -150,5 +150,35 @@ describe('radio SystemCore mode is judged against the controller that answered',
 
   test('firmware that does not report the mode is not a failure', () => {
     expect(evaluateSystemCore({ version: 'VH-109_1.9.0' }, 'systemcore').status).toBe('pass');
+  });
+});
+
+describe('field control-system policy', () => {
+  test('default says nothing to anyone', () => {
+    expect(evaluateControllerPolicy('roboRIO', 'none')).toBeNull();
+    expect(evaluateControllerPolicy('systemcore', 'none')).toBeNull();
+  });
+
+  test('encourage: roboRIO warns but is allowed, SystemCore passes', () => {
+    const rio = evaluateControllerPolicy('roboRIO', 'preferSystemCore');
+    expect(rio?.status).toBe('warn');
+    expect(rio?.expected).toBe('SystemCore');
+    expect(evaluateControllerPolicy('systemcore', 'preferSystemCore')?.status).toBe('pass');
+  });
+
+  test('SystemCore only: roboRIO fails', () => {
+    expect(evaluateControllerPolicy('roboRIO', 'blockRoboRIO')?.status).toBe('fail');
+    expect(evaluateControllerPolicy('systemcore', 'blockRoboRIO')?.status).toBe('pass');
+  });
+
+  test('no SystemCore: SystemCore fails', () => {
+    expect(evaluateControllerPolicy('systemcore', 'blockSystemCore')?.status).toBe('fail');
+    expect(evaluateControllerPolicy('roboRIO', 'blockSystemCore')?.status).toBe('pass');
+  });
+
+  test('no controller found: policy stays quiet, whatever it is', () => {
+    for (const p of ['preferSystemCore', 'blockRoboRIO', 'blockSystemCore'] as const) {
+      expect(evaluateControllerPolicy(null, p)).toBeNull();
+    }
   });
 });

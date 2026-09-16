@@ -1,5 +1,5 @@
 import dgram from 'node:dgram';
-import type { StationName, CheckResult, TeamCheckResults, DiscoveredHost } from './types.js';
+import type { StationName, CheckResult, TeamCheckResults, DiscoveredHost, ControllerPolicy } from './types.js';
 
 const FETCH_TIMEOUT = 1500;
 /** roboRIO's NI SysAPI is slower than the radio — give it more time. */
@@ -618,6 +618,81 @@ export function parseMdnsAnswers(msg: Buffer): MdnsAnswer[] {
 export async function checkRobotController(
   team: number,
   extraIps: string[] = [],
+  sourceIp?: string,
+): Promise<{ controller: RobotController | null; checks: CheckResult[] }> {
+  const found = await detectRobotController(team, extraIps, sourceIp);
+  const policy = evaluateControllerPolicy(found.controller, controllerPolicyResolver?.() ?? 'none');
+  if (policy) found.checks.push(policy);
+  return found;
+}
+
+/** The field's stance on control systems, supplied by index.ts (same resolver
+ *  pattern as the video proxy target) so the checks pick up an admin change
+ *  without a restart. */
+let controllerPolicyResolver: (() => ControllerPolicy | undefined) | undefined;
+
+export function setControllerPolicyResolver(resolver: () => ControllerPolicy | undefined): void {
+  controllerPolicyResolver = resolver;
+}
+
+/**
+ * Turn the field's control-system policy into a check the team sees.
+ * Returns null when the field has no opinion, or when no controller was found
+ * (the "no controller" error already says everything useful).
+ *
+ * Advisory by design: a failed check tells the team and field staff, it does
+ * not stop the robot connecting or joining a match. Controller detection can
+ * miss transiently (a dropped mDNS probe), and hard-blocking on that would
+ * strand a legitimate robot mid-event.
+ */
+export function evaluateControllerPolicy(
+  controller: RobotController | null,
+  policy: ControllerPolicy = 'none',
+): CheckResult | null {
+  if (policy === 'none' || controller === null) return null;
+  const name = 'Control System Policy';
+  const isCore = controller === 'systemcore';
+  switch (policy) {
+    case 'preferSystemCore':
+      return isCore
+        ? { name, status: 'pass', actual: 'SystemCore' }
+        : {
+            name,
+            status: 'warn',
+            expected: 'SystemCore',
+            actual: 'roboRIO',
+            message:
+              'This field is moving to SystemCore. Your robot still runs the roboRIO control system — still allowed here, but plan the switch.',
+            helpUrl: HELP_URLS.systemCore,
+          };
+    case 'blockRoboRIO':
+      return isCore
+        ? { name, status: 'pass', actual: 'SystemCore' }
+        : {
+            name,
+            status: 'fail',
+            expected: 'SystemCore',
+            actual: 'roboRIO',
+            message: 'This field is set to SystemCore only — a roboRIO robot is not accepted here. See field staff.',
+            helpUrl: HELP_URLS.systemCore,
+          };
+    case 'blockSystemCore':
+      return isCore
+        ? {
+            name,
+            status: 'fail',
+            expected: 'roboRIO',
+            actual: 'SystemCore',
+            message: 'This field is not accepting SystemCore robots right now. See field staff.',
+            helpUrl: HELP_URLS.systemCore,
+          }
+        : { name, status: 'pass', actual: 'roboRIO' };
+  }
+}
+
+async function detectRobotController(
+  team: number,
+  extraIps: string[],
   sourceIp?: string,
 ): Promise<{ controller: RobotController | null; checks: CheckResult[] }> {
   const rio = await findRoboRIO(team, extraIps);

@@ -239,6 +239,10 @@ export interface SetupSettings {
    *  control). Absent/true = on; set false via the admin switch to hold
    *  not-in-match robots disabled. */
   outOfMatchControl?: boolean;
+  /** Field policy on robot control systems. 'none' (default) says nothing to
+   *  teams; 'preferSystemCore' warns roboRIO teams; the block modes fail the
+   *  robot check for the disallowed control system. */
+  controllerPolicy?: ControllerPolicy;
   /** Address this field is reachable at from anywhere, e.g.
    *  `https://pfms.example.org` — used to build the post-match QR link. */
   publicUrl?: string;
@@ -285,6 +289,10 @@ export function isStreamSourceUrl(value: string): boolean {
   if (!url.hostname) return false;
   return value.length <= 512;
 }
+
+/** What this field wants teams to run. Advisory: it drives the robot check's
+ *  verdict, it does not stop a robot from connecting. */
+export type ControllerPolicy = 'none' | 'preferSystemCore' | 'blockRoboRIO' | 'blockSystemCore';
 
 export interface SetupConfig {
   version: 1;
@@ -413,6 +421,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   outOfMatchControl: v => typeof v === 'boolean',
+  controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
 };
 
