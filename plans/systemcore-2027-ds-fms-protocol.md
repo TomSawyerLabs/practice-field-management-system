@@ -177,3 +177,41 @@ route preference (and mDNS reflection) doesn't work for IPv6 clients.
 
 - Don't reply to unjoined stations' handshakes (locks out local enable).
 - Don't send legacy DSes an 8-byte 0x1f reply — they expect 5-byte 0x19.
+
+## Control system policy (admin-selectable, 2026-09-16)
+
+Follow-on ask: let an event nudge or restrict which control system teams
+run. Admin → "Control system policy", four modes, persisted in setup
+settings (`controllerPolicy`), default `none` (nothing changes):
+
+- `none` — no opinion. Nothing is warned about, nothing is blocked.
+- `preferSystemCore` — roboRIO robots get a warning on their check. They
+  still play.
+- `blockRoboRIO` — SystemCore only.
+- `blockSystemCore` — no SystemCore.
+
+**Block means the field refuses to enable, not just a red check.** The
+user was explicit after a first advisory-only pass: "block should mean
+refuse to allow enabling (in match or just messing around)". Enforcement
+lives in three places, because there are three ways a robot can be enabled:
+
+1. `MatchEngine.enableParticipating()` — skips a blocked station when the
+   match enables the field.
+2. `MatchEngine.undisable()` — the per-station re-enable button.
+3. The out-of-match path in `index.ts`: `resolveTeamSlot` keeps a blocked
+   DS under field control instead of releasing it to local control, and a
+   500 ms hold loop streams disabled control packets to it. Without this a
+   blocked team could simply enable from their own Driver Station.
+
+Detection comes from the same mDNS probe the robot check uses, cached per
+station in `stationController` as team checks run.
+
+**Only a positive identification blocks.** `controllerBlockReason(null, …)`
+is always null, on every policy. A dropped mDNS probe must never strand a
+legitimate robot mid-event — the failure mode of "didn't detect, so didn't
+block" is a policy miss; the other way round is a team that can't play.
+
+Pure and unit-tested: `controllerBlockReason()` in `teamChecker.ts`,
+covered in `teamChecker.test.ts` alongside `evaluateControllerPolicy`.
+The station page shows `blockedReason` as an error alert so the team sees
+why, rather than a robot that silently won't enable.

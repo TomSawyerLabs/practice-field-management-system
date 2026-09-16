@@ -292,6 +292,9 @@ export function isStreamSourceUrl(value: string): boolean {
 
 /** What this field wants teams to run. Advisory: it drives the robot check's
  *  verdict, it does not stop a robot from connecting. */
+/** Which control system answered on a team's subnet. */
+export type RobotController = 'roboRIO' | 'systemcore';
+
 export type ControllerPolicy = 'none' | 'preferSystemCore' | 'blockRoboRIO' | 'blockSystemCore';
 
 export interface SetupConfig {
@@ -733,6 +736,9 @@ export type StationControlState = {
    *  (stationSelfUndisable); an 'admin' disable only clears from the admin
    *  console. Null when enabled or when disabled by phase control. */
   disabledBy: 'ds' | 'self' | 'admin' | null;
+  /** Set when the field's control-system policy forbids this robot: why it
+   *  cannot be enabled. The field holds it disabled in and out of matches. */
+  blockedReason?: string;
 };
 
 export type MatchEndReason = 'normal' | 'stopped' | 'estop' | 'abandoned';
@@ -1487,6 +1493,8 @@ export interface TeamCheckResults {
   team: number;
   timestamp: number;
   checks: CheckResult[];
+  /** Which control system answered, so the field can enforce its policy. */
+  controller?: RobotController | null;
 }
 
 export function isTeamCheckResults(msg: unknown): msg is TeamCheckResults {

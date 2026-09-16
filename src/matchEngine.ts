@@ -123,6 +123,9 @@ export class MatchEngine {
   private shareToken: string | null = null;
   private endReason: MatchEndReason | undefined;
   private teamResolver: TeamResolver;
+  /** Why a station's robot may not be enabled (field control-system policy),
+   *  supplied by index.ts. Null/undefined = allowed. */
+  private enableBlocked?: (station: StationName) => string | null;
   /** Maps physical station → alliance match slot during an active match */
   private portToSlot = new Map<StationName, MatchSlot>();
   /** Which alliance won auto (computed after auto ends) */
@@ -280,6 +283,12 @@ export class MatchEngine {
       return `${state.alliance}${position}` as MatchSlot;
     }
     return defaultSlotToRadio[station];
+  }
+
+  /** Gate every enable on the field's control-system policy. A blocked robot
+   *  is never enabled, in a match or out of one. */
+  setEnableBlocked(resolver: (station: StationName) => string | null) {
+    this.enableBlocked = resolver;
   }
 
   /** Set callback used to determine auto winner from scoring data. */
@@ -980,6 +989,11 @@ export class MatchEngine {
    *  override a staff disable; the admin console can override anything. */
   undisable(station: StationName, byAdmin = false) {
     const state = this.stationStates.get(station)!;
+    const blocked = this.enableBlocked?.(station);
+    if (blocked) {
+      appWarn(`Cannot enable ${station}: ${blocked}`);
+      return;
+    }
     if (this.phase !== 'auto' && this.phase !== 'teleop' && this.phase !== 'endgame') {
       appWarn(`Cannot re-enable ${station} in phase ${this.phase} — robots only run during auto/teleop/endgame`);
       return;
@@ -1129,7 +1143,12 @@ export class MatchEngine {
   getState(): MatchState {
     const stationStates: Partial<Record<StationName, StationControlState>> = {};
     for (const station of StationNameList) {
-      const state = { ...this.stationStates.get(station)!, dsAttached: this.isDsAttached(station) };
+      const blockedReason = this.enableBlocked?.(station) ?? undefined;
+      const state = {
+        ...this.stationStates.get(station)!,
+        dsAttached: this.isDsAttached(station),
+        ...(blockedReason ? { blockedReason } : {}),
+      };
       // When not in active match or postMatch, resolve live team numbers; during a match, use the snapshot
       if (!this.isMatchActive() && this.phase !== 'postMatch') state.teamNumber = this.teamResolver(station);
       stationStates[station] = state;
@@ -1434,6 +1453,14 @@ export class MatchEngine {
       if (mode === 'teleOp' && state.aStop) {
         state.aStop = false;
         console.log(`A-Stop released for teleop: ${station}`);
+      }
+      const blocked = this.enableBlocked?.(station);
+      if (blocked) {
+        // Field policy forbids this control system — hold it disabled for the
+        // whole match rather than enabling with everyone else.
+        state.enabled = false;
+        console.log(`Not enabling ${station}: ${blocked}`);
+        continue;
       }
       if (state.joined && !state.eStop && !state.aStop) {
         state.enabled = true;

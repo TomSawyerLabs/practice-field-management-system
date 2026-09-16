@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { evaluateControllerPolicy, evaluateSystemCore, parseMdnsAnswers } from './teamChecker.js';
+import {
+  controllerBlockReason,
+  evaluateControllerPolicy,
+  evaluateSystemCore,
+  parseMdnsAnswers,
+} from './teamChecker.js';
 
 /**
  * Covers the SystemCore half of the robot tester without a robot on the field:
@@ -179,6 +184,30 @@ describe('field control-system policy', () => {
   test('no controller found: policy stays quiet, whatever it is', () => {
     for (const p of ['preferSystemCore', 'blockRoboRIO', 'blockSystemCore'] as const) {
       expect(evaluateControllerPolicy(null, p)).toBeNull();
+    }
+  });
+});
+
+describe('blocking refuses the enable', () => {
+  test('nothing is blocked by default or when only encouraging', () => {
+    expect(controllerBlockReason('roboRIO', 'none')).toBeNull();
+    expect(controllerBlockReason('systemcore', 'none')).toBeNull();
+    expect(controllerBlockReason('roboRIO', 'preferSystemCore')).toBeNull();
+  });
+
+  test('SystemCore only blocks a roboRIO, and nothing else', () => {
+    expect(controllerBlockReason('roboRIO', 'blockRoboRIO')).toContain('SystemCore only');
+    expect(controllerBlockReason('systemcore', 'blockRoboRIO')).toBeNull();
+  });
+
+  test('no SystemCore blocks a SystemCore, and nothing else', () => {
+    expect(controllerBlockReason('systemcore', 'blockSystemCore')).toContain('not accepting SystemCore');
+    expect(controllerBlockReason('roboRIO', 'blockSystemCore')).toBeNull();
+  });
+
+  test('an unidentified controller is never blocked', () => {
+    for (const p of ['none', 'preferSystemCore', 'blockRoboRIO', 'blockSystemCore'] as const) {
+      expect(controllerBlockReason(null, p)).toBeNull();
     }
   });
 });

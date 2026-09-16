@@ -111,11 +111,15 @@ checks. The other modes add a **Control System Policy** check:
 | SystemCore only         | **fail** — told to see field staff                             | pass                               |
 | No SystemCore           | pass                                                           | **fail** — told to see field staff |
 
-This is advisory: a failed check tells the team and field staff, it does not
-stop the robot connecting or joining a match. Controller detection can miss
-transiently (a dropped mDNS probe), and hard-blocking on that would strand a
-legitimate robot mid-event. The check is skipped entirely when no controller
-was found, since the "no controller" error already covers that.
+The two block modes are enforced, not just reported: pFMS refuses to enable a
+blocked robot **in a match and out of one**. In a match the enable gate skips
+it; out of a match the field keeps its Driver Station under field control and
+streams disabled packets, so the team cannot enable locally either. The
+station page shows the reason.
+
+Only a **positively identified** control system is blocked. If no controller
+answered, nothing is blocked and no policy check is added — a dropped mDNS
+probe must never strand a legitimate robot.
 
 ### Factory Default Check
 

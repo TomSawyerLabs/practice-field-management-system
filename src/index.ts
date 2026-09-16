@@ -34,7 +34,7 @@ import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
 import { SubnetScanner } from './subnetScanner.js';
 import { MdnsReflector } from './mdnsReflector.js';
-import { TeamChecker, setControllerPolicyResolver } from './teamChecker.js';
+import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
@@ -68,6 +68,7 @@ import {
   DriveSessionState,
   RecordingStreamConfig,
   isRecordingStreamConfig,
+  RobotController,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -294,6 +295,22 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Initialize match engine (for admin page match simulation & e-stop)
   const matchEngine = new MatchEngine(s => radioManager.getTeamForStation(s));
+
+  // Which control system answered on each station, learned from the team
+  // checks. Only a positive identification can block a robot, so a dropped
+  // detection never strands a legitimate one.
+  const stationController = new Map<StationName, RobotController | null>();
+
+  /** Why this station's robot may not be enabled, per the field policy. */
+  function policyBlockReason(station: StationName): string | null {
+    return controllerBlockReason(
+      stationController.get(station) ?? null,
+      setupConfigStore.get().settings.controllerPolicy,
+    );
+  }
+
+  // Every enable in the match engine goes through this gate.
+  matchEngine.setEnableBlocked(policyBlockReason);
 
   // Initialize match audio (plays FRC field sounds on phase transitions)
   const matchAudio = new MatchAudio();
@@ -559,6 +576,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       .runChecks(station, team)
       .then(results => {
         latestCheckResults.set(station, results);
+        if (results.controller !== undefined) stationController.set(station, results.controller);
         // Snapshot AFTER checks complete so we compare against what was alive
         // when results were determined, avoiding unnecessary re-triggers
         const scan = subnetScanner.getResults();
@@ -1166,6 +1184,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         const state = matchEngine.getState();
         const joined = state.stationStates[station]?.joined ?? false;
         if (!joined && !tcpReplyAll && !tcpReplyOptIn.has(station)) {
+          // Blocked control system: do NOT hand local control back. Assign the
+          // station so the DS stays under field control, and the hold loop
+          // below keeps sending disabled packets — that is what stops a team
+          // enabling a blocked robot while messing around out of a match.
+          if (policyBlockReason(station)) return matchEngine.slotForStation(station);
           // Not in a match: unless an admin has turned it off, actively release
           // the DS to local control (a "not in match" reply) so a driver can
           // enable for freeplay without closing/reopening the DS. Read live so
@@ -1180,6 +1203,33 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     }).then(fms => {
       if (!fms) return;
       matchEngine.setUdpSocket(fms.udpSocket);
+
+      // Robots whose control system the field blocks are held under field
+      // control: resolveTeamSlot above assigns them (so the DS cannot enable
+      // locally) and this keeps a steady stream of disabled packets going,
+      // which is what actually refuses the enable while they are out of a
+      // match. In a match, matchEngine's enable gate does the same job.
+      // A flip in blocked state re-handshakes the DS so it picks up the new
+      // answer (held vs released) straight away.
+      const wasBlocked = new Map<StationName, boolean>();
+      setInterval(() => {
+        const state = matchEngine.getState();
+        for (const station of StationNameList) {
+          const blocked = policyBlockReason(station) !== null;
+          const joined = state.stationStates[station]?.joined ?? false;
+          const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
+          if (blocked !== (wasBlocked.get(station) ?? false)) {
+            wasBlocked.set(station, blocked);
+            if (dsIp) {
+              appInfo(`${station}: control system ${blocked ? 'blocked' : 'allowed'} — re-handshaking DS ${dsIp}`);
+              fms.emit('disconnectDS', { address: dsIp });
+            }
+          }
+          if (blocked && !joined && dsIp) {
+            matchEngine.sendRawControlPacket(dsIp, station, [{ type: 'gameData', data: 'Blocked' }]);
+          }
+        }
+      }, 500).unref();
 
       // Joining a match hands the DS to the FMS: the 0x19 station-assignment
       // reply locks out local enable, and the join heartbeat keeps the robot

@@ -1,5 +1,12 @@
 import dgram from 'node:dgram';
-import type { StationName, CheckResult, TeamCheckResults, DiscoveredHost, ControllerPolicy } from './types.js';
+import type {
+  StationName,
+  CheckResult,
+  TeamCheckResults,
+  DiscoveredHost,
+  ControllerPolicy,
+  RobotController,
+} from './types.js';
 
 const FETCH_TIMEOUT = 1500;
 /** roboRIO's NI SysAPI is slower than the radio — give it more time. */
@@ -18,7 +25,7 @@ const HELP_URLS = {
 } as const;
 
 /** Which robot controller answered on the team subnet. */
-export type RobotController = 'roboRIO' | 'systemcore';
+export type { RobotController };
 
 // ── NI SysAPI property tags ─────────────────────────────────────────
 
@@ -640,11 +647,29 @@ export function setControllerPolicyResolver(resolver: () => ControllerPolicy | u
  * Returns null when the field has no opinion, or when no controller was found
  * (the "no controller" error already says everything useful).
  *
- * Advisory by design: a failed check tells the team and field staff, it does
- * not stop the robot connecting or joining a match. Controller detection can
- * miss transiently (a dropped mDNS probe), and hard-blocking on that would
- * strand a legitimate robot mid-event.
+ * This is the reported verdict; the actual refusal to enable lives in the
+ * match engine's enable gate and the FMS hold loop (see controllerBlockReason).
  */
+/**
+ * Why this control system may not be ENABLED on this field, or null.
+ *
+ * Only a positive identification blocks: if no controller answered we return
+ * null, so a dropped detection can never strand a legitimate robot.
+ */
+export function controllerBlockReason(
+  controller: RobotController | null,
+  policy: ControllerPolicy = 'none',
+): string | null {
+  if (controller === null) return null;
+  if (policy === 'blockRoboRIO' && controller === 'roboRIO') {
+    return 'This field is set to SystemCore only — a roboRIO robot cannot be enabled here.';
+  }
+  if (policy === 'blockSystemCore' && controller === 'systemcore') {
+    return 'This field is not accepting SystemCore robots — this robot cannot be enabled here.';
+  }
+  return null;
+}
+
 export function evaluateControllerPolicy(
   controller: RobotController | null,
   policy: ControllerPolicy = 'none',
@@ -976,16 +1001,19 @@ export class TeamChecker {
     const hosts = this.getAliveHosts(station);
     const extraIps = hosts.filter(h => h.alive && !h.ip.endsWith('.1') && !h.ip.endsWith('.254')).map(h => h.ip);
     const sourceIp = this.vlanHostOctet ? `${teamSubnet(team)}.${this.vlanHostOctet}` : undefined;
-    const [radioChecks, rioChecks] = await Promise.all([
-      checkRadio(team, sourceIp),
-      checkRoboRIO(team, extraIps, sourceIp),
-    ]);
+    // Detect the controller first (roboRIO or SystemCore) so the radio's
+    // SystemCore-mode verdict is judged against what actually answered — the
+    // station checks used to assume a roboRIO and reported SystemCore robots
+    // as "not found".
+    const controllerResult = await checkRobotController(team, extraIps, sourceIp);
+    const radioChecks = await checkRadio(team, sourceIp, controllerResult.controller);
     return {
       type: 'teamCheckResults',
       station,
       team,
       timestamp: Date.now(),
-      checks: [...radioChecks, ...rioChecks],
+      checks: [...radioChecks, ...controllerResult.checks],
+      controller: controllerResult.controller,
     };
   }
 }

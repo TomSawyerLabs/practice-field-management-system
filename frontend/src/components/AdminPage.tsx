@@ -368,12 +368,12 @@ function ControllerPolicySection() {
     {
       value: 'blockRoboRIO',
       label: 'SystemCore only',
-      help: 'roboRIO robots fail their robot check and are told to see field staff.',
+      help: 'roboRIO robots cannot be enabled — in a match or messing around out of one.',
     },
     {
       value: 'blockSystemCore',
       label: 'No SystemCore',
-      help: 'SystemCore robots fail their robot check and are told to see field staff.',
+      help: 'SystemCore robots cannot be enabled — in a match or messing around out of one.',
     },
   ];
   const current = options.find(o => o.value === policy) ?? options[0];
@@ -389,8 +389,8 @@ function ControllerPolicySection() {
           />
         </Box>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          {current.help} A blocked robot still connects and can drive — the check turns red so the team and field staff
-          see it.
+          {current.help} A blocked robot still connects and shows up normally; the field simply refuses to enable it,
+          and its station says why. Only a robot whose control system was positively identified is blocked.
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           {options.map(o => (

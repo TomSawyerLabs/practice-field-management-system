@@ -4,6 +4,7 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
+import Alert from '@mui/material/Alert';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
 import { AStopPopout, openMatchPopup } from './AStopPopout';
@@ -236,6 +237,11 @@ export function MatchPanel({ station }: { station?: StationName }) {
 
   return (
     <Card sx={{ mb: 2 }}>
+      {myState?.blockedReason && (
+        <Alert severity="error" sx={{ borderRadius: 0 }}>
+          {myState.blockedReason} The field will not enable this robot — see field staff.
+        </Alert>
+      )}
       <CardContent>
         {/* Phase display when active or post-match */}
         {(isActive || isPostMatch) && (
