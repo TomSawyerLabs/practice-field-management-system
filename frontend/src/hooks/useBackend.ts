@@ -539,17 +539,58 @@ function handleSlackTestResult(msg: { ok: boolean; error?: string; channelName?:
   events.dispatchEvent(new CustomEvent('slackTestResult', { detail: msg }));
 }
 
+/** Reloading only fixes a version mismatch if the bundle the server hands back
+ *  is actually newer. Cap the attempts so a stale deploy can't spin forever. */
+const MAX_VERSION_RELOADS = 3;
+const VERSION_RELOAD_WINDOW = 5 * 60_000;
+const VERSION_RELOADS_KEY = 'pfms-version-reloads';
+
+function recentVersionReloads(): number[] {
+  try {
+    const now = Date.now();
+    const raw: unknown = JSON.parse(sessionStorage.getItem(VERSION_RELOADS_KEY) || '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((t): t is number => typeof t === 'number' && now - t < VERSION_RELOAD_WINDOW);
+  } catch {
+    return [];
+  }
+}
+
 function handleServerInfo(info: ServerInfo) {
   // Sent once on connect — seeds the clock offset before any other traffic
   if (info.now !== undefined) noteServerTimestamp(info.now);
 
   // Auto-refresh if the backend has been updated since this frontend was built.
   // Both sides use the git short hash; 'unknown' means we can't compare (dev mode, no git).
+  //
+  // Capped, because a reload only helps when the served bundle actually changes.
+  // If it doesn't — a deploy that restarted the backend without rsyncing
+  // frontend/dist to the directory Caddy serves — an uncapped reload takes out
+  // every screen on the field at 2-3 Hz with no way to read the error
+  // (2026-09-16). After the cap we keep running the mismatched frontend and say
+  // so, which is far better than a field that can't be operated at all.
   const buildVersion = typeof __BUILD_VERSION__ !== 'undefined' ? __BUILD_VERSION__ : 'unknown';
   if (buildVersion !== 'unknown' && info.version !== 'unknown' && info.version !== buildVersion) {
-    console.log(`Version mismatch: frontend=${buildVersion}, server=${info.version} — reloading`);
-    window.location.reload();
-    return;
+    const reloads = recentVersionReloads();
+    if (reloads.length < MAX_VERSION_RELOADS) {
+      reloads.push(Date.now());
+      try {
+        sessionStorage.setItem(VERSION_RELOADS_KEY, JSON.stringify(reloads));
+      } catch {
+        // Private mode / storage disabled — the cap degrades to "reload once
+        // per page load", which still can't spin.
+      }
+      console.log(`Version mismatch: frontend=${buildVersion}, server=${info.version} — reloading`);
+      window.location.reload();
+      return;
+    }
+    console.warn(
+      `Version mismatch persists after ${MAX_VERSION_RELOADS} reloads: frontend=${buildVersion}, ` +
+        `server=${info.version}. The served frontend bundle is stale — continuing with it.`,
+    );
+    events.dispatchEvent(
+      new CustomEvent('versionMismatch', { detail: { frontend: buildVersion, server: info.version } }),
+    );
   }
 
   currentServerInfo = info;
@@ -2052,4 +2093,16 @@ export function useServerStartTime(): number | null {
   }, []);
 
   return startTime;
+}
+
+/** True once the frontend has given up reloading into a matching version.
+ *  The served bundle is stale; the page still works, it is just out of date. */
+export function useVersionMismatch(): { frontend: string; server: string } | null {
+  const [mismatch, setMismatch] = useState<{ frontend: string; server: string } | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setMismatch((e as CustomEvent<{ frontend: string; server: string }>).detail);
+    events.addEventListener('versionMismatch', handler);
+    return () => events.removeEventListener('versionMismatch', handler);
+  }, []);
+  return mismatch;
 }

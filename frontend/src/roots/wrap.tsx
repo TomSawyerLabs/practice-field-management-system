@@ -6,7 +6,13 @@ import LinearProgress from '@mui/material/LinearProgress';
 import Typography from '@mui/material/Typography';
 import Alert from '@mui/material/Alert';
 import Snackbar from '@mui/material/Snackbar';
-import { useHistory, useLatest, serverToBrowserTime, useServerResponse } from '../hooks/useBackend.js';
+import {
+  useHistory,
+  useLatest,
+  serverToBrowserTime,
+  useServerResponse,
+  useVersionMismatch,
+} from '../hooks/useBackend.js';
 import { StatusBar } from '../components/StatusBar';
 import { SupportWidgetProvider } from '../components/SupportChatWidget';
 
@@ -23,6 +29,7 @@ export function WrapAll({
   showReconfigOverlay?: boolean;
 }) {
   const latest = useLatest();
+  const versionMismatch = useVersionMismatch();
   // .slice() to avoid mutating the state array — .reverse() is in-place and
   // would cause lastActive to oscillate between the first and last ACTIVE
   // entries on alternating renders.
@@ -127,6 +134,13 @@ export function WrapAll({
                 )}
               </Grid>
             </Backdrop>
+          )}
+          {versionMismatch && (
+            <Alert severity="warning" square sx={{ borderRadius: 0 }}>
+              This page is running an old version ({versionMismatch.frontend}); the server is on{' '}
+              {versionMismatch.server}. Reloading did not pick up the new one — the deploy likely did not publish the
+              frontend. Tell field staff; everything still works.
+            </Alert>
           )}
           <Snackbar open={serverResponse !== null} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
             <Alert severity={serverResponse?.severity ?? 'info'} variant="filled" sx={{ width: '100%' }}>
