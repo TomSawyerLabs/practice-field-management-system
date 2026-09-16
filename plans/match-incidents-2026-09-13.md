@@ -21,69 +21,88 @@ steamboat journal; no code changed yet — each needs a decision.
   decoupled from physical driver-station side**. Fixing it needs a field-side
   decision (below), not a code correction to the current logic.
 
-### What the logs proved (2026-09-13, follow-up)
+### What the logs proved (corrected 2026-09-16 — the earlier pass was wrong)
 
-- 5940/slot1 was assigned **red1 in every match that started** (all day). The
-  only blue moment was a stray `join blue` at 12:20:34, corrected to red at
-  12:20:40, before any match. No controller alliance-swap was ever used.
-- So no started match ran with 5940 on blue. A match that felt reversed was
-  not a wrong pFMS assignment in that match. Video should confirm what colour
-  5940's **DS actually displayed**; if it showed blue while pFMS logged red1,
-  that is a 2027-DS propagation issue.
-- Found and fixed a latent propagation gap: switching a joined station's
-  alliance (red<->blue) did **not** force the DS to re-handshake, so the new
-  colour reached the DS only via the next UDP tick or the DS's own ~3 s
-  reconnect. Now an alliance change emits `disconnectDS` exactly like
-  join/leave, so the DS reconnects and gets the new 0x1f immediately. (Not
-  the cause of 5940's match — four minutes elapsed — but removes the window.)
+An earlier follow-up in this document claimed "5940/slot1 was assigned
+**red1 in every match that started** (all day)" and that the only blue
+moment was a stray join at 12:20 before any match. **That is false.** It
+only looked at the morning and early-afternoon matches and missed the
+13:37 re-join. The record:
 
-### Open question 1 (blocking a full field-side policy)
+- `match-history.json`: 5940/slot1 is recorded **red** for matches 21-24
+  and **blue** for matches 25-29 (13:40 onward). Five matches ran with
+  5940 on blue.
+- The last match 5940 played (match 29, 14:53:33) logged it outright:
+  `Match 1 started with stations: slot1, slot2, slot4 (red: slot2, blue:
+slot1,slot4)`. 5940 was on **blue**, which is exactly the match the
+  reversed-side report came from.
 
-How are the six driver-station positions physically laid out, and what should
-drive the robot's field side?
+How they got there, from the journal (all times 2026-09-13):
 
-- (a) Slots are fixed to a side — e.g. slot1-3 on one wall, slot4-6 on the
-  other. Then pFMS should tell the robot the colour that matches its physical
-  side, or warn when a team joins the "wrong" colour for their slot.
-- (b) It's a single practice wall / symmetric and teams should always feel
-  like their own alliance regardless — then the current free choice is fine
-  and this is just inherent red/blue origin behaviour to document.
-- (c) Something else. A short description of where each slot physically sits
-  relative to the field is enough for me to propose the exact change.
+| time     | event                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------- |
+| 13:34:26 | `stationJoinAlliance slot1 red` → `Station slot1 joined red alliance`; DS told `red1`                         |
+| 13:35:09 | `stationLeave slot1` → released to local control                                                              |
+| 13:35:59 | `Drive started: 10.55.65.16 → slot1 (team 5940)` — free driving                                               |
+| 13:37:25 | `stationJoinAlliance slot1 **blue**` → `Station slot1 joined blue alliance`; DS told `blue1` one second later |
+| 13:38:47 | ready check opened                                                                                            |
+| 13:39:10 | slot1 readies up                                                                                              |
+| 13:40:40 | match 25 starts, 5940 on blue                                                                                 |
+
+So, answering the question directly: **yes — somebody clicked "join blue"
+on slot1, and nobody noticed.** Nobody clicked "swap": `grep -c "swapped
+to"` over the whole day is **0**, so `swapStationAlliance` was never used.
+pFMS did exactly what it was told, and told the DS the right thing within
+a second of being told it.
+
+Note the log wording is diagnostic: `joinStationAlliance` prints
+"switched to" when a _joined_ station changes alliance and "joined" on a
+fresh join. The 13:37:25 line says "joined", which is consistent with the
+`stationLeave` at 13:35:09 — they left and came back on the other colour,
+so the "changing alliance clears ready" guard never applied. The ready
+check then opened _after_ the change, so readying up gave the team no hint
+their colour had changed since the previous match.
 
 ## 2. "5940 E-Stopped and their partners were also E-Stopped"
 
-- pFMS did **not** propagate the E-Stop. The engine's `stationEStop` only ever
-  touches the one station; the only alliance-wide/all-station E-Stop is
-  `globalEStop`, reached solely by the admin "Global E-Stop" button
-  (`adminGlobalEStop`), which was not sent in that match.
-- Journal for the 12:24 match: `stationSelfEStop station: slot1` →
-  `E-Stop: slot1` at 12:25:47, and that is the only E-Stop line. What the
-  partners actually show around then, from the same log:
-  - slot4 (972) at 12:25:49: `DS lost robot comms (raw=0x10)` — radio ping
-    only, no robot link. A comms drop, now treated as "keep enabled".
-  - slot2 (2813) at 12:26:23: `DS disable reported (raw=0x78)` — a real DS
-    disable ~36 s later, then ECONNRESET on its TCP link at 12:26:54.
-    These are independent robot/network events, not an E-Stop, and are spread
-    over a minute rather than simultaneous with 5940's E-Stop.
-- So if partners truly went to **E-Stop** (not just disabled) the instant
-  5940 did, the cause is outside pFMS's match engine — most likely a physical
-  field E-Stop loop wired so one button cuts the alliance, or the drivers
-  read a disable as an E-Stop. pFMS has no code path that E-Stops an alliance
-  from one team's button.
+**No pFMS event matches this report.** Corrected 2026-09-16 against the
+full day's journal, not just the 12:24 match:
 
-### Open question 2 (blocking a fix)
+- `E-Stop: slot1` (5940) appears exactly **twice** all day: 10:07:44 and
+  12:25:47. Neither is in the last match.
+- In the last match 5940 played (match 29, 14:53:33 — blue: slot1+slot4),
+  the only E-Stop is `stationSelfEStop slot4` at 14:54:22. That is **972**,
+  not 5940. slot1 was never E-Stopped in that match. slot2 (2813) reported
+  an ordinary `DS disable` at 14:56:12 — 110 s later, unrelated.
+- The one field-wide E-Stop all day was `adminGlobalEStop` at **10:07:56**,
+  12 s after 5940's own E-Stop at 10:07:44. But in that match slot1 was the
+  **only** station joined and the only attached DS — there were no partners
+  to E-Stop. So it cannot be the reported event either.
 
-When the partners "got E-Stopped", did their Driver Stations show a red
-**E-Stop**, or **No Comms / Disabled**? And is the field E-Stop button a
-physical loop, or only the pFMS station-page button? That distinguishes a
-field-wiring issue from a coincidental comms drop.
+`globalEStop()` is worth knowing precisely, because it is the only
+alliance-crossing path: it sets `eStop = true` on **all six** stations and
+sends E-Stop packets to every station with a known DS address, explicitly
+"not just joined". So a Global E-Stop does hit robots merely driving around
+outside the match — it just had nobody to hit at 10:07:56.
 
-slot4/972's drop (12:25:49) had no pFMS network event (no DNAT/takeover/
-duplicate/block); its status went to radio-ping-only while the AP kept the
-radio associated — a robot-side/RF drop. 972 also has the radio QoS
-bandwidth limit ON (see the robot-tester warning), a known latency/loss
-risk with camera streams; worth turning off on their radio.
+Most likely reading of the report: the E-Stop was **972's** (slot4), not
+5940's, and the "partners too" impression came from 2813's disable in the
+same match plus the general confusion of a stopped field. A single station
+E-Stop provably touches only that station.
+
+Relevant: at 10:07 the E-Stop buttons did not yet distinguish one-robot
+from whole-field. Commit `e84f44a` ("E-Stop buttons now clearly read
+'E-Stop One' vs 'E-Stop All'") landed at 13:16:35 the same day, ~3 h after
+that global E-Stop. If a mis-click was ever the mechanism, the guard for it
+is already shipped.
+
+### Open question 2 — largely answered
+
+Still worth knowing whether the field E-Stop is a physical loop, since
+that is the one mechanism outside pFMS that could stop an alliance at
+once. But pFMS's own logs now rule out the software path: no station
+E-Stop propagated, and no global E-Stop fired in any match that had
+partners on the field.
 
 ## 3. Side finding (my recent code): recorder pre-roll dir race
 
@@ -99,4 +118,9 @@ stale session is still worth doing but the "No such file" symptom is fixed.
 ## Things not to do
 
 - Don't add an alliance-wide E-Stop to "match" the report — real FRC E-Stops
-  one robot; the report is unconfirmed and likely field wiring.
+  one robot, and the logs show no propagation ever happened.
+- Don't conclude anything about a day's matches from a single match's log
+  window. The first pass at both questions did that and got both wrong:
+  it missed a re-join three hours later and an E-Stop in a different slot.
+  Check `match-history.json` for the whole day first, then go to the
+  journal for the specific minute.
