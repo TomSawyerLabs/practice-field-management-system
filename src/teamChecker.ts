@@ -323,7 +323,7 @@ export async function checkFactoryDefault(team: number): Promise<CheckResult[]> 
  * SystemCore, off for a roboRIO. When no controller was found the mode is
  * reported but not judged.
  */
-function evaluateSystemCore(
+export function evaluateSystemCore(
   data: { systemcoreEnabled?: boolean; version?: string },
   controller: RobotController | null | undefined,
 ): CheckResult {
@@ -580,7 +580,7 @@ type MdnsAnswer =
   | { type: 'SRV'; name: string; target: string; port: number };
 
 /** All A/PTR/SRV records in a DNS response (answers + additionals). */
-function parseMdnsAnswers(msg: Buffer): MdnsAnswer[] {
+export function parseMdnsAnswers(msg: Buffer): MdnsAnswer[] {
   const out: MdnsAnswer[] = [];
   if (msg.length < 12) return out;
   const qdcount = msg.readUInt16BE(4);
