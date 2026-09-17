@@ -28,11 +28,7 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
 1. **Create** — the match controller creates a match from `/match`. Teams
    can now join from their station pages.
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
-   each) from their station page. Slots on this field aren't tied to a
-   colour, and many teams' robot code mirrors its autos and field-relative
-   driving based on the alliance colour it is given — so a team that joins
-   a different colour than they set up for may see their robot drive
-   mirrored. Joining hands the Driver Station to the
+   each) from their station page. Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
    freely. If the DS isn't talking to the FMS yet, the station page shows
    an advisory warning, but teams can still ready up once the ready check
