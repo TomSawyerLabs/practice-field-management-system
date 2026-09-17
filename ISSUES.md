@@ -79,7 +79,10 @@ neither surfaced to the user:
 
 - `NetworkManager` only records `previousStations` after a fully successful
   pass, so any teardown error repeats on every retry until the service
-  restarts. (`Address not found` is tolerated; other errors aren't.)
+  restarts. (`Address not found` is tolerated; other errors aren't.) The
+  station loop has no per-station error handling either, so one failing
+  teardown aborts the whole pass and leaves later stations' gateway
+  addresses on their bridges (needing a manual `ip addr del`).
 
 Diagnosis oracle: `curl -s http://10.0.100.2/status` from the field server.
 `stationStatuses.<station> = null` means the station is not configured on the
@@ -95,6 +98,59 @@ radio push fails.
 - A match that ends because every station left (`abandoned`) is never
   written to match history: no station is still joined when postMatch is
   entered, so the history store finds no teams and skips it.
+
+## Stop buttons: keyboard and layout
+
+- The station page puts A-Stop and E-Stop side by side at the same size
+  (`MatchPanel.tsx`), which the 1678 incident named as the likely cause of a
+  mis-tap. The match window was made A-Stop-dominant; the station page was
+  not.
+- Keyboard activation is guarded on only one of the two surfaces. The match
+  window ignores keyboard-synthesized clicks (`AStopPopout.tsx`, `detail === 0`),
+  so a stray Space can't trip E-Stop. The station page only drops focus after
+  the activation fires, so Space or Enter on a focused E-Stop still trips it.
+- Deferred decision: mapping Space in the match window to A-Stop during auto
+  would match driver muscle memory (and A-Stop self-releases), but global key
+  handlers that stop robots can misfire. Not done on purpose.
+
+## Unverified behaviour we depend on
+
+Each of these is asserted by our code but was never confirmed against real
+hardware or a real deployment:
+
+- **Out-of-match release.** A DS that isn't in the match gets a status-2
+  reply, meant to return it to local control. If a DS instead treats status 2
+  as "connected, waiting", this parks every freeplay DS rather than freeing
+  it. Default-on. `FMS_TCP_REPLY_STATIONS` (assign a real slot instead) has
+  never been bench-tested either.
+- **Re-enable after a DS-side disable.** `undisable()` clears the field's
+  latch and resumes enable packets; whether a DS that latched a local Enter
+  disable follows it back to enabled is untested.
+- **2027 DS stop reporting.** Neither a Disable nor an E-Stop pressed on the
+  2027 DS has been observed reaching pFMS.
+- **Public match links need a proxy change.** The post-match QR and
+  `/matches/<token>` links only work from outside once the reverse proxy
+  rewrites `/matches/*` and exempts `/api/public/*` from its access check.
+  That change was staged in the ops repo; there's no record it was applied.
+
+## Depends on things outside this repo
+
+- The balls-counter deployed on sentinel runs from the unmerged branch
+  `fix/package-for-latest-uv` (PR #1 open), not its master. A `git pull` on
+  master there silently breaks match score recording.
+- Score review and match recording rely on fields in the `/ws/scores`
+  broadcast (`phase`, `matchId`, `subPeriod`, `inactiveGoalAlliance`, pause
+  spans) — see `docs/scoring.md`. Don't rename or drop them.
+
+## Not started
+
+- The Blue Alliance reporting (from the match-review work) was scoped and
+  never begun.
+- `postMatch` serves a frozen team-number snapshot, so a robot that joins
+  after a match ends doesn't appear until the 2-minute auto-clear.
+- `matchRecorder`'s `finishSession`/`adopt` can still remove or rename a
+  session directory under a just-spawned ffmpeg. Only the part-directory
+  race was fixed. Low severity, self-recovering.
 
 ## SystemCore gaps
 

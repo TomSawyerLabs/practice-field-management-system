@@ -113,13 +113,17 @@ can never get stuck in a hardware-latched stop from an FMS action.
 
 A stopped robot is recoverable mid-match:
 
-- After an accidental disable (console button, or the Enter key on the
-  Driver Station) a **Re-enable** button appears on the station page and
-  match window while robots are running.
+- After an accidental disable from the console button, a **Re-enable**
+  button appears on the station page and match window while robots are
+  running. It clears the field's disable and resumes enable packets.
+  Untested: whether a Driver Station that latched its own local disable
+  (the Enter key) follows that back to enabled, or has to be re-enabled at
+  the DS.
 - A disable applied by field staff can only be lifted by field staff.
-- Untested: whether a Disable pressed on the 2027 Driver Station reaches
-  pFMS. That DS never sets the "enabled" bit in its status, so pFMS can't
-  use the bit to notice one.
+- Untested: whether a Disable — or an E-Stop — pressed on the 2027 Driver
+  Station reaches pFMS. That DS never sets the "enabled" bit in its status,
+  so pFMS can't use the bit to notice a disable, and its E-Stop bit has
+  never been seen set.
 
 ### Admin Overrides
 
@@ -132,7 +136,7 @@ clear e-stop, and force-stop match.
 Tapping **Join** also opens a small match window for that station:
 
 - **Before the match:** everyone's ready status with a Ready toggle,
-  A-Stop pre-arm, and this robot's E-Stop (two taps to confirm).
+  A-Stop pre-arm, and this robot's E-Stop (a single tap).
 - **From the countdown:** the phase and timer, dominated by a giant A-Stop
   button through auto. It closes itself after the match (a checkbox lets
   it close at match start instead).

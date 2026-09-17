@@ -1178,10 +1178,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     );
 
     runFMS({
-      // Station-assignment reply (0x19): only for stations that joined a match,
-      // where FMS control is already asserted via UDP. Freeplay DSes must get no
-      // reply — answering would lock out their local enable — unless explicitly
-      // opted in via FMS_TCP_REPLY_STATIONS to test that lockout hypothesis.
+      // Station-assignment reply (0x19/0x1f). Joined stations get their slot.
+      // A station that isn't in the match gets a status-2 "not in match" reply
+      // by default (see makeNotInMatchReply), which is meant to hand the DS back
+      // to local control; FMS_TCP_REPLY_STATIONS instead assigns it a real slot.
+      // The old design sent nothing at all to freeplay DSes, on the theory that
+      // any reply locks out local enable — which is why a team had to restart
+      // the DS to drive out of a match.
       resolveTeamSlot: teamNumber => {
         const station = radioManager.getStationForTeam(teamNumber);
         if (!station) return undefined;

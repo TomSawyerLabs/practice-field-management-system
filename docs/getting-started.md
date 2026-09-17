@@ -269,18 +269,20 @@ Network operations log what they _would_ do instead of touching the OS.
 pFMS is quiet about misconfiguration — **startup problems appear only in
 the service log**, not in the UI. Check there first.
 
-| Symptom                                               | Likely cause                                                                                                                                                                      |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exits immediately, code 78                            | A required tool is missing — the log names it                                                                                                                                     |
-| Log repeats "waiting for radio"                       | AP unreachable. Field control probably isn't the native VLAN on the trunk                                                                                                         |
-| Robots associate but are unreachable                  | Switch VLAN IDs don't match the `slot1→10 … slot6→60` mapping                                                                                                                     |
-| Laptops can't reach robots                            | Missing `10.0.0.0/8` static route on the site router                                                                                                                              |
-| Field speaker silent                                  | No audio device selected in `/admin`, or no ALSA player installed                                                                                                                 |
-| Browsers silent, field speaker fine                   | `sounds/` never made it into the web root                                                                                                                                         |
-| Team avatars missing                                  | `FIRST_API_*` set in `.env` instead of `/etc/pfms/environment`                                                                                                                    |
-| Deploy interrupts a live match                        | `update.sh` health check port doesn't match `WEBSOCKET_PORT`                                                                                                                      |
-| Scoreboard won't cast                                 | `/scores` isn't served over HTTPS                                                                                                                                                 |
-| Some Wi-Fi devices intermittently can't load the page | Wired→wireless ARP isn't delivered (the AP drops broadcasts toward Wi-Fi clients). `arping`/`ip neigh` from the server shows the client INCOMPLETE — not a DNS or netmask problem |
+| Symptom                                                                                                                                    | Likely cause                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Exits immediately, code 78                                                                                                                 | A required tool is missing — the log names it                                                           |
+| Log repeats "waiting for radio"                                                                                                            | AP unreachable. Field control probably isn't the native VLAN on the trunk                               |
+| Robots associate but are unreachable                                                                                                       | Switch VLAN IDs don't match the `slot1→10 … slot6→60` mapping                                           |
+| Laptops can't reach robots                                                                                                                 | Missing `10.0.0.0/8` static route on the site router                                                    |
+| Field speaker silent                                                                                                                       | No audio device selected in `/admin`, or no ALSA player installed                                       |
+| Browsers silent, field speaker fine                                                                                                        | `sounds/` never made it into the web root                                                               |
+| Team avatars missing                                                                                                                       | `FIRST_API_*` set in `.env` instead of `/etc/pfms/environment`                                          |
+| Deploy interrupts a live match                                                                                                             | `update.sh` health check port doesn't match `WEBSOCKET_PORT`                                            |
+| Scoreboard won't cast                                                                                                                      | `/scores` isn't served over HTTPS                                                                       |
+| Some Wi-Fi devices intermittently can't load the page                                                                                      | Wired→wireless ARP isn't delivered (broadcast toward Wi-Fi clients isn't getting through — AP broadcast |
+| suppression, an L2 loop and a mis-provisioned switch port all look identical                                                               |
+| here; the mechanism was never pinned down). `arping`/`ip neigh` from the server shows the client INCOMPLETE — not a DNS or netmask problem |
 
 `/logs` shows the live backend log stream once the app is up, and the
 support widget on every page can file an issue with a screenshot attached.

@@ -697,10 +697,15 @@ export function makeStationAssignment(handshake: TeamNumberMessage | Ds2027TeamN
 }
 
 /**
- * Tell a DS it is known but NOT in the current match (status byte 2), so it
- * leaves FMS-controlled mode and returns to local control rather than staying
- * locked until the operator closes and reopens the app. Same frame shape as the
- * assignment reply, station 0. (Cheesy Arena sends status 2 for the same case.)
+ * Tell a DS it is known but NOT in the current match (status byte 2). The
+ * intent is that it leaves FMS-controlled mode and returns to local control
+ * rather than staying locked until the operator closes and reopens the app.
+ * Same frame shape as the assignment reply, station 0. (Cheesy Arena sends
+ * status 2 for the same case.)
+ *
+ * UNVERIFIED on hardware: whether a DS actually frees up on status 2, or
+ * treats it as "connected, waiting" and stays parked. Verify on one real
+ * out-of-match robot before relying on it.
  */
 export function makeNotInMatchReply(handshake: TeamNumberMessage | Ds2027TeamNumberMessage): Buffer {
   if (handshake.type === 0x18) return Buffer.from([0x00, 0x03, 0x19, 0, 2]);

@@ -87,8 +87,9 @@ sends when it connects:
 | Control packets FMS → DS | UDP **1121** (1120 = "ask first") | the UDP port named in the handshake — a new one on every reconnect |
 | Game data                | UDP tag `0x07`                    | UDP tag `0x20`, max 8 characters                                   |
 
-Control packets to the 2027 DS must come **from** the FMS's UDP port 1160;
-it ignores them from any other port. It never sets the "enabled" bit in its
+Control packets to the 2027 DS must come **from** the FMS's UDP port 1160.
+Sent from an ephemeral port, the DS showed "connected" but never enabled and
+sent no status back; from 1160 it worked. It never sets the "enabled" bit in its
 status, even while the robot runs. During a live match its TCP traffic was
 only `0x1e` handshakes and `0x1d` keepalives. Whether a Disable pressed on
 the DS reaches pFMS is untested.
@@ -98,9 +99,13 @@ both directions (the robot replies to the DS's source port, so NAT works
 without extra forwarding), UDP 1150, and TCP 1250, 1740 and 5810.
 
 The station-assignment reply puts the DS in FMS-controlled mode. Joined
-stations get their alliance slot; a DS that isn't in the match gets a
-"release" reply so it can be driven locally, unless an admin turns off
-out-of-match control.
+stations get their alliance slot. A DS that isn't in the match is sent a
+status-2 "not in match" reply, intended to hand it back to local control so
+a driver can enable for freeplay without restarting the Driver Station
+(Cheesy Arena sends status 2 for this case); an admin switch turns this off.
+**Not confirmed on hardware** — if a DS treats status 2 as "connected,
+waiting" instead, it would park a freeplay DS rather than free it. Worth
+checking on one real out-of-match robot.
 
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
