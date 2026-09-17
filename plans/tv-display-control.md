@@ -197,9 +197,9 @@ part that now ships with pFMS rather than living in private site config.
 
 ## Open questions
 
-1. **Can one TV run both modes, with explicit handoff — or is it one mode per
-   display, chosen at setup?** This decides whether `TvControl` needs
-   arbitration logic or just a mode switch. Blocking the design.
+1. ~~Can one TV run both modes, with explicit handoff — or is it one mode per
+   display, chosen at setup?~~ **Answered 2026-08-16:** pFMS does not
+   arbitrate between the modes (see Findings).
 2. Does `sendAppLink()` accept the passthrough `content://` URI? Needs a pairing
    against a real TV to answer.
 3. Should pFMS detect and warn about the Cast-in-standby limitation, or attempt
@@ -225,7 +225,7 @@ part that now ships with pFMS rather than living in private site config.
 - [x] Pick the control channel (remote protocol over ADB) and the library
 - [x] Decide where pairing UI and cert persistence live
 - [x] Test input switching — keycodes fail, intent works, wake resumes last input
-- [ ] Answer open question 1 (one mode per display, or arbitration?)
+- [x] Answer open question 1 (one mode per display, or arbitration?) — no arbitration
 - [ ] Pair against a real TV and test `sendAppLink()` with the passthrough URI
 - [ ] Add a networked-standby check to `probeScoreboard()`
 - [ ] Build `tvPairingStore.ts` + `DisplaySection`

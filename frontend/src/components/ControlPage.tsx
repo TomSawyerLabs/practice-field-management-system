@@ -941,7 +941,7 @@ function AddRobotForm({
 
 /**
  * Debounce the "multiple DS" warning so it doesn't flicker when DS TCP flaps (~6s cycle).
- * Holds the warning for `holdMs` after blockedDsIps clears, then releases.
+ * Holds the warning for `holdMs` after the blocked-DS list clears, then releases.
  */
 type DebouncedDsInfo = { acceptedIp: string; blockedIps: string[] } | null;
 

@@ -637,7 +637,7 @@
         // Compare pages, not "is the backend reachable": /ws is deliberately open
         // to outside visitors for the external login flow, so a working socket
         // proves nothing. Probing it made every misclassified visitor reload
-        // forever (plans/pfms-tsl-ipv6-public-page-reload-loop.md).
+        // forever (an IPv6 LAN device was misclassified as external, 2026-09).
         var PUBLIC_PAGE = /<meta\b[^>]*\bname=["']?pfms-page["']?[^>]*\bcontent=["']?public/i;
 
         // Belt and braces: if the probe and the real navigation ever disagree,

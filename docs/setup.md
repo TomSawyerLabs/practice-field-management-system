@@ -241,3 +241,6 @@ network that reach pFMS over IPv6 get the internal UI even though the proxy
 does not consider their address private. Devices whose traffic arrives via a
 VPN or a private-DNS service such as Cloudflare WARP are external from the
 network's point of view and need the access link like anyone else.
+
+Keep `/ws` exempt from the proxy's access check: the external login flow
+uses it before the visitor has a cookie.

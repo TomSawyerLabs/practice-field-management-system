@@ -18,6 +18,9 @@ import type { MatchHistoryEntry, PublicMatchSummary } from './types.js';
  * at match start, known only to whoever saw the QR code or was given the
  * link. No API key, no cookie — a phone on cellular has neither. Nothing
  * here reveals any other match, and nothing is writable.
+ *
+ * Never use the match id as the token: match ids are exposed without auth
+ * (`/api/match-review/matches`, recording URLs, every internal client).
  */
 export function handlePublicMatchRequest(
   req: IncomingMessage,

@@ -875,6 +875,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       dsLastActivity.set(dsIp, Date.now());
     }
 
+    // Liveness is activity-only, never "the TCP socket is open": team VLANs
+    // are masqueraded, and a DS that vanishes without a FIN (laptop swap,
+    // unplugged cable) leaves an established socket behind for ~10 minutes
+    // until keepalive reaps it — long enough to lock the replacement out.
     /** Check if a DS IP is considered stale (no activity for DS_STALE_TIMEOUT_MS). */
     function isDsStale(dsIp: string): boolean {
       const last = dsLastActivity.get(dsIp);

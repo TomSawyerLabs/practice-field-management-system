@@ -777,8 +777,6 @@ export type DSConnectionInfo = {
   /** UDP port match control packets are sent to (1121 for the legacy DS; the
    *  2027 DS names its own, changing on every reconnect) */
   udpPort?: number;
-  /** If set, these DS IPs are trying to connect and are being blocked */
-  blockedDsIps?: string[];
 };
 
 /** Broadcast state for active drive sessions (DS → station DNAT mappings). */
@@ -2685,7 +2683,7 @@ export interface MatchHistoryEntry {
   reviewUrl?: string;
   /** Video files pFMS itself recorded for this match (one per configured stream). */
   recordings?: MatchRecording[];
-  /** Capability token for the public summary page (`/scores?match=<token>`)
+  /** Capability token for the public summary page (`/matches/<token>`)
    *  and `/api/public/match/<token>/…`. Backfilled for older entries. */
   shareToken?: string;
   /** Final per-period points per alliance (auto/teleop/endgame or shift

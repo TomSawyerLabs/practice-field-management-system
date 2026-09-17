@@ -18,6 +18,9 @@
  * (or the nightly configuration-clearing cron wipes them at 6am).
  *
  * No match is created, no sounds fire — the scoreboard stays in idle freeplay.
+ *
+ * active-config.json is written even when the radio push fails, so a slot
+ * appearing there doesn't prove the radio took it.
  */
 import { readFileSync } from 'node:fs';
 import dgram from 'node:dgram';

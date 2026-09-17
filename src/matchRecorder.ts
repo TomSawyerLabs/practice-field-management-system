@@ -4,8 +4,10 @@
  *
  * Streams come from the admin panel (`recordingStreams` in SetupSettings):
  * anything ffmpeg can pull, typically the field's stitchd/MediaMTX RTSP
- * outputs. One ffmpeg per enabled stream starts when a match enters its
- * countdown and stops a few seconds after it ends. Nothing is transcoded —
+ * outputs. One ffmpeg per enabled stream starts as a pre-roll once the field
+ * is startable (so the hold-to-start and countdown are captured) and stops a
+ * few seconds after the match ends; a pre-roll whose match never starts is
+ * discarded. Nothing is transcoded —
  * `-c copy` remuxes the stream into MP4, so the only cost is disk.
  *
  * Robustness:

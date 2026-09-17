@@ -77,4 +77,40 @@ neither surfaced to the user:
   (never sending a disabled packet) leaves a stale `true` entry that defers
   all commits until some other DS event clears it.
 
-Context and diagnosis oracles in `plans/radio-commit-address-not-found.md`.
+- `NetworkManager` only records `previousStations` after a fully successful
+  pass, so any teardown error repeats on every retry until the service
+  restarts. (`Address not found` is tolerated; other errors aren't.)
+
+Diagnosis oracle: `curl -s http://10.0.100.2/status` from the field server.
+`stationStatuses.<station> = null` means the station is not configured on the
+radio, whatever `active-config.json` says — that file is written even when the
+radio push fails.
+
+## Silent paths in match control
+
+- `sendDSPacket` returns silently when a joined station has no live DS
+  endpoint, so a match can run with a robot that never receives an enable.
+  Nothing warns at countdown or auto start; the only signal is the advisory
+  DS chip before Ready.
+- A match that ends because every station left (`abandoned`) is never
+  written to match history: no station is still joined when postMatch is
+  entered, so the history store finds no teams and skips it.
+
+## SystemCore gaps
+
+- Passive robot telemetry (`robotPacketCapture.ts`) only captures robot
+  packets from UDP source port 1150. A SystemCore robot replies from 1110, so
+  passive battery telemetry is probably missing for SystemCore robots.
+  Unverified on hardware.
+- Route preference (`routePreferenceManager.ts`) always runs an IPv4
+  `ip rule add`. A browser on an IPv6 address logs `Invalid source address`
+  and gets no route preference (and no mDNS reflection).
+
+## Setup and packaging
+
+- No "restart pFMS" action: settings read at startup only tell you to
+  restart.
+- The network backend is built when `networkManager.ts` loads; it should be
+  created lazily.
+- The Linux standalone-binary targets compile but have never been run, and
+  the binary has no self-update path (`update.sh` doesn't apply to it).

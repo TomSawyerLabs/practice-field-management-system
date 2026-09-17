@@ -87,8 +87,19 @@ sends when it connects:
 | Control packets FMS → DS | UDP **1121** (1120 = "ask first") | the UDP port named in the handshake — a new one on every reconnect |
 | Game data                | UDP tag `0x07`                    | UDP tag `0x20`, max 8 characters                                   |
 
-The station-assignment reply is still only sent to stations joined to a
-match (it puts the DS in FMS-controlled mode). The 2027 DS only includes
+Control packets to the 2027 DS must come **from** the FMS's UDP port 1160;
+it ignores them from any other port. It never sets the "enabled" bit in its
+status, and a Disable pressed on it is invisible to pFMS (it sends only
+`0x1e` handshakes and `0x1d` keepalives over TCP). A SystemCore robot talks
+to the DS from UDP 1110 back to the DS's source port rather than the
+roboRIO's 1150, and also uses TCP 1250, 1740 and 5810.
+
+The station-assignment reply puts the DS in FMS-controlled mode. Joined
+stations get their alliance slot; a DS that isn't in the match gets a
+"release" reply so it can be driven locally, unless an admin turns off
+out-of-match control.
+
+The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
 Arena `field/driver_station_connection.go`.
 
@@ -102,6 +113,8 @@ minute; Ubuntu's default ceiling of 1024 overflowed with four teams and a
 full table silently drops packets to any host without an entry (2026-09-13:
 three Driver Stations lost their robots mid-match). If `dmesg` shows
 `neighbour: arp_cache: neighbor table overflow!`, this is what it means.
+Don't fix it by slowing the scanner — that only delays the overflow; the
+table size is the fix.
 
 ## DS ↔ RIO UDP and Dynamic DNAT
 

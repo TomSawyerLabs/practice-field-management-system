@@ -60,18 +60,18 @@ service restart — no `systemctl daemon-reload` needed.
 
 ## Scoring & Scoreboard
 
-| Variable                         | Default                             | Description                                                                                                                                                                                                                                            |
-| -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `SCORING_AUTO_REGISTER_LIMIT`    | `1`                                 | Max scoring elements auto-registered from incoming events. Set to `0` to require explicit configuration via the API.                                                                                                                                   |
-| `SCORING_REQUIRE_KEY`            | `false`                             | Set to `true` to refuse unauthenticated scoring writes even before any API key exists. Without it, the scoring API is open until you create your first key — see [scoring.md](scoring.md#authentication).                                              |
-| `CAST_RECEIVER_APP_ID`           | `260A23F5`                          | Google Cast receiver app ID for the scoreboard. The default is registered against **this project's** scoreboard URL, so casting won't work elsewhere until you register your own — see [scoreboard casting](#scoreboard-casting).                      |
-| `CAST_NAMESPACE`                 | `urn:x-cast:com.tomsawyerlabs.pfms` | Cast custom-message namespace. Only change it if you also change it on your receiver.                                                                                                                                                                  |
-| `VIDEO_PROXY_TARGET`             | _(none)_                            | Base URL of a WHEP/WebRTC stream server (e.g. MediaMTX, `http://10.255.0.20:8889`). Enables `/api/video-proxy/*` so the scoreboard's video view can play `whep:<stream>` sources over HTTPS. Only signaling is proxied; media flows directly over UDP. |
-| `MATCH_RECORDING_STREAMS`        | _(none)_                            | Seed for the match video recorder: `name=url,name=url` (e.g. `all-field=rtsp://10.255.0.20:8554/all-field`). Streams saved in the admin panel take precedence. See [match video recording](match-system.md#match-video-recording).                     |
-| `MATCH_RECORDINGS_DIR`           | `recordings`                        | Where recorded matches are stored (one directory per match id).                                                                                                                                                                                        |
-| `MATCH_RECORDING_RETENTION_DAYS` | `30`                                | Recordings older than this are deleted by a daily sweep. The admin panel value wins.                                                                                                                                                                   |
-| `FFMPEG_PATH` / `FFPROBE_PATH`   | `ffmpeg` / `ffprobe`                | Binaries used by the recorder. Recording is disabled (and says so in the admin panel) when ffmpeg can't be run.                                                                                                                                        |
-| `PUBLIC_URL`                     | _(page's own origin)_               | Address the field is reachable at from anywhere, e.g. `https://pfms.example.org`. Used for the post-match QR code and share links (`/scores?match=<token>`). The setup UI value wins.                                                                  |
+| Variable                         | Default                             | Description                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SCORING_AUTO_REGISTER_LIMIT`    | `1`                                 | Max scoring elements auto-registered from incoming events. Set to `0` to require explicit configuration via the API.                                                                                                                                                                                                                                                                                 |
+| `SCORING_REQUIRE_KEY`            | `false`                             | Set to `true` to refuse unauthenticated scoring writes even before any API key exists. Without it, the scoring API is open until you create your first key — see [scoring.md](scoring.md#authentication).                                                                                                                                                                                            |
+| `CAST_RECEIVER_APP_ID`           | `260A23F5`                          | Google Cast receiver app ID for the scoreboard. The default is registered against **this project's** scoreboard URL, so casting won't work elsewhere until you register your own — see [scoreboard casting](#scoreboard-casting).                                                                                                                                                                    |
+| `CAST_NAMESPACE`                 | `urn:x-cast:com.tomsawyerlabs.pfms` | Cast custom-message namespace. Only change it if you also change it on your receiver.                                                                                                                                                                                                                                                                                                                |
+| `VIDEO_PROXY_TARGET`             | _(none)_                            | Base URL of a WHEP/WebRTC stream server (e.g. MediaMTX, `http://10.255.0.20:8889`). Enables `/api/video-proxy/*` so the scoreboard's video view can play `whep:<stream>` sources over HTTPS. Only signaling is proxied; media flows directly over UDP, so internet viewers also need a UDP port-forward to MediaMTX's `webrtcLocalUDPAddress` and `webrtcAdditionalHosts` set to the public address. |
+| `MATCH_RECORDING_STREAMS`        | _(none)_                            | Seed for the match video recorder: `name=url,name=url` (e.g. `all-field=rtsp://10.255.0.20:8554/all-field`). Streams saved in the admin panel take precedence. See [match video recording](match-system.md#match-video-recording).                                                                                                                                                                   |
+| `MATCH_RECORDINGS_DIR`           | `recordings`                        | Where recorded matches are stored (one directory per match id).                                                                                                                                                                                                                                                                                                                                      |
+| `MATCH_RECORDING_RETENTION_DAYS` | `30`                                | Recordings older than this are deleted by a daily sweep. The admin panel value wins.                                                                                                                                                                                                                                                                                                                 |
+| `FFMPEG_PATH` / `FFPROBE_PATH`   | `ffmpeg` / `ffprobe`                | Binaries used by the recorder. Recording is disabled (and says so in the admin panel) when ffmpeg can't be run.                                                                                                                                                                                                                                                                                      |
+| `PUBLIC_URL`                     | _(page's own origin)_               | Address the field is reachable at from anywhere, e.g. `https://pfms.example.org`. Used for the post-match QR code and share links (`/matches/<token>`). The setup UI value wins.                                                                                                                                                                                                                     |
 
 ## Integrations
 
@@ -132,6 +132,17 @@ Caddy setup in `docs/network.md`), it must forward `/cast-config.js` to the
 backend alongside `/ws` and `/api/*` — otherwise the scoreboard silently
 falls back to the built-in IDs.
 
+**TVs that drop the cast.** Low-memory Android/Google TVs kill the Cast
+receiver once the screensaver or sleep timer sends it to the background (the
+TV log shows `Killing …mediashell… Sync transaction while in frozen state`).
+The scoreboard disappears and the TV drops out of the Cast list until its
+Cast service restarts. Turn the TV's screensaver and sleep timers off (over
+adb: `settings put secure screensaver_enabled 0`, and the longest
+`screen_off_timeout`/`sleep_timeout`). Lite mode (`?lite=1`) lowers memory
+use but doesn't prevent this. To check whether a TV's Cast service is up,
+test TCP port 8009 — the TV doesn't answer unicast `_googlecast` mDNS
+queries. `scripts/tv-cast-monitor.py` logs this over time.
+
 ## Setup Wizard
 
 | Variable            | Default             | Description                                                               |
@@ -166,9 +177,10 @@ check. Run `node dist/cli.js --help` for the full list.
 
 ## Misc / Debug
 
-| Variable                    | Default | Description                                |
-| --------------------------- | ------- | ------------------------------------------ |
-| `RADIO_HISTORY_DURATION_MS` | `60000` | Radio status history retention window (ms) |
+| Variable                      | Default | Description                                                                        |
+| ----------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| `RADIO_HISTORY_DURATION_MS`   | `60000` | Radio status history retention window (ms)                                         |
+| `RADIO_RECONCILE_DEBOUNCE_MS` | `15000` | How long the radio's config must stay out of sync before pFMS pushes it again (ms) |
 
 ## Trusted Proxies
 

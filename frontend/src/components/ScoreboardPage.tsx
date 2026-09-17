@@ -2066,6 +2066,9 @@ function AllianceScoreBoxImpl({
   reserveDecor?: boolean;
 }) {
   const color = alliance === 'red' ? '#ef5350' : '#42a5f5';
+  // Don't cap this with `cqh` / `container-type: size` — tried; it collapsed
+  // the idle freeplay 0–0 to an invisible font. If a height cap is ever
+  // needed, measure with a ResizeObserver.
   const mainFontSize = compact ? 'clamp(2rem, 5vw, 4rem)' : 'clamp(4rem, 15vw, 12rem)';
   const rgb = alliance === 'red' ? '239, 83, 80' : '66, 165, 245';
   const bgColor = isFreePlay

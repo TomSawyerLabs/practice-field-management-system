@@ -12,7 +12,7 @@ Polls every 20 s and appends a line to the log ONLY when something changes:
 Usage (on steamboat):
   nohup python3 tv-cast-monitor.py 10.255.11.11 10.255.0.5 /tmp/tv-cast-monitor.log &
 
-Investigation: plans/cast-reliability.md
+Background: docs/configuration.md, "TVs that drop the cast".
 """
 
 import datetime

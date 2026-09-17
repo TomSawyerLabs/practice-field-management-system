@@ -28,7 +28,11 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
 1. **Create** — the match controller creates a match from `/match`. Teams
    can now join from their station pages.
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
-   each) from their station page. Joining hands the Driver Station to the
+   each) from their station page. The robot takes its field origin from
+   the alliance it is assigned, not from where the driver stands. This
+   field lets any slot join either colour, so a team that joins the colour
+   whose wall is across from them sees their controls and auto mirrored.
+   Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
    freely. If the DS isn't talking to the FMS yet, the station page shows
    an advisory warning, but teams can still ready up once the ready check
@@ -90,8 +94,8 @@ can never get stuck in a hardware-latched stop from an FMS action.
 ### E-Stop
 
 - Emergency stop for the rest of the match. Triggered from the station
-  page or match window (always **two taps** to confirm), from the DS
-  itself, or by field staff from `/admin`.
+  page or match window (a single tap — field staff can clear a mistake),
+  from the DS itself, or by field staff from `/admin`.
 - Requires a human to clear from the admin console; matches ended by
   e-stop never auto-clear.
 - After staff clear it, the team (or staff) can re-enable the robot
@@ -117,6 +121,9 @@ A stopped robot is recoverable mid-match:
   Driver Station) a **Re-enable** button appears on the station page and
   match window while robots are running.
 - A disable applied by field staff can only be lifted by field staff.
+- The 2027 Driver Station never reports a local Disable to the FMS, so pFMS
+  can't see it or offer Re-enable. Disable from the station page instead,
+  so it can be undone there.
 
 ### Admin Overrides
 
@@ -209,7 +216,9 @@ pFMS can keep a full video of every match, independent of the score-review
 integration. In **Admin → Match Video Recording**, list one or more stream
 URLs (anything ffmpeg can pull — for the field's stitchd/MediaMTX that is
 `rtsp://<host>:8554/<stream>`), enable the ones to record, and **Test** each
-before saving. From the next match on:
+before saving. Use the stream server's IPv4 address: on the reference field
+the server can't resolve the bare hostname, and the FQDN resolves only to
+IPv6 while stitchd listens on IPv4. From the next match on:
 
 - One ffmpeg per enabled stream starts as soon as the field is startable
   (ready check open, every team and required staff role ready) — so the
