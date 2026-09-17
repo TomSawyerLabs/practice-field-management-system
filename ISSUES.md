@@ -99,19 +99,15 @@ radio push fails.
   written to match history: no station is still joined when postMatch is
   entered, so the history store finds no teams and skips it.
 
-## Stop buttons: keyboard and layout
+## Stop buttons
 
-- The station page puts A-Stop and E-Stop side by side at the same size
-  (`MatchPanel.tsx`), which the 1678 incident named as the likely cause of a
-  mis-tap. The match window was made A-Stop-dominant; the station page was
-  not.
-- Keyboard activation is guarded on only one of the two surfaces. The match
-  window ignores keyboard-synthesized clicks (`AStopPopout.tsx`, `detail === 0`),
-  so a stray Space can't trip E-Stop. The station page only drops focus after
-  the activation fires, so Space or Enter on a focused E-Stop still trips it.
+Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make
+A-Stop dominant through the countdown and auto. What's left:
+
 - Deferred decision: mapping Space in the match window to A-Stop during auto
   would match driver muscle memory (and A-Stop self-releases), but global key
   handlers that stop robots can misfire. Not done on purpose.
+- The station page's new layout has not been looked at on a real phone.
 
 ## Unverified behaviour we depend on
 

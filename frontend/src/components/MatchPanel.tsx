@@ -141,6 +141,23 @@ function SelfServiceControls({
     fn();
   };
 
+  // E-Stop needs more than a blur. Blurring only helps the NEXT keypress; a
+  // Space/Enter aimed at the Driver Station still activates a focused E-Stop
+  // the first time. Drop keyboard-synthesized clicks (detail === 0) as the
+  // match window already does — an E-Stop latches until field staff clear it,
+  // so a stray keystroke must never reach it. A real tap still fires at once.
+  const tapOnly = (fn: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    if (e.detail === 0) return;
+    fn();
+  };
+
+  // Through the countdown and auto, A-Stop is the button a driver wants and
+  // E-Stop is the one they must not hit by mistake (A-Stop self-releases at
+  // teleop; E-Stop ends their match). Size them accordingly — the match
+  // window does the same. Once A-Stop is gone, E-Stop is the primary stop.
+  const aStopPhase = phase === 'countdown' || phase === 'auto';
+
   return (
     <>
       {/* Countdown: backing out aborts the 3-2-1 and returns everyone to setup */}
@@ -175,14 +192,14 @@ function SelfServiceControls({
         </Button>
       )}
       {/* A-Stop: only meaningful before/during auto; self-releases at teleop */}
-      {(phase === 'countdown' || phase === 'auto') &&
+      {aStopPhase &&
         (myState?.aStop ? (
           <Chip label="A-Stopped until teleop" size="small" color="warning" />
         ) : (
           <Button
             variant="contained"
             color="warning"
-            size="small"
+            sx={{ flex: 2, minWidth: 140, py: 1.25, fontSize: '1.05rem' }}
             onClick={blurring(() => sendStationSelfAStop(station))}
           >
             A-Stop
@@ -191,7 +208,13 @@ function SelfServiceControls({
       {myState?.eStop ? (
         <Chip label="E-Stopped — field staff can clear it" size="small" color="error" />
       ) : (
-        <Button variant="contained" color="error" size="small" onClick={blurring(() => sendStationSelfEStop(station))}>
+        <Button
+          variant={aStopPhase ? 'outlined' : 'contained'}
+          color="error"
+          size="small"
+          sx={aStopPhase ? { flex: '0 0 auto', px: 1.5 } : undefined}
+          onClick={tapOnly(() => sendStationSelfEStop(station))}
+        >
           E-Stop
         </Button>
       )}
