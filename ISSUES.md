@@ -98,10 +98,10 @@ radio push fails.
 
 ## SystemCore gaps
 
-- Passive robot telemetry (`robotPacketCapture.ts`) only captures robot
-  packets from UDP source port 1150. A SystemCore robot replies from 1110, so
-  passive battery telemetry is probably missing for SystemCore robots.
-  Unverified on hardware.
+- Passive robot telemetry (`robotPacketCapture.ts`) only captures packets to
+  UDP port 1150. A SystemCore robot talks to its DS mostly over UDP 1110, so
+  check whether battery voltage shows up for a SystemCore robot that isn't
+  in a match. Unverified on hardware.
 - Route preference (`routePreferenceManager.ts`) always runs an IPv4
   `ip rule add`. A browser on an IPv6 address logs `Invalid source address`
   and gets no route preference (and no mDNS reflection).

@@ -89,10 +89,13 @@ sends when it connects:
 
 Control packets to the 2027 DS must come **from** the FMS's UDP port 1160;
 it ignores them from any other port. It never sets the "enabled" bit in its
-status, and a Disable pressed on it is invisible to pFMS (it sends only
-`0x1e` handshakes and `0x1d` keepalives over TCP). A SystemCore robot talks
-to the DS from UDP 1110 back to the DS's source port rather than the
-roboRIO's 1150, and also uses TCP 1250, 1740 and 5810.
+status, even while the robot runs. During a live match its TCP traffic was
+only `0x1e` handshakes and `0x1d` keepalives. Whether a Disable pressed on
+the DS reaches pFMS is untested.
+
+Seen between a 2027 DS and a SystemCore robot on the field: UDP 1110 in
+both directions (the robot replies to the DS's source port, so NAT works
+without extra forwarding), UDP 1150, and TCP 1250, 1740 and 5810.
 
 The station-assignment reply puts the DS in FMS-controlled mode. Joined
 stations get their alliance slot; a DS that isn't in the match gets a
