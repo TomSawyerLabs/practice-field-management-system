@@ -563,6 +563,11 @@ export async function startFMSServer({
           emitter.emit('dsDisconnected', { address: addr });
         } else {
           tcpConnections.set(addr, remaining);
+          // "(N remaining)" counts SOCKETS, not Driver Stations. Team VLANs are
+          // masqueraded, so a DS that vanishes without a FIN leaves its socket
+          // established for ~10 min until keepalive reaps it; `ss -tino` has
+          // shown sockets days old holding exactly one 0x18 frame. A high count
+          // is corpses, not extra Driver Stations.
           if (logConnection) console.log(`DS connection closed: ${addr} (${remaining} remaining)`);
         }
       });

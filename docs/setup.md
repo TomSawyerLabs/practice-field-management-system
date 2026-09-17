@@ -244,3 +244,21 @@ network's point of view and need the access link like anyone else.
 
 Keep `/ws` exempt from the proxy's access check: the external login flow
 uses it before the visitor has a cookie.
+
+Some traps worth knowing before you change any of this:
+
+- **Don't trust the `Host` header to mean "internal."** The IPv4
+  port-forward means anyone on the internet can send `Host: pfms.tsl`. The
+  on-link check is address-based for that reason.
+- **Relay `Set-Cookie` only when it's present.** With Caddy's `forward_auth`
+  plus `handle_response`, an unconditional relay of
+  `{http.reverse_proxy.header.Set-Cookie}` sends the browser that
+  placeholder literally when the auth reply carries no cookie — which is
+  exactly the on-link `200` path.
+- **Never "fix" this by turning IPv6 off.** Also, `default_bind 0.0.0.0`
+  doesn't do what it looks like: Go binds dual-stack anyway (`ss` still
+  shows `*:80`).
+- **Split horizon is easy to get half-right.** A local resolver may answer
+  the internal A record for the public name while forwarding the AAAA query
+  upstream, so dual-stack clients on the LAN come back through the public
+  path and still look external.

@@ -70,6 +70,9 @@ export function getAllianceShiftState(
   _endgameDuration: number,
   autoWinnerAlliance: Alliance | null | undefined,
 ): Alliance | null {
+  // Null means both goals stay active for the whole match, i.e. no shift
+  // scoring at all — which is the off-goal-scoring bug this was written to
+  // fix. A tie must resolve to an alliance rather than stay null.
   if (!autoWinnerAlliance) return null;
 
   // Only apply shift logic during teleop

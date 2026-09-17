@@ -100,6 +100,9 @@ export class MatchHistoryStore {
           shareToken: state.shareToken ?? mintShareToken(),
           startedAt: this.matchStartTime || now,
           endedAt: now,
+          // Wall clock, so this INCLUDES time the match spent paused. Every
+          // display of it (match history, summary page, public API) shows it
+          // unqualified — don't treat it as the sum of the periods.
           durationSeconds: Math.round((now - (this.matchStartTime || now)) / 1000),
           endReason: state.endReason ?? 'normal',
           autoWinner: state.autoWinnerAlliance ?? null,

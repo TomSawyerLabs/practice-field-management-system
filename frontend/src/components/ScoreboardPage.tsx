@@ -232,6 +232,9 @@ export function ScoreboardPage() {
   const toggleMute = () => {
     setMuted(m => {
       const next = !m;
+      // Display mute only. The server plays the field speaker itself
+      // (src/matchAudio.ts) and is deliberately unaffected — muting every
+      // display does not silence the field.
       localStorage.setItem('scoreboard-muted', next ? '1' : '0');
       if (next) stopAllSounds();
       window.__castSendMute?.(next);

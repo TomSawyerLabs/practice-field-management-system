@@ -124,6 +124,24 @@ three Driver Stations lost their robots mid-match). If `dmesg` shows
 Don't fix it by slowing the scanner — that only delays the overflow; the
 table size is the fix.
 
+When a Driver Station says it's connected to FMS but the robot never
+enables, the journal should show, in order: `DS at <ip>: team N (2027 DS,
+control UDP P, flags 0) → assigned <slot>`, then `Match control for <slot>
+now sent to <ip>:P/ds2027` **once** rather than every 3 s, then `DS attached
+to FMS: <slot>`. To watch the wire:
+`sudo tcpdump -i <trunk> -nn -X "host <ip> and udp"`.
+
+Two things that look like faults and aren't: the 2027 DS reconnects its TCP
+session every ~3 s while assigned (~5 s while not), advertising a fresh
+control port each time — Cheesy Arena doesn't special-case it either, so it
+appears to be inherent. And `dhcpcd`'s `route socket overflowed … drained N
+messages` is collateral from neighbor-table churn, not a DHCP fault.
+
+A Driver Station is not always behind its slot's NAT gateway: one team's DS
+traffic has been seen arriving from an address on another subnet entirely,
+with robots driving fine. Don't assume the slot gateway address when
+matching a DS to a station.
+
 ## DS ↔ RIO UDP and Dynamic DNAT
 
 The FRC Driver Station ↔ roboRIO UDP protocol uses **asymmetric ports**:

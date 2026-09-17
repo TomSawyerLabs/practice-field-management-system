@@ -269,20 +269,37 @@ Network operations log what they _would_ do instead of touching the OS.
 pFMS is quiet about misconfiguration — **startup problems appear only in
 the service log**, not in the UI. Check there first.
 
-| Symptom                                                                                                                                    | Likely cause                                                                                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| Exits immediately, code 78                                                                                                                 | A required tool is missing — the log names it                                                           |
-| Log repeats "waiting for radio"                                                                                                            | AP unreachable. Field control probably isn't the native VLAN on the trunk                               |
-| Robots associate but are unreachable                                                                                                       | Switch VLAN IDs don't match the `slot1→10 … slot6→60` mapping                                           |
-| Laptops can't reach robots                                                                                                                 | Missing `10.0.0.0/8` static route on the site router                                                    |
-| Field speaker silent                                                                                                                       | No audio device selected in `/admin`, or no ALSA player installed                                       |
-| Browsers silent, field speaker fine                                                                                                        | `sounds/` never made it into the web root                                                               |
-| Team avatars missing                                                                                                                       | `FIRST_API_*` set in `.env` instead of `/etc/pfms/environment`                                          |
-| Deploy interrupts a live match                                                                                                             | `update.sh` health check port doesn't match `WEBSOCKET_PORT`                                            |
-| Scoreboard won't cast                                                                                                                      | `/scores` isn't served over HTTPS                                                                       |
-| Some Wi-Fi devices intermittently can't load the page                                                                                      | Wired→wireless ARP isn't delivered (broadcast toward Wi-Fi clients isn't getting through — AP broadcast |
-| suppression, an L2 loop and a mis-provisioned switch port all look identical                                                               |
-| here; the mechanism was never pinned down). `arping`/`ip neigh` from the server shows the client INCOMPLETE — not a DNS or netmask problem |
+| Symptom                                               | Likely cause                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------- |
+| Exits immediately, code 78                            | A required tool is missing — the log names it                             |
+| Log repeats "waiting for radio"                       | AP unreachable. Field control probably isn't the native VLAN on the trunk |
+| Robots associate but are unreachable                  | Switch VLAN IDs don't match the `slot1→10 … slot6→60` mapping             |
+| Laptops can't reach robots                            | Missing `10.0.0.0/8` static route on the site router                      |
+| Field speaker silent                                  | No audio device selected in `/admin`, or no ALSA player installed         |
+| Browsers silent, field speaker fine                   | `sounds/` never made it into the web root                                 |
+| Team avatars missing                                  | `FIRST_API_*` set in `.env` instead of `/etc/pfms/environment`            |
+| Deploy interrupts a live match                        | `update.sh` health check port doesn't match `WEBSOCKET_PORT`              |
+| Scoreboard won't cast                                 | `/scores` isn't served over HTTPS                                         |
+| Some Wi-Fi devices intermittently can't load the page | Wired→wireless ARP isn't getting through — see below                      |
+
+**Wi-Fi clients that work, then don't.** If a phone or laptop loads pFMS
+sometimes and not others, the usual cause is that ARP from the server to
+the client isn't being delivered, while the client→server direction works
+fine. It looks intermittent because the server can answer only while it
+still holds the client's neighbor entry, which it learns passively when the
+client ARPs first; once that ages out (minutes), the server has to ARP the
+client — the broken direction. `arping` the client from the server and
+watch `ip neigh`: `INCOMPLETE` confirms it, and it is not DNS, not the
+netmask, and not `rp_filter`.
+
+To confirm and to get someone working for the day:
+`sudo ip neigh replace <ip> lladdr <mac> dev <iface>` (undo with
+`ip neigh del`). If that fixes it, the data path is fine. The real fix is on
+the access point: look at proxy ARP, "multicast and broadcast control" or
+broadcast filtering, and client isolation. A large flat subnet makes APs
+more likely to suppress broadcast. An L2 loop or a mis-provisioned switch
+port produce identical symptoms, so don't trust a controller's topology map
+as evidence — check its event log for MAC flapping instead.
 
 `/logs` shows the live backend log stream once the app is up, and the
 support widget on every page can file an issue with a screenshot attached.

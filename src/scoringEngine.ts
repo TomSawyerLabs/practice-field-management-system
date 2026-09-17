@@ -391,7 +391,10 @@ export class ScoringEngine {
     const boundaryAt = this.timeline.latestAt;
     const boundaryMoved = prevPhase !== state.phase && boundaryAt !== undefined && boundaryAt < now;
 
-    // Auto-switch to match mode when a match starts
+    // Auto-switch to match mode when a match starts. 'created' must stay in
+    // this guard: matches go idle → created → countdown, so a check against
+    // the previous phase being 'idle' never fires and scoring stays in free
+    // play for the whole match.
     if ((prevPhase === 'idle' || prevPhase === 'created') && state.phase === 'countdown') {
       this.mode = 'match';
 
