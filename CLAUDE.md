@@ -9,6 +9,24 @@ just developers. Lead with the user-visible effect ("Auto-clear finished
 matches back to idle after 2 minutes"), not the mechanism. Implementation
 detail belongs in the commit body, which is not posted.
 
+The announcement groups commits, in this order: **What's new** (changes a
+pFMS user will notice), **Fixes**, **Docs**. Internal changes — plans, tests,
+formatting, tooling — are left out unless a deploy contains nothing else.
+
+Tag every commit with a `Changelog:` trailer so it lands in the right group.
+Put it in the final paragraph, next to `Co-Authored-By`, or git won't read it
+as a trailer:
+
+```
+Changelog: feature     # or: fix, docs, internal
+Co-Authored-By: ...
+```
+
+Untagged commits are guessed: plan/test/tooling-only files → internal,
+docs-only → docs, a subject saying "no longer", "actually", "fix"… → fix,
+anything else → feature. The guess can't tell that a code change is only a
+refactor or new tests, so tag those `internal`.
+
 ## Tooling
 
 - Use `bun run` for all package scripts (typecheck, build, dev).

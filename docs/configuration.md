@@ -87,18 +87,18 @@ variables — see [support.md](support.md#slack-integration).
 
 State files are JSON, written to the working directory by default:
 
-| Variable               | Default                 | Holds                                                                                                                             |
-| ---------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                |
-| `STAGED_CONFIG_FILE`   | `staged-config.json`    | Staged (not yet committed) station configuration                                                                                  |
-| `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                 |
-| `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                  |
-| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                            |
-| `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                            |
-| `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                             |
-| `SUPPORT_CHATS_FILE`   | `support-chats.json`    | Support chat sessions                                                                                                             |
-| `SLACK_CONFIG_FILE`    | `slack-config.json`     | Slack integration configuration                                                                                                   |
-| `DEPLOY_ANNOUNCE_FILE` | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel. |
+| Variable               | Default                 | Holds                                                                                                                                                        |
+| ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                                           |
+| `STAGED_CONFIG_FILE`   | `staged-config.json`    | Staged (not yet committed) station configuration                                                                                                             |
+| `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
+| `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
+| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                                                       |
+| `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                                                       |
+| `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                                                        |
+| `SUPPORT_CHATS_FILE`   | `support-chats.json`    | Support chat sessions                                                                                                                                        |
+| `SLACK_CONFIG_FILE`    | `slack-config.json`     | Slack integration configuration                                                                                                                              |
+| `DEPLOY_ANNOUNCE_FILE` | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel, grouped by kind of change. |
 
 Not configurable: `match-history.json`, `usage-data.json`,
 `audio-config.json` (fixed names in the working directory).

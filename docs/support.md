@@ -44,9 +44,10 @@ Configured on the admin page (`/admin` → Slack Integration):
 - Test-connection button to verify configuration
 
 The same channel also receives deploy announcements: on startup with a new
-git version, the backend posts the commit subjects since the last deploy
-(see `src/deployAnnouncer.ts` — this is why commit subjects are written as
-user-facing prose).
+git version, the backend posts the commit subjects since the last deploy,
+grouped as What's new, Fixes and Docs (see `src/deployAnnouncer.ts` — this is
+why commit subjects are written as user-facing prose). Internal changes such as
+plans, tests and tooling are only listed when a deploy has nothing else.
 
 ## Security model — read this before opening a field
 
