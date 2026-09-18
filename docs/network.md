@@ -224,9 +224,25 @@ Names are cached (`src/hostnameResolver.ts`) and pushed to clients as a
 
 With `MDNS_REFLECTOR=true` (requires `VLAN_INTERFACE`), the backend
 bridges `.local` queries between the main network and team VLANs so
-laptops can resolve `roboRIO-TEAM-FRC.local` across the routed boundary.
+laptops can resolve `roboRIO-TEAM-FRC.local`, `radio.local`,
+`limelight.local` and the like across the routed boundary.
 `MDNS_EXCLUDE_REQUESTERS` and `MDNS_LISTEN_INTERFACES` tune which
 requesters and interfaces participate.
+
+It is a per-laptop bridge, not a flood:
+
+- **A query is forwarded only to the VLAN of the station that laptop is
+  placed on** — its route preference. That preference comes from pressing
+  "Drive this robot", from the Driver Station's FMS handshake, or from the
+  subnet scanner noticing (in conntrack, every 10 s) that the laptop is
+  talking to a team subnet. A laptop that can't be placed gets nothing
+  forwarded until it connects to something in its `10.TE.AM.x` range.
+- **An answer is sent unicast back to the laptop(s) that asked**, matched
+  by name against the questions forwarded in the last few seconds. Nothing
+  is multicast onto the laptop networks, and unsolicited announcements are
+  dropped. This is what lets several robots share a name: every radio is
+  `radio.local`, and a flooded answer from one team used to land in every
+  laptop's cache.
 
 ## Physical Field Ports
 
