@@ -263,7 +263,9 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   mid-match. If the source drops, recording resumes into a new part; at the
   end the parts are joined and remuxed into a normal `+faststart` MP4.
 - The files are attached to the match in **Match History** (`/match`) and on
-  each participating team's **station page** (last five matches), with one
+  each participating team's **station page** (that team's last five
+  recorded matches, matched by team number — not by slot, so a team never
+  sees videos left behind by whoever used the slot before them), with one
   download button per stream. Downloads are served by the backend at
   `/api/recordings/<matchId>/<file>` with a friendly attachment name and
   Range support, so a browser can also scrub through them.

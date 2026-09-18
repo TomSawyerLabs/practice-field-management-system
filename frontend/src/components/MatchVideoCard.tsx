@@ -8,7 +8,7 @@ import Tooltip from '@mui/material/Tooltip';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import VideocamOffIcon from '@mui/icons-material/VideocamOff';
 import Typography from '@mui/material/Typography';
-import type { MatchHistoryEntry, MatchRecording, StationName } from '../../../src/types';
+import type { MatchHistoryEntry, MatchRecording } from '../../../src/types';
 import { useMatchHistory, useMatchRecordingState } from '../hooks/useBackend';
 
 /** Download URL for one recorded file. `download` forces an attachment with a
@@ -100,19 +100,23 @@ export function RecordingIconButtons({ match }: { match: Pick<MatchHistoryEntry,
  * Station page card: this team's recent matches with their video downloads.
  * Only renders when there is something to download or a recording is in
  * progress, so teams on fields without recording never see it.
+ *
+ * Matches are picked by team number only. The slot a team sits in is reused
+ * by whoever comes next, so matching on it showed the previous team's
+ * videos to the new one (seen 2026-09-18: a team practicing alone the
+ * night before had left 16 matches on slot 1).
  */
-export function MatchVideoCard({ station, teamNumber }: { station: StationName; teamNumber: number | null }) {
+export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
   const history = useMatchHistory();
   const recording = useMatchRecordingState();
 
-  const mine = (history?.matches ?? [])
-    .filter(
-      m =>
-        m.recordings?.length &&
-        m.teams.some(t => t.station === station || (teamNumber !== null && t.teamNumber === teamNumber)),
-    )
-    .slice(-5)
-    .reverse();
+  const mine =
+    teamNumber === null
+      ? []
+      : (history?.matches ?? [])
+          .filter(m => m.recordings?.length && m.teams.some(t => t.teamNumber === teamNumber))
+          .slice(-5)
+          .reverse();
 
   const inProgress =
     recording?.activeMatchId && recording.streams.some(s => s.status === 'recording' || s.status === 'finalizing');

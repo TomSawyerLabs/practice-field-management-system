@@ -344,7 +344,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
                 {isSelected && (
                   <>
                     <MatchPanelForControl station={station} ssid={ssid} />
-                    <MatchVideoCard station={station} teamNumber={teamNumber} />
+                    <MatchVideoCard teamNumber={teamNumber} />
                     <PortSelector station={station} ssid={ssid} />
                   </>
                 )}
