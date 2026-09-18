@@ -29,7 +29,13 @@ import {
   sendRadioConfigureRequest,
 } from '../hooks/useBackend';
 import { StatusIcon } from './TeamChecksPanel';
-import { CheckResultRow, SettlingBanner } from './SharedTestComponents';
+import {
+  CheckResultRow,
+  RobotAddresses,
+  SettlingBanner,
+  controllerFromChecks,
+  teamSubnet as subnetOf,
+} from './SharedTestComponents';
 
 const PULSE_STYLES = {
   '@keyframes test-pulse': {
@@ -155,12 +161,19 @@ export function TestPage() {
   const radioChecks = state.checks.filter(
     c => c.name.startsWith('Radio') && c.name !== 'Radio Detected' && c.name !== 'Radio Not Configured',
   );
-  const rioChecks = state.checks.filter(c => c.name.startsWith('roboRIO'));
+  // Column 2 holds whichever controller answered: roboRIO checks are named
+  // "roboRIO …", a SystemCore's are "Robot Controller" / "SystemCore …".
+  const rioChecks = state.checks.filter(
+    c => c.name.startsWith('roboRIO') || c.name === 'Robot Controller' || c.name.startsWith('SystemCore'),
+  );
+  const controller = controllerFromChecks(state.checks);
+  const controllerLabel =
+    controller === 'systemcore' ? 'SystemCore' : controller === 'roboRIO' ? 'roboRIO' : 'Controller';
   const networkChecks = state.checks.filter(
     c => c.name === 'Radio Detected' || c.name === 'Radio Not Configured' || c.name === 'Team Consistency',
   );
   const firmwareOutdated = radioChecks.some(c => c.name === 'Radio Firmware' && c.status === 'fail');
-  const teamSubnet = state.teamNumber ? `10.${Math.floor(state.teamNumber / 100)}.${state.teamNumber % 100}` : null;
+  const teamSubnet = state.teamNumber ? subnetOf(state.teamNumber) : null;
   const radioTeam = radioChecks.find(c => c.name === 'Radio Team')?.actual;
   const rioTeam = rioChecks.find(c => c.name === 'roboRIO Team')?.actual;
   const dhcpTeamStr = String(state.teamNumber);
@@ -262,7 +275,12 @@ export function TestPage() {
                   color="text.secondary"
                   sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}
                 >
-                  Radio {teamSubnet && <code style={{ fontWeight: 400 }}>{teamSubnet}.1</code>}
+                  Radio{' '}
+                  {teamSubnet && (
+                    <Link href={`http://${teamSubnet}.1`} target="_blank" rel="noopener">
+                      <code style={{ fontWeight: 400 }}>{teamSubnet}.1</code>
+                    </Link>
+                  )}
                 </Typography>
                 {radioChecks
                   .filter(c => c.name !== 'Radio Team')
@@ -292,7 +310,12 @@ export function TestPage() {
                   color="text.secondary"
                   sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}
                 >
-                  roboRIO {teamSubnet && <code style={{ fontWeight: 400 }}>{teamSubnet}.2</code>}
+                  {controllerLabel}{' '}
+                  {teamSubnet && (
+                    <Link href={`http://${teamSubnet}.2`} target="_blank" rel="noopener">
+                      <code style={{ fontWeight: 400 }}>{teamSubnet}.2</code>
+                    </Link>
+                  )}
                 </Typography>
                 {rioChecks
                   .filter(c => c.name !== 'roboRIO Team')
@@ -338,6 +361,8 @@ export function TestPage() {
                 </Box>
               </Box>
             </Box>
+
+            {state.teamNumber && <RobotAddresses team={state.teamNumber} controller={controller} />}
 
             {/* Team consistency summary */}
             {(radioTeam || rioTeam) && (

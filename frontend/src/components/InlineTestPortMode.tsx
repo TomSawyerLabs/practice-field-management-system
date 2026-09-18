@@ -9,7 +9,7 @@ import StopIcon from '@mui/icons-material/Stop';
 import BuildIcon from '@mui/icons-material/Build';
 import type { StationTestState } from '../../../src/types';
 import { StatusIcon } from './TeamChecksPanel';
-import { CheckResultRow, SettlingBanner } from './SharedTestComponents';
+import { CheckResultRow, RobotAddresses, SettlingBanner, controllerFromChecks } from './SharedTestComponents';
 
 interface InlineTestPortModeProps {
   testState: StationTestState;
@@ -88,6 +88,7 @@ export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: Inli
           ))}
         </Box>
       )}
+      {teamNumber && <RobotAddresses team={teamNumber} controller={controllerFromChecks(checks)} compact />}
 
       {/* WPA key check results (when all pass) */}
       {wpaKeyChecks && !hasMismatch && wpaKeyChecks.some(c => c.status === 'pass') && (

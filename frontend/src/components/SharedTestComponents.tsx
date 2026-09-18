@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import type { CheckResult } from '../../../src/types';
+import { CopyToClipboard } from './CopyToClipboard';
 import { StatusIcon } from './TeamChecksPanel';
 
 /**
@@ -131,5 +132,144 @@ export function SettlingBanner({
         Radio {type === 'firmware' ? 'updated' : 'reconfigured'}. Network settling ({secs}s)...
       </Typography>
     </Alert>
+  );
+}
+
+// ── Robot addresses ─────────────────────────────────────────────────
+
+export type ControllerKind = 'roboRIO' | 'systemcore' | null;
+
+/** `10.TE.AM` for a team — the first three octets every robot-side address hangs off. */
+export function teamSubnet(team: number): string {
+  return `10.${Math.floor(team / 100)}.${team % 100}`;
+}
+
+/**
+ * Which controller the checks found. The roboRIO checks are all named
+ * "roboRIO …" (the not-found error is also named "roboRIO", so it is skipped);
+ * a SystemCore announces itself in the "Robot Controller" check's value.
+ */
+export function controllerFromChecks(checks: CheckResult[]): ControllerKind {
+  if (checks.some(c => c.name === 'Robot Controller' && c.actual?.startsWith('SystemCore'))) return 'systemcore';
+  if (checks.some(c => c.name.startsWith('roboRIO') && c.status !== 'error')) return 'roboRIO';
+  return null;
+}
+
+function AddressLink({ href, small }: { href: string; small?: boolean }) {
+  return (
+    <Link
+      href={href}
+      target="_blank"
+      rel="noopener"
+      sx={{ fontFamily: 'monospace', fontSize: small ? '0.7rem' : undefined }}
+    >
+      {href}
+    </Link>
+  );
+}
+
+/**
+ * The addresses a mentor reaches for once the robot is on the network: the
+ * radio and controller web pages, and the Driver Station's static IP. Every
+ * row names the alternative (.local name, factory address) inline rather than
+ * behind a hover, and the full variant says when the links actually answer —
+ * they are on the robot's subnet, so a laptop on the guest Wi‑Fi only gets
+ * there while driving that station, on a field port, or wired to the radio.
+ *
+ * With no controller identified yet both roboRIO and SystemCore rows show, so
+ * the page is useful before (or without) the controller probe succeeding.
+ */
+export function RobotAddresses({
+  team,
+  controller,
+  compact,
+}: {
+  team: number;
+  controller: ControllerKind;
+  compact?: boolean;
+}) {
+  const subnet = teamSubnet(team);
+  const radio = `http://${subnet}.1`;
+  const rio = `http://${subnet}.2`;
+  const core = `http://${subnet}.2/configure`;
+  const showRio = controller !== 'systemcore';
+  const showCore = controller !== 'roboRIO';
+
+  if (compact) {
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, fontSize: '0.7rem' }}>
+        Radio <AddressLink href={radio} small />
+        {showRio && (
+          <>
+            {' · '}roboRIO <AddressLink href={rio} small />
+          </>
+        )}
+        {showCore && (
+          <>
+            {' · '}SystemCore <AddressLink href={core} small />
+          </>
+        )}
+      </Typography>
+    );
+  }
+
+  const rows: { label: string; main: ReactNode; also: string }[] = [
+    {
+      label: 'Radio config',
+      main: <AddressLink href={radio} />,
+      also: 'http://radio.local from the robot’s network; http://192.168.69.1 on a factory-fresh radio',
+    },
+  ];
+  if (showRio) {
+    rows.push({
+      label: 'roboRIO web config',
+      main: <AddressLink href={rio} />,
+      also: `http://roborio-${team}-frc.local`,
+    });
+  }
+  if (showCore) {
+    rows.push({
+      label: 'SystemCore dashboard',
+      main: <AddressLink href={core} />,
+      also: 'http://robot.local/configure',
+    });
+  }
+  rows.push({
+    label: 'Driver Station static IP',
+    main: (
+      <CopyToClipboard text={`${subnet}.5`} tooltipText="Copy">
+        <Box component="span" sx={{ fontFamily: 'monospace', cursor: 'pointer' }}>
+          {subnet}.5
+        </Box>
+      </CopyToClipboard>
+    ),
+    also: 'mask 255.0.0.0 — only if the laptop is not on DHCP',
+  });
+
+  return (
+    <Box sx={{ pt: 1, borderTop: 1, borderColor: 'divider' }}>
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+        Handy addresses
+      </Typography>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: 1.5, rowGap: 0.25 }}>
+        {rows.map(row => (
+          <Box key={row.label} sx={{ display: 'contents' }}>
+            <Typography variant="caption" color="text.secondary">
+              {row.label}
+            </Typography>
+            <Typography variant="caption" sx={{ minWidth: 0 }}>
+              {row.main}
+              <Box component="span" sx={{ color: 'text.secondary', fontSize: '0.7rem', display: 'block' }}>
+                {row.also}
+              </Box>
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5, fontSize: '0.7rem' }}>
+        These answer from the robot's network — while driving it from its station page, on a field port, or wired to the
+        radio.
+      </Typography>
+    </Box>
   );
 }

@@ -125,6 +125,12 @@ probe must never strand a legitimate robot.
 
 Probes `http://192.168.69.1/status` in parallel with the team-IP checks. If the radio responds at the factory IP but **not** at the team IP, the radio hasn't been configured — this produces a **fail** result prompting configuration. If both respond, it's normal (the radio always keeps the factory IP alive as a recovery fallback).
 
+## Handy Addresses
+
+Once a team number is known, the page lists the addresses a mentor reaches for, as links: the radio config page (`http://10.TE.AM.1`, also `http://radio.local` from the robot's network or `http://192.168.69.1` on a factory-fresh radio), the roboRIO web config (`http://10.TE.AM.2`, also `http://roborio-TEAM-frc.local`) or the SystemCore dashboard (`http://10.TE.AM.2/configure`, also `http://robot.local/configure`) depending on which controller answered — both while none has — and the Driver Station's static IP (`10.TE.AM.5`, mask `255.0.0.0`).
+
+The links only answer from the robot's own subnet. A laptop on the guest Wi-Fi gets there while driving that station from its station page (route preference), on a physical field port, or wired straight to the radio; from anywhere else they are a reference to copy, not a click.
+
 ## Factory Default Radio Detection
 
 A background probe runs every 2 seconds, fetching `http://192.168.69.1/status`. This works because the tester adds `192.168.69.8/24` as a secondary IP on the test interface at link-up, giving it a route to the `192.168.69.0/24` subnet.
