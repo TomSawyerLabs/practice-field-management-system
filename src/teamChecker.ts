@@ -394,40 +394,66 @@ function evaluateRadioFirmware(data: { version?: string }): CheckResult {
   };
 }
 
-/**
- * The radio's "Enable QoS BW Limit" checkbox (`qosEnabled`). Its own help text:
- * bandwidth limiting protects control packets when cameras share the link. In
- * practice it throttles the robot to the competition cap, and a robot pushing
- * camera streams past that cap sees ~130 ms latency and packet loss — exactly
- * what took 6238 down at the 2026-09-13 scrimmage. The practice field applies
- * no limit of its own, so the setting only hurts here.
- */
+/** The per-team cap: what an event enforces, and what the radio enforces on itself when "Enable QoS BW Limit" is ticked. */
 const QOS_CAP_MBPS = 4;
-const QOS_NEAR_MBPS = 3.5;
 
-function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: number): CheckResult {
+/** With the limiter on, this much of the cap is close enough that shaping is already biting. */
+const QOS_NEAR_FRACTION = 0.9;
+
+/**
+ * The radio's "Enable QoS BW Limit" checkbox (`qosEnabled`), and how much of
+ * the cap the robot is actually using on its linked band.
+ *
+ * The checkbox itself is neither right nor wrong here, so it is reported and
+ * not judged — plenty of teams leave it on all season with a robot that never
+ * comes near the cap. What actually hurts is the traffic, so that is what the
+ * warning follows:
+ *
+ *  - limiter on — warn from 90 % of the cap, because the radio is shaping the
+ *    robot's traffic right now, and control packets share that link: this is
+ *    the lag and the NetworkTables/Driver Station dropouts (972 at the
+ *    2026-09-13 scrimmage).
+ *  - limiter off — nothing throttles the robot on this field, so a number under
+ *    the cap means nothing. Warn only once it is over: the same robot gets
+ *    shaped at an event.
+ */
+export function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: number): CheckResult {
+  const name = 'Radio QoS BW Limit';
   if (data.qosEnabled === undefined) {
-    return { name: 'Radio QoS BW Limit', status: 'pass', message: 'Not reported by firmware' };
+    return { name, status: 'pass', message: 'Not reported by firmware' };
   }
-  if (!data.qosEnabled) {
-    return { name: 'Radio QoS BW Limit', status: 'pass', actual: 'disabled' };
+  const limiter = data.qosEnabled ? `enabled (~${QOS_CAP_MBPS} Mbps cap)` : 'disabled (no cap)';
+  if (usedMbps === undefined) {
+    return { name, status: 'pass', actual: limiter };
   }
-  const usage = usedMbps !== undefined ? `, using ${usedMbps.toFixed(1)} Mbps` : '';
-  const hitting = usedMbps !== undefined && usedMbps >= QOS_NEAR_MBPS;
-  return {
-    name: 'Radio QoS BW Limit',
-    status: 'warn',
-    expected: 'disabled',
-    actual: `enabled${usage}`,
-    message: hitting
-      ? `Enabled and you are at the ~${QOS_CAP_MBPS} Mbps cap right now (${usedMbps!.toFixed(1)} Mbps) — the radio is ` +
-        `throttling the robot, which is what causes the lag and NetworkTables/Driver Station dropouts. Untick ` +
-        `"Enable QoS BW Limit" on the radio, or cut what the robot streams (camera resolution/FPS).`
-      : `The radio is throttling the robot to the ~${QOS_CAP_MBPS} Mbps competition cap. With camera streams above the ` +
-        `cap this adds latency and packet loss (NetworkTables timeouts). The practice field sets no limit — untick ` +
-        `"Enable QoS BW Limit" in the radio configuration unless the 2.4 GHz network is needed.`,
-    helpUrl: HELP_URLS.radioFirmware,
-  };
+  const used = usedMbps.toFixed(1);
+
+  if (data.qosEnabled && usedMbps >= QOS_CAP_MBPS * QOS_NEAR_FRACTION) {
+    return {
+      name,
+      status: 'warn',
+      message:
+        `The robot is using ${used} Mbps of the ~${QOS_CAP_MBPS} Mbps cap its own radio is enforcing — it is being ` +
+        `throttled right now, which is what causes the lag and the NetworkTables/Driver Station dropouts. Cut what the ` +
+        `robot streams (camera resolution/FPS), or untick "Enable QoS BW Limit" on the radio to run unthrottled here ` +
+        `(an event will still enforce the cap).`,
+      helpUrl: HELP_URLS.radioFirmware,
+    };
+  }
+
+  if (!data.qosEnabled && usedMbps > QOS_CAP_MBPS) {
+    return {
+      name,
+      status: 'warn',
+      message:
+        `The robot is using ${used} Mbps, over the ~${QOS_CAP_MBPS} Mbps per-team cap. Nothing is throttling it here, ` +
+        `but at an event this traffic gets shaped — expect lag and dropouts unless what the robot streams comes down ` +
+        `(camera resolution/FPS) before you compete.`,
+      helpUrl: HELP_URLS.radioFirmware,
+    };
+  }
+
+  return { name, status: 'pass', actual: `${limiter}, using ${used} Mbps` };
 }
 
 /** Fetch radio /status and run all radio checks. Firmware first; SystemCore skipped if outdated. Includes detected team number.

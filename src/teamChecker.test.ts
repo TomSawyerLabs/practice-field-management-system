@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   controllerBlockReason,
   evaluateControllerPolicy,
+  evaluateQosLimit,
   evaluateSystemCore,
   parseMdnsAnswers,
 } from './teamChecker.js';
@@ -209,5 +210,41 @@ describe('blocking refuses the enable', () => {
     for (const p of ['none', 'preferSystemCore', 'blockRoboRIO', 'blockSystemCore'] as const) {
       expect(controllerBlockReason(null, p)).toBeNull();
     }
+  });
+});
+
+describe('radio bandwidth limit', () => {
+  test('the setting alone is reported, not judged', () => {
+    expect(evaluateQosLimit({ qosEnabled: true }).status).toBe('pass');
+    expect(evaluateQosLimit({ qosEnabled: false }).status).toBe('pass');
+    expect(evaluateQosLimit({ qosEnabled: true }).actual).toContain('enabled');
+    expect(evaluateQosLimit({ qosEnabled: false }).actual).toContain('disabled');
+  });
+
+  test('usage well under the cap passes either way, and is shown', () => {
+    const on = evaluateQosLimit({ qosEnabled: true }, 0.2);
+    expect(on.status).toBe('pass');
+    expect(on.actual).toContain('0.2 Mbps');
+    const off = evaluateQosLimit({ qosEnabled: false }, 0.2);
+    expect(off.status).toBe('pass');
+    expect(off.actual).toContain('0.2 Mbps');
+  });
+
+  test('limiter on: warn from 90% of the cap, because the shaping is happening now', () => {
+    expect(evaluateQosLimit({ qosEnabled: true }, 3.5).status).toBe('pass');
+    expect(evaluateQosLimit({ qosEnabled: true }, 3.6).status).toBe('warn');
+    expect(evaluateQosLimit({ qosEnabled: true }, 3.9).message).toContain('throttled right now');
+  });
+
+  test('limiter off: silent up to the cap, warn only above it', () => {
+    expect(evaluateQosLimit({ qosEnabled: false }, 3.9).status).toBe('pass');
+    expect(evaluateQosLimit({ qosEnabled: false }, 4).status).toBe('pass');
+    const over = evaluateQosLimit({ qosEnabled: false }, 5.2);
+    expect(over.status).toBe('warn');
+    expect(over.message).toContain('at an event');
+  });
+
+  test('firmware that does not report the setting is not a failure', () => {
+    expect(evaluateQosLimit({}, 6).status).toBe('pass');
   });
 });
