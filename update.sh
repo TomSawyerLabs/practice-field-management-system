@@ -18,6 +18,22 @@ if $CLEAN; then
   rm -rf node_modules
 fi
 
+# One deploy at a time. Two runs that overlapped (2026-09-18 17:59, five
+# seconds apart) each rebuilt and reloaded the backend, so every screen on the
+# field reloaded twice. The lock lives on fd 9, which survives the re-exec
+# below, so the 'continue' pass inherits it instead of taking it again. A
+# second run waits its turn; once it gets the lock it pulls whatever is newest
+# and, if the backend is already on that commit, skips the reload (see below).
+LOCK_FILE=${PFMS_UPDATE_LOCK:-/tmp/pfms-update.lock}
+if [[ ! " $* " =~ " continue " ]]; then
+  exec 9>>"$LOCK_FILE"
+  if ! flock -n 9; then
+    echo "⏳ Another deploy is already running — waiting for it to finish..."
+    flock 9
+    echo "✅ Previous deploy finished — continuing with this one."
+  fi
+fi
+
 # Run the latest version of this script after updating
 if [[ ! " $* " =~ " continue " ]]; then
   git pull
@@ -54,12 +70,31 @@ rsync -av sounds/ $DEPLOY_BASE/internal/sounds/
 # Copy the public.html to the public directory
 cp frontend/src/public.html $DEPLOY_BASE/public/index.html
 
-# Helper: get the current match phase from the backend
-get_match_phase() {
+# Helper: read one field of the backend's /health JSON ("unknown" if it's down)
+get_health_field() {
   curl -sf "http://localhost:$PORT/health" 2>/dev/null \
-    | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).phase' 2>/dev/null \
+    | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).$1 ?? 'unknown'" 2>/dev/null \
     || echo "unknown"
 }
+
+# Helper: get the current match phase from the backend
+get_match_phase() {
+  get_health_field phase
+}
+
+# Nothing to restart if the backend already runs the commit we just deployed —
+# typically a second deploy queued behind the lock above. The files were still
+# synced (the same content), so a stale frontend can't hide behind this; only
+# the disruptive part is skipped. './update.sh force' reloads regardless, e.g.
+# after changing the environment file.
+HEAD_VERSION=$(git rev-parse --short HEAD)
+RUNNING_VERSION=$(get_health_field version)
+if [ "$RUNNING_VERSION" = "$HEAD_VERSION" ] && ! $FORCE; then
+  echo ""
+  echo "✅ Backend is already running $HEAD_VERSION — files synced, no reload needed."
+  echo "   (use './update.sh force' to reload anyway)"
+  exit 0
+fi
 
 # Phases where robots are under field control or scores are still counting —
 # reloading would interrupt a live match, so wait these out. Everything else

@@ -255,11 +255,13 @@ export function setupWebSocket(
       return;
     }
 
-    // Health/status endpoint — used by update.sh to check for active matches
+    // Health/status endpoint — used by update.sh to check for active matches,
+    // and to skip the reload when the running backend is already the commit
+    // being deployed (two overlapping deploys used to reload every screen twice).
     if (req.url === '/health') {
       const state = matchEngine.getState();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ phase: state.phase }));
+      res.end(JSON.stringify({ phase: state.phase, version: serverVersion }));
       return;
     }
 

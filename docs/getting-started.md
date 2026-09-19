@@ -177,7 +177,7 @@ journalctl -u practice-field-management-system -f
 ```
 
 **Check:** the log shows `OK: 10.0.100.5`, then the radio status poll
-starting. `curl localhost:9005/health` returns `{"phase":"idle"}`.
+starting. `curl localhost:9005/health` returns `{"phase":"idle","version":"<git hash>"}`.
 
 Use `systemctl reload` for updates — it preserves iptables rules and
 routes so robots stay connected. `restart` does a full cleanup.
