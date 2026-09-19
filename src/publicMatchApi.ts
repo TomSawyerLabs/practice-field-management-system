@@ -30,7 +30,9 @@ export function handlePublicMatchRequest(
 ): boolean {
   const [path] = (req.url ?? '').split('?');
   const m = /^\/api\/public\/match\/([^/]+)(?:\/(video|avatar)\/([^/]+))?\/?$/.exec(path);
-  if (!path.startsWith('/api/public/')) return false;
+  // Only this handler's own prefix: other token-scoped public routes
+  // (/api/public/practice/…) have their own handlers after this one.
+  if (!path.startsWith('/api/public/match/')) return false;
   if (!m) {
     json(res, 404, { error: 'Unknown public route' });
     return true;
