@@ -2,14 +2,25 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
+import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import VideocamOffIcon from '@mui/icons-material/VideocamOff';
 import Typography from '@mui/material/Typography';
-import type { MatchHistoryEntry, MatchRecording } from '../../../src/types';
-import { useMatchHistory, useMatchRecordingState } from '../hooks/useBackend';
+import type { MatchHistoryEntry, MatchRecording, PracticeRunEntry } from '../../../src/types';
+import {
+  practiceDayUrl,
+  sendSetPracticeRecording,
+  useMatchHistory,
+  useMatchRecordingState,
+  usePracticeDayLink,
+  usePracticeRecordingState,
+  usePublicUrl,
+} from '../hooks/useBackend';
+import { CopyToClipboard } from './CopyToClipboard';
 
 /** Download URL for one recorded file. `download` forces an attachment with a
  *  friendly name; without it the browser can play/scrub the file inline. */
@@ -96,10 +107,20 @@ export function RecordingIconButtons({ match }: { match: Pick<MatchHistoryEntry,
   );
 }
 
+/** A match or a practice run, as one row in the station card's list. */
+interface VideoRow {
+  key: string;
+  label: string;
+  startedAt: number;
+  match: Pick<MatchHistoryEntry, 'matchId' | 'recordings'>;
+}
+
 /**
- * Station page card: this team's recent matches with their video downloads.
- * Only renders when there is something to download or a recording is in
- * progress, so teams on fields without recording never see it.
+ * Station page card: "record while enabled" for this team, today's practice
+ * link, and this team's recent videos (matches and practice runs) with
+ * their downloads. Rendered whenever the field can record at all, so the
+ * checkbox is there to find before the first recording exists; on a field
+ * without streams it only appears once there is something to download.
  *
  * Matches are picked by team number only. The slot a team sits in is reused
  * by whoever comes next, so matching on it showed the previous team's
@@ -109,45 +130,124 @@ export function RecordingIconButtons({ match }: { match: Pick<MatchHistoryEntry,
 export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
   const history = useMatchHistory();
   const recording = useMatchRecordingState();
+  const practice = usePracticeRecordingState();
+  const dayLink = usePracticeDayLink(teamNumber);
+  const publicUrl = usePublicUrl();
 
-  const mine =
-    teamNumber === null
-      ? []
-      : (history?.matches ?? [])
-          .filter(m => m.recordings?.length && m.teams.some(t => t.teamNumber === teamNumber))
-          .slice(-5)
-          .reverse();
+  const canRecord = !!recording?.available && recording.streams.some(s => s.enabled);
+  const optedIn = teamNumber !== null && !!practice?.optIn.includes(teamNumber);
 
-  const inProgress =
+  const rows: VideoRow[] = [];
+  if (teamNumber !== null) {
+    for (const m of history?.matches ?? []) {
+      if (!m.recordings?.length || !m.teams.some(t => t.teamNumber === teamNumber)) continue;
+      rows.push({
+        key: m.matchId ?? String(m.startedAt),
+        label: `Match ${m.matchNumber}`,
+        startedAt: m.startedAt,
+        match: m,
+      });
+    }
+    for (const r of practice?.runs ?? []) {
+      if (!r.teams.some(t => t.teamNumber === teamNumber)) continue;
+      rows.push({ key: r.id, label: 'Practice run', startedAt: r.startedAt, match: runAsMatch(r) });
+    }
+  }
+  rows.sort((a, b) => b.startedAt - a.startedAt);
+  const recent = rows.slice(0, 8);
+
+  const matchInProgress =
     recording?.activeMatchId && recording.streams.some(s => s.status === 'recording' || s.status === 'finalizing');
+  const runInProgress = teamNumber !== null && !!practice?.activeRun?.teams.includes(teamNumber);
 
-  if (mine.length === 0 && !inProgress) return null;
+  if (!canRecord && recent.length === 0 && !matchInProgress) return null;
+
+  const status = !canRecord
+    ? (practice?.unavailableReason ?? 'Recording is not set up on this field')
+    : runInProgress
+      ? 'Recording now — the clip ends 3 s after you disable.'
+      : optedIn
+        ? practice?.buffering
+          ? 'Ready: enabling your robot starts a clip (with 3 s before and after).'
+          : 'Recording starts as soon as your Driver Station connects and you enable.'
+        : 'Tick to get a video of every time you enable your robot outside a match.';
 
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
-        <Typography variant="h6" sx={{ mb: 1 }}>
-          Match Video
+        <Typography variant="h6" sx={{ mb: 0.5 }}>
+          Video
         </Typography>
-        {inProgress && (
+
+        {teamNumber !== null && (
+          <Box sx={{ mb: 1.5 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={optedIn}
+                  disabled={!canRecord}
+                  onChange={e => sendSetPracticeRecording(teamNumber, e.target.checked)}
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <span>Record while enabled</span>
+                  {runInProgress && <Chip size="small" color="error" label="● Recording" />}
+                </Box>
+              }
+            />
+            <Typography variant="body2" sx={{ color: 'text.secondary', ml: 4 }}>
+              {status}
+            </Typography>
+          </Box>
+        )}
+
+        {matchInProgress && (
           <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
             Recording this match — downloads appear here a few seconds after it ends.
           </Typography>
         )}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {mine.map(m => (
-            <Box
-              key={m.matchId ?? m.startedAt}
-              sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}
+
+        {dayLink?.token && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>
+            <Typography variant="body2">
+              Today&apos;s videos ({dayLink.count}), for downloading later or from home:
+            </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              href={practiceDayUrl(publicUrl, dayLink.token)}
+              target="_blank"
+              rel="noopener"
             >
-              <Typography variant="body2" sx={{ minWidth: 150 }}>
-                Match {m.matchNumber} · {formatWhen(m.startedAt)}
-              </Typography>
-              <RecordingButtons match={m} />
-            </Box>
-          ))}
-        </Box>
+              Open
+            </Button>
+            <CopyToClipboard text={practiceDayUrl(publicUrl, dayLink.token)} tooltipText="Copy the link">
+              <Button size="small" variant="outlined">
+                Copy link
+              </Button>
+            </CopyToClipboard>
+          </Box>
+        )}
+
+        {recent.length > 0 && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {recent.map(row => (
+              <Box key={row.key} sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="body2" sx={{ minWidth: 190 }}>
+                  {row.label} · {formatWhen(row.startedAt)}
+                </Typography>
+                <RecordingButtons match={row.match} />
+              </Box>
+            ))}
+          </Box>
+        )}
       </CardContent>
     </Card>
   );
+}
+
+/** A practice run's files are served by the same route as a match's. */
+function runAsMatch(run: PracticeRunEntry): Pick<MatchHistoryEntry, 'matchId' | 'recordings'> {
+  return { matchId: run.id, recordings: run.recordings };
 }

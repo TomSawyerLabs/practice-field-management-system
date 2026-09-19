@@ -4,6 +4,7 @@ import { createTheme, CssBaseline, ThemeProvider } from '@mui/material';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { ScoreboardPage } from '../components/ScoreboardPage';
 import { MatchSummaryPage } from '../components/MatchSummaryPage';
+import { PracticeDayPage } from '../components/PracticeDayPage';
 
 // `/matches/<token>` is the post-match summary a team scanned off the TV. It
 // shares this bundle (the server maps that path to scores.html); the older
@@ -14,6 +15,10 @@ import { MatchSummaryPage } from '../components/MatchSummaryPage';
 const summaryToken =
   /^\/matches\/([^/?#]+)/.exec(window.location.pathname)?.[1] ??
   new URLSearchParams(window.location.search).get('match');
+// `/practice/<token>` is a team's practice day: every match and practice run
+// they were part of, with videos and metadata, from the link on their station
+// page or the one posted to their mentors on Slack.
+const practiceToken = /^\/practice\/([^/?#]+)/.exec(window.location.pathname)?.[1];
 
 const theme = createTheme({
   colorSchemes: { dark: true },
@@ -26,7 +31,13 @@ createRoot(document.getElementById('root')!).render(
       <ThemeProvider theme={theme} defaultMode="dark">
         <CssBaseline />
         {/* Match audio is mounted inside ScoreboardPage so per-display mute can gate it */}
-        {summaryToken ? <MatchSummaryPage token={summaryToken} /> : <ScoreboardPage />}
+        {practiceToken ? (
+          <PracticeDayPage token={practiceToken} />
+        ) : summaryToken ? (
+          <MatchSummaryPage token={summaryToken} />
+        ) : (
+          <ScoreboardPage />
+        )}
       </ThemeProvider>
     </ErrorBoundary>
   </StrictMode>,

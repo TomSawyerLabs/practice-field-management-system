@@ -2889,3 +2889,262 @@ export function isUsageState(msg: unknown): msg is UsageState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as UsageState).type === 'usageState';
 }
+
+// ── Recording metadata (what was happening while a video ran) ──────
+
+/** One robot telemetry sample kept alongside a recording. `t` is server
+ *  epoch ms; the fields mirror TelemetryUpdate with the DS status flattened. */
+export interface TelemetrySample {
+  t: number;
+  station: StationName;
+  teamNumber?: number;
+  batteryVoltage?: number;
+  batteryVoltageMin?: number;
+  rttMs?: number;
+  lostPackets?: number;
+  canUtil?: number;
+  dsCpuPercent?: number;
+  brownout?: boolean;
+  enabled?: boolean;
+  mode?: 'teleOp' | 'test' | 'auto';
+  eStop?: boolean;
+  aStop?: boolean;
+  robotComms?: boolean;
+}
+
+/** `metadata.json` written next to every recording (match or practice run):
+ *  every score event the goal sensors reported for the window and the
+ *  telemetry of every robot on the field during it. */
+export interface RecordingMetadata {
+  version: 1;
+  kind: 'match' | 'practice';
+  /** Directory name under the recordings root (match id or practice run id). */
+  id: string;
+  matchNumber?: number;
+  startedAt: number;
+  endedAt: number;
+  teams: { station: string; teamNumber: number | null; alliance: string | null }[];
+  /** Balls scored while the recording ran, as the scoring engine judged them. */
+  scoreEvents: ProcessedScoreEvent[];
+  telemetry: TelemetrySample[];
+}
+
+// ── Practice recording (record while enabled) ───────────────────────
+
+/** How many seconds of footage to keep before the first enable and after
+ *  the last disable of a practice run. */
+export const PRACTICE_PAD_SECONDS = 3;
+
+/** A recorded practice run: the field video from a few seconds before a
+ *  robot was enabled outside a match to a few seconds after it was
+ *  disabled. Filed under every opted-in team that was enabled during it. */
+export interface PracticeRunEntry {
+  /** Directory name under the recordings root (`practice-…`). */
+  id: string;
+  /** Window the clip covers (enable − pad … disable + pad). */
+  startedAt: number;
+  endedAt: number;
+  /** Opted-in stations enabled at some point during the run. */
+  teams: { station: StationName; teamNumber: number }[];
+  recordings: MatchRecording[];
+  /** `metadata.json` (score events + telemetry) was written for this run. */
+  hasMetadata?: boolean;
+}
+
+/** Capability token for one team's practice day (`/practice/<token>`). */
+export interface PracticeDayToken {
+  token: string;
+  teamNumber: number;
+  /** Local practice day, `YYYY-MM-DD` (a day rolls over at 04:00, not midnight). */
+  day: string;
+  createdAt: number;
+  /** When the link was posted to the team's Slack contact, if it was. */
+  slackPostedAt?: number;
+  /** A note that no Slack contact is configured was posted to the support channel. */
+  noContactNotedAt?: number;
+}
+
+/** Live practice-recording status, broadcast to internal clients. */
+export interface PracticeRecordingState {
+  type: 'practiceRecordingState';
+  /** Teams that ticked "record while enabled". */
+  optIn: number[];
+  /** ffmpeg is pulling the streams into the ring buffer (an opted-in team is on the field). */
+  buffering: boolean;
+  /** A run is being captured right now. */
+  activeRun?: { startedAt: number; teams: number[] };
+  /** Why practice recording can't work, when it can't (no streams, no ffmpeg). */
+  unavailableReason?: string;
+  /** Recent runs, newest last. */
+  runs: PracticeRunEntry[];
+}
+
+export function isPracticeRecordingState(msg: unknown): msg is PracticeRecordingState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as PracticeRecordingState).type === 'practiceRecordingState';
+}
+
+/** Client → Server: a station page ticks/unticks "record while enabled" for its team. */
+export interface SetPracticeRecording {
+  type: 'setPracticeRecording';
+  teamNumber: number;
+  enabled: boolean;
+}
+
+export function isSetPracticeRecording(msg: unknown): msg is SetPracticeRecording {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as SetPracticeRecording;
+  return (
+    m.type === 'setPracticeRecording' &&
+    Number.isInteger(m.teamNumber) &&
+    m.teamNumber > 0 &&
+    typeof m.enabled === 'boolean'
+  );
+}
+
+/** Client → Server: a station page asks for its team's link for today. The
+ *  reply is a PracticeDayLink to that client only — tokens are never
+ *  broadcast. */
+export interface RequestPracticeDayLink {
+  type: 'requestPracticeDayLink';
+  teamNumber: number;
+}
+
+export function isRequestPracticeDayLink(msg: unknown): msg is RequestPracticeDayLink {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as RequestPracticeDayLink;
+  return m.type === 'requestPracticeDayLink' && Number.isInteger(m.teamNumber) && m.teamNumber > 0;
+}
+
+/** Server → one client: the team's practice-day link, or `token: null`
+ *  when nothing has been recorded for that team today. */
+export interface PracticeDayLink {
+  type: 'practiceDayLink';
+  teamNumber: number;
+  day: string;
+  token: string | null;
+  /** Recordings (matches + runs) filed under the day so far. */
+  count: number;
+}
+
+export function isPracticeDayLink(msg: unknown): msg is PracticeDayLink {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as PracticeDayLink).type === 'practiceDayLink';
+}
+
+/** What `/api/public/practice/<token>` returns: one team's practice day. */
+export interface PublicPracticeDay {
+  teamNumber: number;
+  day: string;
+  /** Human label for the day in the field's local time, e.g. "Fri, Sep 18". */
+  dayLabel: string;
+  /** Days recordings are kept before the sweep deletes them. */
+  retentionDays: number;
+  /** Everything in one zip (videos + metadata). */
+  zipUrl: string;
+  /** Rough size of that zip (sum of the files). */
+  zipBytes: number;
+  items: PublicPracticeItem[];
+}
+
+export interface PublicPracticeItem {
+  kind: 'match' | 'practice';
+  id: string;
+  /** Match number for matches; run number within the day for practice. */
+  number: number;
+  startedAt: number;
+  endedAt: number;
+  durationSeconds: number;
+  /** Teams on the field during this recording (this one included). */
+  teams: { station: string; teamNumber: number; alliance?: Alliance | null }[];
+  /** Match result, for matches. */
+  redScore?: number;
+  blueScore?: number;
+  /** Link to the match summary page, for matches. */
+  summaryUrl?: string;
+  /** Balls counted per alliance during the window, when metadata exists. */
+  scored?: Record<Alliance, number>;
+  /** Battery range seen for this team during the window, when telemetry was available. */
+  battery?: { min: number; max: number };
+  recordings: {
+    name: string;
+    file: string;
+    bytes: number;
+    durationSeconds?: number;
+    status: 'ok' | 'partial';
+    url: string;
+    downloadUrl: string;
+  }[];
+  /** Token-scoped URLs of the sidecars, when they exist. */
+  metadataUrl?: string;
+  telemetryCsvUrl?: string;
+  scoresCsvUrl?: string;
+}
+
+// ── Team Slack contacts (who gets a team's practice links) ─────────
+
+export interface TeamSlackContact {
+  teamNumber: number;
+  /** A channel the bot posts into, or people it opens a group DM with. */
+  kind: 'channel' | 'users';
+  channelId?: string;
+  channelName?: string;
+  users?: { id: string; name: string }[];
+  updatedAt: number;
+}
+
+export interface TeamContactsState {
+  type: 'teamContactsState';
+  contacts: TeamSlackContact[];
+}
+
+export function isTeamContactsState(msg: unknown): msg is TeamContactsState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TeamContactsState).type === 'teamContactsState';
+}
+
+/** Client → Server (admin): set a team's Slack contact. `target` is a
+ *  channel (`#team-5940` or `C0123…`) or people (`@alice, @bob` or `U0123…`). */
+export interface SaveTeamContact {
+  type: 'saveTeamContact';
+  teamNumber: number;
+  target: string;
+}
+
+export function isSaveTeamContact(msg: unknown): msg is SaveTeamContact {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as SaveTeamContact;
+  return (
+    m.type === 'saveTeamContact' &&
+    Number.isInteger(m.teamNumber) &&
+    m.teamNumber > 0 &&
+    typeof m.target === 'string' &&
+    m.target.trim().length > 0 &&
+    m.target.length <= 400
+  );
+}
+
+export interface RemoveTeamContact {
+  type: 'removeTeamContact';
+  teamNumber: number;
+}
+
+export function isRemoveTeamContact(msg: unknown): msg is RemoveTeamContact {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as RemoveTeamContact;
+  return m.type === 'removeTeamContact' && Number.isInteger(m.teamNumber) && m.teamNumber > 0;
+}
+
+/** Server → one client: outcome of a SaveTeamContact. */
+export interface TeamContactSaveResult {
+  type: 'teamContactSaveResult';
+  teamNumber: number;
+  ok: boolean;
+  error?: string;
+  contact?: TeamSlackContact;
+}
+
+export function isTeamContactSaveResult(msg: unknown): msg is TeamContactSaveResult {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TeamContactSaveResult).type === 'teamContactSaveResult';
+}

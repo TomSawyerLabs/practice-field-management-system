@@ -51,6 +51,14 @@ import {
   MatchRecordingState,
   isRecordingStreamTestResult,
   RecordingStreamTestResult,
+  isPracticeRecordingState,
+  PracticeRecordingState,
+  isTeamContactsState,
+  TeamContactsState,
+  isPracticeDayLink,
+  PracticeDayLink,
+  isTeamContactSaveResult,
+  TeamContactSaveResult,
   isUsageState,
   UsageState,
   isDriveSessionState,
@@ -493,6 +501,21 @@ function handleSlackConfigState(state: SlackConfigState) {
   events.dispatchEvent(new CustomEvent('slackConfigState', { detail: state }));
 }
 
+// ── Practice recording ("record while enabled") ─────────────────────
+
+let currentPracticeRecordingState: PracticeRecordingState | null = null;
+let currentTeamContactsState: TeamContactsState | null = null;
+
+function handlePracticeRecordingState(state: PracticeRecordingState) {
+  currentPracticeRecordingState = state;
+  events.dispatchEvent(new CustomEvent('practiceRecordingState', { detail: state }));
+}
+
+function handleTeamContactsState(state: TeamContactsState) {
+  currentTeamContactsState = state;
+  events.dispatchEvent(new CustomEvent('teamContactsState', { detail: state }));
+}
+
 function handleSetupProbeState(state: SetupProbeState) {
   currentSetupProbeState = state;
   events.dispatchEvent(new CustomEvent('setupProbeState', { detail: state }));
@@ -795,6 +818,26 @@ function receiveMessage(detail: Message) {
 
   if (isRecordingStreamTestResult(detail)) {
     events.dispatchEvent(new CustomEvent('recordingStreamTestResult', { detail }));
+    return;
+  }
+
+  if (isPracticeRecordingState(detail)) {
+    handlePracticeRecordingState(detail);
+    return;
+  }
+
+  if (isTeamContactsState(detail)) {
+    handleTeamContactsState(detail);
+    return;
+  }
+
+  if (isPracticeDayLink(detail)) {
+    events.dispatchEvent(new CustomEvent('practiceDayLink', { detail }));
+    return;
+  }
+
+  if (isTeamContactSaveResult(detail)) {
+    events.dispatchEvent(new CustomEvent('teamContactSaveResult', { detail }));
     return;
   }
 
@@ -2078,6 +2121,90 @@ export function usePublicUrl(): string {
 /** Public summary/video page for a match, by share token. */
 export function matchSummaryUrl(publicUrl: string, shareToken: string): string {
   return `${publicUrl}/matches/${encodeURIComponent(shareToken)}`;
+}
+
+/** Public page listing one team's recordings for a practice day, by token. */
+export function practiceDayUrl(publicUrl: string, token: string): string {
+  return `${publicUrl}/practice/${encodeURIComponent(token)}`;
+}
+
+// ── Practice recording ("record while enabled") ─────────────────────
+
+export function usePracticeRecordingState(): PracticeRecordingState | null {
+  const [state, setState] = useState<PracticeRecordingState | null>(currentPracticeRecordingState);
+
+  useEffect(() => {
+    setState(currentPracticeRecordingState);
+    const handler = (e: Event) => setState((e as CustomEvent<PracticeRecordingState>).detail);
+    events.addEventListener('practiceRecordingState', handler);
+    return () => events.removeEventListener('practiceRecordingState', handler);
+  }, []);
+
+  return state;
+}
+
+export function sendSetPracticeRecording(teamNumber: number, enabled: boolean) {
+  sendWhenOpen({ type: 'setPracticeRecording', teamNumber, enabled });
+}
+
+/**
+ * This team's practice-day link for today. Re-asked whenever the practice
+ * state changes (a run just finished) or a match lands in history, so the
+ * link and its count stay current; the token itself only ever travels to
+ * this client.
+ */
+export function usePracticeDayLink(teamNumber: number | null): PracticeDayLink | null {
+  const [link, setLink] = useState<PracticeDayLink | null>(null);
+  const practice = usePracticeRecordingState();
+  const history = useMatchHistory();
+  const connected = useWsConnected();
+  const runCount = practice?.runs.length ?? 0;
+  const matchCount = history?.matches.length ?? 0;
+
+  useEffect(() => {
+    if (teamNumber === null) {
+      setLink(null);
+      return;
+    }
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<PracticeDayLink>).detail;
+      if (detail.teamNumber === teamNumber) setLink(detail);
+    };
+    events.addEventListener('practiceDayLink', handler);
+    sendWhenOpen({ type: 'requestPracticeDayLink', teamNumber });
+    return () => events.removeEventListener('practiceDayLink', handler);
+  }, [teamNumber, runCount, matchCount, connected]);
+
+  return link;
+}
+
+export function useTeamContacts(): TeamContactsState | null {
+  const [state, setState] = useState<TeamContactsState | null>(currentTeamContactsState);
+
+  useEffect(() => {
+    setState(currentTeamContactsState);
+    const handler = (e: Event) => setState((e as CustomEvent<TeamContactsState>).detail);
+    events.addEventListener('teamContactsState', handler);
+    return () => events.removeEventListener('teamContactsState', handler);
+  }, []);
+
+  return state;
+}
+
+export function sendSaveTeamContact(teamNumber: number, target: string) {
+  sendWhenOpen({ type: 'saveTeamContact', teamNumber, target });
+}
+
+export function sendRemoveTeamContact(teamNumber: number) {
+  sendWhenOpen({ type: 'removeTeamContact', teamNumber });
+}
+
+export function useTeamContactSaveResult(callback: (result: TeamContactSaveResult) => void) {
+  useEffect(() => {
+    const handler = (e: Event) => callback((e as CustomEvent<TeamContactSaveResult>).detail);
+    events.addEventListener('teamContactSaveResult', handler);
+    return () => events.removeEventListener('teamContactSaveResult', handler);
+  }, [callback]);
 }
 
 export function useServerStartTime(): number | null {

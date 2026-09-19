@@ -27,6 +27,7 @@ import { statfs } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { MatchEngine } from './matchEngine.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
+import type { SessionMetadataCollector } from './sessionMetadata.js';
 import type {
   MatchPhase,
   MatchRecording,
@@ -143,7 +144,7 @@ function isRtsp(url: string): boolean {
   return /^rtsps?:/i.test(url);
 }
 
-function inputArgs(url: string): string[] {
+export function inputArgs(url: string): string[] {
   // Give up on a stalled source instead of hanging forever, so the reconnect
   // logic can kick in. The RTSP demuxer takes `-timeout` (µs) and REJECTS the
   // generic `-rw_timeout` ("Option rw_timeout not found" — ffprobe tolerates
@@ -160,7 +161,9 @@ export class MatchRecorder {
   private readonly getStreams: () => RecordingStreamConfig[];
   private readonly getRetentionDays: () => number | undefined;
   private historyStore: MatchHistoryStore | null = null;
+  private metadata: SessionMetadataCollector | null = null;
   private session: Session | null = null;
+  private sweepListeners: (() => void)[] = [];
   /** Status of the last run per stream name, shown while idle. */
   private lastStatus = new Map<string, MatchRecordingStreamStatus>();
   private listeners: ((state: MatchRecordingState) => void)[] = [];
@@ -207,6 +210,44 @@ export class MatchRecorder {
       const i = this.listeners.indexOf(fn);
       if (i >= 0) this.listeners.splice(i, 1);
     };
+  }
+
+  /** Called after every retention sweep, so other indexes of the recordings
+   *  directory (practice runs) can drop entries whose files are gone. */
+  addSweepListener(fn: () => void): () => void {
+    this.sweepListeners.push(fn);
+    return () => {
+      const i = this.sweepListeners.indexOf(fn);
+      if (i >= 0) this.sweepListeners.splice(i, 1);
+    };
+  }
+
+  /** Score events and telemetry get written next to each match's video. */
+  setMetadataCollector(collector: SessionMetadataCollector): void {
+    this.metadata = collector;
+  }
+
+  /** Absolute recordings root (matches and practice runs share it). */
+  get recordingsDirectory(): string {
+    return this.directory;
+  }
+
+  get ffmpegPath(): string {
+    return this.ffmpeg;
+  }
+
+  get ffprobePath(): string {
+    return this.ffprobe;
+  }
+
+  /** ffmpeg was found and works on this host. */
+  isAvailable(): boolean {
+    return this.available;
+  }
+
+  /** Days recordings are kept (configured, or the default). */
+  effectiveRetentionDays(): number {
+    return this.retentionDays();
   }
 
   getState(): MatchRecordingState {
@@ -543,6 +584,14 @@ export class MatchRecorder {
       recordings.push(await this.finalizeJob(session, job, endedAt));
     }
     this.writeManifest(session, recordings, endedAt);
+    this.metadata?.writeSidecars(session.dir, {
+      kind: 'match',
+      id: matchId,
+      matchNumber: session.matchNumber,
+      startedAt: session.startedAt,
+      endedAt,
+      teams: session.teams,
+    });
     for (const rec of recordings) {
       this.lastStatus.set(rec.name, {
         name: rec.name,
@@ -666,18 +715,8 @@ export class MatchRecorder {
     };
   }
 
-  private async probeDuration(file: string): Promise<number | undefined> {
-    try {
-      const out = await this.run(
-        this.ffprobe,
-        ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
-        15_000,
-      );
-      const n = Number.parseFloat(out.trim());
-      return Number.isFinite(n) ? Math.round(n * 10) / 10 : undefined;
-    } catch {
-      return undefined;
-    }
+  private probeDuration(file: string): Promise<number | undefined> {
+    return probeDuration(this.ffprobe, file);
   }
 
   private writeManifest(session: Session, recordings: MatchRecording[], endedAt?: number): void {
@@ -712,6 +751,8 @@ export class MatchRecorder {
     for (const name of readdirSync(this.directory)) {
       const dir = join(this.directory, name);
       if (this.session?.dir === dir) continue;
+      // The practice recorder's ring buffer lives here too and manages itself.
+      if (name.startsWith('.')) continue;
       try {
         if (!statSync(dir).isDirectory()) continue;
         const manifest = this.readManifest(name);
@@ -729,6 +770,13 @@ export class MatchRecorder {
     if (removed > 0)
       console.log(`Match recorder: removed ${removed} recording(s) older than ${this.retentionDays()} days`);
     void this.refreshDiskStats();
+    for (const fn of this.sweepListeners) {
+      try {
+        fn();
+      } catch (err) {
+        console.error('Error in MatchRecorder sweep listener:', err);
+      }
+    }
   }
 
   private async refreshDiskStats(): Promise<void> {
@@ -744,7 +792,10 @@ export class MatchRecorder {
       for (const name of readdirSync(this.directory)) {
         const dir = join(this.directory, name);
         if (!statSync(dir).isDirectory()) continue;
-        for (const f of readdirSync(dir)) total += statSync(join(dir, f)).size;
+        for (const f of readdirSync(dir)) {
+          const st = statSync(join(dir, f));
+          if (st.isFile()) total += st.size;
+        }
       }
       this.usedBytes = total;
     } catch {
@@ -775,28 +826,47 @@ export class MatchRecorder {
     }
   }
 
-  /** Run a command to completion, resolving with stdout. Rejects on non-zero
-   *  exit (with the tail of stderr) or when it outlives `timeoutMs`. */
   private run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let out = '';
-      let err = '';
-      proc.stdout?.on('data', d => (out += d));
-      proc.stderr?.on('data', d => (err += d));
-      const timer = setTimeout(() => {
-        proc.kill('SIGKILL');
-        reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`));
-      }, timeoutMs);
-      proc.on('error', e => {
-        clearTimeout(timer);
-        reject(e);
-      });
-      proc.on('close', code => {
-        clearTimeout(timer);
-        if (code === 0) resolve(out);
-        else reject(new Error(err.trim().split('\n').slice(-3).join(' | ') || `exit code ${code}`));
-      });
+    return runCommand(cmd, args, timeoutMs);
+  }
+}
+
+/** Run a command to completion, resolving with stdout. Rejects on non-zero
+ *  exit (with the tail of stderr) or when it outlives `timeoutMs`. */
+export function runCommand(cmd: string, args: string[], timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    proc.stdout?.on('data', d => (out += d));
+    proc.stderr?.on('data', d => (err += d));
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    proc.on('error', e => {
+      clearTimeout(timer);
+      reject(e);
     });
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0) resolve(out);
+      else reject(new Error(err.trim().split('\n').slice(-3).join(' | ') || `exit code ${code}`));
+    });
+  });
+}
+
+/** Media duration in seconds via ffprobe, or undefined when unreadable. */
+export async function probeDuration(ffprobe: string, file: string): Promise<number | undefined> {
+  try {
+    const out = await runCommand(
+      ffprobe,
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
+      15_000,
+    );
+    const n = Number.parseFloat(out.trim());
+    return Number.isFinite(n) ? Math.round(n * 10) / 10 : undefined;
+  } catch {
+    return undefined;
   }
 }

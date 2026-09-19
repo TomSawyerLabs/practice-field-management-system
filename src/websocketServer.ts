@@ -85,6 +85,12 @@ import {
   isTestAudioDevice,
   isRefreshAudioDevices,
   isClearMatchHistory,
+  isSetPracticeRecording,
+  isRequestPracticeDayLink,
+  isSaveTeamContact,
+  isRemoveTeamContact,
+  type PracticeDayLink,
+  type TeamContactSaveResult,
   CastReceiverList,
   RoutePreferenceState,
   PendingCommitState,
@@ -112,6 +118,10 @@ import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
 import type { MatchRecorder } from './matchRecorder.js';
+import type { PracticeRecorder } from './practiceRecorder.js';
+import type { PracticeStore } from './practiceStore.js';
+import { practiceDayOf } from './practiceStore.js';
+import type { TeamContactStore } from './teamContactStore.js';
 import { createStaticHandler, findAssetDir } from './staticServer.js';
 import { join } from 'node:path';
 import {
@@ -205,6 +215,14 @@ export function setupWebSocket(
     matchRecorder?: MatchRecorder;
     /** Public address of the field for share links (undefined = use the page's own origin). */
     publicUrl?: () => string | undefined;
+    /** "Record while enabled" and the per-team practice-day links. */
+    practice?: {
+      recorder: PracticeRecorder;
+      store: PracticeStore;
+      contacts: TeamContactStore;
+      /** Recordings a team's day link lists right now (matches + runs). */
+      countItems: (teamNumber: number, day: string) => number;
+    };
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -458,6 +476,10 @@ export function setupWebSocket(
   if (setup?.matchRecorder) {
     setup.matchRecorder.addListener(state => broadcast(state));
   }
+  if (setup?.practice) {
+    setup.practice.recorder.addListener(state => broadcast(state));
+    setup.practice.contacts.addListener(state => broadcast(state));
+  }
 
   if (setup) {
     setup.configStore.addListener(() => broadcast(setupConfigMessage()));
@@ -653,6 +675,12 @@ export function setupWebSocket(
     // Send match video recorder state
     if (setup?.matchRecorder) {
       ws.send(JSON.stringify(setup.matchRecorder.getState()));
+    }
+
+    // Practice recording ("record while enabled") and team Slack contacts
+    if (setup?.practice) {
+      ws.send(JSON.stringify(setup.practice.recorder.getState()));
+      ws.send(JSON.stringify(setup.practice.contacts.getState()));
     }
 
     // Send usage tracking state
@@ -1310,6 +1338,63 @@ export function setupWebSocket(
       } else if (isClearMatchHistory(data)) {
         if (matchHistoryStore && adminConnections.has(ws)) {
           matchHistoryStore.clear();
+        }
+
+        // ── Practice recording ("record while enabled") ──────────────
+      } else if (isSetPracticeRecording(data)) {
+        // Station pages are not authenticated (same trust as the rest of the
+        // station page); the checkbox is per team number.
+        if (setup?.practice) {
+          setup.practice.store.setOptIn(data.teamNumber, data.enabled);
+          setup.practice.recorder.onOptInChanged();
+        }
+      } else if (isRequestPracticeDayLink(data)) {
+        // The token is answered to this client only, never broadcast.
+        if (setup?.practice) {
+          const day = practiceDayOf(Date.now());
+          const entry = setup.practice.store.findDay(data.teamNumber, day);
+          const reply: PracticeDayLink = {
+            type: 'practiceDayLink',
+            teamNumber: data.teamNumber,
+            day,
+            token: entry?.token ?? null,
+            count: entry ? setup.practice.countItems(data.teamNumber, day) : 0,
+          };
+          ws.send(JSON.stringify(reply));
+        }
+      } else if (isSaveTeamContact(data)) {
+        if (setup?.practice && slackBridge) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required to set team contacts' }));
+          } else {
+            const { teamNumber, target } = data;
+            const practice = setup.practice;
+            slackBridge
+              .resolveContact(target)
+              .then(resolved => {
+                const contact = { teamNumber, updatedAt: Date.now(), ...resolved };
+                practice.contacts.set(contact);
+                const result: TeamContactSaveResult = { type: 'teamContactSaveResult', teamNumber, ok: true, contact };
+                ws.send(JSON.stringify(result));
+              })
+              .catch((err: Error) => {
+                const result: TeamContactSaveResult = {
+                  type: 'teamContactSaveResult',
+                  teamNumber,
+                  ok: false,
+                  error: err.message,
+                };
+                ws.send(JSON.stringify(result));
+              });
+          }
+        }
+      } else if (isRemoveTeamContact(data)) {
+        if (setup?.practice) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required to set team contacts' }));
+          } else {
+            setup.practice.contacts.remove(data.teamNumber);
+          }
         }
       } else {
         appWarn('Unknown message type from client: ' + JSON.stringify(sanitizedConfig));

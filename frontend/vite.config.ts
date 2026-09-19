@@ -87,7 +87,7 @@ function stationRoutes(): Plugin {
         if (url?.split('?')[0] === '/staff') {
           req.url = '/staff.html';
         }
-        if (url === '/scores' || url?.startsWith('/matches/')) {
+        if (url === '/scores' || url?.startsWith('/matches/') || url?.startsWith('/practice/')) {
           req.url = '/scores.html';
         }
         if (url === '/overview') {
@@ -157,6 +157,14 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/api/video-proxy': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/public': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/api/recordings': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       },

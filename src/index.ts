@@ -58,6 +58,12 @@ import { MatchHistoryStore } from './matchHistoryStore.js';
 import { MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
 import { handlePublicMatchRequest } from './publicMatchApi.js';
+import { SessionMetadataCollector } from './sessionMetadata.js';
+import { PracticeStore } from './practiceStore.js';
+import { PracticeRecorder } from './practiceRecorder.js';
+import { PracticeNotifier } from './practiceNotifier.js';
+import { TeamContactStore } from './teamContactStore.js';
+import { countPracticeDayItems, handlePracticeRequest, type PracticeApiDeps } from './practiceApi.js';
 import { UsageTracker } from './usageTracker.js';
 import { HostnameResolver } from './hostnameResolver.js';
 import {
@@ -77,6 +83,7 @@ import { scoringRequiresKey } from './httpApiUtils.js';
 import { setVideoProxyTargetResolver } from './videoProxy.js';
 import { runSetupProbe } from './setupProbe.js';
 import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -379,6 +386,50 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const adminAuth = new AdminAuth();
   const externalAccessStore = new ExternalAccessStore();
 
+  // What was happening while each video ran: every score event and every
+  // robot's telemetry for the window, written next to the video by both
+  // recorders (metadata.json + CSVs).
+  const teamForStation = (station: StationName) => radioManager.getTeamForStation(station) ?? undefined;
+  const sessionMetadata = new SessionMetadataCollector({ getTeamForStation: teamForStation });
+  matchRecorder.setMetadataCollector(sessionMetadata);
+  scoringEngine.addEventListener(e => sessionMetadata.onScoreEvent(e));
+
+  // "Record while enabled": practice runs outside matches, filed per team
+  // with a per-day share link, and the link posted to the team's mentors.
+  const practiceStore = new PracticeStore();
+  const teamContacts = new TeamContactStore();
+  const practiceRecorder = new PracticeRecorder({
+    directory: matchRecorder.recordingsDirectory,
+    ffmpegPath: matchRecorder.ffmpegPath,
+    ffprobePath: matchRecorder.ffprobePath,
+    getStreams: () => setupConfigStore.get().settings.recordingStreams ?? envRecordingStreams,
+    store: practiceStore,
+    metadata: sessionMetadata,
+    getTeamForStation: teamForStation,
+    isAvailable: () => matchRecorder.isAvailable(),
+  });
+  matchEngine.addStateListener(state => practiceRecorder.onMatchState(state));
+  matchRecorder.addSweepListener(() =>
+    practiceStore.pruneMissing(id => existsSync(join(matchRecorder.recordingsDirectory, id))),
+  );
+  const publicUrl = () => setupConfigStore.get().settings.publicUrl ?? process.env.PUBLIC_URL;
+  const practiceApi: PracticeApiDeps = {
+    practiceStore,
+    historyStore: matchHistoryStore,
+    recorder: matchRecorder,
+    publicUrl,
+  };
+  const practiceNotifier = new PracticeNotifier({
+    practiceStore,
+    historyStore: matchHistoryStore,
+    contacts: teamContacts,
+    slack: slackBridge,
+    lastSeen: team => practiceRecorder.lastSeenForTeam(team),
+    countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
+    publicUrl,
+    retentionDays: () => matchRecorder.effectiveRetentionDays(),
+  });
+
   // Initialize WebSocket server (callbacks are set below after subsystems are created)
   let onRunTeamChecks: ((station: StationName) => void) | undefined;
   let onDriveAction: ((dsIp: string, station: StationName | null) => void) | undefined;
@@ -400,6 +451,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleMatchReviewRequest(req, res, matchHistoryStore, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleRecordingsRequest(req, res, matchRecorder),
       (req, res) => handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder),
+      (req, res) => handlePracticeRequest(req, res, practiceApi),
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
     ],
@@ -461,7 +513,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       matchRecorder,
       // Where this field is reachable from the internet, for the post-match
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
-      publicUrl: () => setupConfigStore.get().settings.publicUrl ?? process.env.PUBLIC_URL,
+      publicUrl,
+      practice: {
+        recorder: practiceRecorder,
+        store: practiceStore,
+        contacts: teamContacts,
+        countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
+      },
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose
       // rather than what was on the command line.
@@ -488,6 +546,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   matchRecorder.start(matchEngine, matchHistoryStore).catch(err => {
     console.error('Match recorder failed to start:', err);
   });
+  practiceRecorder.start();
+  practiceNotifier.start();
 
   // Broadcast score state changes to all WebSocket clients
   scoringEngine.addStateListener(broadcast);
@@ -651,7 +711,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // fires per sniffed packet (250+/s with six robots), which floods slow
   // displays and delays the score updates queued behind it. Status changes
   // still flush immediately.
-  const broadcastTelemetry = createTelemetryCoalescer(update => broadcast(update));
+  const broadcastTelemetry = createTelemetryCoalescer(update => {
+    broadcast(update);
+    // The same coalesced stream feeds the recording sidecars and the
+    // practice recorder's enable/disable detection.
+    sessionMetadata.onTelemetry(update);
+    practiceRecorder.onTelemetry(update);
+  });
 
   // Passive robot packet capture — sniff robot→DS UDP to extract battery voltage
   // and robot status without taking FMS control of the Driver Station.

@@ -104,6 +104,8 @@ export class ScoringEngine {
   private autoRegisterLimit = 1;
   private suppressBroadcast = false;
   private listeners: ((state: ScoreState) => void)[] = [];
+  /** Told about every event as it is accepted (before any re-judging). */
+  private eventListeners: ((event: ProcessedScoreEvent) => void)[] = [];
 
   /** Set the maximum number of elements that can be auto-registered from incoming events. */
   setAutoRegisterLimit(limit: number): void {
@@ -184,6 +186,13 @@ export class ScoringEngine {
     this.attribute(processed, elementConfig);
 
     this.events.push(processed);
+    for (const fn of this.eventListeners) {
+      try {
+        fn(processed);
+      } catch (err) {
+        console.error('Error in scoring event listener:', err);
+      }
+    }
 
     // Update dedup timestamp (only for counted, non-negative events)
     if (!deduplicated && count > 0) {
@@ -276,6 +285,17 @@ export class ScoringEngine {
       if (before !== after) changed = true;
     }
     if (changed) this.broadcast();
+  }
+
+  /** Hear every accepted event (the recorders keep the ones that fall in a
+   *  video's window). The object is the engine's own, so a later re-judge
+   *  is visible to the listener too. */
+  addEventListener(fn: (event: ProcessedScoreEvent) => void): () => void {
+    this.eventListeners.push(fn);
+    return () => {
+      const idx = this.eventListeners.indexOf(fn);
+      if (idx >= 0) this.eventListeners.splice(idx, 1);
+    };
   }
 
   /** Process multiple events with a single broadcast at the end (if any changed state). */
