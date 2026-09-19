@@ -97,7 +97,8 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 11. [x] Docs (match-system, support scopes, configuration, README); Caddy change staged in ops (uncommitted).
 12. [x] Typecheck, tests (91 pass), frontend build; commits below.
 13. [x] Cameron authorised the Caddy change and the deploy (2026-09-19); reworked to per-robot runs and automatic Slack delivery.
-14. [ ] Push ops (Caddy) and pFMS; deploy with `update.sh`; verify live.
+14. [x] ops Caddy change pushed (cedfaae, CI run 35469957830 green); pFMS deployed twice (6148723, then 3e4ba78 with the public-route fix); /practice/<token> page and /api/public/practice/<token> answer from the internet; a bot DM to a user id works with the existing scopes (tested against Cameron Test).
+15. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
 
 ## Findings / gotchas
 
@@ -115,6 +116,13 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 - **No `zip` on steamboat** — hence the in-process store-only ZIP64 writer.
 - **Prettier pads markdown table cells**, so scripted edits to the docs
   tables must match on the cell text, not the whole padded line.
+- **`handlePublicMatchRequest` claimed all of `/api/public/*`** and 404'd
+  the practice API behind it; only visible in the live check, not in any
+  test. Fixed in 3e4ba78 (own-prefix check + regression test). Any future
+  `/api/public/<thing>` handler must be registered with that in mind.
+- **A bot DM needs only `chat:write`**: `chat.postMessage` with a user id as
+  the channel opened the IM itself (channel D0C2YNYCF45). Group DMs would
+  need `mpim:write`, which is why delivery is one DM per member.
 
 ## Progress log
 
@@ -122,6 +130,10 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 - 2026-09-19: everything built and green locally (typecheck, 91 tests incl.
   a real-ffmpeg practice-run test, frontend build). Caddy change staged in
   the ops checkout, not committed. Not yet deployed.
+- 2026-09-19 (later): Cameron's review → per-robot clips (no coalescing)
+  and automatic Slack DMs by team number in Slack names; admin contact
+  table removed. Caddy change deployed via ops CI; pFMS deployed; public
+  route bug found live and fixed; 95 tests green.
 
 ## Open questions for Cameron
 
