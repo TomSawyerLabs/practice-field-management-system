@@ -55,6 +55,8 @@ import {
   PracticeRecordingState,
   isPracticeDayLink,
   PracticeDayLink,
+  isRecordingsInventory,
+  RecordingsInventory,
   isUsageState,
   UsageState,
   isDriveSessionState,
@@ -818,6 +820,11 @@ function receiveMessage(detail: Message) {
 
   if (isPracticeDayLink(detail)) {
     events.dispatchEvent(new CustomEvent('practiceDayLink', { detail }));
+    return;
+  }
+
+  if (isRecordingsInventory(detail)) {
+    events.dispatchEvent(new CustomEvent('recordingsInventory', { detail }));
     return;
   }
 
@@ -2121,6 +2128,28 @@ export function usePracticeRecordingState(): PracticeRecordingState | null {
   }, []);
 
   return state;
+}
+
+/** Admin: everything on the recordings disk. Asked for on mount and after
+ *  every delete; the server answers this client only. */
+export function useRecordingsInventory(): [RecordingsInventory | null, () => void] {
+  const [inv, setInv] = useState<RecordingsInventory | null>(null);
+  const refresh = useCallback(() => sendWhenOpen({ type: 'requestRecordingsInventory' }), []);
+  useEffect(() => {
+    const handler = (e: Event) => setInv((e as CustomEvent<RecordingsInventory>).detail);
+    events.addEventListener('recordingsInventory', handler);
+    refresh();
+    return () => events.removeEventListener('recordingsInventory', handler);
+  }, [refresh]);
+  return [inv, refresh];
+}
+
+export function sendDeleteRecording(id: string) {
+  sendWhenOpen({ type: 'deleteRecording', id });
+}
+
+export function sendDeleteRecordingsBefore(before: number) {
+  sendWhenOpen({ type: 'deleteRecordingsBefore', before });
 }
 
 export function sendSetPracticeRecording(teamNumber: number, enabled: boolean) {

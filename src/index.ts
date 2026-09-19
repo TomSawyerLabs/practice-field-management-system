@@ -407,9 +407,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     isAvailable: () => matchRecorder.isAvailable(),
   });
   matchEngine.addStateListener(state => practiceRecorder.onMatchState(state));
-  matchRecorder.addSweepListener(() =>
-    practiceStore.pruneMissing(id => existsSync(join(matchRecorder.recordingsDirectory, id))),
-  );
+  matchRecorder.addSweepListener(() => {
+    const onDisk = (id: string) => existsSync(join(matchRecorder.recordingsDirectory, id));
+    practiceStore.pruneMissing(onDisk);
+    matchHistoryStore.pruneMissingRecordings(onDisk);
+  });
   const publicUrl = () => setupConfigStore.get().settings.publicUrl ?? process.env.PUBLIC_URL;
   const practiceApi: PracticeApiDeps = {
     practiceStore,

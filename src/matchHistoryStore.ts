@@ -165,6 +165,22 @@ export class MatchHistoryStore {
     return true;
   }
 
+  /** Drop the recording list of matches whose directory no longer exists
+   *  (retention sweep or an admin delete), so pages stop offering them. */
+  pruneMissingRecordings(exists: (matchId: string) => boolean): void {
+    let changed = false;
+    for (const m of this.matches) {
+      if (m.matchId && m.recordings?.length && !exists(m.matchId)) {
+        delete m.recordings;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.persist();
+      this.notifyListeners();
+    }
+  }
+
   /** The history entry for a match id, if any. */
   find(matchId: string): MatchHistoryEntry | undefined {
     return this.matches.find(m => m.matchId === matchId);

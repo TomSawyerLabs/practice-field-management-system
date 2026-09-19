@@ -269,6 +269,13 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   download button per stream. Downloads are served by the backend at
   `/api/recordings/<matchId>/<file>` with a friendly attachment name and
   Range support, so a browser can also scrub through them.
+- **Admin → Recordings on Disk** lists everything still stored (matches and
+  practice runs, with dates, teams and sizes), space used and free, the
+  last week's growth rate and the days until the volume fills at that rate,
+  and per-team totals. Any recording can be deleted there, or everything
+  older than N days at once; deleted matches keep their history entry but
+  lose their download buttons. This is the manual lever while the retention
+  policy is being worked out.
 - Each match directory carries a `recording.json` sidecar, and a daily sweep
   deletes matches older than the configured retention (default 30 days).
 
@@ -381,9 +388,11 @@ Match control happens over the app WebSocket. The main message types
 
 - **Practice recording:** `setPracticeRecording` (a station page ticks
   "record while enabled" for its team), `requestPracticeDayLink` → a
-  `practiceDayLink` reply to that client only; admin `saveTeamContact` /
-  `removeTeamContact` → `teamContactSaveResult`; broadcast
-  `practiceRecordingState` and `teamContactsState`.
+  `practiceDayLink` reply to that client only; broadcast
+  `practiceRecordingState`.
+- **Recordings on disk (admin):** `requestRecordingsInventory` →
+  `recordingsInventory` to that client; `deleteRecording`,
+  `deleteRecordingsBefore`.
 - **Station self-service:** `stationJoinAlliance`, `stationLeave`,
   `stationReady`, `stationStartMatch`, `stationPauseMatch`,
   `stationResumeMatch`, `stationAbandonMatch`, `stationSelfDisable`,

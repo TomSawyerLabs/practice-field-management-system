@@ -3080,3 +3080,69 @@ export interface PublicPracticeItem {
   telemetryCsvUrl?: string;
   scoresCsvUrl?: string;
 }
+
+// ── Recordings on disk (admin inventory + eviction) ────────────────
+
+/** One directory under the recordings root, as the admin page lists it. */
+export interface RecordingInventoryEntry {
+  id: string;
+  kind: 'match' | 'practice' | 'other';
+  matchNumber?: number;
+  startedAt?: number;
+  endedAt?: number;
+  /** Team numbers this recording is filed under. */
+  teams: number[];
+  bytes: number;
+  /** Stream files that captured something (status ok/partial). */
+  videos: number;
+}
+
+/** Everything under the recordings root, sent to an admin on request. */
+export interface RecordingsInventory {
+  type: 'recordingsInventory';
+  entries: RecordingInventoryEntry[];
+  usedBytes?: number;
+  diskFreeBytes?: number;
+  retentionDays: number;
+  directory: string;
+  scannedAt: number;
+}
+
+export function isRecordingsInventory(msg: unknown): msg is RecordingsInventory {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RecordingsInventory).type === 'recordingsInventory';
+}
+
+/** Admin asks for the inventory (it is scanned on demand, not broadcast). */
+export interface RequestRecordingsInventory {
+  type: 'requestRecordingsInventory';
+}
+
+export function isRequestRecordingsInventory(msg: unknown): msg is RequestRecordingsInventory {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RequestRecordingsInventory).type === 'requestRecordingsInventory';
+}
+
+/** Admin deletes one recording directory (match or practice run). */
+export interface DeleteRecording {
+  type: 'deleteRecording';
+  id: string;
+}
+
+export function isDeleteRecording(msg: unknown): msg is DeleteRecording {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as DeleteRecording;
+  return m.type === 'deleteRecording' && typeof m.id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(m.id);
+}
+
+/** Admin deletes every recording that started before `before` (epoch ms). */
+export interface DeleteRecordingsBefore {
+  type: 'deleteRecordingsBefore';
+  before: number;
+}
+
+export function isDeleteRecordingsBefore(msg: unknown): msg is DeleteRecordingsBefore {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as DeleteRecordingsBefore;
+  return m.type === 'deleteRecordingsBefore' && Number.isFinite(m.before) && m.before > 0;
+}

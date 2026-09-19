@@ -10,6 +10,7 @@ import { MatchTimeline } from './MatchTimeline';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
+import { RecordingsInventorySection } from './RecordingsInventorySection';
 
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -430,6 +431,7 @@ export function AdminPage() {
       <AudioDeviceSection />
       <SlackConfigSection />
       <MatchRecordingSection />
+      <RecordingsInventorySection />
       <FirmwareSection />
     </Container>
   );

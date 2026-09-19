@@ -34,6 +34,8 @@ import type {
   MatchRecordingState,
   MatchRecordingStreamStatus,
   MatchState,
+  RecordingInventoryEntry,
+  RecordingsInventory,
   RecordingStreamConfig,
   RecordingStreamTestResult,
 } from './types.js';
@@ -733,6 +735,112 @@ export class MatchRecorder {
       writeFileSync(join(session.dir, 'recording.json'), JSON.stringify(manifest, null, 2));
     } catch (err) {
       console.error(`Match recorder: cannot write manifest in ${session.dir}: ${(err as Error).message}`);
+    }
+  }
+
+  // ── inventory & eviction (admin) ───────────────────────────────────
+
+  /** Scan the recordings root: one entry per directory, with its size and
+   *  what the manifest says about it. Cheap enough for on-demand use (a
+   *  stat per file); not broadcast. */
+  inventory(): RecordingsInventory {
+    const entries: RecordingInventoryEntry[] = [];
+    if (existsSync(this.directory)) {
+      for (const name of readdirSync(this.directory)) {
+        if (name.startsWith('.')) continue;
+        const dir = join(this.directory, name);
+        let bytes = 0;
+        try {
+          if (!statSync(dir).isDirectory()) continue;
+          for (const f of readdirSync(dir)) {
+            const st = statSync(join(dir, f));
+            if (st.isFile()) bytes += st.size;
+          }
+        } catch {
+          continue;
+        }
+        const manifest = this.readManifest(name);
+        const teams = [...new Set((manifest?.teams ?? []).map(t => t.teamNumber).filter((n): n is number => !!n))];
+        entries.push({
+          id: name,
+          kind: name.startsWith('practice-') ? 'practice' : manifest ? 'match' : 'other',
+          matchNumber: manifest?.matchNumber,
+          startedAt: manifest?.startedAt,
+          endedAt: manifest?.endedAt,
+          teams,
+          bytes,
+          videos: (manifest?.recordings ?? []).filter(r => r.status !== 'failed').length,
+        });
+      }
+    }
+    entries.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+    return {
+      type: 'recordingsInventory',
+      entries,
+      usedBytes: this.usedBytes,
+      diskFreeBytes: this.diskFreeBytes,
+      retentionDays: this.retentionDays(),
+      directory: this.directory,
+      scannedAt: Date.now(),
+    };
+  }
+
+  /** Delete one recording directory. The active session and the practice
+   *  buffer are refused. Returns false when nothing was deleted. */
+  deleteRecording(id: string): boolean {
+    const dir = this.matchDirectory(id);
+    if (!dir || id.startsWith('.') || this.session?.dir === dir || !existsSync(dir)) return false;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      console.error(`Match recorder: could not delete ${dir}: ${(err as Error).message}`);
+      return false;
+    }
+    console.log(`Recording deleted by admin: ${id}`);
+    this.afterDelete();
+    return true;
+  }
+
+  /** Delete every recording whose manifest says it started before `before`
+   *  (directories without a manifest go by mtime). Returns the count. */
+  deleteRecordingsBefore(before: number): number {
+    let removed = 0;
+    for (const e of this.inventory().entries) {
+      const started = e.startedAt ?? this.mtimeOf(e.id);
+      if (started === undefined || started >= before) continue;
+      const dir = this.matchDirectory(e.id);
+      if (!dir || this.session?.dir === dir) continue;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        console.warn(`Match recorder: could not delete ${dir}: ${(err as Error).message}`);
+      }
+    }
+    if (removed > 0) {
+      console.log(`Recordings deleted by admin: ${removed} older than ${new Date(before).toISOString()}`);
+      this.afterDelete();
+    }
+    return removed;
+  }
+
+  private mtimeOf(id: string): number | undefined {
+    try {
+      return statSync(join(this.directory, id)).mtimeMs;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Disk stats and the other indexes (practice runs, match history) catch up. */
+  private afterDelete(): void {
+    void this.refreshDiskStats().then(() => this.emit());
+    for (const fn of this.sweepListeners) {
+      try {
+        fn();
+      } catch (err) {
+        console.error('Error in MatchRecorder sweep listener:', err);
+      }
     }
   }
 

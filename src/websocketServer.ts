@@ -87,6 +87,9 @@ import {
   isClearMatchHistory,
   isSetPracticeRecording,
   isRequestPracticeDayLink,
+  isRequestRecordingsInventory,
+  isDeleteRecording,
+  isDeleteRecordingsBefore,
   type PracticeDayLink,
   CastReceiverList,
   RoutePreferenceState,
@@ -1340,6 +1343,30 @@ export function setupWebSocket(
         if (setup?.practice) {
           setup.practice.store.setOptIn(data.teamNumber, data.enabled);
           setup.practice.recorder.onOptInChanged();
+        }
+      } else if (isRequestRecordingsInventory(data)) {
+        // Admin only: lists every recording on disk (all teams).
+        if (setup?.matchRecorder) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
+          } else {
+            ws.send(JSON.stringify(setup.matchRecorder.inventory()));
+          }
+        }
+      } else if (isDeleteRecording(data) || isDeleteRecordingsBefore(data)) {
+        if (setup?.matchRecorder) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required to delete recordings' }));
+          } else {
+            const recorder = setup.matchRecorder;
+            const n = isDeleteRecording(data)
+              ? recorder.deleteRecording(data.id)
+                ? 1
+                : 0
+              : recorder.deleteRecordingsBefore(data.before);
+            ws.send(JSON.stringify({ info: `Deleted ${n} recording${n === 1 ? '' : 's'}` }));
+            ws.send(JSON.stringify(recorder.inventory()));
+          }
         }
       } else if (isRequestPracticeDayLink(data)) {
         // The token is answered to this client only, never broadcast.
