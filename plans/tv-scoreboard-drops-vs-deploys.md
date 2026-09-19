@@ -167,7 +167,28 @@ pFMS side (worth doing regardless, none of them fix the TV):
 
 Side note: on 09-18 the backend was deployed twice five seconds apart
 (17:59:32 and 17:59:37), which reloads every screen twice. Two deploy runs
-overlapped; harmless, but worth not doing.
+overlapped — `update.sh` had no lock. Fixed 2026-09-19 (below).
+
+## Done (2026-09-19)
+
+- **Option 2 applied to the TV, with Cameron's OK, at 12:20:**
+  `device_config put activity_manager_native_boot use_freezer false`, pinned
+  with `device_config set_sync_disabled_for_tests persistent`, then
+  `adb reboot`. Read back after boot: `dumpsys activity settings` shows
+  `use_freezer=false`; screensaver settings from 09-13 survived. The reboot
+  also cleared 120 days of swap (MemFree 50 → 106 MB right after boot).
+  **Verify over the next days:** `dumpsys activity exit-info
+com.google.android.apps.mediashell` should stop showing
+  `FREEZER BINDER TRANSACTION`; the `TOO MANY EMPTY PROCS` kills (option 3
+  territory) may remain.
+- **Deploy lock + same-commit skip** (`update.sh`, `/health`): a second
+  `update.sh` now waits on `flock` (`/tmp/pfms-update.lock`, fd 9 held
+  across the script's self re-exec), and once it runs it skips the backend
+  reload if `/health` already reports the commit being deployed — files
+  are still synced, so the 09-16 stale-frontend case can't hide behind it.
+  `force` overrides both the match guard and the skip. Takes effect on
+  steamboat the first time the new script is pulled (the first run still
+  reloads, because the old backend's `/health` has no version).
 
 ## Progress log
 
@@ -178,7 +199,11 @@ overlapped; harmless, but worth not doing.
 - [x] TV process-management settings and memory state
 - [x] Ruled out frontend memory growth, the reload, matches, and pFMS
       network events as the cause
-- [ ] Cameron picks from the options above
+- [x] Cameron picked: freezer off (option 2) — applied and verified
+- [x] Deploy lock + same-commit reload skip built (not yet deployed)
+- [ ] Deploy the lock change to steamboat
+- [ ] Watch the TV's exit-info for a few days to see what kill reasons remain
+- [ ] Options 3, 5, 6, 7 — still open for Cameron
 
 ## Things not to do
 
