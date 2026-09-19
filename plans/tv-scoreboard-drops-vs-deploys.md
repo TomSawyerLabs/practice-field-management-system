@@ -200,8 +200,11 @@ com.google.android.apps.mediashell` should stop showing
 - [x] Ruled out frontend memory growth, the reload, matches, and pFMS
       network events as the cause
 - [x] Cameron picked: freezer off (option 2) — applied and verified
-- [x] Deploy lock + same-commit reload skip built (not yet deployed)
-- [ ] Deploy the lock change to steamboat
+- [x] Deploy lock + same-commit reload skip built
+- [x] Deployed to steamboat 2026-09-19 12:25 (e3ae7c8) and verified there: a
+      rerun rebuilt, synced and skipped the reload (one `Started` in the
+      journal); a run started while another process held
+      `/tmp/pfms-update.lock` printed the waiting message and blocked
 - [ ] Watch the TV's exit-info for a few days to see what kill reasons remain
 - [ ] Options 3, 5, 6, 7 — still open for Cameron
 
