@@ -15,6 +15,11 @@ and provides:
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review
   ([details](docs/scoring.md))
+- **Practice video** — tick "record while enabled" on the station page and
+  every enable outside a match becomes a clip (3 s either side), with the
+  balls scored and the robot's telemetry alongside; a per-day link (and zip)
+  for taking home, posted to the team's mentors on Slack
+  ([details](docs/match-system.md#record-while-enabled-practice-runs))
 - **Match video** — every match recorded from the field's video streams,
   downloadable by each drive team right after the match
   ([details](docs/match-system.md#match-video-recording))
@@ -89,7 +94,7 @@ bun run build       # Compile backend + build frontend
 | `/overview`         | Admin station overview — status for all six stations                                                                                                                                                                                                                  |
 | `/match`            | Match control — dedicated controller page for match lifecycle and history                                                                                                                                                                                             |
 | `/staff?role=…`     | Field-staff ready-up — a referee / scorekeeper / safety monitor marks ready before a match                                                                                                                                                                            |
-| `/admin`            | Admin page — global/per-station e-stop, match status, force stop, API keys, Slack, external access, match video recording                                                                                                                                             |
+| `/admin`            | Admin page — global/per-station e-stop, match status, force stop, API keys, Slack, team Slack contacts, external access, match video recording                                                                                                                        |
 | `/network`          | Network page — discovered devices, VLAN status, network stats                                                                                                                                                                                                         |
 | `/route`            | Route page — choose which robot to talk to when a team has duplicate stations                                                                                                                                                                                         |
 | `/logs`             | Logs page — live backend log stream                                                                                                                                                                                                                                   |

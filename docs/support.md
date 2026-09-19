@@ -40,6 +40,11 @@ Configured on the admin page (`/admin` → Slack Integration):
 
 - Requires a Slack App with a Bot Token (`xoxb-...`) and App-Level Token
   (`xapp-...`) with `connections:write` scope
+- Posting practice-video links to teams (**Admin → Team Slack Contacts**,
+  see [match-system.md](match-system.md#sending-the-link-to-the-teams-mentors))
+  additionally needs the bot scopes `channels:read`, `groups:read`,
+  `users:read`, `im:write` and `mpim:write`; reinstall the app after adding
+  them
 - Uses Socket Mode for receiving messages (no public URL required)
 - Test-connection button to verify configuration
 

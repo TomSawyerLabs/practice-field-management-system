@@ -289,11 +289,100 @@ proxy must serve `/matches/*` as the scores page and expose it, `/assets/*`
 and `/api/public/*` without its access check). The `/match` page offers the same link ("Summary", "Copy
 link") for every match in history and shows the QR code after each match.
 
+### Record while enabled (practice runs)
+
+Most field time is not matches: a robot is enabled from its own Driver
+Station for a minute at a time. A team that ticks **Record while enabled**
+on its station page (the Video card) gets a clip of every such enable,
+from 3 s before the robot was enabled to 3 s after it was disabled.
+
+How it works (`src/practiceRecorder.ts`):
+
+- While any opted-in team is on the field (its DS or robot is sending
+  telemetry) one ffmpeg per enabled stream pulls the source continuously
+  into 1 s MPEG-TS segments under `recordings/.practice-buffer/`, and
+  segments older than ~15 s are deleted. That ring buffer is what makes the
+  3 s pre-roll possible; it costs one extra RTSP reader per stream and no
+  transcoding. The buffer stops when no opted-in robot has been heard from
+  for 15 s.
+- An enable (the DS status's enabled bit, outside a match) starts a run;
+  the last disable of the enabled opted-in robots ends it. A disable followed
+  by a re-enable within 2 s stays one clip; a run longer than 20 minutes is
+  split. Overlapping enables of several opted-in robots make one clip, filed
+  under every team that was enabled during it.
+- The segments spanning the window are joined (`-c copy`, `+faststart`)
+  into `recordings/practice-<stamp>-<id>/<stream>.mp4` with the same
+  `recording.json` sidecar matches have, so the retention sweep treats runs
+  and matches alike. Padding is "at least 3 s": segments split on keyframes,
+  so up to one GOP more can be included on either side.
+- Matches are the match recorder's job. The buffer stops and a run in
+  progress is closed the moment a match leaves the idle/created phases.
+
+Runs are listed on the team's station page next to its matches, and are
+indexed in `practice-recordings.json` (opt-in per team, runs, day tokens).
+
+### Recording metadata: balls scored and telemetry
+
+Every recording — match or practice run — gets three sidecars written by
+`src/sessionMetadata.ts` from a rolling half-hour record of the field:
+
+- `metadata.json` — every score event the goal sensors reported during the
+  window, exactly as the scoring engine judged it (element, alliance, when
+  the ball scored, phase/sub-period, whether it counted and why not), plus
+  every robot's telemetry samples (battery voltage and the sag floor between
+  broadcasts, RTT, lost packets, CAN utilisation, DS CPU, brownout, and the
+  DS status: enabled, mode, E-Stop/A-Stop, robot comms).
+- `scores.csv` and `telemetry.csv` — the same, one row per event/sample,
+  with a `video_s` column (seconds into the recording) so a row can be found
+  in the clip.
+
+The window for a match is the recording's window (pre-roll to post-roll);
+for a practice run it is the padded enable window.
+
+### Practice day links
+
+Each team gets one link per practice day, `/practice/<token>`, listing every
+match and practice run the team was part of that day with the videos,
+the sidecars, and one **Download everything** zip (store-only, ZIP64, built
+by `src/zipStream.ts` — MP4s don't compress, and a day can exceed 4 GB).
+A practice day runs 04:00–04:00 local, so a session past midnight stays
+together. The token is 32 random characters minted with the day's first
+recording; it grants that team's recordings for that day and nothing else,
+the same model as the match summary link. The station page shows the link
+("Today's videos") as soon as the first recording exists, with a copy
+button, for taking home.
+
+The data is at `/api/public/practice/<token>` (`src/practiceApi.ts`), which
+like `/api/public/match/*` must be reachable without the external-access
+check, and the page path `/practice/*` must be served as the scores bundle
+by the reverse proxy exactly as `/matches/*` is.
+
+### Sending the link to the team's mentors
+
+When a team that recorded something has been quiet for 20 minutes (no robot
+heard from, no run or match ending) — or the practice day rolls over — the
+link is posted on Slack, once per team per day, to the team's contact from
+**Admin → Team Slack Contacts** (`src/practiceNotifier.ts`,
+`team-contacts.json`): a channel the bot is in (`#team-5940`) or one or
+more people as a group DM (`@alice, @bob`). The contact is resolved against
+the workspace when saved, so a typo fails on the admin page rather than at
+10 pm. Later recordings that day land on the same live link; nothing is
+re-sent. A team with no contact gets nothing; the support channel gets one
+note per team per day saying a contact is missing (the link itself is not
+posted there — it opens the team's videos). Beyond the support-chat scopes,
+the bot needs `channels:read`, `groups:read`, `users:read`, `im:write` and
+`mpim:write`.
+
 ## WebSocket Message Reference
 
 Match control happens over the app WebSocket. The main message types
 (see `src/types.ts` for payloads):
 
+- **Practice recording:** `setPracticeRecording` (a station page ticks
+  "record while enabled" for its team), `requestPracticeDayLink` → a
+  `practiceDayLink` reply to that client only; admin `saveTeamContact` /
+  `removeTeamContact` → `teamContactSaveResult`; broadcast
+  `practiceRecordingState` and `teamContactsState`.
 - **Station self-service:** `stationJoinAlliance`, `stationLeave`,
   `stationReady`, `stationStartMatch`, `stationPauseMatch`,
   `stationResumeMatch`, `stationAbandonMatch`, `stationSelfDisable`,
