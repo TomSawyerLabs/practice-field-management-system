@@ -10,18 +10,20 @@
  * source continuously into 1 s MPEG-TS segments in a ring buffer
  * (`<recordings>/.practice-buffer/<stream>/seg-NNNNNN.ts`), and segments older
  * than ~15 s are thrown away. When a robot is enabled the segments stop being
- * thrown away; when the last one is disabled the segments spanning the window
- * are joined (`-c copy`) into `<recordings>/practice-<stamp>/<stream>.mp4`.
+ * thrown away; when it is disabled the segments spanning its window are
+ * joined (`-c copy`) into `<recordings>/practice-<stamp>/<stream>.mp4`.
+ *
+ * Every robot gets its own clip. Six robots running independently produce
+ * six files, each cut to that robot's own enable/disable times, all of the
+ * same field view; the buffer is shared, the runs are not.
  *
  * Timing uses segment mtimes: a segment's mtime is when ffmpeg closed it, i.e.
  * the wall-clock end of its footage (minus the source's own latency, which
  * shifts everything equally). Segments split on keyframes, so the padding is
  * "at least 3 s", up to 3 s + one GOP.
  *
- * Runs are field-wide: overlapping enables of several opted-in robots make
- * one clip, filed under every team that was enabled during it. Matches are
- * the MatchRecorder's job — the buffer stops as soon as a match leaves the
- * idle/created phases and a run in progress is closed at that moment.
+ * Matches are the MatchRecorder's job — the buffer stops as soon as a match
+ * leaves the idle/created phases and runs in progress are closed then.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -43,7 +45,7 @@ import {
 
 const PAD_MS = PRACTICE_PAD_SECONDS * 1000;
 const SEGMENT_SECONDS = 1;
-/** Segments older than this are deleted while no run is being captured. */
+/** Segments older than this are deleted unless a run still needs them. */
 const BUFFER_KEEP_MS = 15_000;
 /** A disable followed by a re-enable within this window stays one clip. */
 const MERGE_GRACE_MS = 2000;
@@ -89,13 +91,14 @@ interface BufferJob {
   stderr: string[];
 }
 
+/** One robot's enable, in progress or waiting to be cut. */
 interface Run {
-  /** Window start: first enable minus the pad. */
+  station: StationName;
+  teamNumber: number;
+  /** Window start: the enable minus the pad. */
   startedAt: number;
-  /** Opted-in stations enabled at some point during the run → team. */
-  participants: Map<StationName, number>;
-  /** When the last enabled participant disabled; undefined while any is enabled. */
-  lastDisableAt?: number;
+  /** When the robot disabled; undefined while it is enabled. */
+  disabledAt?: number;
   /** Set once the run is closed and waiting to be finalized. */
   endedAt?: number;
 }
@@ -118,7 +121,8 @@ export class PracticeRecorder {
   private readonly bufferRoot: string;
   private readonly now: () => number;
   private jobs: BufferJob[] | null = null;
-  private run: Run | null = null;
+  /** Open runs, one per enabled station. */
+  private runs = new Map<StationName, Run>();
   /** Runs closed and being finalized: their segments must survive pruning. */
   private finalizing = new Set<Run>();
   private stationSeen = new Map<StationName, number>();
@@ -147,7 +151,7 @@ export class PracticeRecorder {
     this.stopping = true;
     if (this.tickTimer) clearInterval(this.tickTimer);
     this.tickTimer = null;
-    this.run = null;
+    this.runs.clear();
     await this.stopBuffer();
     try {
       rmSync(this.bufferRoot, { recursive: true, force: true });
@@ -171,16 +175,18 @@ export class PracticeRecorder {
       type: 'practiceRecordingState',
       optIn: this.opts.store.getOptIn(),
       buffering: this.jobs !== null,
-      activeRun: this.run
-        ? { startedAt: this.run.startedAt, teams: [...new Set(this.run.participants.values())] }
-        : undefined,
+      activeRuns: [...this.runs.values()].map(r => ({
+        station: r.station,
+        teamNumber: r.teamNumber,
+        startedAt: r.startedAt,
+      })),
       unavailableReason: this.unavailableReason(),
       runs: runs.slice(-RUNS_IN_STATE),
     };
   }
 
   /** A team's opt-in changed: an untick while its robot is enabled ends its
-   *  part in the run; a tick while it is on the field starts buffering. */
+   *  run; a tick while it is on the field starts buffering. */
   onOptInChanged(): void {
     this.tick();
   }
@@ -212,7 +218,7 @@ export class PracticeRecorder {
     this.matchPhase = state.phase;
     if (isPracticePhase(was) && !isPracticePhase(state.phase)) {
       // The match recorder takes over from here.
-      if (this.run && this.run.endedAt === undefined) this.closeRun(this.run, this.now(), 'match starting');
+      for (const run of [...this.runs.values()]) this.closeRun(run, this.now(), 'match starting');
       this.tick();
     }
   }
@@ -230,33 +236,29 @@ export class PracticeRecorder {
       this.startBuffer();
       if (!this.jobs) return;
     }
-    let run = this.run;
-    if (run && run.endedAt !== undefined) run = null; // closed, being finalized
-    if (!run) {
-      run = { startedAt: now - PAD_MS, participants: new Map() };
-      this.run = run;
-      console.log(`Practice recording started: ${station} (team ${team}) enabled`);
-    } else if (run.lastDisableAt !== undefined) {
+    const existing = this.runs.get(station);
+    if (existing && existing.disabledAt !== undefined) {
+      // Re-enabled within the merge grace: same clip.
+      existing.disabledAt = undefined;
       console.log(`Practice recording continues: ${station} (team ${team}) re-enabled`);
+    } else if (!existing) {
+      this.runs.set(station, { station, teamNumber: team, startedAt: now - PAD_MS });
+      console.log(`Practice recording started: ${station} (team ${team}) enabled`);
     }
-    run.participants.set(station, team);
-    run.lastDisableAt = undefined;
     this.emit();
   }
 
   private handleDisable(station: StationName, now: number): void {
-    const run = this.run;
-    if (!run || run.endedAt !== undefined || !run.participants.has(station)) return;
-    const anyEnabled = [...run.participants.keys()].some(s => this.stationEnabled.get(s));
-    if (!anyEnabled && run.lastDisableAt === undefined) run.lastDisableAt = now;
+    const run = this.runs.get(station);
+    if (run && run.disabledAt === undefined) run.disabledAt = now;
   }
 
   private closeRun(run: Run, endedAt: number, why: string): void {
     run.endedAt = endedAt;
     this.finalizing.add(run);
-    if (this.run === run) this.run = null;
+    if (this.runs.get(run.station) === run) this.runs.delete(run.station);
     console.log(
-      `Practice recording closing (${why}): ${Math.round((endedAt - run.startedAt) / 1000)}s, teams ${[...new Set(run.participants.values())].join(', ')}`,
+      `Practice recording closing (${why}): ${run.station} team ${run.teamNumber}, ${Math.round((endedAt - run.startedAt) / 1000)}s`,
     );
     this.emit();
     // The segment holding the last padded second closes ~1 s after it; give
@@ -285,35 +287,29 @@ export class PracticeRecorder {
       }
     }
 
-    const run = this.run;
-    if (run && run.endedAt === undefined) {
-      // A participant whose team unticked the box no longer holds the run open.
-      for (const [station, team] of run.participants) {
-        if (!this.opts.store.isOptedIn(team) && this.stationEnabled.get(station)) {
-          run.participants.delete(station);
-        }
-      }
-      const anyEnabled = [...run.participants.keys()].some(s => this.stationEnabled.get(s));
-      if (!anyEnabled && run.lastDisableAt === undefined) run.lastDisableAt = now;
-      if (run.participants.size === 0) {
-        this.run = null;
-      } else if (run.lastDisableAt !== undefined && now >= run.lastDisableAt + PAD_MS + MERGE_GRACE_MS) {
-        this.closeRun(run, run.lastDisableAt + PAD_MS, 'robot disabled');
+    for (const run of [...this.runs.values()]) {
+      if (!this.opts.store.isOptedIn(run.teamNumber)) {
+        // The team unticked the box mid-run: drop it, nothing is kept.
+        this.runs.delete(run.station);
+        this.emit();
+      } else if (run.disabledAt !== undefined && now >= run.disabledAt + PAD_MS + MERGE_GRACE_MS) {
+        this.closeRun(run, run.disabledAt + PAD_MS, 'robot disabled');
       } else if (now - run.startedAt >= MAX_RUN_MS) {
         // Split a marathon enable so the clip stays manageable; the next
         // clip starts right where this one ends.
-        const participants = new Map([...run.participants].filter(([s]) => this.stationEnabled.get(s)));
         this.closeRun(run, now, 'maximum clip length');
-        if (participants.size > 0) this.run = { startedAt: now, participants };
+        if (this.stationEnabled.get(run.station)) {
+          this.runs.set(run.station, { station: run.station, teamNumber: run.teamNumber, startedAt: now });
+        }
       }
     }
 
     const shouldBuffer =
       this.unavailableReason() === undefined &&
       isPracticePhase(this.matchPhase) &&
-      (this.run !== null || this.presentOptedInStations(now).length > 0);
+      (this.runs.size > 0 || this.presentOptedInStations(now).length > 0);
     if (shouldBuffer && !this.jobs) this.startBuffer();
-    else if (!shouldBuffer && this.jobs && this.run === null) void this.stopBuffer();
+    else if (!shouldBuffer && this.jobs && this.runs.size === 0) void this.stopBuffer();
 
     this.pruneBuffer(now);
   }
@@ -451,11 +447,11 @@ export class PracticeRecorder {
   }
 
   /** Delete segments nobody will need: older than the keep window, and not
-   *  inside the window of a run in progress or being finalized. */
+   *  inside the window of any run in progress or being finalized. */
   private pruneBuffer(now: number): void {
     if (!existsSync(this.bufferRoot)) return;
     let protectFrom = Infinity;
-    if (this.run) protectFrom = this.run.startedAt;
+    for (const r of this.runs.values()) protectFrom = Math.min(protectFrom, r.startedAt);
     for (const r of this.finalizing) protectFrom = Math.min(protectFrom, r.startedAt);
     const cutoff = Math.min(now - BUFFER_KEEP_MS, protectFrom);
     for (const seg of this.listSegments()) {
@@ -533,14 +529,8 @@ export class PracticeRecorder {
       const segs = this.listSegments(src.dir).filter(s => s.end > run.startedAt && s.start < endedAt);
       recordings.push(await this.joinSegments(src.name, src.slug, segs, dir, run.startedAt, endedAt));
     }
-    const teams = [...run.participants].map(([station, teamNumber]) => ({ station, teamNumber }));
-    const manifest: RecordingManifest = {
-      matchId: id,
-      startedAt: run.startedAt,
-      endedAt,
-      teams: teams.map(t => ({ ...t, alliance: null })),
-      recordings,
-    };
+    const teams = [{ station: run.station, teamNumber: run.teamNumber, alliance: null }];
+    const manifest: RecordingManifest = { matchId: id, startedAt: run.startedAt, endedAt, teams, recordings };
     try {
       writeFileSync(join(dir, 'recording.json'), JSON.stringify(manifest, null, 2));
     } catch (err) {
@@ -551,7 +541,7 @@ export class PracticeRecorder {
       id,
       startedAt: run.startedAt,
       endedAt,
-      teams: manifest.teams,
+      teams,
     });
     this.finalizing.delete(run);
     if (recordings.every(r => r.status === 'failed')) {
@@ -560,10 +550,18 @@ export class PracticeRecorder {
       this.emit();
       return;
     }
-    const entry: PracticeRunEntry = { id, startedAt: run.startedAt, endedAt, teams, recordings, hasMetadata };
+    const entry: PracticeRunEntry = {
+      id,
+      station: run.station,
+      teamNumber: run.teamNumber,
+      startedAt: run.startedAt,
+      endedAt,
+      recordings,
+      hasMetadata,
+    };
     this.opts.store.addRun(entry);
     const summary = recordings.map(r => `${r.name}: ${r.status} ${(r.bytes / 1e6).toFixed(0)} MB`).join(', ');
-    console.log(`Practice recording saved: ${id} (${summary}) for team(s) ${teams.map(t => t.teamNumber).join(', ')}`);
+    console.log(`Practice recording saved: ${id} (${summary}) for team ${run.teamNumber}`);
     this.emit();
   }
 

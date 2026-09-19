@@ -184,7 +184,7 @@ function summarizeDay(
       fileSize(join(dir, file)) !== undefined ? `${base}/meta/${encodeURIComponent(item.id)}/${file}` : undefined;
     const teams = item.match
       ? item.match.teams.map(t => ({ station: t.station, teamNumber: t.teamNumber, alliance: t.alliance }))
-      : item.run!.teams.map(t => ({ station: t.station, teamNumber: t.teamNumber }));
+      : [{ station: item.run!.station, teamNumber: item.run!.teamNumber }];
     out.push({
       kind: item.kind,
       id: item.id,

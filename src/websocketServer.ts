@@ -87,10 +87,7 @@ import {
   isClearMatchHistory,
   isSetPracticeRecording,
   isRequestPracticeDayLink,
-  isSaveTeamContact,
-  isRemoveTeamContact,
   type PracticeDayLink,
-  type TeamContactSaveResult,
   CastReceiverList,
   RoutePreferenceState,
   PendingCommitState,
@@ -121,7 +118,6 @@ import type { MatchRecorder } from './matchRecorder.js';
 import type { PracticeRecorder } from './practiceRecorder.js';
 import type { PracticeStore } from './practiceStore.js';
 import { practiceDayOf } from './practiceStore.js';
-import type { TeamContactStore } from './teamContactStore.js';
 import { createStaticHandler, findAssetDir } from './staticServer.js';
 import { join } from 'node:path';
 import {
@@ -219,7 +215,6 @@ export function setupWebSocket(
     practice?: {
       recorder: PracticeRecorder;
       store: PracticeStore;
-      contacts: TeamContactStore;
       /** Recordings a team's day link lists right now (matches + runs). */
       countItems: (teamNumber: number, day: string) => number;
     };
@@ -478,7 +473,6 @@ export function setupWebSocket(
   }
   if (setup?.practice) {
     setup.practice.recorder.addListener(state => broadcast(state));
-    setup.practice.contacts.addListener(state => broadcast(state));
   }
 
   if (setup) {
@@ -677,10 +671,9 @@ export function setupWebSocket(
       ws.send(JSON.stringify(setup.matchRecorder.getState()));
     }
 
-    // Practice recording ("record while enabled") and team Slack contacts
+    // Practice recording ("record while enabled")
     if (setup?.practice) {
       ws.send(JSON.stringify(setup.practice.recorder.getState()));
-      ws.send(JSON.stringify(setup.practice.contacts.getState()));
     }
 
     // Send usage tracking state
@@ -1361,40 +1354,6 @@ export function setupWebSocket(
             count: entry ? setup.practice.countItems(data.teamNumber, day) : 0,
           };
           ws.send(JSON.stringify(reply));
-        }
-      } else if (isSaveTeamContact(data)) {
-        if (setup?.practice && slackBridge) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to set team contacts' }));
-          } else {
-            const { teamNumber, target } = data;
-            const practice = setup.practice;
-            slackBridge
-              .resolveContact(target)
-              .then(resolved => {
-                const contact = { teamNumber, updatedAt: Date.now(), ...resolved };
-                practice.contacts.set(contact);
-                const result: TeamContactSaveResult = { type: 'teamContactSaveResult', teamNumber, ok: true, contact };
-                ws.send(JSON.stringify(result));
-              })
-              .catch((err: Error) => {
-                const result: TeamContactSaveResult = {
-                  type: 'teamContactSaveResult',
-                  teamNumber,
-                  ok: false,
-                  error: err.message,
-                };
-                ws.send(JSON.stringify(result));
-              });
-          }
-        }
-      } else if (isRemoveTeamContact(data)) {
-        if (setup?.practice) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to set team contacts' }));
-          } else {
-            setup.practice.contacts.remove(data.teamNumber);
-          }
         }
       } else {
         appWarn('Unknown message type from client: ' + JSON.stringify(sanitizedConfig));

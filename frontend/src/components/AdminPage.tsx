@@ -10,7 +10,6 @@ import { MatchTimeline } from './MatchTimeline';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
-import { TeamContactsSection } from './TeamContactsSection';
 
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -430,7 +429,6 @@ export function AdminPage() {
       <StationControlSection />
       <AudioDeviceSection />
       <SlackConfigSection />
-      <TeamContactsSection />
       <MatchRecordingSection />
       <FirmwareSection />
     </Container>

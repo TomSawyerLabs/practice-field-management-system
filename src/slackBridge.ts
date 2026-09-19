@@ -257,94 +257,44 @@ export class SlackBridge {
     }
   }
 
-  /** Open (or find) a DM with one user or a group DM with several; returns
-   *  the conversation id to post into, or null. Needs `im:write`/`mpim:write`. */
-  async openGroupDm(userIds: string[]): Promise<string | null> {
-    if (!this.web || !this.config || userIds.length === 0) return null;
-    try {
-      const result = await this.web.conversations.open({ users: userIds.join(',') });
-      return (result.channel as { id?: string } | undefined)?.id ?? null;
-    } catch (err) {
-      console.warn('Slack conversations.open failed:', (err as Error).message);
-      return null;
+  /**
+   * Everyone in the workspace on a team, judged from their Slack names: the
+   * pfms-support convention is a team number in the display or real name —
+   * "Mark 5940", "Aidan Honnold (5940)", "Stephan Massalt (971/9584)",
+   * "Christina Lee (Team 6036)". Any run of 1–5 digits bounded by
+   * non-digits in the display name, real name or title counts; the
+   * username is ignored (people use their student ID there). The directory
+   * is cached for an hour. Needs `users:read`.
+   */
+  async findTeamMembers(teamNumber: number): Promise<{ id: string; name: string }[]> {
+    const directory = await this.userDirectory();
+    const out: { id: string; name: string }[] = [];
+    for (const u of directory) {
+      if (u.teams.has(teamNumber)) out.push({ id: u.id, name: u.name });
     }
+    return out;
   }
 
-  /**
-   * Turn what an admin typed into a deliverable Slack contact: a channel
-   * (`#team-5940` or `C0123…`) or people (`@alice, @bob` or `U0123…`).
-   * Resolved against the workspace so a typo fails now, not at 10 pm when
-   * the link should go out. Needs `channels:read`, `groups:read`, `users:read`.
-   */
-  async resolveContact(
-    target: string,
-  ): Promise<
-    | { kind: 'channel'; channelId: string; channelName?: string }
-    | { kind: 'users'; users: { id: string; name: string }[] }
-  > {
-    if (!this.web) throw new Error('Slack is not connected');
-    const web = this.web;
-    const parts = target
-      .split(/[\s,]+/)
-      .map(p => p.trim())
-      .filter(Boolean);
-    if (parts.length === 0) throw new Error('Nothing to resolve');
+  private directoryCache: { at: number; users: { id: string; name: string; teams: Set<number> }[] } | null = null;
 
-    const looksLikeChannel = (p: string) => p.startsWith('#') || /^[CG][A-Z0-9]{8,}$/.test(p);
-    if (parts.length === 1 && looksLikeChannel(parts[0])) {
-      const p = parts[0];
-      if (p.startsWith('#')) {
-        const name = p.slice(1).toLowerCase();
-        let cursor: string | undefined;
-        do {
-          const page = await web.conversations.list({
-            types: 'public_channel,private_channel',
-            exclude_archived: true,
-            limit: 1000,
-            cursor,
-          });
-          const hit = (page.channels ?? []).find(c => c.name?.toLowerCase() === name);
-          if (hit?.id) return { kind: 'channel', channelId: hit.id, channelName: hit.name };
-          cursor = page.response_metadata?.next_cursor || undefined;
-        } while (cursor);
-        throw new Error(`No channel named ${p} that the bot can see (invite the bot to a private channel first)`);
+  private async userDirectory(): Promise<{ id: string; name: string; teams: Set<number> }[]> {
+    if (this.directoryCache && Date.now() - this.directoryCache.at < 60 * 60 * 1000) return this.directoryCache.users;
+    if (!this.web) return this.directoryCache?.users ?? [];
+    const users: { id: string; name: string; teams: Set<number> }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.web.users.list({ limit: 1000, cursor });
+      for (const m of page.members ?? []) {
+        if (!m.id || m.deleted || m.is_bot || m.id === 'USLACKBOT') continue;
+        const p = m.profile ?? {};
+        const teams = teamNumbersIn([p.display_name, p.real_name, m.real_name, p.title]);
+        if (teams.size === 0) continue;
+        users.push({ id: m.id, name: p.real_name ?? m.real_name ?? m.name ?? m.id, teams });
       }
-      const info = await web.conversations.info({ channel: p });
-      const c = info.channel as { id?: string; name?: string } | undefined;
-      if (!c?.id) throw new Error(`Channel ${p} not found`);
-      return { kind: 'channel', channelId: c.id, channelName: c.name };
-    }
-    if (parts.some(looksLikeChannel)) throw new Error('Give one channel, or one or more people — not both');
-
-    const users: { id: string; name: string }[] = [];
-    let directory:
-      | { id?: string; name?: string; real_name?: string; deleted?: boolean; profile?: { display_name?: string } }[]
-      | null = null;
-    for (const p of parts) {
-      if (/^[UW][A-Z0-9]{8,}$/.test(p)) {
-        const info = await web.users.info({ user: p });
-        const u = info.user as { id?: string; real_name?: string; name?: string } | undefined;
-        if (!u?.id) throw new Error(`User ${p} not found`);
-        users.push({ id: u.id, name: u.real_name ?? u.name ?? p });
-        continue;
-      }
-      const handle = p.replace(/^@/, '').toLowerCase();
-      if (!directory) {
-        directory = [];
-        let cursor: string | undefined;
-        do {
-          const page = await web.users.list({ limit: 1000, cursor });
-          directory.push(...((page.members ?? []) as typeof directory));
-          cursor = page.response_metadata?.next_cursor || undefined;
-        } while (cursor);
-      }
-      const hit = directory.find(
-        u => !u.deleted && (u.name?.toLowerCase() === handle || u.profile?.display_name?.toLowerCase() === handle),
-      );
-      if (!hit?.id) throw new Error(`No Slack user @${handle}`);
-      users.push({ id: hit.id, name: hit.real_name ?? hit.name ?? handle });
-    }
-    return { kind: 'users', users };
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    this.directoryCache = { at: Date.now(), users };
+    return users;
   }
 
   /**
@@ -600,4 +550,18 @@ export class SlackBridge {
       console.error(`Failed to save Slack config to ${this.configFilePath}:`, (err as Error).message);
     }
   }
+}
+
+/** FRC team numbers mentioned in free text: 1–5 digit runs bounded by
+ *  non-digits ("5940", "(971/9584)", "Team 6036", "FRC 8033x9400"). */
+export function teamNumbersIn(fields: (string | undefined)[]): Set<number> {
+  const out = new Set<number>();
+  for (const f of fields) {
+    if (!f) continue;
+    for (const m of f.matchAll(/(?<!\d)(\d{1,5})(?!\d)/g)) {
+      const n = Number(m[1]);
+      if (n > 0) out.add(n);
+    }
+  }
+  return out;
 }

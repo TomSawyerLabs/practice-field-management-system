@@ -149,7 +149,7 @@ export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
       });
     }
     for (const r of practice?.runs ?? []) {
-      if (!r.teams.some(t => t.teamNumber === teamNumber)) continue;
+      if (r.teamNumber !== teamNumber) continue;
       rows.push({ key: r.id, label: 'Practice run', startedAt: r.startedAt, match: runAsMatch(r) });
     }
   }
@@ -158,7 +158,7 @@ export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
 
   const matchInProgress =
     recording?.activeMatchId && recording.streams.some(s => s.status === 'recording' || s.status === 'finalizing');
-  const runInProgress = teamNumber !== null && !!practice?.activeRun?.teams.includes(teamNumber);
+  const runInProgress = teamNumber !== null && !!practice?.activeRuns.some(r => r.teamNumber === teamNumber);
 
   if (!canRecord && recent.length === 0 && !matchInProgress) return null;
 

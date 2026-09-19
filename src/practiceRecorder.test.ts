@@ -50,6 +50,8 @@ describe('PracticeStore', () => {
   });
 });
 
+const teamFor = (s: string) => (s === 'slot1' ? 5940 : s === 'slot2' ? 6036 : undefined);
+
 describe('PracticeRecorder', () => {
   if (!ffmpegAvailable()) {
     test.skip('needs ffmpeg on PATH', () => {});
@@ -100,7 +102,7 @@ describe('PracticeRecorder', () => {
       { stdio: 'inherit' },
     );
     store = new PracticeStore(join(dir, 'practice.json'));
-    metadata = new SessionMetadataCollector({ getTeamForStation: s => (s === 'slot1' ? 5940 : undefined) });
+    metadata = new SessionMetadataCollector({ getTeamForStation: teamFor });
     recorder = new PracticeRecorder({
       directory: dir,
       ffmpegPath: ffmpeg,
@@ -108,7 +110,7 @@ describe('PracticeRecorder', () => {
       getStreams: () => [{ name: 'All field', url: source, enabled: true }],
       store,
       metadata,
-      getTeamForStation: s => (s === 'slot1' ? 5940 : undefined),
+      getTeamForStation: teamFor,
       isAvailable: () => true,
       // Play the file at real time, forever, as a live source would.
       inputPrefixArgs: ['-re', '-stream_loop', '-1'],
@@ -125,9 +127,9 @@ describe('PracticeRecorder', () => {
     }
   });
 
-  const telemetry = (enabled: boolean, voltage = 12.5): TelemetryUpdate => ({
+  const telemetry = (enabled: boolean, voltage = 12.5, station: 'slot1' | 'slot2' = 'slot1'): TelemetryUpdate => ({
     type: 'telemetry',
-    station: 'slot1',
+    station,
     timestamp: Date.now(),
     batteryVoltage: voltage,
     dsStatus: { eStop: false, aStop: false, robotComms: true, radioPing: true, rioPing: true, enabled, mode: 'teleOp' },
@@ -153,7 +155,7 @@ describe('PracticeRecorder', () => {
     const enabledAt = Date.now();
     recorder.onTelemetry(telemetry(true));
     metadata.onTelemetry(telemetry(true, 12.1));
-    expect(recorder.getState().activeRun?.teams).toEqual([5940]);
+    expect(recorder.getState().activeRuns.map(r => r.teamNumber)).toEqual([5940]);
     const ball: ProcessedScoreEvent = {
       id: 'evt-1',
       source: 'test',
@@ -170,10 +172,28 @@ describe('PracticeRecorder', () => {
     };
     metadata.onScoreEvent(ball);
     events.push(ball);
+    store.setOptIn(6036, true);
+    let secondEnabledAt = 0;
+    let secondDisabledAt = 0;
     for (let i = 0; i < 4; i++) {
       await sleep(1000);
       recorder.onTelemetry(telemetry(true, 11.8 + i * 0.1));
       metadata.onTelemetry(telemetry(true, 11.8 + i * 0.1));
+      if (i === 0) {
+        // A second robot enables while the first is running: its own clip.
+        secondEnabledAt = Date.now();
+        recorder.onTelemetry(telemetry(true, 12.9, 'slot2'));
+        expect(
+          recorder
+            .getState()
+            .activeRuns.map(r => r.teamNumber)
+            .sort(),
+        ).toEqual([5940, 6036]);
+      }
+      if (i === 2) {
+        secondDisabledAt = Date.now();
+        recorder.onTelemetry(telemetry(false, 12.9, 'slot2'));
+      }
     }
     const disabledAt = Date.now();
     recorder.onTelemetry(telemetry(false));
@@ -181,14 +201,23 @@ describe('PracticeRecorder', () => {
 
     // Keep the station "present" while the run closes and finalizes.
     const deadline = Date.now() + 25_000;
-    while (store.getRuns().length === 0 && Date.now() < deadline) {
+    while (store.getRuns().length < 2 && Date.now() < deadline) {
       await sleep(500);
       recorder.onTelemetry(telemetry(false));
     }
     const runs = store.getRuns();
-    expect(runs.length).toBe(1);
-    const run = runs[0];
-    expect(run.teams).toEqual([{ station: 'slot1', teamNumber: 5940 }]);
+    expect(runs.length).toBe(2);
+    // No coalescing: each robot's clip is cut to its own enable/disable.
+    const second = runs.find(r => r.teamNumber === 6036)!;
+    expect(second.station).toBe('slot2');
+    expect(second.startedAt).toBeLessThanOrEqual(secondEnabledAt - 3000 + 50);
+    expect(second.endedAt).toBeGreaterThanOrEqual(secondDisabledAt + 3000 - 50);
+    expect(second.recordings[0].durationSeconds).toBeGreaterThanOrEqual(7);
+    expect(second.recordings[0].durationSeconds).toBeLessThanOrEqual(11);
+    const run = runs.find(r => r.teamNumber === 5940)!;
+    expect(run.station).toBe('slot1');
+    expect(run.startedAt).toBeLessThan(second.startedAt);
+    expect(run.endedAt).toBeGreaterThan(second.endedAt);
     expect(run.startedAt).toBeLessThanOrEqual(enabledAt - 3000 + 50);
     expect(run.endedAt).toBeGreaterThanOrEqual(disabledAt + 3000 - 50);
     expect(run.recordings).toHaveLength(1);
@@ -212,8 +241,15 @@ describe('PracticeRecorder', () => {
     expect(csv).toContain('5940');
     // The day link exists from the first run on.
     expect(store.findDay(5940, practiceDayOf(run.startedAt))?.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-    // Nothing but the clip directory and the buffer under the root.
-    expect(readdirSync(dir).filter(n => n.startsWith('practice-'))).toEqual([run.id]);
+    expect(store.findDay(6036, practiceDayOf(run.startedAt))?.token).not.toBe(
+      store.findDay(5940, practiceDayOf(run.startedAt))?.token,
+    );
+    // Nothing but the two clip directories and the buffer under the root.
+    expect(
+      readdirSync(dir)
+        .filter(n => n.startsWith('practice-'))
+        .sort(),
+    ).toEqual([run.id, second.id].sort());
 
     // The buffer keeps running while the team is still present, and stops
     // once it has gone quiet.

@@ -78,7 +78,7 @@ export class PracticeStore {
     if (this.runs.length > MAX_RUNS) this.runs = this.runs.slice(-MAX_RUNS);
     // A day link exists from the first recording on, so the station page
     // can show it right away and the notifier knows there is something to send.
-    for (const t of run.teams) this.getOrCreateDayToken(t.teamNumber, practiceDayOf(run.startedAt));
+    this.getOrCreateDayToken(run.teamNumber, practiceDayOf(run.startedAt));
     this.persist();
     this.notify();
   }
@@ -89,7 +89,7 @@ export class PracticeStore {
 
   /** Runs a team took part in on a practice day, oldest first. */
   runsFor(teamNumber: number, day: string): PracticeRunEntry[] {
-    return this.runs.filter(r => practiceDayOf(r.startedAt) === day && r.teams.some(t => t.teamNumber === teamNumber));
+    return this.runs.filter(r => practiceDayOf(r.startedAt) === day && r.teamNumber === teamNumber);
   }
 
   /** Drop runs whose directory the retention sweep has deleted. */
@@ -133,10 +133,10 @@ export class PracticeStore {
     this.persist();
   }
 
-  markNoContactNoted(token: string, at = Date.now()): void {
+  markNoMembersNoted(token: string, at = Date.now()): void {
     const entry = this.findByToken(token);
     if (!entry) return;
-    entry.noContactNotedAt = at;
+    entry.noMembersNotedAt = at;
     this.persist();
   }
 

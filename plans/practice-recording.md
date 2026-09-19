@@ -34,9 +34,10 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 - "Enabled" for out-of-match robots comes from the DS UDP status
   (`TelemetryManager` → `TelemetryUpdate.dsStatus.enabled`), not from the match
   engine (which only drives enable during matches).
-- Slack: one bot in the pfms-support workspace (`slack-config.json`). It needs
-  `chat:write`, `channels:read`, `groups:read`, `users:read`, `im:write`,
-  `mpim:write` to post to a team channel or DM a mentor.
+- Slack: one bot in the pfms-support workspace (`slack-config.json`). Its
+  granted scopes (checked 2026-09-19 via `x-oauth-scopes`): chat:write,
+  files:write, channels:read, users:read, channels:history, emoji:read —
+  enough to list users and DM them.
 
 ## Decisions already made (don't re-ask)
 
@@ -46,11 +47,11 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
   opted-in team's DS is attached; segments older than ~15 s are deleted unless
   a run is being captured. Cost is one extra RTSP reader per stream, no
   transcoding.
-- **A run = the union of overlapping enables of opted-in stations.** Starts
-  3 s before the first enable, ends 3 s after the last disable (with a short
-  merge window so a quick disable/re-enable stays one clip). Every opted-in
-  station enabled during the window is a participant; the clip is filed under
-  each participant team's day.
+- **One run per robot, never coalesced** (Cameron, 2026-09-19 review): each
+  opted-in station's enable starts its own run and its disable ends it, 3 s
+  padded, with a 2 s merge window for a quick disable/re-enable. Six robots
+  running independently produce six files of the same field view, each cut
+  to that robot's own times. The ring buffer is shared; the runs are not.
 - **Not during matches.** While the match engine is in any active phase
   (countdown through postMatch) the match recorder owns the streams; practice
   runs are only captured in `idle`/`created`.
@@ -64,11 +65,14 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
   for the window, plus participants and timing) and `telemetry.csv` /
   `scores.csv` for spreadsheets, written into the recording directory by both
   recorders from a shared rolling collector (`src/sessionMetadata.ts`).
-- **Team → Slack contact is admin configuration** (`team-contacts.json`,
-  Admin → Team Slack contacts): a channel (`#team-5940` or `C…`) or one or more
-  users (`@handle` or `U…`, delivered as a group DM). Resolved and validated
-  when saved. No contact configured → nothing is posted (a note appears in the
-  support channel once per team per day so staff know to add one).
+- **Slack delivery is automatic, no admin table** (Cameron, 2026-09-19
+  review): the link is DMed to every workspace member whose display name,
+  real name or title contains the team number — the pfms-support convention
+  ("Mark 5940", "Aidan Honnold (5940)", "Stephan Massalt (971/9584)"). One
+  message per member per team per day. Individual DMs rather than a group
+  DM because `chat.postMessage` to a user id needs only `chat:write`, which
+  the bot has; group DMs would need `mpim:write`. Nobody claims the team →
+  one note in the support channel, no link.
 - **When to post:** once per team per practice day, the first time the team
   has been quiet for 20 minutes (no enable, no DS attached) after recording
   something, or at day rollover. Later recordings the same day extend the same
@@ -92,7 +96,8 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 10. [x] Frontend: station card checkbox + today link + run list; `/practice/<token>` page; admin contacts section.
 11. [x] Docs (match-system, support scopes, configuration, README); Caddy change staged in ops (uncommitted).
 12. [x] Typecheck, tests (91 pass), frontend build; commits below.
-13. [ ] Cameron: authorise the Caddy change; add the Slack bot scopes; then deploy (`deploy` skill) and try it live.
+13. [x] Cameron authorised the Caddy change and the deploy (2026-09-19); reworked to per-robot runs and automatic Slack delivery.
+14. [ ] Push ops (Caddy) and pFMS; deploy with `update.sh`; verify live.
 
 ## Findings / gotchas
 
@@ -123,8 +128,7 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 1. Caddy: `/practice/*` must join `/matches/*` in the public-path list, the
    https redirect and the `scores.html` rewrite. Staged in the ops repo when
    ready; needs your explicit yes.
-2. Slack app scopes listed above must be added to the pfms-support bot before
-   team-channel/DM delivery works (reinstall the app after adding scopes).
+2. (resolved) No extra Slack scopes needed with individual DMs.
 
 ## Things not to do
 

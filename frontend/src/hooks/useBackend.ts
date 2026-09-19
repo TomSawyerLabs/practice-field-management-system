@@ -53,12 +53,8 @@ import {
   RecordingStreamTestResult,
   isPracticeRecordingState,
   PracticeRecordingState,
-  isTeamContactsState,
-  TeamContactsState,
   isPracticeDayLink,
   PracticeDayLink,
-  isTeamContactSaveResult,
-  TeamContactSaveResult,
   isUsageState,
   UsageState,
   isDriveSessionState,
@@ -504,16 +500,10 @@ function handleSlackConfigState(state: SlackConfigState) {
 // ── Practice recording ("record while enabled") ─────────────────────
 
 let currentPracticeRecordingState: PracticeRecordingState | null = null;
-let currentTeamContactsState: TeamContactsState | null = null;
 
 function handlePracticeRecordingState(state: PracticeRecordingState) {
   currentPracticeRecordingState = state;
   events.dispatchEvent(new CustomEvent('practiceRecordingState', { detail: state }));
-}
-
-function handleTeamContactsState(state: TeamContactsState) {
-  currentTeamContactsState = state;
-  events.dispatchEvent(new CustomEvent('teamContactsState', { detail: state }));
 }
 
 function handleSetupProbeState(state: SetupProbeState) {
@@ -826,18 +816,8 @@ function receiveMessage(detail: Message) {
     return;
   }
 
-  if (isTeamContactsState(detail)) {
-    handleTeamContactsState(detail);
-    return;
-  }
-
   if (isPracticeDayLink(detail)) {
     events.dispatchEvent(new CustomEvent('practiceDayLink', { detail }));
-    return;
-  }
-
-  if (isTeamContactSaveResult(detail)) {
-    events.dispatchEvent(new CustomEvent('teamContactSaveResult', { detail }));
     return;
   }
 
@@ -2176,35 +2156,6 @@ export function usePracticeDayLink(teamNumber: number | null): PracticeDayLink |
   }, [teamNumber, runCount, matchCount, connected]);
 
   return link;
-}
-
-export function useTeamContacts(): TeamContactsState | null {
-  const [state, setState] = useState<TeamContactsState | null>(currentTeamContactsState);
-
-  useEffect(() => {
-    setState(currentTeamContactsState);
-    const handler = (e: Event) => setState((e as CustomEvent<TeamContactsState>).detail);
-    events.addEventListener('teamContactsState', handler);
-    return () => events.removeEventListener('teamContactsState', handler);
-  }, []);
-
-  return state;
-}
-
-export function sendSaveTeamContact(teamNumber: number, target: string) {
-  sendWhenOpen({ type: 'saveTeamContact', teamNumber, target });
-}
-
-export function sendRemoveTeamContact(teamNumber: number) {
-  sendWhenOpen({ type: 'removeTeamContact', teamNumber });
-}
-
-export function useTeamContactSaveResult(callback: (result: TeamContactSaveResult) => void) {
-  useEffect(() => {
-    const handler = (e: Event) => callback((e as CustomEvent<TeamContactSaveResult>).detail);
-    events.addEventListener('teamContactSaveResult', handler);
-    return () => events.removeEventListener('teamContactSaveResult', handler);
-  }, [callback]);
 }
 
 export function useServerStartTime(): number | null {

@@ -305,11 +305,11 @@ How it works (`src/practiceRecorder.ts`):
   3 s pre-roll possible; it costs one extra RTSP reader per stream and no
   transcoding. The buffer stops when no opted-in robot has been heard from
   for 15 s.
-- An enable (the DS status's enabled bit, outside a match) starts a run;
-  the last disable of the enabled opted-in robots ends it. A disable followed
-  by a re-enable within 2 s stays one clip; a run longer than 20 minutes is
-  split. Overlapping enables of several opted-in robots make one clip, filed
-  under every team that was enabled during it.
+- An enable (the DS status's enabled bit, outside a match) starts that
+  robot's run; its disable ends it. A disable followed by a re-enable within
+  2 s stays one clip; a run longer than 20 minutes is split. Every robot gets
+  its own clip cut to its own times — six robots running independently make
+  six files of the same field view, not one.
 - The segments spanning the window are joined (`-c copy`, `+faststart`)
   into `recordings/practice-<stamp>-<id>/<stream>.mp4` with the same
   `recording.json` sidecar matches have, so the retention sweep treats runs
@@ -361,17 +361,18 @@ by the reverse proxy exactly as `/matches/*` is.
 
 When a team that recorded something has been quiet for 20 minutes (no robot
 heard from, no run or match ending) — or the practice day rolls over — the
-link is posted on Slack, once per team per day, to the team's contact from
-**Admin → Team Slack Contacts** (`src/practiceNotifier.ts`,
-`team-contacts.json`): a channel the bot is in (`#team-5940`) or one or
-more people as a group DM (`@alice, @bob`). The contact is resolved against
-the workspace when saved, so a typo fails on the admin page rather than at
-10 pm. Later recordings that day land on the same live link; nothing is
-re-sent. A team with no contact gets nothing; the support channel gets one
-note per team per day saying a contact is missing (the link itself is not
-posted there — it opens the team's videos). Beyond the support-chat scopes,
-the bot needs `channels:read`, `groups:read`, `users:read`, `im:write` and
-`mpim:write`.
+link is sent on Slack, once per team per day, as a direct message to
+everyone on that team (`src/practiceNotifier.ts`). Who is on a team is read
+off Slack names, which is how the pfms-support workspace already works:
+any 1–5 digit number in a member's display name, real name or title
+("Mark 5940", "Aidan Honnold (5940)", "Stephan Massalt (971/9584)",
+"Christina Lee (Team 6036)"). Nothing to configure; a mentor who wants the
+links puts their team number in their Slack name. Later recordings that day
+land on the same live link; nothing is re-sent. A team nobody in Slack
+claims gets nothing, and the support channel gets one note per team per day
+saying so (the link itself is not posted there — it opens the team's
+videos). This needs only the `users:read` and `chat:write` scopes the bot
+already has.
 
 ## WebSocket Message Reference
 

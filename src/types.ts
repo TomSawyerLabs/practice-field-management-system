@@ -2935,17 +2935,17 @@ export interface RecordingMetadata {
  *  the last disable of a practice run. */
 export const PRACTICE_PAD_SECONDS = 3;
 
-/** A recorded practice run: the field video from a few seconds before a
+/** A recorded practice run: the field video from a few seconds before one
  *  robot was enabled outside a match to a few seconds after it was
- *  disabled. Filed under every opted-in team that was enabled during it. */
+ *  disabled. One robot, one clip — six robots running at once make six. */
 export interface PracticeRunEntry {
   /** Directory name under the recordings root (`practice-…`). */
   id: string;
+  station: StationName;
+  teamNumber: number;
   /** Window the clip covers (enable − pad … disable + pad). */
   startedAt: number;
   endedAt: number;
-  /** Opted-in stations enabled at some point during the run. */
-  teams: { station: StationName; teamNumber: number }[];
   recordings: MatchRecording[];
   /** `metadata.json` (score events + telemetry) was written for this run. */
   hasMetadata?: boolean;
@@ -2960,8 +2960,8 @@ export interface PracticeDayToken {
   createdAt: number;
   /** When the link was posted to the team's Slack contact, if it was. */
   slackPostedAt?: number;
-  /** A note that no Slack contact is configured was posted to the support channel. */
-  noContactNotedAt?: number;
+  /** A note that nobody in Slack claims this team was posted to the support channel. */
+  noMembersNotedAt?: number;
 }
 
 /** Live practice-recording status, broadcast to internal clients. */
@@ -2971,8 +2971,8 @@ export interface PracticeRecordingState {
   optIn: number[];
   /** ffmpeg is pulling the streams into the ring buffer (an opted-in team is on the field). */
   buffering: boolean;
-  /** A run is being captured right now. */
-  activeRun?: { startedAt: number; teams: number[] };
+  /** Robots being recorded right now, one run each. */
+  activeRuns: { station: StationName; teamNumber: number; startedAt: number }[];
   /** Why practice recording can't work, when it can't (no streams, no ffmpeg). */
   unavailableReason?: string;
   /** Recent runs, newest last. */
@@ -3079,72 +3079,4 @@ export interface PublicPracticeItem {
   metadataUrl?: string;
   telemetryCsvUrl?: string;
   scoresCsvUrl?: string;
-}
-
-// ── Team Slack contacts (who gets a team's practice links) ─────────
-
-export interface TeamSlackContact {
-  teamNumber: number;
-  /** A channel the bot posts into, or people it opens a group DM with. */
-  kind: 'channel' | 'users';
-  channelId?: string;
-  channelName?: string;
-  users?: { id: string; name: string }[];
-  updatedAt: number;
-}
-
-export interface TeamContactsState {
-  type: 'teamContactsState';
-  contacts: TeamSlackContact[];
-}
-
-export function isTeamContactsState(msg: unknown): msg is TeamContactsState {
-  if (typeof msg !== 'object' || !msg) return false;
-  return (msg as TeamContactsState).type === 'teamContactsState';
-}
-
-/** Client → Server (admin): set a team's Slack contact. `target` is a
- *  channel (`#team-5940` or `C0123…`) or people (`@alice, @bob` or `U0123…`). */
-export interface SaveTeamContact {
-  type: 'saveTeamContact';
-  teamNumber: number;
-  target: string;
-}
-
-export function isSaveTeamContact(msg: unknown): msg is SaveTeamContact {
-  if (typeof msg !== 'object' || !msg) return false;
-  const m = msg as SaveTeamContact;
-  return (
-    m.type === 'saveTeamContact' &&
-    Number.isInteger(m.teamNumber) &&
-    m.teamNumber > 0 &&
-    typeof m.target === 'string' &&
-    m.target.trim().length > 0 &&
-    m.target.length <= 400
-  );
-}
-
-export interface RemoveTeamContact {
-  type: 'removeTeamContact';
-  teamNumber: number;
-}
-
-export function isRemoveTeamContact(msg: unknown): msg is RemoveTeamContact {
-  if (typeof msg !== 'object' || !msg) return false;
-  const m = msg as RemoveTeamContact;
-  return m.type === 'removeTeamContact' && Number.isInteger(m.teamNumber) && m.teamNumber > 0;
-}
-
-/** Server → one client: outcome of a SaveTeamContact. */
-export interface TeamContactSaveResult {
-  type: 'teamContactSaveResult';
-  teamNumber: number;
-  ok: boolean;
-  error?: string;
-  contact?: TeamSlackContact;
-}
-
-export function isTeamContactSaveResult(msg: unknown): msg is TeamContactSaveResult {
-  if (typeof msg !== 'object' || !msg) return false;
-  return (msg as TeamContactSaveResult).type === 'teamContactSaveResult';
 }

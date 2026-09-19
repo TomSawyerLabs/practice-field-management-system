@@ -6,15 +6,15 @@
  * the practice day has rolled over. One message per team per day — later
  * recordings that day land on the same live link, so nothing is repeated.
  *
- * Delivery goes to the team's configured Slack contact (a channel or a
- * group DM). With no contact configured nothing is sent to anyone; the
- * support channel gets one heads-up per team per day so staff can add one.
- * The link itself is not posted there: it opens the team's videos.
+ * Who gets it is automatic: everyone in the workspace whose Slack name says
+ * they are on the team (see SlackBridge.findTeamMembers), each by direct
+ * message. A team nobody in Slack claims gets nothing; the support channel
+ * gets one heads-up per team per day so staff can pass the link on. The
+ * link itself is not posted there: it opens the team's videos.
  */
 import type { MatchHistoryStore } from './matchHistoryStore.js';
 import { practiceDayEnd, practiceDayLabel, type PracticeStore } from './practiceStore.js';
 import type { SlackBridge } from './slackBridge.js';
-import type { TeamContactStore } from './teamContactStore.js';
 
 /** Quiet this long after the last sign of the team = session over. */
 const QUIET_MS = 20 * 60 * 1000;
@@ -25,7 +25,6 @@ const RETRY_MS = 10 * 60 * 1000;
 export interface PracticeNotifierDeps {
   practiceStore: PracticeStore;
   historyStore: MatchHistoryStore;
-  contacts: TeamContactStore;
   slack: SlackBridge;
   /** Last time any station configured for this team sent telemetry, epoch ms (0 = never). */
   lastSeen: (teamNumber: number) => number;
@@ -85,31 +84,31 @@ export class PracticeNotifier {
     const entry = store.findByToken(token);
     if (!entry) return false;
     if (!this.deps.slack.isConnected()) return false;
-    const contact = this.deps.contacts.get(teamNumber);
-    if (!contact) {
-      if (!entry.noContactNotedAt) {
+    const members = await this.deps.slack.findTeamMembers(teamNumber);
+    if (members.length === 0) {
+      if (!entry.noMembersNotedAt) {
         const ok = await this.deps.slack.postToChannel(
           `📹 Team ${teamNumber} recorded ${count} video${count === 1 ? '' : 's'} on ${practiceDayLabel(day)}, ` +
-            `but has no Slack contact for their practice links. Add one under *Admin → Team Slack contacts* ` +
-            `and the link will go out automatically next time.`,
+            `but nobody in this Slack has ${teamNumber} in their name, so their practice link had no one to go to. ` +
+            `Mentors: put your team number in your Slack display name (e.g. "Pat Lee (${teamNumber})") to get these automatically.`,
         );
-        if (ok) store.markNoContactNoted(token);
+        if (ok) store.markNoMembersNoted(token);
       }
       return false;
     }
-    let channelId: string | null = null;
-    if (contact.kind === 'channel') channelId = contact.channelId ?? null;
-    else channelId = await this.deps.slack.openGroupDm((contact.users ?? []).map(u => u.id));
-    if (!channelId) {
-      console.warn(`Practice link for team ${teamNumber}: no Slack conversation to post into`);
-      return false;
+    const text = this.message(teamNumber, day, count, token);
+    let delivered = 0;
+    for (const m of members) {
+      if (await this.deps.slack.postTo(m.id, text)) delivered++;
     }
-    const ok = await this.deps.slack.postTo(channelId, this.message(teamNumber, day, count, token));
-    if (ok) {
+    if (delivered > 0) {
       store.markSlackPosted(token);
-      console.log(`Practice link for team ${teamNumber} (${day}) posted to Slack ${contact.kind} ${channelId}`);
+      console.log(
+        `Practice link for team ${teamNumber} (${day}) sent to ${delivered}/${members.length} Slack member(s): ${members.map(m => m.name).join(', ')}`,
+      );
+      return true;
     }
-    return ok;
+    return false;
   }
 
   message(teamNumber: number, day: string, count: number, token: string): string {
@@ -120,7 +119,7 @@ export class PracticeNotifier {
       `${count} recording${count === 1 ? '' : 's'} (matches and practice runs), each with the balls scored and ` +
       `battery/telemetry alongside: ${link}\n` +
       `Download them one at a time or all at once as a zip. Anything recorded later today shows up on the same link. ` +
-      `Videos are kept for ${keep} days.`
+      `Videos are kept for ${keep} days. You got this because your Slack name includes ${teamNumber}.`
     );
   }
 

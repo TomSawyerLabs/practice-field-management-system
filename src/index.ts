@@ -62,7 +62,6 @@ import { SessionMetadataCollector } from './sessionMetadata.js';
 import { PracticeStore } from './practiceStore.js';
 import { PracticeRecorder } from './practiceRecorder.js';
 import { PracticeNotifier } from './practiceNotifier.js';
-import { TeamContactStore } from './teamContactStore.js';
 import { countPracticeDayItems, handlePracticeRequest, type PracticeApiDeps } from './practiceApi.js';
 import { UsageTracker } from './usageTracker.js';
 import { HostnameResolver } from './hostnameResolver.js';
@@ -397,7 +396,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // "Record while enabled": practice runs outside matches, filed per team
   // with a per-day share link, and the link posted to the team's mentors.
   const practiceStore = new PracticeStore();
-  const teamContacts = new TeamContactStore();
   const practiceRecorder = new PracticeRecorder({
     directory: matchRecorder.recordingsDirectory,
     ffmpegPath: matchRecorder.ffmpegPath,
@@ -422,7 +420,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const practiceNotifier = new PracticeNotifier({
     practiceStore,
     historyStore: matchHistoryStore,
-    contacts: teamContacts,
     slack: slackBridge,
     lastSeen: team => practiceRecorder.lastSeenForTeam(team),
     countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
@@ -517,7 +514,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       practice: {
         recorder: practiceRecorder,
         store: practiceStore,
-        contacts: teamContacts,
         countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
       },
       // Settings saved in the wizard win over the env vars this process
