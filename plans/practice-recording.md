@@ -98,7 +98,9 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 12. [x] Typecheck, tests (91 pass), frontend build; commits below.
 13. [x] Cameron authorised the Caddy change and the deploy (2026-09-19); reworked to per-robot runs and automatic Slack delivery.
 14. [x] ops Caddy change pushed (cedfaae, CI run 35469957830 green); pFMS deployed twice (6148723, then 3e4ba78 with the public-route fix); /practice/<token> page and /api/public/practice/<token> answer from the internet; a bot DM to a user id works with the existing scopes (tested against Cameron Test).
-15. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
+15. [x] Admin → Recordings on Disk (100f4db, deployed 2026-09-19 15:06 PDT): inventory, per-team totals, used/free, days-until-full, delete one / delete older than N days.
+16. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
+17. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
 
 ## Findings / gotchas
 
