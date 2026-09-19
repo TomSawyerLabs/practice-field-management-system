@@ -40,7 +40,10 @@ alone the evening before.
 
 ## Progress log
 
-- [x] Station card filters by team number only; docs wording updated.
+- [x] Station card filters by team number only; docs wording updated
+      (f91afaa on origin/master).
+- [x] Deployed to steamboat 2026-09-18 17:59 PDT via `./update.sh`; served
+      bundle and backend both report f91afaa, field was idle.
 - [ ] Decide whether the deeper exposure needs closing (see questions).
 
 ## Open questions for Cameron
