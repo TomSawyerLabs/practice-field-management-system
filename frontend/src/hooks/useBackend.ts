@@ -48,7 +48,10 @@ import {
   isMatchHistoryState,
   MatchHistoryState,
   isMatchRecordingState,
+  isTimelapseState,
   MatchRecordingState,
+  TimelapseState,
+  RenderTimelapse,
   isRecordingStreamTestResult,
   RecordingStreamTestResult,
   isPracticeRecordingState,
@@ -528,6 +531,13 @@ function handleMatchHistoryState(state: MatchHistoryState) {
   events.dispatchEvent(new CustomEvent('matchHistoryState', { detail: state }));
 }
 
+let currentTimelapseState: TimelapseState | null = null;
+
+function handleTimelapseState(state: TimelapseState) {
+  currentTimelapseState = state;
+  events.dispatchEvent(new CustomEvent('timelapseState', { detail: state }));
+}
+
 let currentMatchRecordingState: MatchRecordingState | null = null;
 
 function handleMatchRecordingState(state: MatchRecordingState) {
@@ -805,6 +815,11 @@ function receiveMessage(detail: Message) {
 
   if (isMatchRecordingState(detail)) {
     handleMatchRecordingState(detail);
+    return;
+  }
+
+  if (isTimelapseState(detail)) {
+    handleTimelapseState(detail);
     return;
   }
 
@@ -1976,6 +1991,31 @@ export function useMatchRecordingState(): MatchRecordingState | null {
   }, []);
 
   return state;
+}
+
+/** Live status of the long-term field timelapse. */
+export function useTimelapseState(): TimelapseState | null {
+  const [state, setState] = useState<TimelapseState | null>(currentTimelapseState);
+
+  useEffect(() => {
+    setState(currentTimelapseState);
+    const handler = (e: Event) => setState((e as CustomEvent<TimelapseState>).detail);
+    events.addEventListener('timelapseState', handler);
+    return () => events.removeEventListener('timelapseState', handler);
+  }, []);
+
+  return state;
+}
+
+/** Take one archival frame now. `withActions` also runs the light actions,
+ *  which is the only way to find out whether they work. */
+export function sendCaptureTimelapseFrame(withActions: boolean) {
+  sendWhenOpen({ type: 'captureTimelapseFrame', withActions });
+}
+
+/** Build a film from the archival frames; progress arrives in the state. */
+export function sendRenderTimelapse(opts: Omit<RenderTimelapse, 'type'>) {
+  sendWhenOpen({ type: 'renderTimelapse', ...opts });
 }
 
 /** Ask the server to probe a stream URL; resolves with the result (or a

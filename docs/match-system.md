@@ -381,11 +381,102 @@ saying so (the link itself is not posted there — it opens the team's
 videos). This needs only the `users:read` and `chat:write` scopes the bot
 already has.
 
+## Long-Term Field Timelapse
+
+**Admin → Field Timelapse** (off until switched on) keeps a record of the
+field over a season, using the same streams as match recording. Two things
+behind one switch:
+
+- **Archival frames.** At a few fixed local times a day (default 09:00,
+  13:00, 17:00), one full-resolution JPEG per enabled stream. On the
+  reference field's 12 MP stitched stream that is about 3 MB a frame, so
+  three a day is ~3.4 GB a year. They are kept as stills, not video, so a
+  film can be re-rendered later at any size — including crops and pans a
+  finished film would have thrown away.
+- **A fast timelapse while robots are here.** Any packet from any Driver
+  Station starts it; it keeps running for five minutes after the last one,
+  so a practice night is one piece rather than confetti, and pauses during
+  matches (the match recorder owns the streams then, at full rate). The
+  default samples keyframes only, which costs about a fifth of the CPU of
+  decoding every frame to keep one, and runs at 60× — a three-hour practice
+  is three minutes of film, about 60 MB. "Every second" instead gives 30×
+  and smoother motion for roughly the same disk, at most of a CPU core.
+
+Everything lives in `<recordings>/.timelapse/` — `frames/<day>/`,
+`active/<day>/` and `renders/`. The leading dot keeps it clear of the match
+retention sweep; the timelapse sweeps itself, with separate retention for
+frames (default: forever) and practice films (default: 60 days).
+
+**Build a film** in the same section: pick a date range, frame rate and
+height, and the archival frames are rendered into one MP4 you can download.
+Rendering is on demand, one at a time, so it never competes with a match.
+
+### Lights, and other pre/post actions
+
+Every archival frame looks the same only if the field is lit the same way.
+Rather than teach pFMS about any particular light system, the section takes
+two optional HTTP calls — method, URL, headers, JSON body — fired either
+side of the shutter, with a settle delay in between (default 5 s).
+
+They are **skipped whenever the field is in use** (a match is running or any
+robot is enabled). The frame is still taken; only the lights are left alone.
+The post action also runs when the capture itself failed, so the lights are
+never left up.
+
+For Home Assistant, snapshot the lights into a scene first and restore that
+scene afterwards, so they end up exactly as they were — including off:
+
+```
+Before:  POST http://homeassistant.local:8123/api/services/scene/create
+         Authorization: Bearer <long-lived token>
+         {"scene_id":"pfms_timelapse_restore",
+          "snapshot_entities":["light.bay_1_2_lights","light.bay_2_3_lights"]}
+
+         (then a second call, or a script that does both)
+         POST http://homeassistant.local:8123/api/services/light/turn_on
+         {"entity_id":["light.bay_1_2_lights","light.bay_2_3_lights"],
+          "brightness_pct":100}
+
+After:   POST http://homeassistant.local:8123/api/services/scene/turn_on
+         Authorization: Bearer <long-lived token>
+         {"entity_id":"scene.pfms_timelapse_restore"}
+```
+
+Only one call fits in each slot, so when two steps are needed (snapshot then
+turn on), point the pre action at a Home Assistant script that does both.
+
+Use **Capture now (with lights)** to prove the whole chain works; the frame
+list says whether the lights ran, were skipped, or failed and why.
+
+### What it costs
+
+Measured on the reference field (3686×3290 @ 30 fps, 12.3 Mbit/s h264):
+
+| What                                     | Cost                     |
+| ---------------------------------------- | ------------------------ |
+| One archival frame (`-q:v 2`, full size) | ~3 MB, ~3 s to take      |
+| Fast timelapse, keyframes only, crf 30   | ~19 MB per hour on field |
+| Fast timelapse, every second, crf 30     | ~21 MB per hour on field |
+| CPU, keyframes only                      | ~20 % of one core        |
+| CPU, every second                        | ~85 % of one core        |
+
+Frame rate barely moves the disk cost; `crf` does. The frames are retimed to
+30 fps playback before encoding, which is what keeps them cheap — encoding a
+timelapse at its capture rate costs roughly 20× more for identical frames.
+
+Files are served at `/api/timelapse/frame/<day>/<name>.jpg`,
+`/api/timelapse/active/<day>/<name>.mp4` and
+`/api/timelapse/render/<name>.mp4`, with Range support and the same trust as
+`/api/recordings`.
+
 ## WebSocket Message Reference
 
 Match control happens over the app WebSocket. The main message types
 (see `src/types.ts` for payloads):
 
+- **Field timelapse:** `captureTimelapseFrame` (admin takes a frame now,
+  optionally running the light actions), `renderTimelapse` (build a film) →
+  `timelapseState` broadcasts.
 - **Practice recording:** `setPracticeRecording` (a station page ticks
   "record while enabled" for its team), `requestPracticeDayLink` → a
   `practiceDayLink` reply to that client only; broadcast

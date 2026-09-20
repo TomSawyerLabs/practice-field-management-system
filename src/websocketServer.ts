@@ -88,6 +88,8 @@ import {
   isSetPracticeRecording,
   isRequestPracticeDayLink,
   isRequestRecordingsInventory,
+  isCaptureTimelapseFrame,
+  isRenderTimelapse,
   isDeleteRecording,
   isDeleteRecordingsBefore,
   type PracticeDayLink,
@@ -118,6 +120,7 @@ import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
 import type { MatchRecorder } from './matchRecorder.js';
+import type { FieldTimelapse } from './fieldTimelapse.js';
 import type { PracticeRecorder } from './practiceRecorder.js';
 import type { PracticeStore } from './practiceStore.js';
 import { practiceDayOf } from './practiceStore.js';
@@ -212,6 +215,8 @@ export function setupWebSocket(
     runProbe: () => Promise<SetupProbeState>;
     /** Match video recorder — configured through the same admin-gated settings. */
     matchRecorder?: MatchRecorder;
+    /** Long-term timelapse of the field (archival frames + robots-present film). */
+    timelapse?: FieldTimelapse;
     /** Public address of the field for share links (undefined = use the page's own origin). */
     publicUrl?: () => string | undefined;
     /** "Record while enabled" and the per-team practice-day links. */
@@ -477,6 +482,9 @@ export function setupWebSocket(
   if (setup?.practice) {
     setup.practice.recorder.addListener(state => broadcast(state));
   }
+  if (setup?.timelapse) {
+    setup.timelapse.addListener(state => broadcast(state));
+  }
 
   if (setup) {
     setup.configStore.addListener(() => broadcast(setupConfigMessage()));
@@ -677,6 +685,11 @@ export function setupWebSocket(
     // Practice recording ("record while enabled")
     if (setup?.practice) {
       ws.send(JSON.stringify(setup.practice.recorder.getState()));
+    }
+
+    // Long-term field timelapse
+    if (setup?.timelapse) {
+      ws.send(JSON.stringify(setup.timelapse.getState()));
     }
 
     // Send usage tracking state
@@ -1366,6 +1379,41 @@ export function setupWebSocket(
               : recorder.deleteRecordingsBefore(data.before);
             ws.send(JSON.stringify({ info: `Deleted ${n} recording${n === 1 ? '' : 's'}` }));
             ws.send(JSON.stringify(recorder.inventory()));
+          }
+        }
+        // ── Long-term field timelapse ───────────────────────────────
+      } else if (isCaptureTimelapseFrame(data)) {
+        // Admin only: this can move the shop's lights, and it opens a
+        // connection to whatever the actions point at.
+        if (setup?.timelapse) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
+          } else {
+            void setup.timelapse
+              .captureFrame('manual', data.withActions)
+              .then(entry =>
+                ws.send(
+                  JSON.stringify(
+                    entry.error
+                      ? { error: `Timelapse frame failed: ${entry.error}` }
+                      : { info: `Captured ${entry.files.length} frame(s)` },
+                  ),
+                ),
+              )
+              .catch((err: Error) => ws.send(JSON.stringify({ error: `Timelapse frame failed: ${err.message}` })));
+          }
+        }
+      } else if (isRenderTimelapse(data)) {
+        if (setup?.timelapse) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
+          } else {
+            // Minutes of ffmpeg for a season of frames, so the client hears
+            // about it through the state, not this reply.
+            void setup.timelapse
+              .renderFilm(data)
+              .catch((err: Error) => ws.send(JSON.stringify({ error: `Film failed: ${err.message}` })));
+            ws.send(JSON.stringify({ info: 'Building the film…' }));
           }
         }
       } else if (isRequestPracticeDayLink(data)) {

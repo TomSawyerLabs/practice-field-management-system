@@ -11,6 +11,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
 import { RecordingsInventorySection } from './RecordingsInventorySection';
+import { TimelapseSection } from './TimelapseSection';
 
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -431,6 +432,7 @@ export function AdminPage() {
       <AudioDeviceSection />
       <SlackConfigSection />
       <MatchRecordingSection />
+      <TimelapseSection />
       <RecordingsInventorySection />
       <FirmwareSection />
     </Container>
