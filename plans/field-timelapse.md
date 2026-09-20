@@ -116,53 +116,56 @@ retention so a mistake in the trigger can't quietly fill the disk, but the
 feature does not meaningfully compete with the match/practice recordings whose
 eviction policy is still open (`plans/practice-recording.md`, item 17).
 
-## Design sketch
+## What was built (2026-09-20)
 
-**Store:** `<recordings>/.timelapse/` (dot-prefixed → the match sweep ignores
-it), with
+`src/fieldTimelapse.ts` (engine), `src/timelapseApi.ts` (serving),
+`frontend/src/components/TimelapseSection.tsx` (Admin → Field Timelapse),
+config in `src/types.ts` (`SetupSettings.timelapse`), wiring in `index.ts`
+and `websocketServer.ts`, docs in `docs/match-system.md`. Tests in
+`src/fieldTimelapse.test.ts` (13, real ffmpeg against a generated source).
 
-- `frames/YYYY/MM/YYYY-MM-DD_HHMM_<stream>.jpg` — daily archival frames,
-  full-res, retention in years.
-- `active/YYYY-MM-DD/<stream>-NNN.mp4` — active-mode chunks, retention in days,
-  own sweep, own line in the admin inventory.
-- `manifest.json` — what was captured when, and why (scheduled / robots present
-  / manual), plus the light action taken.
+**Store:** `<recordings>/.timelapse/` — `frames/<day>/HHMM-<slug>.jpg`,
+`active/<day>/<slug>-HHMMSS.mp4`, `renders/timelapse-<stamp>.mp4`, plus
+`timelapse.json` (the log the admin list is drawn from; also what stops a
+restart re-taking a slot it already took).
 
-**Daily capture** is a `cron` job (the dep is already in use in
-`src/scheduler.ts`) per configured time-of-day. Sequence:
+**Archival frames:** a 15 s tick, not `cron` — a slot fires if it is due and
+its log entry for today is missing, within a 15 minute grace so a restart
+catches a just-missed frame but 03:00 never stands in for 09:00.
+`ffmpeg -frames:v 1 -q:v 2` per enabled stream, sequentially.
 
-1. Skip entirely if a match is active or any robot is enabled — never strobe a
-   field in use.
-2. Fire the **pre-capture action**, wait `settleSeconds` (default 5 s).
-3. `ffmpeg -frames:v 1 -q:v 2` per enabled stream (~3 s each).
-4. Fire the **post-capture action**.
-5. Retry once after a few minutes if the stream was unreachable.
+**Lights:** pre action → `settleSeconds` → shutter → post action, with the
+post action in a `finally` so a failed capture still restores them. When the
+field is busy the actions are skipped and the frame is taken anyway
+(`lights: 'skipped-field-in-use'`) — a differently-lit frame beats a hole.
 
-**Active capture** starts when robots are present and stops when they leave,
-reusing the practice recorder's presence signal (`TelemetryUpdate` per station,
-15 s timeout) rather than inventing a second one. One long-running ffmpeg per
-enabled stream, segmented into chunks so a crash costs one chunk. It pauses
-while a match is running: the match recorder owns the stream with `-c copy`
-then, and the timelapse for that window can be produced from the finished match
-MP4 afterwards for free.
+**Fast timelapse:** starts on any telemetry packet, holds 5 minutes past the
+last one, stops when a match leaves idle/created. One ffmpeg per stream,
+`-skip_frame nokey` (or `fps=1`), `scale=W:-2,setpts=N/30/TB`, `-r 30`,
+x264 veryfast at the configured crf, fragmented MP4 with `-g 30` so a killed
+process still leaves a playable chunk. Rotated every 30 minutes.
 
-**Lights** are not built in as Home Assistant. The admin panel gets generic
-**pre/post-capture actions**: method, URL, headers (bearer token stored
-write-only), JSON body, plus a settle delay. That covers HA, Hue, Shelly, or a
-shop-specific endpoint without pFMS learning any of them. The HA recipe to
-document:
+**Rendering:** on demand, one at a time, concat demuxer over the frame JPEGs
+at the chosen fps and height.
 
-- pre: `POST /api/services/scene/create` with
-  `{"scene_id":"pfms_timelapse_restore","snapshot_entities":[…]}`, then
-  `POST /api/services/light/turn_on` `{"entity_id":[…],"brightness_pct":100}`
-- post: `POST /api/services/scene/turn_on`
-  `{"entity_id":"scene.pfms_timelapse_restore"}`
+### Verified against the real stream (2026-09-20)
 
-so the lights go back exactly as they were, including off.
+`scripts.local/timelapse-live-check.ts` runs the real engine against
+`rtsp://sentinel.tsl:8554/all-field`:
 
-**Rendering** is on demand, not at capture time: an admin/URL endpoint that
-concatenates a date range (daily frames at N fps, or the active chunks) into
-one MP4. Keeps the archive as source material rather than a baked film.
+- archival frame: **3.45 MB**, 3.6 s per capture
+- 56 s of field time → a 297 KB chunk, 1920×1714, 30 fps, 28 frames, 0.93 s
+  of film = **60× speed, 19 MB per field-hour** — matching the prediction
+- film renders from the frames and is served over `/api/timelapse/render/…`
+
+### Known gaps
+
+- **Not deployed.** Everything above ran locally and on a scratch directory.
+- Shutdown does not stop the encoder gracefully (neither does the practice
+  recorder). The fragmented MP4 survives, but the last partial fragment is
+  lost — at most a second of film.
+- The frames are stills only: there is no "film the whole day at 1 frame a
+  minute" mode between the two. Nobody has asked for one.
 
 ## Decisions already made (don't re-ask)
 
@@ -197,13 +200,18 @@ Earlier decisions, unchanged:
       then re-measured after finding the 1 fps-timebase error (tables above).
       Scratch files under `/tmp/tltest` on steamboat were removed.
 - [x] 2026-09-20 All four open questions answered; see decisions above.
-- [ ] Config schema + validators (`src/types.ts`).
-- [ ] `src/fieldTimelapse.ts` — daily scheduler, active capture, sweep.
-- [ ] Pre/post action runner + HA recipe in `docs/configuration.md`.
-- [ ] Wiring in `index.ts`, state + admin commands in `websocketServer.ts`.
-- [ ] HTTP serving of frames, chunks and renders.
-- [ ] Admin UI section.
-- [ ] Render endpoint.
+- [x] Config schema + validators (`src/types.ts`), with tests.
+- [x] `src/fieldTimelapse.ts` — scheduler, active capture, sweep, render.
+- [x] Pre/post action runner + HA recipe in `docs/match-system.md`.
+- [x] Wiring in `index.ts`, state + admin commands in `websocketServer.ts`.
+- [x] HTTP serving of frames, chunks and renders (`src/timelapseApi.ts`).
+- [x] Admin UI section (`TimelapseSection.tsx`), README + docs.
+- [x] Verified end to end against the live field stream.
+- [ ] Deploy to steamboat, switch it on, and write the Home Assistant
+      pre/post actions for the bay lights (needs a long-lived HA token and
+      Cameron's per-change authorisation for anything touching HA).
+- [ ] After a week, check the actual disk growth against the 19 MB/field-hour
+      estimate and settle the retention numbers.
 
 ## Things not to do
 
