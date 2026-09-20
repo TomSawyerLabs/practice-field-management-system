@@ -246,6 +246,9 @@ export interface SetupSettings {
   /** Address this field is reachable at from anywhere, e.g.
    *  `https://pfms.example.org` — used to build the post-match QR link. */
   publicUrl?: string;
+  /** Long-term timelapse of the field: a few archival frames a day, plus a
+   *  fast timelapse while robots are here. Absent = off. */
+  timelapse?: TimelapseConfig;
 }
 
 /** One video source pFMS records during matches. Anything ffmpeg can read
@@ -268,6 +271,121 @@ export function isRecordingStreamConfig(v: unknown): v is RecordingStreamConfig 
     typeof c.url === 'string' &&
     isStreamSourceUrl(c.url) &&
     typeof c.enabled === 'boolean'
+  );
+}
+
+// ── Long-term timelapse ─────────────────────────────────────────────
+
+/**
+ * An HTTP call pFMS makes either side of a scheduled timelapse frame, so the
+ * field can be lit the same way in every archival frame.
+ *
+ * Deliberately generic rather than a Home Assistant integration: the pre
+ * action drives the lights to a known level, the post action puts them back,
+ * and pFMS does not need to know which of Home Assistant, Hue, Shelly or a
+ * shop-specific endpoint is on the other end. `headers` is where a bearer
+ * token goes — it is admin-only config and is never echoed back to clients.
+ */
+export interface TimelapseAction {
+  method: 'GET' | 'POST' | 'PUT';
+  url: string;
+  headers?: Record<string, string>;
+  /** Request body, sent as `application/json` unless `headers` says otherwise. */
+  body?: string;
+}
+
+export function isTimelapseAction(v: unknown): v is TimelapseAction {
+  const a = v as TimelapseAction;
+  if (typeof a !== 'object' || a === null) return false;
+  if (a.method !== 'GET' && a.method !== 'POST' && a.method !== 'PUT') return false;
+  if (typeof a.url !== 'string' || !/^https?:\/\/[^\s]+$/.test(a.url) || a.url.length > 500) return false;
+  if (a.headers !== undefined) {
+    if (typeof a.headers !== 'object' || a.headers === null || Array.isArray(a.headers)) return false;
+    const entries = Object.entries(a.headers);
+    if (entries.length > 10) return false;
+    // A header name with a newline in it would let one setting inject others.
+    if (!entries.every(([k, v]) => /^[A-Za-z0-9-]{1,64}$/.test(k) && typeof v === 'string' && !/[\r\n]/.test(v)))
+      return false;
+  }
+  if (a.body !== undefined && (typeof a.body !== 'string' || a.body.length > 4000)) return false;
+  return true;
+}
+
+/** How the fast (robots-present) timelapse samples the stream. `keyframes`
+ *  decodes only keyframes — a fifth of the CPU of `everySecond`, at whatever
+ *  rate the source's GOP gives (0.5 fps on the stitched field stream). */
+export type TimelapseActiveMode = 'keyframes' | 'everySecond';
+
+export interface TimelapseConfig {
+  enabled: boolean;
+  /** Local clock times ("HH:MM") for the daily archival frames. */
+  dailyTimes: string[];
+  /** Also run the fast timelapse while robots are on the field. */
+  captureWhileRobotsPresent: boolean;
+  activeMode: TimelapseActiveMode;
+  /** x264 quality for the fast timelapse: lower is better and bigger. */
+  activeCrf: number;
+  /** Width the fast timelapse is scaled to; height follows the aspect. */
+  activeWidth: number;
+  /** Days to keep the fast-timelapse chunks. */
+  activeRetentionDays: number;
+  /** Days to keep the daily archival frames; 0 keeps them forever. */
+  frameRetentionDays: number;
+  preAction?: TimelapseAction;
+  postAction?: TimelapseAction;
+  /** Seconds between the pre action and the shutter, for lights to settle. */
+  settleSeconds: number;
+}
+
+export const TIMELAPSE_DEFAULTS: TimelapseConfig = {
+  enabled: false,
+  dailyTimes: ['09:00', '13:00', '17:00'],
+  captureWhileRobotsPresent: true,
+  activeMode: 'keyframes',
+  activeCrf: 30,
+  activeWidth: 1920,
+  activeRetentionDays: 60,
+  frameRetentionDays: 0,
+  settleSeconds: 5,
+};
+
+/** "HH:MM" on a 24-hour clock. */
+export function isTimeOfDay(v: unknown): v is string {
+  return typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+}
+
+export function isTimelapseConfig(v: unknown): v is TimelapseConfig {
+  const c = v as TimelapseConfig;
+  return (
+    typeof c === 'object' &&
+    c !== null &&
+    typeof c.enabled === 'boolean' &&
+    Array.isArray(c.dailyTimes) &&
+    c.dailyTimes.length <= 24 &&
+    c.dailyTimes.every(isTimeOfDay) &&
+    typeof c.captureWhileRobotsPresent === 'boolean' &&
+    (c.activeMode === 'keyframes' || c.activeMode === 'everySecond') &&
+    typeof c.activeCrf === 'number' &&
+    Number.isInteger(c.activeCrf) &&
+    c.activeCrf >= 14 &&
+    c.activeCrf <= 40 &&
+    typeof c.activeWidth === 'number' &&
+    Number.isInteger(c.activeWidth) &&
+    c.activeWidth >= 320 &&
+    c.activeWidth <= 3840 &&
+    typeof c.activeRetentionDays === 'number' &&
+    Number.isInteger(c.activeRetentionDays) &&
+    c.activeRetentionDays >= 1 &&
+    c.activeRetentionDays <= 3650 &&
+    typeof c.frameRetentionDays === 'number' &&
+    Number.isInteger(c.frameRetentionDays) &&
+    c.frameRetentionDays >= 0 &&
+    c.frameRetentionDays <= 3650 &&
+    (c.preAction === undefined || isTimelapseAction(c.preAction)) &&
+    (c.postAction === undefined || isTimelapseAction(c.postAction)) &&
+    typeof c.settleSeconds === 'number' &&
+    c.settleSeconds >= 0 &&
+    c.settleSeconds <= 120
   );
 }
 
@@ -426,6 +544,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   outOfMatchControl: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
+  timelapse: isTimelapseConfig,
 };
 
 export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings {
@@ -3145,4 +3264,118 @@ export function isDeleteRecordingsBefore(msg: unknown): msg is DeleteRecordingsB
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as DeleteRecordingsBefore;
   return m.type === 'deleteRecordingsBefore' && Number.isFinite(m.before) && m.before > 0;
+}
+
+// ── Long-term timelapse state (admin) ───────────────────────────────
+
+/** One archival frame that was taken (or attempted). */
+export interface TimelapseFrameEntry {
+  /** Local day, `YYYY-MM-DD`. */
+  day: string;
+  /** Scheduled time that produced it, `HH:MM`, or `manual`. */
+  slot: string;
+  at: number;
+  /** One per enabled stream. */
+  files: { stream: string; file: string; bytes: number }[];
+  /** Whether the pre/post actions ran, and what happened if they didn't. */
+  lights: 'none' | 'ran' | 'skipped-field-in-use' | 'failed';
+  lightsError?: string;
+  error?: string;
+}
+
+/** One stretch of fast timelapse, from robots arriving to the field going quiet. */
+export interface TimelapseSessionEntry {
+  day: string;
+  startedAt: number;
+  endedAt?: number;
+  stream: string;
+  file: string;
+  bytes: number;
+  /** Seconds of field time this chunk covers (not its playback length). */
+  coveredSeconds?: number;
+}
+
+export interface TimelapseState {
+  type: 'timelapseState';
+  enabled: boolean;
+  /** Why nothing can be captured, when that is the case. */
+  unavailableReason?: string;
+  /** A fast-timelapse encoder is running right now. */
+  capturing: boolean;
+  /** Robots have been seen recently, so capture is wanted. */
+  robotsPresent: boolean;
+  /** Next scheduled archival frame (epoch ms), when one is scheduled. */
+  nextDailyAt?: number;
+  lastFrame?: TimelapseFrameEntry;
+  recentFrames: TimelapseFrameEntry[];
+  recentSessions: TimelapseSessionEntry[];
+  /** Totals on disk, refreshed with the sweep. */
+  frameCount: number;
+  frameBytes: number;
+  sessionBytes: number;
+  renderBytes: number;
+  directory: string;
+  render?: TimelapseRenderState;
+}
+
+export function isTimelapseState(msg: unknown): msg is TimelapseState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TimelapseState).type === 'timelapseState';
+}
+
+/** A film being built (or the last one built) from the archival frames. */
+export interface TimelapseRenderState {
+  status: 'running' | 'done' | 'failed';
+  file?: string;
+  bytes?: number;
+  frames?: number;
+  startedAt: number;
+  finishedAt?: number;
+  error?: string;
+}
+
+/** Admin takes an archival frame now, outside the schedule. */
+export interface CaptureTimelapseFrame {
+  type: 'captureTimelapseFrame';
+  /** Run the light actions too (the point of a test capture). */
+  withActions: boolean;
+}
+
+export function isCaptureTimelapseFrame(msg: unknown): msg is CaptureTimelapseFrame {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as CaptureTimelapseFrame;
+  return m.type === 'captureTimelapseFrame' && typeof m.withActions === 'boolean';
+}
+
+/** Admin builds a film from the archival frames in a date range. */
+export interface RenderTimelapse {
+  type: 'renderTimelapse';
+  /** `YYYY-MM-DD`; omitted means "everything". */
+  from?: string;
+  to?: string;
+  /** Frames per second of the finished film. */
+  fps: number;
+  /** Output height in pixels; the width follows the source aspect. */
+  height: number;
+  /** Which stream's frames to use (they are captured per stream). */
+  stream?: string;
+}
+
+const isDay = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
+export function isRenderTimelapse(msg: unknown): msg is RenderTimelapse {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as RenderTimelapse;
+  return (
+    m.type === 'renderTimelapse' &&
+    (m.from === undefined || isDay(m.from)) &&
+    (m.to === undefined || isDay(m.to)) &&
+    Number.isInteger(m.fps) &&
+    m.fps >= 1 &&
+    m.fps <= 60 &&
+    Number.isInteger(m.height) &&
+    m.height >= 240 &&
+    m.height <= 2160 &&
+    (m.stream === undefined || (typeof m.stream === 'string' && m.stream.length <= 60))
+  );
 }

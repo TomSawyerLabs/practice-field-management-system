@@ -57,56 +57,64 @@ including RTSP connect:
 | 1920 wide `-q:v 6` | 548 KB |
 | 1280 wide `-q:v 5` | 280 KB |
 
-h264 timelapse, encoded from one captured 120 s sample of the real stream so
-all rows see identical content (1920 wide = 1920×1714):
+h264 timelapse. **Retime the frames to 30 fps playback before encoding**
+(`setpts=N/30/TB`, `-r 30`) — the first pass of these measurements left the
+output at a 1 fps timebase, which inflated every figure by roughly 20×. x264's
+rate control budgets bits per _second of output_, so a timelapse that plays at
+30 fps costs a small fraction of the same frames laid out at 1 fps. All rows
+below are the corrected form, encoded from one captured 60 s sample of the real
+stream so they see identical content (1920 wide = 1920×1714):
 
-| Setting                         | Per frame | Per hour captured |
-| ------------------------------- | --------- | ----------------- |
-| 1 fps, 1920w, crf 24 veryfast   | 393 KB    | 1.41 GB           |
-| 1 fps, 1920w, crf 28 medium     | 249 KB    | 0.90 GB           |
-| 1 fps, 1920w, crf 28 + hqdn3d   | 202 KB    | 0.73 GB           |
-| **1 fps, 1920w, crf 32 medium** | 109 KB    | **0.39 GB**       |
-| 1 fps, full-res, crf 30 medium  | 807 KB    | 2.91 GB           |
-| 0.2 fps (1/5 s), 1920w, crf 28  | 335 KB    | 0.24 GB           |
+| Setting                           | Per hour captured | SSIM (Y) vs crf 12 |
+| --------------------------------- | ----------------- | ------------------ |
+| 0.5 fps keyframe-only, crf 26     | 47 MB             | 0.881              |
+| **0.5 fps keyframe-only, crf 30** | **19 MB**         | **0.824**          |
+| 0.5 fps keyframe-only, crf 34     | 9 MB              | 0.755              |
+| 1 fps, crf 26                     | 40 MB             | 0.903              |
+| 1 fps, crf 30                     | 21 MB             | 0.857              |
+| 1 fps, crf 34                     | 11 MB             | 0.796              |
 
-Reference: recording the stream as-is is **5.5 GB/hour**.
+Reference: recording the stream as-is is **5.5 GB/hour**, and a full-res JPEG
+per second would be ~6.5 GB/hour.
 
-Per-frame cost is high because consecutive timelapse frames share little
-temporal redundancy and the sensor is noisy — the quality knob (crf), not the
-frame rate, is what moves storage. 1 fps at crf 32 costs _less_ per hour than
-0.2 fps at crf 28 and looks far better in motion.
+**Frame rate is not what costs storage — quality is.** Doubling the frame rate
+from 0.5 to 1 fps costs nothing measurable (19 MB/hr → 21 MB/hr) because the
+extra frames predict from their neighbours; 1 fps at crf 30 is _better_ SSIM
+than 0.5 fps at the same crf, for the same bytes. The only real cost of 1 fps
+is CPU.
 
-CPU, measured live against the stream:
+CPU is the real constraint. Measured live against the stream, x264 veryfast:
 
-| Pipeline                                        | CPU (of one core) | Frames out |
-| ----------------------------------------------- | ----------------- | ---------- |
-| full decode + `fps=1` + scale + x264 veryfast   | 88 %              | 1 fps      |
-| full decode + `fps=1` + scale + x264 medium¹    | ~135 %            | 1 fps      |
-| **`-skip_frame nokey`** + scale + x264 veryfast | **21 %**          | 0.5 fps    |
-
-¹ Derived from the offline encode of the 120 s sample (29.1 s wall at 557 %
-CPU for 120 s of source), not measured live; the other two rows were measured
-against the live stream.
+| Pipeline                        | CPU (of one core) | Frames out |
+| ------------------------------- | ----------------- | ---------- |
+| full decode + `fps=1` + scale   | 79–88 %           | 1 fps      |
+| **`-skip_frame nokey`** + scale | **16–21 %**       | 0.5 fps    |
 
 `-skip_frame nokey` only decodes keyframes; the source's GOP is 2 s, so it
-yields exactly 0.5 fps for about a quarter of the CPU. That is the cheap mode
-if a 60× playback speed is acceptable.
+yields exactly 0.5 fps for a fifth of the CPU of decoding all 30 fps just to
+throw 29 of them away. That is the whole argument for it — storage is a wash.
+
+VAAPI hardware decode would give 1 fps at keyframe-only cost, but is **not
+available to pFMS on steamboat today**: `-hwaccel vaapi -hwaccel_device
+/dev/dri/renderD128` fails with `Device creation failed: -22` even though the
+node exists, most likely a missing driver or render-group membership. Chasing
+it is a steamboat change needing separate authorisation; not on this feature's
+path.
 
 ### What that means in season terms
 
 - **Daily mode:** 3 full-res `-q:v 2` frames/day = 9.4 MB/day = **3.4 GB/year**.
   Free, effectively. Keep the JPEGs forever; they can be re-rendered into a film
   at any resolution later, including 4K crops and pans.
-- **Active mode**, at 1 fps / 1920w / crf 32 = 0.39 GB per captured hour:
-  - a 3-hour practice night → 1.2 GB
-  - 300 field-hours in a season → **~120 GB**
-  - at 0.5 fps keyframe-only, roughly half that.
+- **Active mode**, keyframe-only at crf 30 = ~19 MB per captured hour:
+  - a 3-hour practice night → 57 MB
+  - 300 field-hours in a season → **~6 GB**
 
-120 GB fits in the 390 GB free, but it is the same pool the match and practice
-recordings grow into, and the eviction policy for those is still open
-(`plans/practice-recording.md`, item 17). Active-mode chunks therefore need
-their own retention (short, days-to-weeks) distinct from the daily frames
-(long, years).
+Storage is therefore a non-issue for both modes, against 390 GB free and
+9.6 GB of recordings today. Active chunks still get their own (shorter)
+retention so a mistake in the trigger can't quietly fill the disk, but the
+feature does not meaningfully compete with the match/practice recordings whose
+eviction policy is still open (`plans/practice-recording.md`, item 17).
 
 ## Design sketch
 
@@ -158,41 +166,56 @@ one MP4. Keeps the archive as source material rather than a baked film.
 
 ## Decisions already made (don't re-ask)
 
+All four settled by Cameron on 2026-09-20:
+
+- **Active mode is keyframe-only, 0.5 fps, 60× playback** (`-skip_frame
+nokey`). Chosen for CPU — a fifth of a core instead of most of one. Storage
+  turned out not to distinguish the options, so 1 fps stays available as an
+  admin setting but is not the default.
+- **Active capture triggers on robots _present_**, not enabled: telemetry from
+  any DS or robot starts it, and it keeps running through a hold window after
+  the last packet so a practice night is one continuous piece rather than
+  confetti.
+- **Daily frames at fixed local clock times, default 09:00 / 13:00 / 17:00**,
+  editable in the admin panel.
+- **Lights via generic pre/post HTTP actions**, not a built-in Home Assistant
+  integration. The HA snapshot/restore recipe is documented instead.
+
+Earlier decisions, unchanged:
+
 - Two modes, one feature; active mode never touches the lights.
 - Storage sits under the recordings root but dot-prefixed, so the match
   retention sweep leaves it alone; separate retention per mode.
 - Daily frames are archived as full-res JPEGs (re-renderable), active mode is
-  encoded straight to h264 (JPEG frames at that rate cost 3–10× more).
-
-## Open questions for the user
-
-1. Active-mode rate/quality — recommend **1 fps, 1920 wide, crf 32**
-   (0.39 GB/hr, 30× playback). Cheaper alternative: keyframe-only 0.5 fps
-   (~0.2 GB/hr, a quarter of the CPU, 60× playback).
-2. Active trigger — robots _present_ (DS/robot telemetry seen) or robots
-   _enabled_? Present is simpler and catches the setup/teardown that makes a
-   shop timelapse fun; enabled is maybe 3× less footage.
-3. Daily times — fixed local clock (recommend 09:00 / 13:00 / 17:00) or
-   sun-relative (dawn+1h, solar noon, dusk−1h)?
-4. Light control — generic pre/post HTTP actions (recommended, HA recipe
-   documented) or a first-class Home Assistant integration in pFMS?
+  encoded straight to h264.
+- Retime to 30 fps playback at capture time, never store a 1 fps timebase.
 
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
-- [x] 2026-09-20 Measured JPEG and h264 timelapse sizes + CPU on steamboat
-      (tables above). Scratch files were left in `/tmp/tltest` on steamboat.
-- [ ] Answer the four open questions.
-- [ ] Config schema + validators (`src/types.ts`), admin UI.
+- [x] 2026-09-20 Measured JPEG and h264 timelapse sizes + CPU on steamboat,
+      then re-measured after finding the 1 fps-timebase error (tables above).
+      Scratch files under `/tmp/tltest` on steamboat were removed.
+- [x] 2026-09-20 All four open questions answered; see decisions above.
+- [ ] Config schema + validators (`src/types.ts`).
 - [ ] `src/fieldTimelapse.ts` — daily scheduler, active capture, sweep.
 - [ ] Pre/post action runner + HA recipe in `docs/configuration.md`.
-- [ ] Inventory row + retention controls in `RecordingsInventorySection.tsx`.
+- [ ] Wiring in `index.ts`, state + admin commands in `websocketServer.ts`.
+- [ ] HTTP serving of frames, chunks and renders.
+- [ ] Admin UI section.
 - [ ] Render endpoint.
 
 ## Things not to do
 
-- Don't store the active mode as JPEG frames — 3–10× the bytes of h264 for the
-  same frames.
+- Don't store the active mode as JPEG frames — hundreds of times the bytes of
+  a retimed h264 timelapse for the same frames.
+- Don't encode a timelapse at its capture frame rate. Retime to 30 fps first;
+  leaving the output at a 1 fps timebase costs ~20× the bytes for the same
+  frames and the same visual quality. This cost a full round of measurements.
+- Don't combine `-fps_mode passthrough` with `-r` — ffmpeg 7.1 refuses
+  ("contradictory"). `setpts=N/30/TB` plus `-r 30` is the working form.
+- Don't pipe an ffmpeg command into `ssh` from a heredoc without `-nostdin`;
+  ffmpeg eats the rest of the script from stdin and the errors make no sense.
 - Don't run the timelapse decoder during a match; the match recorder is already
   on that stream and the timelapse can be derived from its MP4 later.
 - Don't touch the lights when the field is in use, and never without a restore
