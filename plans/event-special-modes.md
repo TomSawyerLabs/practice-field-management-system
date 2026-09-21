@@ -171,11 +171,14 @@ the way `shiftState` is) so it can be unit-tested.
    this doesn't block anything, but don't expect `bunx eslint` to work in
    `frontend/` without an install.
 
-3. **The full suite takes ~170 s.** Run it in the background; the challenge
+3. **Vite picks 5174 here**, because another project's dev server holds 5173 —
+   check the port before pointing a browser at it.
+
+4. **The full suite takes ~170 s.** Run it in the background; the challenge
    end-to-end tests add ~14 s of real waiting because the 3 s countdown is
    driven by real timers (`setInterval`), not fakeable ones.
 
-4. **`AllianceScoreBox` was reusable for laps.** Its `freePlayLabel` prop
+5. **`AllianceScoreBox` was reusable for laps.** Its `freePlayLabel` prop
    renders a caption under the big number, so laps + "LAPS" needed no new
    component — and its chase/flourish animations are all gated on
    `isFreePlay`, which is false in match mode.
@@ -196,6 +199,9 @@ the way `shiftState` is) so it can be unit-tested.
 - [x] Phase 4 — leaderboard. `MatchHistoryEntry.challenge`,
       `src/challengeRanking.ts`, the board on `/match` and on the TV between
       runs, challenge results in history rows.
+- [x] Driven in the real app (DRY_RUN backend + vite): create → Speed Challenge
+      → window chips → stopwatch toggle → cancel → create all behave, and the
+      format/window/timing carry over to the next run as intended.
 - [ ] **Try it on real hardware before the weekend.** Everything so far is
       typecheck + unit tests; no challenge run has been driven from an actual
       Driver Station.
@@ -205,7 +211,8 @@ the way `shiftState` is) so it can be unit-tested.
 1. Penalty weights are guesses (−1 lap / +5 s). Worth confirming before the
    event, but not blocking.
 2. Is 60 s the right default window? Trivial to change.
-3. Nothing has been exercised against a real DS yet — the countdown, enable
+3. The UI and the config path are verified in the real app, but nothing has
+   been exercised against a real DS yet — the countdown, enable
    and buzzer all run through the normal match path, so they should behave,
    but a dry run on the field before Saturday is the only way to know.
 4. Not built, and not asked for: a public shareable leaderboard link (the
