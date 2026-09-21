@@ -8,6 +8,11 @@ import {
   MatchSlot,
   MatchState,
   MatchEndReason,
+  ChallengeTiming,
+  CHALLENGE_DEFAULT_DURATION,
+  CHALLENGE_MIN_DURATION,
+  CHALLENGE_MAX_DURATION,
+  isChallengeConfig,
   StationName,
   StationNameList,
   StationNumber,
@@ -56,6 +61,25 @@ const OFFICIAL_CONFIG: MatchConfig = {
   skipAuto: false,
   autoWinner: 'scores',
 };
+
+/** Timing for a challenge run: one enabled window and nothing else. No auto
+ *  (so no auto winner, no shifts, no game-data byte) and no endgame — with
+ *  `endgameDuration: 0` the teleop→endgame check can never fire, since it
+ *  only runs while `remainingTime > 0`. The host's window is the one number
+ *  that isn't fixed, clamped so a typo can't strand the field. */
+function challengeConfig(duration: number | undefined, timing: ChallengeTiming | undefined): MatchConfig {
+  const requested = Number.isFinite(duration) ? Math.round(duration!) : CHALLENGE_DEFAULT_DURATION;
+  return {
+    autoDuration: 0,
+    teleopDuration: Math.min(CHALLENGE_MAX_DURATION, Math.max(CHALLENGE_MIN_DURATION, requested)),
+    endgameDuration: 0,
+    pauseDuration: 0,
+    skipAuto: true,
+    autoWinner: 'scores',
+    format: 'challenge',
+    challengeTiming: timing === 'stopwatch' ? 'stopwatch' : 'window',
+  };
+}
 
 export type TeamResolver = (station: StationName) => number | null;
 
@@ -325,7 +349,13 @@ export class MatchEngine {
       state.aStop = false;
       state.disabledBy = null;
     }
-    this.pendingConfig = { ...OFFICIAL_CONFIG };
+    // Format carries over between matches: an event host runs dozens of
+    // challenge runs back to back and shouldn't re-pick every time. Every
+    // other pending choice resets. The created-phase UI states the format
+    // loudly so a real match can't quietly inherit a challenge clock.
+    this.pendingConfig = isChallengeConfig(this.pendingConfig)
+      ? challengeConfig(this.pendingConfig.teleopDuration, this.pendingConfig.challengeTiming)
+      : { ...OFFICIAL_CONFIG };
     this.config = null;
     this.portToSlot.clear();
     this.autoWinnerAlliance = null;
@@ -539,12 +569,19 @@ export class MatchEngine {
       appWarn(`Cannot update match config in phase ${this.phase}`);
       return;
     }
-    // Only accept skipAuto and autoWinner — durations are official
-    this.pendingConfig = {
-      ...OFFICIAL_CONFIG,
-      skipAuto: config.skipAuto ?? false,
-      autoWinner: config.autoWinner ?? 'scores',
-    };
+    if (config.format === 'challenge') {
+      // A field event, not a match: the host picks the window. This is the
+      // ONLY path that may set a duration — an official match is always
+      // OFFICIAL_CONFIG, whatever a client sends.
+      this.pendingConfig = challengeConfig(config.teleopDuration, config.challengeTiming);
+    } else {
+      // Only accept skipAuto and autoWinner — durations are official
+      this.pendingConfig = {
+        ...OFFICIAL_CONFIG,
+        skipAuto: config.skipAuto ?? false,
+        autoWinner: config.autoWinner ?? 'scores',
+      };
+    }
     // Changing config invalidates the whole ready check
     this.closeReadyCheck();
     console.log('Match config updated:', this.pendingConfig);
@@ -700,8 +737,10 @@ export class MatchEngine {
       return;
     }
 
-    // If skipAuto, auto winner must be pre-set
-    if (this.pendingConfig.skipAuto) {
+    // If skipAuto, auto winner must be pre-set. A challenge has no auto period
+    // to win, and pre-setting a winner to satisfy this would leak alliance
+    // shift tinting and the game-data byte into a run that has neither.
+    if (this.pendingConfig.skipAuto && !isChallengeConfig(this.pendingConfig)) {
       if (
         this.pendingConfig.autoWinner !== 'red' &&
         this.pendingConfig.autoWinner !== 'blue' &&
@@ -1177,17 +1216,21 @@ export class MatchEngine {
     }
 
     // Shift scoring state — computed from the game phase, which survives
-    // pauses (a paused match stays in its pre-pause sub-period)
+    // pauses (a paused match stays in its pre-pause sub-period). A challenge
+    // run has no shifts: both goals stay active, and asking for a sub-period
+    // would give a nonsense answer, since shift boundaries are measured back
+    // from a 140 s teleop this run doesn't have.
     const effectivePhase = this.phase === 'paused' ? (this.prePausePhase ?? undefined) : this.phase;
-    const subPeriod = this.config
-      ? getMatchSubPeriod(effectivePhase, this.remainingTime, this.config.teleopDuration)
+    const shifts = this.config && !isChallengeConfig(this.config);
+    const subPeriod = shifts
+      ? getMatchSubPeriod(effectivePhase, this.remainingTime, this.config!.teleopDuration)
       : null;
-    const inactiveGoalAlliance = this.config
+    const inactiveGoalAlliance = shifts
       ? getAllianceShiftState(
           effectivePhase,
           this.remainingTime,
-          this.config.teleopDuration,
-          this.config.endgameDuration,
+          this.config!.teleopDuration,
+          this.config!.endgameDuration,
           this.autoWinnerAlliance,
         )
       : null;

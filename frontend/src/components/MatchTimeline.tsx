@@ -1,15 +1,31 @@
 import { useState, useEffect, useMemo } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
+import Chip from '@mui/material/Chip';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormControl from '@mui/material/FormControl';
 import FormLabel from '@mui/material/FormLabel';
 import Radio from '@mui/material/Radio';
 import RadioGroup from '@mui/material/RadioGroup';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { Alliance, MatchConfig, MatchPhase, AutoWinnerMode } from '../../../src/types';
+import {
+  Alliance,
+  MatchConfig,
+  MatchPhase,
+  AutoWinnerMode,
+  ChallengeTiming,
+  MatchFormat,
+  CHALLENGE_DEFAULT_DURATION,
+  CHALLENGE_MIN_DURATION,
+  CHALLENGE_MAX_DURATION,
+  isChallengeConfig,
+} from '../../../src/types';
 import { sendUpdateMatchConfig } from '../hooks/useBackend';
+import { CHALLENGE_COLOR } from '../utils/matchFormat';
 
 // ── Colors ──────────────────────────────────────────────────────────
 const RED_SOLID = '#ef5350';
@@ -18,6 +34,9 @@ const NEUTRAL_COLOR = '#66bb6a'; // Both hubs active (auto, transition)
 const ENDGAME_COLOR = '#ffa726'; // End game — gold/orange
 const PAUSE_COLOR = '#9e9e9e';
 const SKIPPED_COLOR = '#bdbdbd'; // Greyed-out auto when skipped
+
+/** Window lengths offered as one-tap chips. */
+const CHALLENGE_PRESETS = [30, 45, 60, 90, 120];
 
 // ── REBUILT shift timing within teleop ──────────────────────────────
 const TRANSITION_DURATION = 10;
@@ -158,7 +177,189 @@ interface MatchTimelineProps {
   remainingTime?: number;
 }
 
-export function MatchTimeline({
+/** What the field is about to run. An official match and a speed challenge
+ *  share the lifecycle but nothing else, so they get separate bars. */
+export function MatchTimeline(props: MatchTimelineProps) {
+  return isChallengeConfig(props.config) ? <ChallengeTimeline {...props} /> : <OfficialTimeline {...props} />;
+}
+
+/** Switch between a regulation match and a field event. Config mode only —
+ *  the format is fixed once a match starts. */
+function FormatSwitch({ config, disabled }: { config: MatchConfig; disabled?: boolean }) {
+  const format: MatchFormat = config.format ?? 'official';
+
+  const handleChange = (next: MatchFormat | null) => {
+    if (!next || next === format) return;
+    if (next === 'challenge') {
+      sendUpdateMatchConfig({
+        ...config,
+        format: 'challenge',
+        teleopDuration: CHALLENGE_DEFAULT_DURATION,
+        challengeTiming: 'window',
+      });
+    } else {
+      sendUpdateMatchConfig({ ...config, format: 'official' });
+    }
+  };
+
+  return (
+    <ToggleButtonGroup
+      exclusive
+      size="small"
+      value={format}
+      disabled={disabled}
+      onChange={(_, next) => handleChange(next as MatchFormat | null)}
+    >
+      <ToggleButton value="official" sx={{ px: 2 }}>
+        Official Match
+      </ToggleButton>
+      <ToggleButton
+        value="challenge"
+        sx={{ px: 2, '&.Mui-selected': { backgroundColor: CHALLENGE_COLOR, color: '#fff' } }}
+      >
+        Speed Challenge
+      </ToggleButton>
+    </ToggleButtonGroup>
+  );
+}
+
+/**
+ * A speed challenge is one enabled window — no auto, no shifts, no endgame —
+ * so it gets one bar instead of eight segments. In progress mode the same bar
+ * carries the run's progress cursor.
+ */
+function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchTimelineProps) {
+  const isProgressMode = progress !== undefined;
+  const duration = config.teleopDuration;
+  const timing: ChallengeTiming = config.challengeTiming ?? 'window';
+
+  const setDuration = (seconds: number) => {
+    const clamped = Math.min(CHALLENGE_MAX_DURATION, Math.max(CHALLENGE_MIN_DURATION, seconds));
+    if (clamped === duration) return;
+    sendUpdateMatchConfig({ ...config, teleopDuration: clamped });
+  };
+
+  const barLabel = isProgressMode
+    ? `${Math.ceil(Math.max(0, remainingTime ?? 0))}s`
+    : timing === 'stopwatch'
+      ? `STOPWATCH — ${formatDuration(duration)} CAP`
+      : `SPEED CHALLENGE — ${formatDuration(duration)}`;
+
+  return (
+    <Box sx={{ mb: isProgressMode ? 0 : 2 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          height: isProgressMode ? 32 : 48,
+          borderRadius: 1,
+          overflow: 'hidden',
+          border: 1,
+          borderColor: 'divider',
+          userSelect: 'none',
+          opacity: disabled ? 0.5 : 1,
+          position: 'relative',
+        }}
+      >
+        <Box
+          sx={{
+            flex: 1,
+            backgroundColor: CHALLENGE_COLOR,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Typography sx={{ ...phaseLabelSx, fontSize: isProgressMode ? '0.65rem' : '0.75rem' }}>{barLabel}</Typography>
+        </Box>
+
+        {isProgressMode && (
+          <Box
+            sx={{
+              position: 'absolute',
+              left: `${Math.min(100, Math.max(0, progress * 100))}%`,
+              right: 0,
+              top: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0,0,0,0.45)',
+              borderLeft: '2px solid #fff',
+              pointerEvents: 'none',
+              transition: 'left 0.3s linear',
+            }}
+          />
+        )}
+      </Box>
+
+      {!isProgressMode && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 1 }}>
+          <FormatSwitch config={config} disabled={disabled} />
+
+          <Box>
+            <FormLabel sx={{ fontSize: '0.75rem', display: 'block', mb: 0.5 }}>
+              Window — robots are enabled for this long
+            </FormLabel>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+              {CHALLENGE_PRESETS.map(seconds => (
+                <Chip
+                  key={seconds}
+                  label={formatDuration(seconds)}
+                  size="small"
+                  color={seconds === duration ? 'primary' : 'default'}
+                  variant={seconds === duration ? 'filled' : 'outlined'}
+                  disabled={disabled}
+                  onClick={() => setDuration(seconds)}
+                />
+              ))}
+              <Button
+                size="small"
+                disabled={disabled || duration <= CHALLENGE_MIN_DURATION}
+                onClick={() => setDuration(duration - 5)}
+              >
+                −5s
+              </Button>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', minWidth: 48, textAlign: 'center' }}>
+                {formatDuration(duration)}
+              </Typography>
+              <Button
+                size="small"
+                disabled={disabled || duration >= CHALLENGE_MAX_DURATION}
+                onClick={() => setDuration(duration + 5)}
+              >
+                +5s
+              </Button>
+            </Box>
+          </Box>
+
+          <FormControl disabled={disabled}>
+            <FormLabel sx={{ fontSize: '0.75rem' }}>Timing</FormLabel>
+            <RadioGroup
+              row
+              value={timing}
+              onChange={e => sendUpdateMatchConfig({ ...config, challengeTiming: e.target.value as ChallengeTiming })}
+            >
+              <FormControlLabel
+                value="window"
+                control={<Radio size="small" />}
+                label={<Typography variant="body2">Laps in the window</Typography>}
+              />
+              <FormControlLabel
+                value="stopwatch"
+                control={<Radio size="small" />}
+                label={<Typography variant="body2">Stopwatch — staff press Finish</Typography>}
+              />
+            </RadioGroup>
+            <Typography variant="caption" color="text.secondary">
+              {timing === 'window'
+                ? 'Clock counts down; the buzzer ends the run. Staff tally laps as they happen.'
+                : 'Clock counts up; the window above is the cap, and running it out is a DNF.'}
+            </Typography>
+          </FormControl>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+function OfficialTimeline({
   config,
   disabled,
   autoWinnerAlliance,
@@ -396,6 +597,11 @@ export function MatchTimeline({
       )}
 
       {/* ── Controls (config mode only) ──────────────────────────── */}
+      {!isProgressMode && (
+        <Box sx={{ mt: 1.5 }}>
+          <FormatSwitch config={config} disabled={disabled} />
+        </Box>
+      )}
       {!isProgressMode && (
         <Box sx={{ display: 'flex', gap: 3, mt: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <FormControlLabel

@@ -64,6 +64,7 @@ import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
+import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR } from '../utils/matchFormat';
 
 // ── Phase display helpers ───────────────────────────────────────────
 
@@ -78,18 +79,6 @@ const PHASE_BG: Record<MatchPhase, string> = {
   teleop: 'rgba(102,187,106,0.10)',
   endgame: 'rgba(255,167,38,0.12)',
   postMatch: 'transparent',
-};
-
-const phaseLabels: Record<MatchPhase, string> = {
-  idle: 'Idle',
-  created: 'Match Created',
-  countdown: 'Countdown',
-  auto: 'Autonomous',
-  autoPause: 'Pause',
-  paused: 'Paused',
-  teleop: 'Teleoperated',
-  endgame: 'Endgame',
-  postMatch: 'Post-Match',
 };
 
 /** Muted page background; during teleop shifts, tint by alliance colour. */
@@ -288,7 +277,7 @@ export function MatchControlPage() {
             Match Control
           </Typography>
           <Chip
-            label={phaseLabels[phase]}
+            label={phaseLabel(phase, matchState.config)}
             sx={{
               fontWeight: 'bold',
               color: activeColor,
@@ -455,10 +444,10 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
       <StaffPanel staffStates={staffStates} readyRequested={readyRequested} />
 
       {/* Match Config */}
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 2, ...(isChallengeConfig(config) && { borderLeft: `6px solid ${CHALLENGE_COLOR}` }) }}>
         <CardContent>
           <Typography variant="h6" sx={{ mb: 1 }}>
-            Match Configuration
+            {isChallengeConfig(config) ? `${formatName(config)} Setup` : 'Match Configuration'}
           </Typography>
           <MatchTimeline config={config} />
         </CardContent>
@@ -723,7 +712,7 @@ function ActiveMatchView({
         <CardContent>
           <Box sx={{ textAlign: 'center', mb: 1 }}>
             <Chip
-              label={awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabels[phase]}
+              label={awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabel(phase, config)}
               sx={{
                 fontSize: '1.2rem',
                 py: 2.5,

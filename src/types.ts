@@ -953,6 +953,32 @@ export type MatchPhase =
 
 export type AutoWinnerMode = 'red' | 'blue' | 'scores' | 'pause';
 
+/** What kind of thing the field is running.
+ *  - `official` — a REBUILT match on official timing. The only format whose
+ *    durations are fixed and non-negotiable.
+ *  - `challenge` — a field event ("speed challenge", obstacle course): robots
+ *    are enabled for a host-chosen window with no auto, no shifts and no
+ *    endgame. Laps and penalties are tallied by hand. */
+export type MatchFormat = 'official' | 'challenge';
+
+/** How a challenge run is timed.
+ *  - `window` — the clock counts down from the configured duration and the
+ *    buzzer ends it. "How many laps in X seconds."
+ *  - `stopwatch` — the clock counts up and staff press Finish; the duration
+ *    is a cap, and running it out is a DNF. */
+export type ChallengeTiming = 'window' | 'stopwatch';
+
+/** Bounds on a challenge window. Long enough to be a real run, short enough
+ *  that a forgotten stopwatch run doesn't hold the field all afternoon. */
+export const CHALLENGE_MIN_DURATION = 10;
+export const CHALLENGE_MAX_DURATION = 300;
+export const CHALLENGE_DEFAULT_DURATION = 60;
+
+/** One penalty costs a lap in window timing, or five seconds on the clock in
+ *  stopwatch timing. */
+export const CHALLENGE_PENALTY_LAPS = 1;
+export const CHALLENGE_PENALTY_SECONDS = 5;
+
 export type MatchConfig = {
   autoDuration: number;
   teleopDuration: number;
@@ -960,7 +986,17 @@ export type MatchConfig = {
   pauseDuration: number;
   skipAuto?: boolean;
   autoWinner?: AutoWinnerMode;
+  /** Absent means `official` — every match that predates the challenge format. */
+  format?: MatchFormat;
+  /** Only meaningful when `format` is `challenge`. Absent means `window`. */
+  challengeTiming?: ChallengeTiming;
 };
+
+/** True for anything that isn't a regulation match. Centralised so the
+ *  display code never has to spell out the default-is-official rule. */
+export function isChallengeConfig(config: Pick<MatchConfig, 'format'> | undefined): boolean {
+  return config?.format === 'challenge';
+}
 
 /** A position within a match: alliance + slot number. Semantically distinct from StationName
  *  (which identifies a physical radio slot). A physical station "slot6" could be mapped to
@@ -1190,6 +1226,9 @@ export function isUpdateMatchConfig(msg: unknown): msg is UpdateMatchConfig {
   if (typeof m.config.pauseDuration !== 'number') return false;
   if (m.config.skipAuto !== undefined && typeof m.config.skipAuto !== 'boolean') return false;
   if (m.config.autoWinner !== undefined && !['red', 'blue', 'scores', 'pause'].includes(m.config.autoWinner))
+    return false;
+  if (m.config.format !== undefined && !['official', 'challenge'].includes(m.config.format)) return false;
+  if (m.config.challengeTiming !== undefined && !['window', 'stopwatch'].includes(m.config.challengeTiming))
     return false;
   return true;
 }

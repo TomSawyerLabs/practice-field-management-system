@@ -180,3 +180,33 @@ describe('MatchTimeline.classifyGoal', () => {
     expect(inactive).toBe('blue');
   });
 });
+
+describe('challenge runs have no shifts', () => {
+  const s = (seconds: number) => T0 + seconds * 1000;
+  const CHALLENGE: MatchConfig = {
+    autoDuration: 0,
+    teleopDuration: 60,
+    endgameDuration: 0,
+    pauseDuration: 0,
+    skipAuto: true,
+    format: 'challenge',
+    challengeTiming: 'window',
+  };
+
+  test('no sub-period is derived from the window', () => {
+    const tl = new MatchTimeline();
+    tl.record(state('teleop', 60, { config: CHALLENGE }), T0);
+    expect(tl.at(s(1))?.subPeriod).toBeNull();
+    // 25 s in would be "shift 1" if the window were read as a teleop
+    expect(tl.at(s(25))?.subPeriod).toBeNull();
+    expect(tl.at(s(55))?.subPeriod).toBeNull();
+  });
+
+  test('neither goal ever goes inactive, so balls always count', () => {
+    const tl = new MatchTimeline();
+    tl.record(state('teleop', 60, { config: CHALLENGE, autoWinnerAlliance: 'red' }), T0);
+    expect(tl.at(s(25))?.inactiveGoal).toBeNull();
+    expect(tl.classifyGoal('red', s(25))).toBe('active');
+    expect(tl.classifyGoal('blue', s(25))).toBe('active');
+  });
+});

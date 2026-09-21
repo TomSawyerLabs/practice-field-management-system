@@ -1,4 +1,4 @@
-import type { Alliance, MatchConfig, MatchPhase, MatchState } from './types.js';
+import { isChallengeConfig, type Alliance, type MatchConfig, type MatchPhase, type MatchState } from './types.js';
 import { getAllianceShiftState, getMatchSubPeriod, type MatchSubPeriod } from './shiftState.js';
 
 /**
@@ -159,6 +159,7 @@ export class MatchTimeline {
     const remaining = s.frozen ? s.remaining : Math.max(0, s.remaining - (t - s.at) / 1000);
     const teleop = s.config?.teleopDuration ?? 0;
     const endgame = s.config?.endgameDuration ?? 0;
+    const shifts = !!s.config && !isChallengeConfig(s.config);
     return {
       at: t,
       phase: s.phase,
@@ -166,8 +167,11 @@ export class MatchTimeline {
       remaining,
       autoWinner: s.autoWinner,
       config: s.config,
-      subPeriod: s.config ? getMatchSubPeriod(s.gamePhase, remaining, teleop) : null,
-      inactiveGoal: s.config ? getAllianceShiftState(s.gamePhase, remaining, teleop, endgame, s.autoWinner) : null,
+      // A challenge run has no shifts. Deriving them anyway would read the
+      // window as a 140 s teleop, invent a shift, and switch a goal off —
+      // silently refusing balls scored during a field event.
+      subPeriod: shifts ? getMatchSubPeriod(s.gamePhase, remaining, teleop) : null,
+      inactiveGoal: shifts ? getAllianceShiftState(s.gamePhase, remaining, teleop, endgame, s.autoWinner) : null,
       phaseStartedAt: s.phaseStartedAt,
     };
   }

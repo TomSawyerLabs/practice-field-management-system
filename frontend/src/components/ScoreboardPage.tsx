@@ -21,6 +21,7 @@ import type { Alliance, ScoreBatch, StationName, TelemetryUpdate } from '../../.
 import { StationNameList } from '../../../src/types';
 import { getAllianceShiftState, getAllianceScoringShifts, getMatchSubPeriod } from '../utils/shiftState';
 import type { MatchSubPeriod } from '../utils/shiftState';
+import { isChallengeConfig, formatName, CHALLENGE_COLOR } from '../utils/matchFormat';
 import { MatchTimeline } from './MatchTimeline';
 import { MatchTimer, getActiveColor } from './MatchTimer';
 import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
@@ -63,6 +64,8 @@ function getMatchBgColor(matchState: ReturnType<typeof useMatchState>): string {
     case 'autoPause':
       return BG_GREY;
     case 'teleop': {
+      // A challenge run has no shifts to colour by — it's green start to buzzer.
+      if (isChallengeConfig(matchState.config)) return BG_GREEN;
       const inactive = getAllianceShiftState(
         phase,
         matchState.remainingTime,
@@ -327,6 +330,8 @@ export function ScoreboardPage() {
     (alliance: Alliance): boolean => {
       if (!matchState) return true;
       if (matchState.phase !== 'teleop') return true;
+      // No shifts in a challenge run — both goals stay live the whole window.
+      if (isChallengeConfig(matchState.config)) return true;
 
       const inactive = getAllianceShiftState(
         matchState.phase,
@@ -400,6 +405,7 @@ export function ScoreboardPage() {
   // (must be before the early return so hook count is stable)
   const currentSubPeriod: MatchSubPeriod | null = useMemo(() => {
     if (!matchState || !isMatchMode) return null;
+    if (isChallengeConfig(matchState.config)) return null;
     return getMatchSubPeriod(matchState.phase, displayRemaining, matchState.config.teleopDuration);
   }, [matchState, isMatchMode, displayRemaining]);
 
@@ -934,7 +940,27 @@ function CenterMatchDisplay({
   if (matchState?.phase === 'postMatch' && matchState.shareToken) {
     return <PostMatchQR token={matchState.shareToken} />;
   }
-  return <MatchTimer remainingTime={remainingTime} color={color} pulse={pulse} fontSize={fontSize} />;
+  const timer = <MatchTimer remainingTime={remainingTime} color={color} pulse={pulse} fontSize={fontSize} />;
+  if (!isChallengeConfig(matchState?.config)) return timer;
+  // The crowd is looking at a clock that isn't a match clock — say so, or the
+  // TV reads as a 0–0 match that ended early.
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
+      <Box
+        sx={{
+          color: CHALLENGE_COLOR,
+          fontWeight: 800,
+          letterSpacing: '0.12em',
+          fontSize: 'clamp(0.7rem, 1.4vw, 1.1rem)',
+          textTransform: 'uppercase',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {formatName(matchState?.config)}
+      </Box>
+      {timer}
+    </Box>
+  );
 }
 
 /** After the match: a QR code to this match's summary + video, so a drive team

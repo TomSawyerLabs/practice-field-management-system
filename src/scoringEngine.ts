@@ -239,10 +239,9 @@ export class ScoringEngine {
         outsideMatch = true;
       }
 
-      if (moment?.config) {
-        matchSubPeriod =
-          getMatchSubPeriod(moment.gamePhase, moment.remaining, moment.config.teleopDuration) ?? undefined;
-      }
+      // The timeline has already worked this out for the instant in question,
+      // including "a challenge run has no sub-periods".
+      matchSubPeriod = moment?.subPeriod ?? undefined;
     }
 
     // Phase restrictions on the element (match mode only)
