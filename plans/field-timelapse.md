@@ -208,6 +208,99 @@ Earlier decisions, unchanged:
   encoded straight to h264.
 - Retime to 30 fps playback at capture time, never store a 1 fps timebase.
 
+## Home Assistant light control at TSL (2026-09-20)
+
+Decisions from Cameron: target **`light.all_lights`**, **snapshot and
+restore** around each frame, and **only when the shop is empty** — "if people
+are here, the lights are already on."
+
+What was checked, so a future session does not redo it:
+
+- **steamboat already reaches HA.** `http://homeassistant.tsl:8123` answers
+  200, `/api/` answers 401 without a token. Note the bare name
+  `homeassistant` does **not** resolve on steamboat; `homeassistant.tsl` does
+  (2600:1700:459:8a1f::793, also 10.255.0.9). No network or Caddy change is
+  needed.
+- **The bay lights are on/off only** (`supported_color_modes: ["onoff"]`), so
+  there is no brightness to set — "full blast" just means on.
+- **The groups hide per-fixture state.** `light.all_lights` reported "on"
+  while light 2 of every row was off. So a snapshot must list the 32 leaf
+  fixtures; snapshotting the group and restoring it would turn the normally-
+  off ones on. Tree: `all_lights → main_lights + edge_lights → per-bay
+main/edge groups → light.bay_{12,23,34,45}_{north,south}_{1..4}`.
+
+### The three calls to paste into Admin → Field Timelapse
+
+Headers on each: `Authorization: Bearer <long-lived token>` — from a
+**non-admin** HA user if possible, since HA tokens are not scoped.
+
+**Before the shutter, call 1** — `POST`
+`http://homeassistant.tsl:8123/api/services/scene/create`
+
+```json
+{
+  "scene_id": "pfms_timelapse_restore",
+  "snapshot_entities": [
+    "light.bay_12_north_1",
+    "light.bay_12_north_2",
+    "light.bay_12_north_3",
+    "light.bay_12_north_4",
+    "light.bay_12_south_1",
+    "light.bay_12_south_2",
+    "light.bay_12_south_3",
+    "light.bay_12_south_4",
+    "light.bay_23_north_1",
+    "light.bay_23_north_2",
+    "light.bay_23_north_3",
+    "light.bay_23_north_4",
+    "light.bay_23_south_1",
+    "light.bay_23_south_2",
+    "light.bay_23_south_3",
+    "light.bay_23_south_4",
+    "light.bay_34_north_1",
+    "light.bay_34_north_2",
+    "light.bay_34_north_3",
+    "light.bay_34_north_4",
+    "light.bay_34_south_1",
+    "light.bay_34_south_2",
+    "light.bay_34_south_3",
+    "light.bay_34_south_4",
+    "light.bay_45_north_1",
+    "light.bay_45_north_2",
+    "light.bay_45_north_3",
+    "light.bay_45_north_4",
+    "light.bay_45_south_1",
+    "light.bay_45_south_2",
+    "light.bay_45_south_3",
+    "light.bay_45_south_4"
+  ]
+}
+```
+
+**Before the shutter, call 2** — `POST`
+`http://homeassistant.tsl:8123/api/services/light/turn_on`
+
+```json
+{ "entity_id": "light.all_lights" }
+```
+
+**After the shutter** — `POST`
+`http://homeassistant.tsl:8123/api/services/scene/turn_on`
+
+```json
+{ "entity_id": "scene.pfms_timelapse_restore" }
+```
+
+The scene is re-created on every capture, so it does not matter that
+`scene.create` scenes do not survive an HA restart.
+
+### Not done, deliberately
+
+The calls above were **not** fired to test them: they turn on every light in
+the shop, which is a physical change to Cameron's building and needs his
+per-change say-so (and a time of day he picks). "Capture now (with lights)"
+in the admin page is the way to try it once the token is in.
+
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
@@ -224,9 +317,14 @@ Earlier decisions, unchanged:
 - [x] Verified end to end against the live field stream.
 - [x] Viewer: thumbnails, day browser, in-page player, film library,
       date-range practice films (2026-09-20).
-- [ ] Deploy to steamboat, switch it on, and write the Home Assistant
-      pre/post actions for the bay lights (needs a long-lived HA token and
-      Cameron's per-change authorisation for anything touching HA).
+- [x] Worked out the Home Assistant wiring (2026-09-20): reachability,
+      on/off-only lights, per-fixture snapshot, and the three calls to paste
+      (above). Multi-call slots and empty-shop-only light control are built.
+- [x] Fixed a leak found on the way: the settings message every station page
+      receives carried the action headers, so a token would have gone out on
+      the field network. Masked now.
+- [ ] Cameron: create the long-lived HA token and paste the three calls in.
+- [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
       estimate and settle the retention numbers.
 
