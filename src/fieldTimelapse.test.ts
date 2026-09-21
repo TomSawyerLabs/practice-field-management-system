@@ -51,16 +51,24 @@ describe('isTimelapseConfig', () => {
     expect(ok({ dailyTimes: ['09:60'] })).toBe(false);
   });
   test('an action needs a real http(s) URL and a known method', () => {
-    expect(ok({ preAction: { method: 'POST', url: 'http://ha.local/api/services/light/turn_on' } })).toBe(true);
-    expect(ok({ preAction: { method: 'DELETE' as 'POST', url: 'http://ha.local/x' } })).toBe(false);
-    expect(ok({ preAction: { method: 'POST', url: 'file:///etc/passwd' } })).toBe(false);
+    expect(ok({ preActions: [{ method: 'POST', url: 'http://ha.local/api/services/light/turn_on' }] })).toBe(true);
+    expect(ok({ preActions: [{ method: 'DELETE' as 'POST', url: 'http://ha.local/x' }] })).toBe(false);
+    expect(ok({ preActions: [{ method: 'POST', url: 'file:///etc/passwd' }] })).toBe(false);
+  });
+  test('a slot takes a short list of calls, not an unbounded one', () => {
+    const call = { method: 'POST' as const, url: 'http://ha.local/x' };
+    expect(ok({ preActions: [call, call] })).toBe(true);
+    expect(ok({ preActions: [call, call, call, call] })).toBe(true);
+    expect(ok({ preActions: [call, call, call, call, call] })).toBe(false);
   });
   test('header values may not smuggle in extra headers', () => {
-    expect(ok({ preAction: { method: 'GET', url: 'http://x/y', headers: { Authorization: 'Bearer t' } } })).toBe(true);
-    expect(ok({ preAction: { method: 'GET', url: 'http://x/y', headers: { Authorization: 'a\r\nX-Evil: 1' } } })).toBe(
-      false,
+    expect(ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'Bearer t' } }] })).toBe(
+      true,
     );
-    expect(ok({ preAction: { method: 'GET', url: 'http://x/y', headers: { 'Bad Name': 'v' } } })).toBe(false);
+    expect(
+      ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'a\r\nX-Evil: 1' } }] }),
+    ).toBe(false);
+    expect(ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { 'Bad Name': 'v' } }] })).toBe(false);
   });
   test('quality and retention are bounded', () => {
     expect(ok({ activeCrf: 13 })).toBe(false);
@@ -76,21 +84,23 @@ describe('timelapse action secrets', () => {
   const stored = (): SetupSettings => ({
     timelapse: {
       ...TIMELAPSE_DEFAULTS,
-      preAction: {
-        method: 'POST',
-        url: 'http://homeassistant.tsl:8123/api/services/light/turn_on',
-        headers: { Authorization: 'Bearer real-token', 'X-Other': 'plain' },
-        body: '{"entity_id":"light.bay_1_2_lights"}',
-      },
-      postAction: { method: 'POST', url: 'http://homeassistant.tsl:8123/api/services/scene/turn_on' },
+      preActions: [
+        {
+          method: 'POST',
+          url: 'http://homeassistant.tsl:8123/api/services/light/turn_on',
+          headers: { Authorization: 'Bearer real-token', 'X-Other': 'plain' },
+          body: '{"entity_id":"light.all_lights"}',
+        },
+      ],
+      postActions: [{ method: 'POST', url: 'http://homeassistant.tsl:8123/api/services/scene/turn_on' }],
     },
   });
 
   test('header values are masked on the way out, everything else is kept', () => {
     const out = redactSetupSettings(stored());
-    expect(out.timelapse!.preAction!.headers).toEqual({ Authorization: SECRET_KEPT, 'X-Other': SECRET_KEPT });
-    expect(out.timelapse!.preAction!.url).toBe('http://homeassistant.tsl:8123/api/services/light/turn_on');
-    expect(out.timelapse!.preAction!.body).toBe('{"entity_id":"light.bay_1_2_lights"}');
+    expect(out.timelapse!.preActions![0].headers).toEqual({ Authorization: SECRET_KEPT, 'X-Other': SECRET_KEPT });
+    expect(out.timelapse!.preActions![0].url).toBe('http://homeassistant.tsl:8123/api/services/light/turn_on');
+    expect(out.timelapse!.preActions![0].body).toBe('{"entity_id":"light.all_lights"}');
     expect(JSON.stringify(out)).not.toContain('real-token');
   });
 
@@ -104,26 +114,26 @@ describe('timelapse action secrets', () => {
     const current = stored();
     const patch = redactSetupSettings(current);
     const saved = restoreSetupSecrets(patch, current);
-    expect(saved.timelapse!.preAction!.headers).toEqual({ Authorization: 'Bearer real-token', 'X-Other': 'plain' });
+    expect(saved.timelapse!.preActions![0].headers).toEqual({ Authorization: 'Bearer real-token', 'X-Other': 'plain' });
   });
 
   test('a newly typed value replaces the stored one', () => {
     const current = stored();
     const patch = redactSetupSettings(current);
-    patch.timelapse!.preAction!.headers = { Authorization: 'Bearer new-token' };
+    patch.timelapse!.preActions![0].headers = { Authorization: 'Bearer new-token' };
     const saved = restoreSetupSecrets(patch, current);
-    expect(saved.timelapse!.preAction!.headers).toEqual({ Authorization: 'Bearer new-token' });
+    expect(saved.timelapse!.preActions![0].headers).toEqual({ Authorization: 'Bearer new-token' });
   });
 
   test('a masked header with nothing stored behind it is dropped, not saved as the mask', () => {
     const patch: Partial<SetupSettings> = {
       timelapse: {
         ...TIMELAPSE_DEFAULTS,
-        preAction: { method: 'GET', url: 'http://x/y', headers: { Authorization: SECRET_KEPT } },
+        preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: SECRET_KEPT } }],
       },
     };
     const saved = restoreSetupSecrets(patch, {});
-    expect(saved.timelapse!.preAction!.headers).toBeUndefined();
+    expect(saved.timelapse!.preActions![0].headers).toBeUndefined();
   });
 });
 
@@ -184,8 +194,12 @@ describe('FieldTimelapse', () => {
   });
 
   test('an archival frame is a full-resolution JPEG per stream, with the light actions around it', async () => {
-    config.preAction = { method: 'POST', url: 'http://lights.invalid/on', body: '{"brightness_pct":100}' };
-    config.postAction = { method: 'POST', url: 'http://lights.invalid/restore' };
+    // Home Assistant's shape: snapshot, then turn on, then restore after.
+    config.preActions = [
+      { method: 'POST', url: 'http://lights.invalid/snapshot', body: '{"scene_id":"pfms_restore"}' },
+      { method: 'POST', url: 'http://lights.invalid/on', body: '{"entity_id":"light.all_lights"}' },
+    ];
+    config.postActions = [{ method: 'POST', url: 'http://lights.invalid/restore' }];
     calls.length = 0;
 
     const entry = await timelapse.captureFrame('manual', true);
@@ -195,9 +209,13 @@ describe('FieldTimelapse', () => {
     expect(entry.files).toHaveLength(1);
     expect(entry.files[0].bytes).toBeGreaterThan(1000);
     expect(timelapse.filePath('frame', entry.files[0].file)).toBeTruthy();
-    // Pre, then post — and the body is passed through untouched.
-    expect(calls.map(c => c.url)).toEqual(['http://lights.invalid/on', 'http://lights.invalid/restore']);
-    expect(calls[0].body).toBe('{"brightness_pct":100}');
+    // Both pre calls in order, then the post one — bodies passed through.
+    expect(calls.map(c => c.url)).toEqual([
+      'http://lights.invalid/snapshot',
+      'http://lights.invalid/on',
+      'http://lights.invalid/restore',
+    ]);
+    expect(calls[0].body).toBe('{"scene_id":"pfms_restore"}');
   });
 
   test('a busy field still gets its frame, but the lights are left alone', async () => {
@@ -211,8 +229,35 @@ describe('FieldTimelapse', () => {
     expect(calls).toHaveLength(0);
   });
 
+  test('robots on the field leave the lights alone too — they are already on', async () => {
+    // Its own instance: telemetry here would otherwise start the fast
+    // timelapse and leak presence into the tests that follow.
+    const seen: string[] = [];
+    const occupied = new FieldTimelapse({
+      directory: dir,
+      ffmpegPath: ffmpeg,
+      getStreams: () => [{ name: 'All field', url: source, enabled: true }],
+      getConfig: () => config,
+      isAvailable: () => true,
+      isFieldBusy: () => false,
+      inputPrefixArgs: ['-re', '-stream_loop', '-1'],
+      tickMs: 60_000,
+      fetchImpl: async url => {
+        seen.push(String(url));
+        return { ok: true, status: 200 };
+      },
+    });
+    occupied.onTelemetry();
+    const entry = await occupied.captureFrame('manual', true);
+    await occupied.stop();
+
+    expect(entry.lights).toBe('skipped-field-in-use');
+    expect(entry.files).toHaveLength(1);
+    expect(seen).toHaveLength(0);
+  }, 20_000);
+
   test('the lights are restored even when the capture itself fails', async () => {
-    const good = config.preAction;
+    const good = config.preActions;
     calls.length = 0;
     const broken = new FieldTimelapse({
       directory: dir,
@@ -229,7 +274,7 @@ describe('FieldTimelapse', () => {
     });
     const entry = await broken.captureFrame('manual', true);
     await broken.stop();
-    config.preAction = good;
+    config.preActions = good;
 
     expect(entry.error).toBeTruthy();
     expect(entry.files).toHaveLength(0);
@@ -257,8 +302,8 @@ describe('FieldTimelapse', () => {
   });
 
   test('robots showing up start a timelapse that plays back at 30 fps', async () => {
-    config.preAction = undefined;
-    config.postAction = undefined;
+    config.preActions = undefined;
+    config.postActions = undefined;
     expect(timelapse.getState().capturing).toBe(false);
 
     timelapse.onTelemetry();

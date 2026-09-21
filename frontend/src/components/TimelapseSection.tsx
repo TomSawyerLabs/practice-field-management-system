@@ -51,47 +51,33 @@ function textToHeaders(text: string): { headers?: Record<string, string>; error?
 
 const timeOfDay = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** One pre- or post-capture HTTP call. */
+/** One call in a slot. The parent owns the list; this owns one entry. */
 function ActionEditor({
-  label,
-  help,
   action,
+  position,
   onChange,
 }: {
-  label: string;
-  help: string;
-  action: TimelapseAction | undefined;
-  onChange: (action: TimelapseAction | undefined) => void;
+  action: TimelapseAction;
+  position: string;
+  onChange: (action: TimelapseAction | null) => void;
 }) {
-  // Seeded once; the parent remounts this editor (via `key`) when the saved
+  // Seeded once; the parent remounts these editors (via `key`) when the saved
   // config replaces what is being edited, so there is nothing to sync.
-  const [headerText, setHeaderText] = useState(headersToText(action?.headers));
+  const [headerText, setHeaderText] = useState(headersToText(action.headers));
   const parsed = textToHeaders(headerText);
 
-  if (!action) {
-    return (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-          <strong>{label}:</strong> none. {help}
-        </Typography>
-        <Button size="small" variant="outlined" onClick={() => onChange({ method: 'POST', url: 'http://' })}>
-          Add
-        </Button>
-      </Box>
-    );
-  }
-
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+    <Box
+      sx={{ display: 'flex', flexDirection: 'column', gap: 1, pl: 1, borderLeft: '2px solid', borderColor: 'divider' }}
+    >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-        <Typography variant="subtitle2">{label}</Typography>
-        <Button size="small" color="inherit" sx={{ opacity: 0.7 }} onClick={() => onChange(undefined)}>
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          {position}
+        </Typography>
+        <Button size="small" color="inherit" sx={{ opacity: 0.7 }} onClick={() => onChange(null)}>
           Remove
         </Button>
       </Box>
-      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-        {help}
-      </Typography>
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <TextField
           select
@@ -138,12 +124,63 @@ function ActionEditor({
       <TextField
         size="small"
         label="Body (JSON)"
-        placeholder='{"entity_id":"light.bay_1_2_lights","brightness_pct":100}'
+        placeholder='{"entity_id":"light.all_lights"}'
         multiline
         minRows={2}
         value={action.body ?? ''}
         onChange={e => onChange({ ...action, body: e.target.value || undefined })}
       />
+    </Box>
+  );
+}
+
+/** All the calls in one slot, run in order. Home Assistant needs two before
+ *  the shutter (snapshot, then turn on), which is why this is a list. */
+function ActionListEditor({
+  label,
+  help,
+  actions,
+  resetKey,
+  onChange,
+}: {
+  label: string;
+  help: string;
+  actions: TimelapseAction[] | undefined;
+  resetKey: number;
+  onChange: (actions: TimelapseAction[] | undefined) => void;
+}) {
+  const list = actions ?? [];
+  const set = (next: TimelapseAction[]) => onChange(next.length > 0 ? next : undefined);
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+        <Typography variant="subtitle2">{label}</Typography>
+        <Button
+          size="small"
+          variant="outlined"
+          disabled={list.length >= 4}
+          onClick={() => set([...list, { method: 'POST', url: 'http://' }])}
+        >
+          Add a call
+        </Button>
+        {list.length === 0 && (
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            none
+          </Typography>
+        )}
+      </Box>
+      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+        {help}
+      </Typography>
+      {list.map((a, i) => (
+        <ActionEditor
+          key={`${resetKey}-${i}`}
+          action={a}
+          position={`Call ${i + 1} of ${list.length}`}
+          onChange={next => set(next ? list.map((x, j) => (j === i ? next : x)) : list.filter((_, j) => j !== i))}
+        />
+      ))}
     </Box>
   );
 }
@@ -292,19 +329,19 @@ export function TimelapseSection() {
           first call and turn that scene back on in the second, so they end up exactly as they were.
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <ActionEditor
-            key={`pre-${resetKey}`}
+          <ActionListEditor
             label="Before the shutter"
-            help="Drive the lights to a known level."
-            action={draft.preAction}
-            onChange={a => edit({ preAction: a })}
+            help="Run in order. For Home Assistant: snapshot the lights into a scene, then turn them on."
+            actions={draft.preActions}
+            resetKey={resetKey}
+            onChange={a => edit({ preActions: a })}
           />
-          <ActionEditor
-            key={`post-${resetKey}`}
+          <ActionListEditor
             label="After the shutter"
-            help="Put the lights back the way they were."
-            action={draft.postAction}
-            onChange={a => edit({ postAction: a })}
+            help="Run in order, even if the capture failed. For Home Assistant: turn the snapshot scene back on."
+            actions={draft.postActions}
+            resetKey={resetKey}
+            onChange={a => edit({ postActions: a })}
           />
           <TextField
             size="small"

@@ -428,36 +428,44 @@ Everything is viewable in the admin section itself, no file browser needed:
 ### Lights, and other pre/post actions
 
 Every archival frame looks the same only if the field is lit the same way.
-Rather than teach pFMS about any particular light system, the section takes
-two optional HTTP calls — method, URL, headers, JSON body — fired either
-side of the shutter, with a settle delay in between (default 5 s).
+Rather than teach pFMS about any particular light system, each slot takes a
+short list of HTTP calls — method, URL, headers, JSON body — run in order
+either side of the shutter, with a settle delay in between (default 5 s). A
+list rather than a single call, so a two-step sequence like Home Assistant's
+snapshot-then-turn-on needs nothing built inside Home Assistant.
 
-They are **skipped whenever the field is in use** (a match is running or any
-robot is enabled). The frame is still taken; only the lights are left alone.
-The post action also runs when the capture itself failed, so the lights are
-never left up.
+They only run **when nobody is here**: a running match, an enabled robot, or
+any Driver Station heard from in the last five minutes all skip them. The
+frame is still taken — the lights are simply left as whoever is in the shop
+set them, which is the point, since a shop with people in it already has its
+lights on. The post calls also run when the capture itself failed, so the
+lights are never left up.
 
-For Home Assistant, snapshot the lights into a scene first and restore that
-scene afterwards, so they end up exactly as they were — including off:
+For Home Assistant, snapshot into a scene first and restore that scene
+afterwards, so they end up exactly as they were — including off:
 
 ```
-Before:  POST http://homeassistant.local:8123/api/services/scene/create
-         Authorization: Bearer <long-lived token>
-         {"scene_id":"pfms_timelapse_restore",
-          "snapshot_entities":["light.bay_1_2_lights","light.bay_2_3_lights"]}
+Before the shutter, call 1:
+  POST http://homeassistant.local:8123/api/services/scene/create
+  Authorization: Bearer <long-lived token>
+  {"scene_id":"pfms_timelapse_restore","snapshot_entities":["light.…", …]}
 
-         (then a second call, or a script that does both)
-         POST http://homeassistant.local:8123/api/services/light/turn_on
-         {"entity_id":["light.bay_1_2_lights","light.bay_2_3_lights"],
-          "brightness_pct":100}
+Before the shutter, call 2:
+  POST http://homeassistant.local:8123/api/services/light/turn_on
+  Authorization: Bearer <long-lived token>
+  {"entity_id":"light.all_lights"}
 
-After:   POST http://homeassistant.local:8123/api/services/scene/turn_on
-         Authorization: Bearer <long-lived token>
-         {"entity_id":"scene.pfms_timelapse_restore"}
+After the shutter:
+  POST http://homeassistant.local:8123/api/services/scene/turn_on
+  Authorization: Bearer <long-lived token>
+  {"entity_id":"scene.pfms_timelapse_restore"}
 ```
 
-Only one call fits in each slot, so when two steps are needed (snapshot then
-turn on), point the pre action at a Home Assistant script that does both.
+**Snapshot the individual fixtures, not a group.** A light group's state is
+derived from its members, so snapshotting the group and restoring it turns
+_every_ member on — losing the ones that were deliberately off. List the leaf
+entities in `snapshot_entities` and target whatever you like with
+`light.turn_on`.
 
 **Header values are secrets.** The settings go out to every internal client
 on connect — station pages are not authenticated — so header values are

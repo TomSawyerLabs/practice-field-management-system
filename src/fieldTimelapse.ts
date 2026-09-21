@@ -296,9 +296,9 @@ export class FieldTimelapse {
   /**
    * Take one full-resolution frame per enabled stream.
    *
-   * The light actions are skipped — not the frame — when the field is in use:
-   * a frame lit differently is worth more than a hole in the film, and nobody
-   * wants the lights jumping to full while a robot is driving.
+   * The light actions are skipped — not the frame — whenever anyone is here:
+   * the lights are already on in that case, and a frame lit differently is
+   * worth more than a hole in the film.
    */
   async captureFrame(slot: string, withActions: boolean): Promise<TimelapseFrameEntry> {
     const config = this.config();
@@ -307,26 +307,34 @@ export class FieldTimelapse {
     const entry: TimelapseFrameEntry = { day, slot, at: now, files: [], lights: 'none' };
     this.capturingFrame = true;
     try {
-      const hasActions = config.preAction !== undefined || config.postAction !== undefined;
-      const useActions = withActions && hasActions && !this.opts.isFieldBusy();
-      if (withActions && hasActions && !useActions) entry.lights = 'skipped-field-in-use';
+      const pre = config.preActions ?? [];
+      const post = config.postActions ?? [];
+      const hasActions = pre.length + post.length > 0;
+      // Only ever touch the lights in an empty shop. When anyone is here they
+      // have already turned the lights on, so there is nothing to gain and a
+      // flicker to lose.
+      const occupied = this.opts.isFieldBusy() || this.robotsPresent();
+      if (withActions && hasActions && occupied) entry.lights = 'skipped-field-in-use';
 
-      if (useActions) {
+      if (!withActions || !hasActions || occupied) {
+        await this.shoot(entry, day, slot);
+      } else {
         try {
-          if (config.preAction) await this.runAction(config.preAction);
+          for (const action of pre) await this.runAction(action);
           entry.lights = 'ran';
           if (config.settleSeconds > 0) await sleep(config.settleSeconds * 1000);
-          await this.shoot(entry, day, slot);
         } catch (err) {
+          // A light that would not come on must not cost us the frame.
           entry.lights = 'failed';
           entry.lightsError = (err as Error).message;
-          // The pre action may have half-run; still capture, still restore.
-          if (entry.files.length === 0) await this.shoot(entry, day, slot).catch(e => (entry.error = errText(e)));
+        }
+        try {
+          await this.shoot(entry, day, slot);
         } finally {
           // Whatever happened above, put the lights back.
-          if (config.postAction) {
+          for (const action of post) {
             try {
-              await this.runAction(config.postAction);
+              await this.runAction(action);
             } catch (err) {
               entry.lights = 'failed';
               entry.lightsError = `restore failed: ${(err as Error).message}`;
@@ -334,8 +342,6 @@ export class FieldTimelapse {
             }
           }
         }
-      } else {
-        await this.shoot(entry, day, slot);
       }
     } finally {
       this.capturingFrame = false;

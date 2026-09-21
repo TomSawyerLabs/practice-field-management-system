@@ -334,9 +334,13 @@ export interface TimelapseConfig {
   activeRetentionDays: number;
   /** Days to keep the daily archival frames; 0 keeps them forever. */
   frameRetentionDays: number;
-  preAction?: TimelapseAction;
-  postAction?: TimelapseAction;
-  /** Seconds between the pre action and the shutter, for lights to settle. */
+  /** Run in order before the shutter. Home Assistant needs two calls to
+   *  snapshot the lights and then turn them on, which is why this is a list
+   *  rather than one call — nothing has to be built inside HA. */
+  preActions?: TimelapseAction[];
+  /** Run in order after the shutter, even if the capture failed. */
+  postActions?: TimelapseAction[];
+  /** Seconds between the pre actions and the shutter, for lights to settle. */
   settleSeconds: number;
 }
 
@@ -353,18 +357,23 @@ export const SECRET_KEPT = '••• unchanged •••';
 
 /** The settings with every secret masked, safe to send to clients. */
 export function redactSetupSettings(settings: SetupSettings): SetupSettings {
-  const mask = (action: TimelapseAction | undefined): TimelapseAction | undefined => {
-    if (!action?.headers) return action;
+  const mask = (action: TimelapseAction): TimelapseAction => {
+    if (!action.headers) return action;
     const headers: Record<string, string> = {};
     for (const name of Object.keys(action.headers)) headers[name] = SECRET_KEPT;
     return { ...action, headers };
   };
   if (!settings.timelapse) return settings;
-  const { preAction, postAction } = settings.timelapse;
-  if (!preAction?.headers && !postAction?.headers) return settings;
+  const { preActions, postActions } = settings.timelapse;
+  const anySecret = [...(preActions ?? []), ...(postActions ?? [])].some(a => a.headers !== undefined);
+  if (!anySecret) return settings;
   return {
     ...settings,
-    timelapse: { ...settings.timelapse, preAction: mask(preAction), postAction: mask(postAction) },
+    timelapse: {
+      ...settings.timelapse,
+      preActions: preActions?.map(mask),
+      postActions: postActions?.map(mask),
+    },
   };
 }
 
@@ -376,11 +385,8 @@ export function redactSetupSettings(settings: SetupSettings): SetupSettings {
  */
 export function restoreSetupSecrets(patch: Partial<SetupSettings>, stored: SetupSettings): Partial<SetupSettings> {
   if (!patch.timelapse) return patch;
-  const unmask = (
-    incoming: TimelapseAction | undefined,
-    old: TimelapseAction | undefined,
-  ): TimelapseAction | undefined => {
-    if (!incoming?.headers) return incoming;
+  const unmask = (incoming: TimelapseAction, old: TimelapseAction | undefined): TimelapseAction => {
+    if (!incoming.headers) return incoming;
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(incoming.headers)) {
       if (value !== SECRET_KEPT) headers[name] = value;
@@ -388,13 +394,15 @@ export function restoreSetupSecrets(patch: Partial<SetupSettings>, stored: Setup
     }
     return { ...incoming, headers: Object.keys(headers).length > 0 ? headers : undefined };
   };
+  // Matched up by position: the admin page edits a list in place, so call n
+  // of the patch is call n of what is stored.
   const old = stored.timelapse;
   return {
     ...patch,
     timelapse: {
       ...patch.timelapse,
-      preAction: unmask(patch.timelapse.preAction, old?.preAction),
-      postAction: unmask(patch.timelapse.postAction, old?.postAction),
+      preActions: patch.timelapse.preActions?.map((a, i) => unmask(a, old?.preActions?.[i])),
+      postActions: patch.timelapse.postActions?.map((a, i) => unmask(a, old?.postActions?.[i])),
     },
   };
 }
@@ -443,8 +451,10 @@ export function isTimelapseConfig(v: unknown): v is TimelapseConfig {
     Number.isInteger(c.frameRetentionDays) &&
     c.frameRetentionDays >= 0 &&
     c.frameRetentionDays <= 3650 &&
-    (c.preAction === undefined || isTimelapseAction(c.preAction)) &&
-    (c.postAction === undefined || isTimelapseAction(c.postAction)) &&
+    (c.preActions === undefined || (Array.isArray(c.preActions) && c.preActions.every(isTimelapseAction))) &&
+    (c.postActions === undefined || (Array.isArray(c.postActions) && c.postActions.every(isTimelapseAction))) &&
+    (c.preActions?.length ?? 0) <= 4 &&
+    (c.postActions?.length ?? 0) <= 4 &&
     typeof c.settleSeconds === 'number' &&
     c.settleSeconds >= 0 &&
     c.settleSeconds <= 120
