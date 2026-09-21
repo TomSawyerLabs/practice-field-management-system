@@ -9,7 +9,9 @@ only ever takes control of stations that have joined. Stations that have
 
 Matches follow the 2026 REBUILT official timing. Durations are **fixed**
 (not user-adjustable) — the only per-match options are _skip autonomous_
-and the _auto winner_ selection.
+and the _auto winner_ selection. (The one exception is the
+[speed challenge](#speed-challenge), a non-match format for field events
+whose window the host does set.)
 
 | Phase       | Duration | Notes                                                                       |
 | ----------- | -------- | --------------------------------------------------------------------------- |
@@ -227,10 +229,66 @@ script; it was mastered to a −3 dB peak with its chime 8 dB below that, so
 regenerate it with more gain if it's too quiet over the field speaker. Edit the constants in that script — or just drop your own
 recordings over the files — if you'd rather have something else.
 
+## Speed Challenge
+
+A **speed challenge** is a field event rather than a match: one robot (or
+two racing each other) is enabled for a window the host chooses, and staff
+tally laps by hand. It exists because a practice field gets used for
+things that aren't matches — obstacle courses, driver-skill runs, anything
+where "go for 60 seconds" is the whole rule set.
+
+Pick it from the format switch on `/match` while setting a match up. The
+window is 30/45/60/90/120 s as one-tap chips, or stepped 5 s at a time
+between 10 s and 5 minutes. Two timing styles:
+
+| Timing      | Clock       | Ends when                              | Ranked by                  |
+| ----------- | ----------- | -------------------------------------- | -------------------------- |
+| `window`    | Counts down | The buzzer                             | Laps, less one per penalty |
+| `stopwatch` | Counts up   | Staff press Finish (window is the cap) | Time, plus 5 s per penalty |
+
+Everything else about a match still applies: the ready check, the 3-2-1
+countdown and horn, E-Stop and A-Stop, pause and resume, video recording,
+and the post-match QR code. What a challenge does **not** have is an
+autonomous period, alliance shifts, an endgame, or an auto winner — so no
+goal ever goes inactive during one, and balls scored count normally.
+
+The format sticks between runs, so an event host picks it once rather than
+every time. The setup card and the TV both say "Speed Challenge" so a run
+can't be mistaken for a 0–0 match.
+
+### Tallying
+
+While a run is going, `/match` shows a large **Lap** button per alliance
+with Undo beside it and a **Penalty** button. Counts travel as deltas, not
+totals, so two people tallying the same run can't overwrite each other,
+and taps before the horn are refused. The tally stays editable through the
+post-match wrap-up — a miscount is always noticed a few seconds too late —
+and corrections made there are written back to the history entry.
+
+In a stopwatch run each alliance gets a **Finish** button, which stops that
+alliance's robot where it stands and records its time; once everyone on the
+field has finished, the run ends rather than waiting out the cap. An
+alliance that never finishes keeps no time at all — a DNF, which ranks
+behind every finish however many laps it managed.
+
+### Leaderboard
+
+The leaderboard is a view over match history, not a store of its own: each
+challenge run's history entry carries its timing and per-alliance tally.
+One row per set of teams showing their best attempt, with the number of
+runs they've had. Window and stopwatch runs are ranked in separate tables —
+they aren't comparable. Ties go to whoever got there first.
+
+It appears on `/match` while the field is idle, and takes over the bottom of
+the scoreboard between runs (top 5) so the TV is the leaderboard while the
+next team lines up.
+
 ## Match History
 
 Finished matches are recorded (teams, per-alliance scores, auto winner,
-end reason, duration) to `match-history.json` (last 100 matches). Duration
+end reason, duration) to `match-history.json` (last 250 matches — a field
+event can put a hundred challenge runs through it in a weekend, and the
+leaderboard reads back from this list). Duration
 is wall-clock from start to end and **includes any time the match spent
 paused**, so it can exceed the sum of the periods. The
 `/match` page shows recent history while the field is idle, including

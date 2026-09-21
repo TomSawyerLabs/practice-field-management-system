@@ -11,6 +11,7 @@ import SmoothieComponent from 'react-smoothie';
 import {
   useScoreState,
   useMatchState,
+  useMatchHistory,
   useTelemetryCallback,
   useWsConnected,
   sendCastReceiverRegister,
@@ -24,6 +25,7 @@ import type { MatchSubPeriod } from '../utils/shiftState';
 import { isChallengeConfig, formatName, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
 import { challengeScore } from '../../../src/types';
 import { MatchTimeline } from './MatchTimeline';
+import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { MatchTimer, getActiveColor } from './MatchTimer';
 import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
 import { MatchAudioBridge, stopAllSounds } from '../hooks/useMatchAudio';
@@ -179,6 +181,7 @@ const COUNTING_PHASES = new Set(['countdown', 'auto', 'autoPause', 'teleop', 'en
 export function ScoreboardPage() {
   const score = useScoreState();
   const matchState = useMatchState();
+  const matchHistory = useMatchHistory();
   const [, setTick] = useState(0);
   const [swapped, setSwapped] = useState(getInitialSwap);
   const [muted, setMuted] = useState(getInitialMuted);
@@ -410,6 +413,12 @@ export function ScoreboardPage() {
     return getMatchSubPeriod(matchState.phase, displayRemaining, matchState.config.teleopDuration);
   }, [matchState, isMatchMode, displayRemaining]);
 
+  // The leaderboard takes the TV between runs — never while one is going,
+  // and only once a challenge has actually been run.
+  const betweenRuns = !matchState || matchState.phase === 'idle' || matchState.phase === 'created';
+  const showLeaderboard =
+    !videoMode && betweenRuns && (matchHistory?.matches ?? []).some(m => m.challenge !== undefined);
+
   // Background — split when only one side is in a match
   const scoreboardBg = getScoreboardBg(matchState, leftInMatch, rightInMatch);
 
@@ -465,7 +474,10 @@ export function ScoreboardPage() {
   // A speed challenge is scored in laps, so the big number is the lap count
   // and the ball score steps aside — nobody at a field event is watching the
   // hubs. Penalties are already deducted.
-  const isChallenge = isChallengeConfig(matchState?.config);
+  // The format sticks between runs, so an idle field still reports a
+  // challenge config. Only swap the ball score for laps once a run is
+  // actually set up — otherwise free-play scoring reads "0 LAPS".
+  const isChallenge = isChallengeConfig(matchState?.config) && matchState?.phase !== 'idle';
   const challengeLaps = (alliance: Alliance): number =>
     challengeScore(matchState?.challenge?.[alliance], matchState?.config.challengeTiming).laps;
   const boxTotal = (alliance: Alliance): number =>
@@ -930,6 +942,26 @@ export function ScoreboardPage() {
               )}
             </Box>
           </Box>
+
+          {/* Between runs at a field event, the TV is the leaderboard. */}
+          {showLeaderboard && (
+            <Box sx={{ px: 3, pb: 2, maxWidth: 900, width: '100%', alignSelf: 'center' }}>
+              <Box
+                sx={{
+                  color: CHALLENGE_COLOR,
+                  fontWeight: 800,
+                  letterSpacing: '0.18em',
+                  textTransform: 'uppercase',
+                  fontSize: 'clamp(0.9rem, 1.8vw, 1.4rem)',
+                  textAlign: 'center',
+                  mb: 1,
+                }}
+              >
+                Speed Challenge Leaderboard
+              </Box>
+              <ChallengeLeaderboard matches={matchHistory?.matches ?? []} compact limit={5} />
+            </Box>
+          )}
 
           {/* Battery voltage for connected robots */}
           <BatteryPanel stationKey={stationKey} leftAlliance={left} matchAlliancesKey={matchAlliancesKey} />

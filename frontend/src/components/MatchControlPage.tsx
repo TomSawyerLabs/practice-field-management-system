@@ -29,6 +29,7 @@ import {
   StaffRoleList,
   StaffRoleLabels,
   MatchHistoryTeam,
+  challengeScore,
 } from '../../../src/types';
 import {
   useMatchState,
@@ -60,6 +61,7 @@ import {
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
+import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
@@ -296,6 +298,7 @@ export function MatchControlPage() {
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
         )}
 
+        {showHistory && <ChallengeLeaderboard matches={matchHistory.matches} />}
         {showHistory && <MatchHistorySection matches={matchHistory.matches} />}
       </Container>
     </Box>
@@ -1364,9 +1367,31 @@ function HistoryScore({
   );
 }
 
+/** A challenge run's result in a history row — laps, or a finishing time. */
+function ChallengeResult({ label, color, align }: { label: string; color: string; align: 'left' | 'right' }) {
+  return (
+    <Typography variant="body2" sx={{ color, fontWeight: 700, fontFamily: 'monospace', textAlign: align }}>
+      {label}
+    </Typography>
+  );
+}
+
+/** What a challenge run's row shows in place of a ball score: laps, or the
+ *  finishing time for a stopwatch run. */
+function challengeResultLabel(match: MatchHistoryEntry, alliance: Alliance): string | null {
+  if (!match.challenge) return null;
+  const tally = match.challenge.tally[alliance];
+  if (!tally) return null;
+  const { laps, seconds } = challengeScore(tally, match.challenge.timing);
+  if (match.challenge.timing === 'stopwatch') return seconds === null ? 'DNF' : `${seconds.toFixed(1)}s`;
+  return `${laps}`;
+}
+
 function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: number }) {
   const redTeams = match.teams.filter(t => t.alliance === 'red');
   const blueTeams = match.teams.filter(t => t.alliance === 'blue');
+  const redChallenge = challengeResultLabel(match, 'red');
+  const blueChallenge = challengeResultLabel(match, 'blue');
   // Winner from the best-known score: human review beats the sensor count
   const redFinal = match.review?.red?.score ?? match.redScore;
   const blueFinal = match.review?.blue?.score ?? match.blueScore;
@@ -1396,19 +1421,33 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
       </Typography>
       <HistoryTeams teams={redTeams} color="error.main" align="right" />
       <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <HistoryScore score={match.redScore} review={match.review?.red} color="error.main" align="right" won={redWon} />
+        {redChallenge !== null ? (
+          <ChallengeResult label={redChallenge} color="error.main" align="right" />
+        ) : (
+          <HistoryScore
+            score={match.redScore}
+            review={match.review?.red}
+            color="error.main"
+            align="right"
+            won={redWon}
+          />
+        )}
       </Box>
       <Typography variant="body2" sx={{ color: 'text.disabled', fontWeight: 300, textAlign: 'center' }}>
-        —
+        {match.challenge ? (match.challenge.timing === 'stopwatch' ? '⏱' : '↻') : '—'}
       </Typography>
       <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
-        <HistoryScore
-          score={match.blueScore}
-          review={match.review?.blue}
-          color="info.main"
-          align="left"
-          won={blueWon}
-        />
+        {blueChallenge !== null ? (
+          <ChallengeResult label={blueChallenge} color="info.main" align="left" />
+        ) : (
+          <HistoryScore
+            score={match.blueScore}
+            review={match.review?.blue}
+            color="info.main"
+            align="left"
+            won={blueWon}
+          />
+        )}
       </Box>
       <HistoryTeams teams={blueTeams} color="info.main" align="left" />
       <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'right', whiteSpace: 'nowrap' }}>

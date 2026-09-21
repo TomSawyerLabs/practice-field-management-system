@@ -12,6 +12,10 @@ and provides:
 - **Self-service matches** — teams join, ready up, and run official-timing
   matches with field-staff ready checks, hold-to-start, E-Stop/A-Stop, and
   match audio ([details](docs/match-system.md))
+- **Speed challenges** — a non-match format for field events: one robot (or
+  two racing) enabled for a window you choose, laps and penalties tallied
+  from a phone, ranked on a leaderboard that takes over the TV between runs
+  ([details](docs/match-system.md#speed-challenge))
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review
   ([details](docs/scoring.md))

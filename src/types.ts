@@ -3049,6 +3049,13 @@ export interface MatchHistoryEntry {
   /** Running total score sampled through the match, for the summary chart.
    *  `t` is seconds since the match started. */
   scoreTimeline?: ScoreSample[];
+  /** Present only for a speed challenge: how the run was timed and what each
+   *  alliance managed. Drives the leaderboard, which is a view over history
+   *  rather than a store of its own. */
+  challenge?: {
+    timing: ChallengeTiming;
+    tally: Partial<Record<Alliance, ChallengeTally>>;
+  };
 }
 
 export interface ScoreSample {

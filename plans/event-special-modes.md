@@ -133,10 +133,15 @@ participating alliance has finished (or the cap expires).
 `elapsed + 5 × penalties`, ascending. A run that never finished in stopwatch
 mode is a DNF and sorts last.
 
-**Leaderboard store.** A new `challengeStore.ts` filed per team, following the
-`practiceStore` precedent rather than polluting field-wide match history (which
-also rolls off at 100 entries — a weekend event could exceed that). Each record
-references its `matchId`/`shareToken` so the leaderboard can link the video.
+**Leaderboard store — changed during the build.** The plan was a separate
+`challengeStore.ts` on the `practiceStore` precedent. It went into
+`MatchHistoryEntry.challenge` instead: history already carries the teams, the
+`matchId`, the `shareToken` and the recordings, so a separate store would have
+duplicated all of it to gain nothing, and the user asked for challenge runs to
+appear in history with video links anyway. The one real objection — a weekend
+event outrunning the 100-entry rolloff — was answered by raising `MAX_ENTRIES`
+to 250. Ranking lives in `src/challengeRanking.ts` (shared with the frontend
+the way `shiftState` is) so it can be unit-tested.
 
 ## Plan / steps
 
@@ -144,7 +149,7 @@ references its `matchId`/`shareToken` so the leaderboard can link the video.
   the `startMatch` and shift-scoring bypasses, host format selector and
   duration stepper, scoreboard/timeline branches so a run doesn't render as a
   broken red-vs-blue match. Shippable alone; this is the literal "countdown,
-  one robot, X seconds" ask. **← current step**
+  one robot, X seconds" ask.
 - **Phase 2 — tally.** Lap and penalty counters per alliance, live on the host
   page (phone-friendly, big tap targets) and the TV.
 - **Phase 3 — stopwatch timing.** Count-up display, per-alliance finish button,
@@ -154,7 +159,26 @@ references its `matchId`/`shareToken` so the leaderboard can link the video.
 
 ## Findings / gotchas
 
-_(nothing yet — populate as the build turns up surprises)_
+1. **`MatchHistoryStore`'s state listener early-returns when the phase hasn't
+   changed** (`if (phase === lastPhase) return;`). A challenge tally is edited
+   during `postMatch` without moving the phase, so the refresh that writes
+   corrections back to the open entry has to sit _above_ that return. First
+   attempt put it below and post-buzzer corrections silently never persisted —
+   caught by the history test, not by hand.
+
+2. **`frontend/eslint` isn't installed** in this checkout (`Cannot find package
+'@eslint/js'`). The pre-commit hook runs typecheck and prettier only, so
+   this doesn't block anything, but don't expect `bunx eslint` to work in
+   `frontend/` without an install.
+
+3. **The full suite takes ~170 s.** Run it in the background; the challenge
+   end-to-end tests add ~14 s of real waiting because the 3 s countdown is
+   driven by real timers (`setInterval`), not fakeable ones.
+
+4. **`AllianceScoreBox` was reusable for laps.** Its `freePlayLabel` prop
+   renders a caption under the big number, so laps + "LAPS" needed no new
+   component — and its chase/flourish animations are all gated on
+   `isFreePlay`, which is false in match mode.
 
 ## Progress log
 
@@ -162,16 +186,30 @@ _(nothing yet — populate as the build turns up surprises)_
 - [x] 2026-09-21 — user chose Option A, corrected the framing to a laps-in-a-
       window speed challenge, asked for head-to-head support, TV leaderboard,
       history+video, and a penalty button.
-- [ ] Phase 1 — the challenge format
-- [ ] Phase 2 — lap and penalty tally
-- [ ] Phase 3 — stopwatch timing
-- [ ] Phase 4 — leaderboard
+- [x] Phase 1 — the challenge format (`cda45c1`). Format switch, window chips
+      and stepper, shift/skip-auto bypasses, purple "not a match" styling on
+      the setup card and the TV.
+- [x] Phase 2 — lap and penalty tally (`60a662c`). Per-alliance Lap/Undo/
+      Penalty on `/match`, laps in place of the ball score on the TV.
+- [x] Phase 3 — stopwatch timing (`60a662c`). Count-up clock, per-alliance
+      Finish, early end once everyone has finished, DNF for the rest.
+- [x] Phase 4 — leaderboard. `MatchHistoryEntry.challenge`,
+      `src/challengeRanking.ts`, the board on `/match` and on the TV between
+      runs, challenge results in history rows.
+- [ ] **Try it on real hardware before the weekend.** Everything so far is
+      typecheck + unit tests; no challenge run has been driven from an actual
+      Driver Station.
 
 ## Open questions for the user
 
 1. Penalty weights are guesses (−1 lap / +5 s). Worth confirming before the
    event, but not blocking.
 2. Is 60 s the right default window? Trivial to change.
+3. Nothing has been exercised against a real DS yet — the countdown, enable
+   and buzzer all run through the normal match path, so they should behave,
+   but a dry run on the field before Saturday is the only way to know.
+4. Not built, and not asked for: a public shareable leaderboard link (the
+   board is on `/match` and the TV only).
 
 ## Things not to do
 

@@ -46,7 +46,9 @@ export function ChallengeTallyPanel({ matchState }: { matchState: MatchState }) 
   const onField = (['red', 'blue'] as Alliance[]).filter(a => teams[a].length > 0);
   if (onField.length === 0) return null;
 
-  const running = phase === 'teleop' || phase === 'endgame' || phase === 'paused';
+  // Finish is only meaningful while the robot is actually driving — the
+  // engine refuses it while paused, so the button follows.
+  const running = phase === 'teleop' || phase === 'endgame';
 
   return (
     <Card sx={{ mb: 2 }}>

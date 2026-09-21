@@ -10,11 +10,27 @@ import type {
   MatchReviewResult,
   StationName,
 } from './types.js';
-import { StationNameList } from './types.js';
+import { StationNameList, isChallengeConfig, type ChallengeTally } from './types.js';
 import { mintShareToken } from './matchEngine.js';
 
+/** Only alliances that actually had a robot on the field are recorded — a
+ *  solo run shouldn't leave an empty second entry on the leaderboard. */
+function challengeTallyFor(
+  teams: MatchHistoryTeam[],
+  challenge: Record<Alliance, ChallengeTally>,
+): Partial<Record<Alliance, ChallengeTally>> {
+  const tally: Partial<Record<Alliance, ChallengeTally>> = {};
+  for (const alliance of ['red', 'blue'] as Alliance[]) {
+    if (teams.some(t => t.alliance === alliance)) tally[alliance] = { ...challenge[alliance] };
+  }
+  return tally;
+}
+
 const DEFAULT_FILE = 'match-history.json';
-const MAX_ENTRIES = 100;
+/** A weekend field event can put a hundred challenge runs through here on its
+ *  own, and the leaderboard is a view over this list — roll off too early and
+ *  the morning's results vanish at lunchtime. */
+const MAX_ENTRIES = 250;
 
 export class MatchHistoryStore {
   private matches: MatchHistoryEntry[] = [];
@@ -60,6 +76,19 @@ export class MatchHistoryStore {
 
     matchEngine.addStateListener(state => {
       const phase = state.phase;
+
+      // A challenge tally stays editable through the post-match wrap-up, so
+      // follow it until the field clears. This sits ABOVE the phase-unchanged
+      // early return below — a staff correction doesn't move the phase.
+      if (phase === 'postMatch' && this.openEntry?.challenge && state.challenge) {
+        const tally = challengeTallyFor(this.openEntry.teams, state.challenge);
+        if (JSON.stringify(tally) !== JSON.stringify(this.openEntry.challenge.tally)) {
+          this.openEntry.challenge.tally = tally;
+          this.persist();
+          this.notifyListeners();
+        }
+      }
+
       if (phase === lastPhase) return;
       const prevPhase = lastPhase;
       lastPhase = phase;
@@ -110,6 +139,12 @@ export class MatchHistoryStore {
           redScore: 0,
           blueScore: 0,
         };
+        if (isChallengeConfig(state.config) && state.challenge) {
+          entry.challenge = {
+            timing: state.config.challengeTiming ?? 'window',
+            tally: challengeTallyFor(teams, state.challenge),
+          };
+        }
         fillScores(entry);
 
         this.matches.push(entry);

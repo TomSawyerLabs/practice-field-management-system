@@ -6,6 +6,7 @@ import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import { MatchTimeline } from './MatchTimeline';
+import { phaseLabel } from '../utils/matchFormat';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
@@ -93,18 +94,6 @@ const phaseColors: Record<MatchPhase, string> = {
   teleop: 'success.main',
   endgame: 'warning.main',
   postMatch: 'text.secondary',
-};
-
-const phaseLabels: Record<MatchPhase, string> = {
-  idle: 'Idle',
-  created: 'Match Created',
-  countdown: 'Countdown',
-  auto: 'Autonomous',
-  autoPause: 'Pause',
-  paused: 'Paused',
-  teleop: 'Teleoperated',
-  endgame: 'Endgame',
-  postMatch: 'Post-Match',
 };
 
 // ── Global E-Stop ───────────────────────────────────────────────────
@@ -434,7 +423,7 @@ function MatchStatusSection() {
       <CardContent>
         <Box sx={{ textAlign: 'center', mb: 2 }}>
           <Chip
-            label={phaseLabels[phase]}
+            label={phaseLabel(phase, matchState.config)}
             sx={{
               fontSize: '1.2rem',
               py: 2.5,

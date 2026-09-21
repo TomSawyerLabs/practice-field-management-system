@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { MatchEngine } from './matchEngine.js';
+import { MatchHistoryStore } from './matchHistoryStore.js';
+import { ScoringEngine } from './scoringEngine.js';
 import { challengeScore, CHALLENGE_MAX_DURATION, CHALLENGE_MIN_DURATION, type MatchConfig } from './types.js';
 
 /** A client asking for a config. Durations are only honoured for a challenge. */
@@ -192,5 +198,37 @@ describe('a challenge run end to end', () => {
     expect(engine.getState().phase).toBe('teleop');
     expect(engine.getState().challenge!.red.finishedAt).toBeUndefined();
     engine.stopMatch();
+  }, 10_000);
+});
+
+describe('a challenge run lands in match history', () => {
+  test('carries its timing and per-alliance tally, and follows post-buzzer corrections', async () => {
+    const file = join(tmpdir(), `pfms-history-${randomUUID()}.json`);
+    const engine = new MatchEngine(() => 5940);
+    const history = new MatchHistoryStore(file);
+    history.attach(engine, new ScoringEngine());
+
+    engine.createMatch();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 10 }));
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    engine.setReady('slot1', true);
+    engine.startMatch();
+
+    await Bun.sleep(3400);
+    engine.challengeAdjust('red', 4);
+    engine.stopMatch();
+
+    const entry = history.getState().matches.at(-1)!;
+    expect(entry.challenge).toEqual({ timing: 'window', tally: { red: { laps: 4, penalties: 0 } } });
+    // Blue never took the field, so it isn't on the board at all
+    expect(entry.challenge!.tally.blue).toBeUndefined();
+
+    // A miscount noticed after the buzzer still makes it into the record
+    engine.challengeAdjust('red', 1);
+    expect(history.getState().matches.at(-1)!.challenge!.tally.red!.laps).toBe(5);
+
+    rmSync(file, { force: true });
   }, 10_000);
 });

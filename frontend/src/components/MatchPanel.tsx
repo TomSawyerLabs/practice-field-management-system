@@ -22,6 +22,7 @@ import {
   sendStationClearAStop,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
+import { phaseLabel } from '../utils/matchFormat';
 
 const phaseColors: Record<MatchPhase, string> = {
   idle: 'text.secondary',
@@ -33,18 +34,6 @@ const phaseColors: Record<MatchPhase, string> = {
   teleop: 'success.main',
   endgame: 'warning.main',
   postMatch: 'text.secondary',
-};
-
-const phaseLabels: Record<MatchPhase, string> = {
-  idle: 'Idle',
-  created: 'Match Created',
-  countdown: 'Countdown',
-  auto: 'Autonomous',
-  autoPause: 'Pause',
-  paused: 'Paused',
-  teleop: 'Teleoperated',
-  endgame: 'Endgame',
-  postMatch: 'Post-Match',
 };
 
 function MatchTimer({ remainingTime, phase }: { remainingTime: number; phase: MatchPhase }) {
@@ -271,7 +260,7 @@ export function MatchPanel({ station }: { station?: StationName }) {
           <>
             <Box sx={{ textAlign: 'center', mb: 1 }}>
               <Chip
-                label={matchState.awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabels[phase]}
+                label={matchState.awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabel(phase, matchState.config)}
                 sx={{
                   fontSize: '1rem',
                   py: 2,
@@ -300,7 +289,7 @@ export function MatchPanel({ station }: { station?: StationName }) {
         {isCreated && (
           <Box sx={{ textAlign: 'center', mb: 1 }}>
             <Chip
-              label={phaseLabels.created}
+              label={phaseLabel('created', matchState.config)}
               sx={{
                 fontSize: '1rem',
                 py: 2,
@@ -487,7 +476,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
           <>
             <Box sx={{ textAlign: 'center', mb: 1 }}>
               <Chip
-                label={matchState.awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabels[phase]}
+                label={matchState.awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabel(phase, matchState.config)}
                 sx={{
                   fontSize: '1rem',
                   py: 2,
@@ -524,7 +513,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
         {isCreated && (
           <Box sx={{ textAlign: 'center', mb: 1 }}>
             <Chip
-              label={phaseLabels.created}
+              label={phaseLabel('created', matchState.config)}
               sx={{
                 fontSize: '1rem',
                 py: 2,
