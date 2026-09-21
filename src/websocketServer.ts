@@ -49,6 +49,8 @@ import {
   isMatchSwapStation,
   isMatchKickStation,
   isMatchSetAutoWinner,
+  isMatchChallengeAdjust,
+  isMatchChallengeFinish,
   isMatchRequestReady,
   isMatchStaffIgnore,
   isStaffReady,
@@ -880,6 +882,10 @@ export function setupWebSocket(
         matchEngine.kickStation(data.station);
       } else if (isMatchSetAutoWinner(data)) {
         matchEngine.setAutoWinner(data.winner);
+      } else if (isMatchChallengeAdjust(data)) {
+        matchEngine.challengeAdjust(data.alliance, data.laps ?? 0, data.penalties ?? 0);
+      } else if (isMatchChallengeFinish(data)) {
+        matchEngine.challengeFinish(data.alliance);
       } else if (isMatchRequestReady(data)) {
         matchEngine.setReadyRequested(data.requested);
       } else if (isMatchStaffIgnore(data)) {

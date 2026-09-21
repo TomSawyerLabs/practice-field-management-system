@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { MatchEngine } from './matchEngine.js';
-import { CHALLENGE_MAX_DURATION, CHALLENGE_MIN_DURATION, type MatchConfig } from './types.js';
+import { challengeScore, CHALLENGE_MAX_DURATION, CHALLENGE_MIN_DURATION, type MatchConfig } from './types.js';
 
 /** A client asking for a config. Durations are only honoured for a challenge. */
 function request(over: Partial<MatchConfig>): MatchConfig {
@@ -96,4 +96,101 @@ describe('challenge format', () => {
     const engine = created();
     expect(engine.getState().config.teleopDuration).toBe(140);
   });
+});
+
+describe('challengeScore', () => {
+  test('window runs are worth their laps, less a lap per penalty', () => {
+    expect(challengeScore({ laps: 7, penalties: 0 }, 'window')).toEqual({ laps: 7, seconds: null });
+    expect(challengeScore({ laps: 7, penalties: 2 }, 'window')).toEqual({ laps: 5, seconds: null });
+  });
+
+  test('enough penalties push a run below zero, so it ranks behind a clean one', () => {
+    expect(challengeScore({ laps: 1, penalties: 4 }, 'window').laps).toBe(-3);
+  });
+
+  test('stopwatch runs add five seconds per penalty', () => {
+    expect(challengeScore({ laps: 1, penalties: 2, finishedAt: 30 }, 'stopwatch').seconds).toBe(40);
+  });
+
+  test('a stopwatch run that never finished has no time', () => {
+    expect(challengeScore({ laps: 1, penalties: 0 }, 'stopwatch').seconds).toBeNull();
+  });
+});
+
+describe('the challenge tally', () => {
+  test('is refused when the field is not running a challenge', () => {
+    const engine = created();
+    engine.challengeAdjust('red', 1);
+    expect(engine.getState().challenge).toBeUndefined();
+  });
+
+  test('is refused before the run starts, so stray taps do not count', () => {
+    const engine = created();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 30 }));
+    engine.challengeAdjust('red', 5);
+    expect(engine.getState().challenge?.red.laps).toBe(0);
+  });
+});
+
+describe('a challenge run end to end', () => {
+  /** Get a single robot onto the field and start the run. */
+  function startRun(timing: 'window' | 'stopwatch') {
+    const engine = new MatchEngine(() => 5940);
+    engine.createMatch();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 30, challengeTiming: timing }));
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    return engine;
+  }
+
+  test('counts down, runs the window with no auto, and tallies laps', async () => {
+    const engine = startRun('window');
+    expect(engine.getState().phase).toBe('countdown');
+
+    await Bun.sleep(3400);
+    const running = engine.getState();
+    // Straight to the run — a challenge has no autonomous period
+    expect(running.phase).toBe('teleop');
+    expect(running.stationStates.slot1?.enabled).toBe(true);
+    expect(running.stationStates.slot1?.mode).toBe('teleOp');
+    expect(running.subPeriod).toBeNull();
+
+    engine.challengeAdjust('red', 1);
+    engine.challengeAdjust('red', 1);
+    engine.challengeAdjust('red', 0, 1);
+    const tally = engine.getState().challenge!.red;
+    expect(tally.laps).toBe(2);
+    expect(tally.penalties).toBe(1);
+
+    // Corrections work, and nothing goes negative
+    engine.challengeAdjust('red', -5, -5);
+    expect(engine.getState().challenge!.red).toMatchObject({ laps: 0, penalties: 0 });
+    engine.stopMatch();
+  }, 10_000);
+
+  test('finishing a stopwatch run stops the robot and ends the run', async () => {
+    const engine = startRun('stopwatch');
+    await Bun.sleep(3400);
+    expect(engine.getState().phase).toBe('teleop');
+
+    engine.challengeFinish('red');
+    const finished = engine.getState();
+    expect(finished.phase).toBe('postMatch');
+    expect(finished.stationStates.slot1?.enabled).toBe(false);
+    // The run proper started after the 3 s countdown
+    expect(finished.challenge!.red.finishedAt).toBeGreaterThan(0);
+    expect(finished.challenge!.red.finishedAt).toBeLessThan(2);
+  }, 10_000);
+
+  test('finish is refused when the run is timed by the window', async () => {
+    const engine = startRun('window');
+    await Bun.sleep(3400);
+    engine.challengeFinish('red');
+    expect(engine.getState().phase).toBe('teleop');
+    expect(engine.getState().challenge!.red.finishedAt).toBeUndefined();
+    engine.stopMatch();
+  }, 10_000);
 });

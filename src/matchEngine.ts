@@ -9,6 +9,7 @@ import {
   MatchState,
   MatchEndReason,
   ChallengeTiming,
+  ChallengeTally,
   CHALLENGE_DEFAULT_DURATION,
   CHALLENGE_MIN_DURATION,
   CHALLENGE_MAX_DURATION,
@@ -44,6 +45,14 @@ const POST_MATCH_COUNT_SECONDS = 3;
  *  cue timing baked into sounds/resume321.wav (tones at 0/1/2s, "live" tone
  *  at 3s) and the browser mirror in frontend/src/hooks/useMatchAudio.ts. */
 const RESUME_COUNTDOWN_SECONDS = 3;
+/** The 3-2-1 before robots go live. `totalMatchTime` starts ticking here, so
+ *  anything measuring the run itself subtracts it. */
+const COUNTDOWN_SECONDS = 3;
+
+/** Phases in which robots are actually driving. */
+function robotsEnabledPhase(phase: MatchPhase): boolean {
+  return phase === 'auto' || phase === 'teleop' || phase === 'endgame';
+}
 /** How long a finished match lingers in postMatch before auto-clearing to idle.
  *  Self-service practice matches are often started and abandoned; without this,
  *  the field (and scoring, which follows the postMatch→idle transition) stays
@@ -67,6 +76,10 @@ const OFFICIAL_CONFIG: MatchConfig = {
  *  `endgameDuration: 0` the teleop→endgame check can never fire, since it
  *  only runs while `remainingTime > 0`. The host's window is the one number
  *  that isn't fixed, clamped so a typo can't strand the field. */
+function emptyChallengeTally(): Record<Alliance, ChallengeTally> {
+  return { red: { laps: 0, penalties: 0 }, blue: { laps: 0, penalties: 0 } };
+}
+
 function challengeConfig(duration: number | undefined, timing: ChallengeTiming | undefined): MatchConfig {
   const requested = Number.isFinite(duration) ? Math.round(duration!) : CHALLENGE_DEFAULT_DURATION;
   return {
@@ -157,6 +170,8 @@ export class MatchEngine {
   private portToSlot = new Map<StationName, MatchSlot>();
   /** Which alliance won auto (computed after auto ends) */
   private autoWinnerAlliance: Alliance | null = null;
+  /** Challenge tally for the run being set up or running. Reset per match. */
+  private challengeTally: Record<Alliance, ChallengeTally> = emptyChallengeTally();
   /** Optional callback to get auto-period scores for auto winner determination.
    *  Returns { red: number, blue: number } totals. */
   private autoScoreResolver?: () => { red: number; blue: number };
@@ -359,6 +374,7 @@ export class MatchEngine {
     this.config = null;
     this.portToSlot.clear();
     this.autoWinnerAlliance = null;
+    this.challengeTally = emptyChallengeTally();
     this.endReason = undefined;
     this.resetReadyCheckAndStaff();
     this.phase = 'created';
@@ -443,6 +459,85 @@ export class MatchEngine {
       this.tickTimer = setInterval(() => this.tick(), TICK_INTERVAL_MS);
       console.log(`Auto pause countdown resumed (${this.remainingTime.toFixed(1)}s remaining)`);
     }
+    this.broadcast();
+  }
+
+  // ── Speed challenge ───────────────────────────────────────────────
+
+  /** Phases where the tally can still be edited: while the run is being set
+   *  up, while it's going, and after the buzzer until the field clears —
+   *  a miscount is always noticed a few seconds too late. */
+  private canTallyChallenge(): boolean {
+    if (!isChallengeConfig(this.config ?? this.pendingConfig)) return false;
+    return this.phase !== 'idle' && this.phase !== 'created' && this.phase !== 'countdown';
+  }
+
+  /** Add to (or subtract from) an alliance's laps and penalties. */
+  challengeAdjust(alliance: Alliance, laps = 0, penalties = 0) {
+    if (!this.canTallyChallenge()) {
+      appWarn(`Challenge tally ignored for ${alliance}: the field is not running a challenge`);
+      return;
+    }
+    const tally = this.challengeTally[alliance];
+    tally.laps = Math.max(0, tally.laps + Math.round(laps));
+    tally.penalties = Math.max(0, tally.penalties + Math.round(penalties));
+    this.broadcast();
+  }
+
+  /** Stop the clock for one alliance (stopwatch timing). Its robots are
+   *  disabled where they stand; when every alliance on the field has
+   *  finished, the run ends rather than waiting out the cap. */
+  challengeFinish(alliance: Alliance) {
+    const config = this.config;
+    if (!config || !isChallengeConfig(config)) {
+      appWarn(`Challenge finish ignored for ${alliance}: the field is not running a challenge`);
+      return;
+    }
+    if (config.challengeTiming !== 'stopwatch') {
+      appWarn(`Challenge finish ignored for ${alliance}: this run is timed by the window, not a stopwatch`);
+      return;
+    }
+    if (!robotsEnabledPhase(this.phase)) {
+      appWarn(`Challenge finish ignored for ${alliance} in phase ${this.phase}`);
+      return;
+    }
+    if (this.challengeTally[alliance].finishedAt !== undefined) return;
+
+    const elapsed = Math.max(0, this.totalMatchTime - COUNTDOWN_SECONDS);
+    this.challengeTally[alliance].finishedAt = elapsed;
+    for (const station of StationNameList) {
+      const state = this.stationStates.get(station)!;
+      if (state.joined && state.alliance === alliance) state.enabled = false;
+    }
+    this.sendPacketsToAll();
+    console.log(`Challenge: ${alliance} finished at ${elapsed.toFixed(2)}s`);
+
+    const stillRunning = this.participatingAlliances().filter(a => this.challengeTally[a].finishedAt === undefined);
+    if (stillRunning.length === 0) {
+      console.log('Challenge: every alliance has finished — ending the run');
+      this.endChallengeRun();
+      return;
+    }
+    this.broadcast();
+  }
+
+  /** Which alliances have a robot on the field for this run. */
+  private participatingAlliances(): Alliance[] {
+    const alliances = new Set<Alliance>();
+    for (const state of this.stationStates.values()) {
+      if (state.joined && state.alliance) alliances.add(state.alliance);
+    }
+    return [...alliances];
+  }
+
+  /** Finish the run early, as the buzzer would have. */
+  private endChallengeRun() {
+    this.endReason = 'normal';
+    this.phase = 'postMatch';
+    this.remainingTime = POST_MATCH_COUNT_SECONDS;
+    this.disableAll();
+    this.sendPacketsToAll();
+    this.schedulePostMatchAutoClear();
     this.broadcast();
   }
 
@@ -756,6 +851,7 @@ export class MatchEngine {
     }
 
     this.config = { ...this.pendingConfig };
+    this.challengeTally = emptyChallengeTally();
     this.matchNumber++;
     this.matchId = randomUUID();
     this.shareToken = mintShareToken();
@@ -787,7 +883,7 @@ export class MatchEngine {
     const effectiveAutoDuration = this.config.skipAuto ? 0 : this.config.autoDuration;
 
     this.phase = 'countdown';
-    this.remainingTime = 3;
+    this.remainingTime = COUNTDOWN_SECONDS;
 
     for (const station of StationNameList) {
       const teamNumber = this.teamResolver(station);
@@ -1260,6 +1356,9 @@ export class MatchEngine {
       resumeAt: this.resumeAt ?? undefined,
       readyRequested: this.readyRequested,
       staffStates,
+      challenge: isChallengeConfig(this.config ?? this.pendingConfig)
+        ? { red: { ...this.challengeTally.red }, blue: { ...this.challengeTally.blue } }
+        : undefined,
     };
   }
 

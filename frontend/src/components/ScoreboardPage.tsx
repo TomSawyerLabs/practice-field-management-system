@@ -21,7 +21,8 @@ import type { Alliance, ScoreBatch, StationName, TelemetryUpdate } from '../../.
 import { StationNameList } from '../../../src/types';
 import { getAllianceShiftState, getAllianceScoringShifts, getMatchSubPeriod } from '../utils/shiftState';
 import type { MatchSubPeriod } from '../utils/shiftState';
-import { isChallengeConfig, formatName, CHALLENGE_COLOR } from '../utils/matchFormat';
+import { isChallengeConfig, formatName, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
+import { challengeScore } from '../../../src/types';
 import { MatchTimeline } from './MatchTimeline';
 import { MatchTimer, getActiveColor } from './MatchTimer';
 import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
@@ -461,6 +462,23 @@ export function ScoreboardPage() {
   const leftLabel = isMatchMode && !leftInMatch ? 'FREE PLAY' : null;
   const rightLabel = isMatchMode && !rightInMatch ? 'FREE PLAY' : null;
 
+  // A speed challenge is scored in laps, so the big number is the lap count
+  // and the ball score steps aside — nobody at a field event is watching the
+  // hubs. Penalties are already deducted.
+  const isChallenge = isChallengeConfig(matchState?.config);
+  const challengeLaps = (alliance: Alliance): number =>
+    challengeScore(matchState?.challenge?.[alliance], matchState?.config.challengeTiming).laps;
+  const boxTotal = (alliance: Alliance): number =>
+    isChallenge ? challengeLaps(alliance) : (score?.[alliance].total ?? 0);
+  const boxLabel = (alliance: Alliance, freePlay: string | null): string | null => {
+    if (!isChallenge) return freePlay;
+    // Once a stopwatch alliance has stopped the clock, its time is the
+    // headline fact about the run — the lap count stays as the big number.
+    const finishedAt = matchState?.challenge?.[alliance]?.finishedAt;
+    if (finishedAt !== undefined) return `${finishedAt.toFixed(1)}S`;
+    return 'LAPS';
+  };
+
   // Stable primitive keys for the memoized battery components — matchState and
   // score object identities change several times a second; these strings only
   // change when the underlying assignments actually change, so the memoized
@@ -583,10 +601,10 @@ export function ScoreboardPage() {
               <AllianceScoreBox
                 compact
                 alliance={left}
-                total={score[left].total}
+                total={boxTotal(left)}
                 active={leftActive}
                 inactiveTotal={leftInMatch ? leftInactive : undefined}
-                freePlayLabel={leftLabel}
+                freePlayLabel={boxLabel(left, leftLabel)}
                 isAutoWinner={isMatchMode && autoWinner === left}
                 isFreePlay={isFreePlay}
                 side="left"
@@ -675,10 +693,10 @@ export function ScoreboardPage() {
               <AllianceScoreBox
                 compact
                 alliance={right}
-                total={score[right].total}
+                total={boxTotal(right)}
                 active={rightActive}
                 inactiveTotal={rightInMatch ? rightInactive : undefined}
-                freePlayLabel={rightLabel}
+                freePlayLabel={boxLabel(right, rightLabel)}
                 isAutoWinner={isMatchMode && autoWinner === right}
                 isFreePlay={isFreePlay}
                 side="right"
@@ -707,10 +725,10 @@ export function ScoreboardPage() {
                 compact
                 reserveDecor
                 alliance={left}
-                total={score[left].total}
+                total={boxTotal(left)}
                 active={leftActive}
                 inactiveTotal={leftInMatch ? leftInactive : undefined}
-                freePlayLabel={leftLabel}
+                freePlayLabel={boxLabel(left, leftLabel)}
                 isAutoWinner={isMatchMode && autoWinner === left}
                 isFreePlay={isFreePlay}
                 side="left"
@@ -750,10 +768,10 @@ export function ScoreboardPage() {
                 compact
                 reserveDecor
                 alliance={right}
-                total={score[right].total}
+                total={boxTotal(right)}
                 active={rightActive}
                 inactiveTotal={rightInMatch ? rightInactive : undefined}
-                freePlayLabel={rightLabel}
+                freePlayLabel={boxLabel(right, rightLabel)}
                 isAutoWinner={isMatchMode && autoWinner === right}
                 isFreePlay={isFreePlay}
                 side="right"
@@ -852,10 +870,10 @@ export function ScoreboardPage() {
               )}
               <AllianceScoreBox
                 alliance={left}
-                total={score[left].total}
+                total={boxTotal(left)}
                 active={leftActive}
                 inactiveTotal={leftInMatch ? leftInactive : undefined}
-                freePlayLabel={leftLabel}
+                freePlayLabel={boxLabel(left, leftLabel)}
                 isAutoWinner={isMatchMode && autoWinner === left}
                 isFreePlay={isFreePlay}
                 side="left"
@@ -890,10 +908,10 @@ export function ScoreboardPage() {
             >
               <AllianceScoreBox
                 alliance={right}
-                total={score[right].total}
+                total={boxTotal(right)}
                 active={rightActive}
                 inactiveTotal={rightInMatch ? rightInactive : undefined}
-                freePlayLabel={rightLabel}
+                freePlayLabel={boxLabel(right, rightLabel)}
                 isAutoWinner={isMatchMode && autoWinner === right}
                 isFreePlay={isFreePlay}
                 side="right"
@@ -940,7 +958,16 @@ function CenterMatchDisplay({
   if (matchState?.phase === 'postMatch' && matchState.shareToken) {
     return <PostMatchQR token={matchState.shareToken} />;
   }
-  const timer = <MatchTimer remainingTime={remainingTime} color={color} pulse={pulse} fontSize={fontSize} />;
+  const countUp = matchState?.config.challengeTiming === 'stopwatch' && isChallengeConfig(matchState?.config);
+  const timer = (
+    <MatchTimer
+      remainingTime={countUp && matchState ? challengeElapsed(matchState) : remainingTime}
+      color={color}
+      pulse={pulse}
+      fontSize={fontSize}
+      countUp={countUp}
+    />
+  );
   if (!isChallengeConfig(matchState?.config)) return timer;
   // The crowd is looking at a clock that isn't a match clock — say so, or the
   // TV reads as a 0–0 match that ended early.

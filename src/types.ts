@@ -998,6 +998,28 @@ export function isChallengeConfig(config: Pick<MatchConfig, 'format'> | undefine
   return config?.format === 'challenge';
 }
 
+/** One alliance's challenge run, as tallied by field staff. */
+export type ChallengeTally = {
+  laps: number;
+  penalties: number;
+  /** Seconds into the run when staff pressed Finish (stopwatch timing only).
+   *  Absent means still running, or — once the run is over — a DNF. */
+  finishedAt?: number;
+};
+
+/** What an alliance's run is worth, for ranking and display. Window runs
+ *  score in laps (higher is better); stopwatch runs score in seconds (lower
+ *  is better), and an unfinished one has no time at all. */
+export function challengeScore(
+  tally: ChallengeTally | undefined,
+  timing: ChallengeTiming | undefined,
+): { laps: number; seconds: number | null } {
+  const laps = (tally?.laps ?? 0) - (tally?.penalties ?? 0) * CHALLENGE_PENALTY_LAPS;
+  if (timing !== 'stopwatch') return { laps, seconds: null };
+  if (tally?.finishedAt === undefined) return { laps, seconds: null };
+  return { laps, seconds: tally.finishedAt + (tally.penalties ?? 0) * CHALLENGE_PENALTY_SECONDS };
+}
+
 /** A position within a match: alliance + slot number. Semantically distinct from StationName
  *  (which identifies a physical radio slot). A physical station "slot6" could be mapped to
  *  match slot "red1" if the team joined the red alliance. */
@@ -1147,6 +1169,10 @@ export type MatchState = {
   readyRequested: boolean;
   /** Per-role readiness for non-team field staff. */
   staffStates: Record<StaffRole, StaffRoleState>;
+  /** Live lap/penalty tally, present only while the field is set up for or
+   *  running a challenge. Both alliances are always present, even when only
+   *  one is on the field — the host page decides what to show. */
+  challenge?: Record<Alliance, ChallengeTally>;
 };
 
 export function isMatchState(msg: unknown): msg is MatchState {
@@ -1337,6 +1363,33 @@ export function isMatchSetAutoWinner(msg: unknown): msg is MatchSetAutoWinner {
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as MatchSetAutoWinner;
   return m.type === 'matchSetAutoWinner' && (m.winner === 'red' || m.winner === 'blue');
+}
+
+/** Staff adjust an alliance's challenge tally: laps completed, penalties
+ *  taken. Deltas, not totals — two people may be tapping at once, and a
+ *  delta can't clobber the other's count. */
+export type MatchChallengeAdjust = {
+  type: 'matchChallengeAdjust';
+  alliance: Alliance;
+  laps?: number;
+  penalties?: number;
+};
+export function isMatchChallengeAdjust(msg: unknown): msg is MatchChallengeAdjust {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as MatchChallengeAdjust;
+  if (m.type !== 'matchChallengeAdjust') return false;
+  if (m.alliance !== 'red' && m.alliance !== 'blue') return false;
+  if (m.laps !== undefined && !Number.isFinite(m.laps)) return false;
+  if (m.penalties !== undefined && !Number.isFinite(m.penalties)) return false;
+  return true;
+}
+
+/** Staff stop the clock for one alliance in a stopwatch challenge. */
+export type MatchChallengeFinish = { type: 'matchChallengeFinish'; alliance: Alliance };
+export function isMatchChallengeFinish(msg: unknown): msg is MatchChallengeFinish {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as MatchChallengeFinish;
+  return m.type === 'matchChallengeFinish' && (m.alliance === 'red' || m.alliance === 'blue');
 }
 
 /** Host opens or retracts the ready check (from the /match page). */

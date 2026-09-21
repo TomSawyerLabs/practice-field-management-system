@@ -48,14 +48,20 @@ export function MatchTimer({
   color,
   pulse,
   fontSize,
+  countUp,
 }: {
   remainingTime: number;
   color: string;
   pulse?: boolean;
   /** Override the default font size (MUI h1 ~6rem). */
   fontSize?: string;
+  /** Count-up (stopwatch) reading. A clock counting down shows the second
+   *  you are still inside, so it ceils; a stopwatch shows the second you
+   *  have finished, so it floors — otherwise it reads 0:01 on press. */
+  countUp?: boolean;
 }) {
-  const display = Math.ceil(Math.max(0, remainingTime));
+  const round = countUp ? Math.floor : Math.ceil;
+  const display = round(Math.max(0, remainingTime));
   const minutes = Math.floor(display / 60);
   const seconds = display % 60;
   return (

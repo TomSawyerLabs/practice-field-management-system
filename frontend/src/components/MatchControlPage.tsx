@@ -59,12 +59,13 @@ import {
   matchSummaryUrl,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
+import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
-import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR } from '../utils/matchFormat';
+import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
 
 // ── Phase display helpers ───────────────────────────────────────────
 
@@ -85,7 +86,7 @@ const PHASE_BG: Record<MatchPhase, string> = {
 function getPageBg(matchState: MatchState): string {
   const { phase } = matchState;
 
-  if (phase === 'teleop' || phase === 'endgame') {
+  if ((phase === 'teleop' || phase === 'endgame') && !isChallengeConfig(matchState.config)) {
     const inactive = getAllianceShiftState(
       phase,
       matchState.remainingTime,
@@ -671,6 +672,8 @@ function ActiveMatchView({
   const blueStations = joinedStations.filter(s => stationStates[s]?.alliance === 'blue');
 
   const progress = useMemo(() => computeBarProgress(totalMatchTime, config), [totalMatchTime, config]);
+  // A stopwatch run is timed by what has elapsed, not what is left.
+  const countUp = isChallengeConfig(config) && config.challengeTiming === 'stopwatch';
 
   // Pulse the timer in the last 3 seconds of each game period
   const shouldPulse = useMemo(() => {
@@ -726,7 +729,12 @@ function ActiveMatchView({
             />
           </Box>
           <Box sx={{ mb: 2 }}>
-            <MatchTimer remainingTime={remainingTime} color={activeColor} pulse={shouldPulse} />
+            <MatchTimer
+              remainingTime={countUp ? challengeElapsed(matchState) : remainingTime}
+              color={activeColor}
+              pulse={shouldPulse}
+              countUp={countUp}
+            />
           </Box>
           <MatchTimeline
             config={config}
@@ -737,6 +745,8 @@ function ActiveMatchView({
           />
         </CardContent>
       </Card>
+
+      <ChallengeTallyPanel matchState={matchState} />
 
       {/* Auto winner prompt — shown during autoPause in 'pause' mode */}
       {awaitingAutoWinner && (
@@ -1036,6 +1046,10 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
           />
         </CardContent>
       </Card>
+
+      {/* Tally stays editable after the buzzer — a miscount is always
+          noticed a few seconds too late. */}
+      <ChallengeTallyPanel matchState={matchState} />
 
       {/* Participants — still in the match */}
       {joinedStations.length > 0 && (

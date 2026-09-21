@@ -1129,6 +1129,17 @@ export function sendMatchSetAutoWinner(winner: Alliance) {
   ws?.send(JSON.stringify({ type: 'matchSetAutoWinner', winner }));
 }
 
+/** Tally a lap or a penalty for one alliance in a speed challenge. Deltas,
+ *  so two people tapping at once can't clobber each other's count. */
+export function sendMatchChallengeAdjust(alliance: Alliance, change: { laps?: number; penalties?: number }) {
+  ws?.send(JSON.stringify({ type: 'matchChallengeAdjust', alliance, ...change }));
+}
+
+/** Stop the clock for one alliance in a stopwatch challenge. */
+export function sendMatchChallengeFinish(alliance: Alliance) {
+  ws?.send(JSON.stringify({ type: 'matchChallengeFinish', alliance }));
+}
+
 /** Host opens or retracts the ready check. */
 export function sendMatchRequestReady(requested: boolean) {
   ws?.send(JSON.stringify({ type: 'matchRequestReady', requested }));
