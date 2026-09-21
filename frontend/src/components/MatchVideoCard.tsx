@@ -24,8 +24,22 @@ import { CopyToClipboard } from './CopyToClipboard';
 
 /** Download URL for one recorded file. `download` forces an attachment with a
  *  friendly name; without it the browser can play/scrub the file inline. */
-export function recordingUrl(matchId: string, rec: MatchRecording, download = true): string {
+export function recordingUrl(matchId: string, rec: Pick<MatchRecording, 'file'>, download = true): string {
   const base = `/api/recordings/${encodeURIComponent(matchId)}/${encodeURIComponent(rec.file)}`;
+  return download ? `${base}?download=1` : base;
+}
+
+/** The JPEG poster frame for one recorded file. The backend makes it the
+ *  first time it is asked for, and 404s when it cannot (a failed capture) —
+ *  so anything showing one needs a fallback for the broken image. */
+export function recordingThumbUrl(matchId: string, file: string): string {
+  return `/api/recordings/${encodeURIComponent(matchId)}/${encodeURIComponent(file)}?thumb=1`;
+}
+
+/** A sidecar (`metadata.json`, `scores.csv`, `telemetry.csv`) from a
+ *  recording directory. */
+export function recordingSidecarUrl(matchId: string, file: string, download = true): string {
+  const base = `/api/recordings/${encodeURIComponent(matchId)}/${encodeURIComponent(file)}`;
   return download ? `${base}?download=1` : base;
 }
 

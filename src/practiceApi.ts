@@ -14,10 +14,10 @@
  * `<id>` must be one of the day's entries, and `<file>` one of that entry's
  * listed files.
  */
-import { createReadStream, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
-import { json } from './httpApiUtils.js';
+import { json, serveSidecar } from './httpApiUtils.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
 import type { MatchRecorder } from './matchRecorder.js';
 import { practiceDayLabel, practiceDayOf, type PracticeStore } from './practiceStore.js';
@@ -310,34 +310,4 @@ async function serveZip(
     console.warn(`Practice zip for team ${teamNumber} ${day} aborted: ${(err as Error).message}`);
     res.destroy();
   }
-}
-
-function serveSidecar(
-  req: IncomingMessage,
-  res: ServerResponse,
-  path: string,
-  file: string,
-  downloadName: string,
-): void {
-  const size = fileSize(path);
-  if (size === undefined) {
-    json(res, 404, { error: 'No such file' });
-    return;
-  }
-  const query = (req.url ?? '').split('?')[1] ?? '';
-  const headers: Record<string, string> = {
-    'Content-Type': file.endsWith('.json') ? 'application/json' : 'text/csv; charset=utf-8',
-    'Content-Length': String(size),
-    'Cache-Control': 'private, max-age=60',
-    'Access-Control-Allow-Origin': '*',
-  };
-  if (/(^|&)download=1(&|$)/.test(query)) headers['Content-Disposition'] = `attachment; filename="${downloadName}"`;
-  res.writeHead(200, headers);
-  if (req.method === 'HEAD') {
-    res.end();
-    return;
-  }
-  const stream = createReadStream(path);
-  stream.on('error', () => res.destroy());
-  stream.pipe(res);
 }

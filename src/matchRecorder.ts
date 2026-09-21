@@ -22,12 +22,22 @@
  *    number of days (default 30) at startup and daily.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import type { MatchEngine } from './matchEngine.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
-import type { SessionMetadataCollector } from './sessionMetadata.js';
+import { METADATA_FILE, SCORES_CSV, TELEMETRY_CSV, type SessionMetadataCollector } from './sessionMetadata.js';
 import type {
   MatchPhase,
   MatchRecording,
@@ -35,6 +45,7 @@ import type {
   MatchRecordingStreamStatus,
   MatchState,
   RecordingInventoryEntry,
+  RecordingInventoryFile,
   RecordingsInventory,
   RecordingStreamConfig,
   RecordingStreamTestResult,
@@ -48,6 +59,8 @@ const ACTIVE_PHASES: ReadonlySet<MatchPhase> = new Set([
   'teleop',
   'endgame',
 ]);
+/** Metadata written beside the videos, listed to an admin when present. */
+const SIDECAR_FILES = [METADATA_FILE, SCORES_CSV, TELEMETRY_CSV];
 /** Phases in which robots have actually run — a session that never reaches
  *  one of these (hold released, countdown aborted) is discarded at the end. */
 const PLAY_PHASES: ReadonlySet<MatchPhase> = new Set(['auto', 'autoPause', 'paused', 'teleop', 'endgame']);
@@ -175,6 +188,10 @@ export class MatchRecorder {
   private sweepTimer: NodeJS.Timeout | null = null;
   private diskFreeBytes?: number;
   private usedBytes?: number;
+  /** Thumbnail generations in flight, keyed by the image path. */
+  private thumbJobs = new Map<string, Promise<string | undefined>>();
+  /** Thumbnails that could not be made, so we stop trying. */
+  private thumbFailed = new Set<string>();
 
   constructor(opts: MatchRecorderOptions) {
     this.directory = resolve(opts.directory ?? process.env.MATCH_RECORDINGS_DIR ?? DEFAULT_RECORDINGS_DIR);
@@ -305,6 +322,106 @@ export class MatchRecorder {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * A poster frame for one recorded file, generated the first time anyone
+   * asks and cached beside the video as `<slug>.thumb.jpg`. Resolves to the
+   * image's path, or undefined when there is nothing to grab a frame from.
+   *
+   * Generated on demand rather than at record time: the end of a match is
+   * the busiest moment this class has, and doing it here also gives every
+   * recording made before thumbnails existed one for free.
+   */
+  async thumbnail(matchId: string, file: string): Promise<string | undefined> {
+    const dir = this.matchDirectory(matchId);
+    if (!dir || !isRecordingFileName(file)) return undefined;
+    const source = join(dir, file);
+    const out = join(dir, `${file.replace(/\.mp4$/, '')}.thumb.jpg`);
+    if (existsSync(out)) return out;
+    // Remember what could not be thumbnailed (no ffmpeg on this host, a
+    // zero-byte capture): a table full of <img>s would otherwise spawn a
+    // doomed ffmpeg per row, on every refresh.
+    if (this.thumbFailed.has(out) || !existsSync(source)) return undefined;
+    const running = this.thumbJobs.get(out);
+    if (running) return running;
+    // One generation per file at a time: a table of twenty rows loads twenty
+    // <img>s at once, and ffmpeg writing the same path from twenty processes
+    // would be a race with a corrupt JPEG at the end of it.
+    const job = this.makeThumbnail(source, out)
+      .then(path => {
+        if (!path) this.thumbFailed.add(out);
+        return path;
+      })
+      .finally(() => this.thumbJobs.delete(out));
+    this.thumbJobs.set(out, job);
+    return job;
+  }
+
+  private async makeThumbnail(source: string, out: string): Promise<string | undefined> {
+    // Writing into the directory bumps its mtime, which the retention sweep
+    // falls back on for directories with no manifest — so looking at an
+    // orphaned `pending-*` in the admin table would keep resetting its age
+    // and stop it ever being swept. Put the timestamps back afterwards.
+    const dir = dirname(out);
+    let dirTimes: { atime: Date; mtime: Date } | undefined;
+    try {
+      const st = statSync(dir);
+      dirTimes = { atime: st.atime, mtime: st.mtime };
+    } catch {
+      // Gone already; nothing to preserve and ffmpeg will say so.
+    }
+    try {
+      return await this.renderThumbnail(source, out);
+    } finally {
+      if (dirTimes) {
+        try {
+          utimesSync(dir, dirTimes.atime, dirTimes.mtime);
+        } catch {
+          // Best effort — at worst the directory looks newer than it is.
+        }
+      }
+    }
+  }
+
+  private async renderThumbnail(source: string, out: string): Promise<string | undefined> {
+    // Not frame 0: a match recording opens on the pre-roll, so its first
+    // frame is an empty field during the countdown. A quarter of the way in
+    // (capped) is far more likely to show a robot.
+    const duration = await this.probeDuration(source);
+    const seek = duration && duration > 8 ? Math.min(duration * 0.25, 30) : 0;
+    for (const at of seek > 0 ? [seek, 0] : [0]) {
+      try {
+        await this.run(
+          this.ffmpeg,
+          // -ss before -i is a keyframe seek: fast, and past the end it just
+          // writes nothing rather than failing, hence the existsSync check.
+          [
+            '-v',
+            'error',
+            '-nostdin',
+            '-y',
+            '-ss',
+            at.toFixed(2),
+            '-i',
+            source,
+            '-frames:v',
+            '1',
+            '-vf',
+            'scale=320:-2',
+            '-q:v',
+            '5',
+            out,
+          ],
+          30_000,
+        );
+        if (existsSync(out)) return out;
+      } catch (err) {
+        console.warn(`Match recorder: no thumbnail for ${source}: ${(err as Error).message}`);
+        return undefined;
+      }
+    }
+    return undefined;
   }
 
   /** ffprobe a candidate URL so the admin can confirm it before saving. */
@@ -750,11 +867,14 @@ export class MatchRecorder {
         if (name.startsWith('.')) continue;
         const dir = join(this.directory, name);
         let bytes = 0;
+        const sizes = new Map<string, number>();
         try {
           if (!statSync(dir).isDirectory()) continue;
           for (const f of readdirSync(dir)) {
             const st = statSync(join(dir, f));
-            if (st.isFile()) bytes += st.size;
+            if (!st.isFile()) continue;
+            bytes += st.size;
+            sizes.set(f, st.size);
           }
         } catch {
           continue;
@@ -770,6 +890,8 @@ export class MatchRecorder {
           teams,
           bytes,
           videos: (manifest?.recordings ?? []).filter(r => r.status !== 'failed').length,
+          files: listFiles(manifest?.recordings, sizes),
+          sidecars: SIDECAR_FILES.filter(f => sizes.has(f)),
         });
       }
     }
@@ -937,6 +1059,36 @@ export class MatchRecorder {
   private run(cmd: string, args: string[], timeoutMs: number): Promise<string> {
     return runCommand(cmd, args, timeoutMs);
   }
+}
+
+/** A plain MP4 name inside a recording directory — no traversal, no
+ *  sidecars. The same shape the video route accepts, so anything listed can
+ *  also be fetched. Raw parts (`<slug>.part0.mp4`) pass: a failed remux
+ *  leaves those as the only playable files. */
+export function isRecordingFileName(file: string): boolean {
+  return /^[A-Za-z0-9._-]{1,120}\.mp4$/.test(file) && !file.includes('..');
+}
+
+/** The videos an admin can open for one recording directory. The manifest
+ *  names them when there is one (and keeps the failed ones, so the page can
+ *  say a stream captured nothing); otherwise fall back to the MP4s actually
+ *  on disk, which is all an interrupted recording leaves behind. */
+function listFiles(recordings: MatchRecording[] | undefined, sizes: Map<string, number>): RecordingInventoryFile[] {
+  if (recordings?.length) {
+    return recordings.map(r => ({
+      name: r.name,
+      file: r.file,
+      // On-disk size wins: the manifest's was right when it was written.
+      bytes: sizes.get(r.file) ?? r.bytes,
+      durationSeconds: r.durationSeconds,
+      status: r.status,
+      error: r.error,
+    }));
+  }
+  return [...sizes.keys()]
+    .filter(isRecordingFileName)
+    .sort()
+    .map(file => ({ name: file.replace(/\.mp4$/, ''), file, bytes: sizes.get(file) ?? 0, status: 'ok' as const }));
 }
 
 /** Run a command to completion, resolving with stdout. Rejects on non-zero

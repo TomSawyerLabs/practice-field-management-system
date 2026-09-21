@@ -278,14 +278,23 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   sees videos left behind by whoever used the slot before them), with one
   download button per stream. Downloads are served by the backend at
   `/api/recordings/<matchId>/<file>` with a friendly attachment name and
-  Range support, so a browser can also scrub through them.
+  Range support, so a browser can also scrub through them; the same path
+  with `?thumb=1` returns a JPEG poster frame, and the sidecar names
+  (`/api/recordings/<matchId>/metadata.json` and the two CSVs) return those
+  files.
 - **Admin → Recordings on Disk** lists everything still stored (matches and
   practice runs, with dates, teams and sizes), space used and free, the
   last week's growth rate and the days until the volume fills at that rate,
-  and per-team totals. Any recording can be deleted there, or everything
-  older than N days at once; deleted matches keep their history entry but
-  lose their download buttons. This is the manual lever while the retention
-  policy is being worked out.
+  and per-team totals. Every row shows a poster frame and opens into the
+  recording itself: a player per stream, its download, the data recorded
+  alongside it (`metadata.json`, `scores.csv`, `telemetry.csv`) and a link
+  to the match's public summary page. All times shown are the local time of
+  the device you are reading them on. Poster frames are made by ffmpeg the
+  first time a row is shown and cached beside the video, so the first look
+  at a long list takes a moment and later ones are instant. Any recording
+  can be deleted there, or everything older than N days at once; deleted
+  matches keep their history entry but lose their download buttons. This is
+  the manual lever while the retention policy is being worked out.
 - Each match directory carries a `recording.json` sidecar, and a daily sweep
   deletes matches older than the configured retention (default 30 days).
 

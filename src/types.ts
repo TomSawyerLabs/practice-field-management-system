@@ -3376,6 +3376,25 @@ export interface RecordingInventoryEntry {
   bytes: number;
   /** Stream files that captured something (status ok/partial). */
   videos: number;
+  /** The video files in this directory, so an admin can watch or download
+   *  them. From the manifest when there is one; otherwise whatever `.mp4`s
+   *  are on disk, so an interrupted recording is still reachable. */
+  files: RecordingInventoryFile[];
+  /** Which of `metadata.json` / `scores.csv` / `telemetry.csv` are present. */
+  sidecars: string[];
+}
+
+/** One video file inside a recording directory, as listed to an admin. */
+export interface RecordingInventoryFile {
+  /** Stream name from the recorder's config (`all-field`), or the file's
+   *  own slug when there is no manifest to name it. */
+  name: string;
+  file: string;
+  bytes: number;
+  durationSeconds?: number;
+  status: 'ok' | 'partial' | 'failed';
+  /** Why the capture is partial or failed, when the manifest says. */
+  error?: string;
 }
 
 /** Everything under the recordings root, sent to an admin on request. */

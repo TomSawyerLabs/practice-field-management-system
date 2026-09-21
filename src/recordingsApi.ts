@@ -1,8 +1,12 @@
 import { createReadStream, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { MatchRecorder } from './matchRecorder.js';
-import { json } from './httpApiUtils.js';
+import { isRecordingFileName, type MatchRecorder } from './matchRecorder.js';
+import { json, serveSidecar } from './httpApiUtils.js';
+import { METADATA_FILE, SCORES_CSV, TELEMETRY_CSV } from './sessionMetadata.js';
+
+/** Metadata files an admin can pull straight out of a recording directory. */
+const SIDECARS = new Set([METADATA_FILE, SCORES_CSV, TELEMETRY_CSV]);
 
 /**
  * Serve pFMS's own match recordings.
@@ -12,6 +16,12 @@ import { json } from './httpApiUtils.js';
  *                                            browser can scrub; `?download=1`
  *                                            sends it as an attachment with a
  *                                            friendly name
+ *   GET /api/recordings/<matchId>/<file>?thumb=1
+ *                                            a JPEG poster frame for that
+ *                                            video, made on first use
+ *   GET /api/recordings/<matchId>/metadata.json|scores.csv|telemetry.csv
+ *                                            the sidecars written beside the
+ *                                            videos (`?download=1` likewise)
  *
  * No API key: drive teams on the field network fetch these straight from the
  * station page. Externally, Caddy's cookie check already guards /api/*.
@@ -39,8 +49,69 @@ export function handleRecordingsRequest(req: IncomingMessage, res: ServerRespons
     json(res, 405, { error: 'Method not allowed' });
     return true;
   }
-  serveRecordingFile(req, res, recorder, decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+  const matchId = decodeURIComponent(m[1]);
+  const file = decodeURIComponent(m[2]);
+
+  if (SIDECARS.has(file)) {
+    const dir = recorder.matchDirectory(matchId);
+    if (!dir) {
+      json(res, 404, { error: 'No such recording' });
+      return true;
+    }
+    serveSidecar(req, res, join(dir, file), file, `${matchId}_${file}`);
+    return true;
+  }
+
+  if (/(^|&)thumb=1(&|$)/.test((req.url ?? '').split('?')[1] ?? '')) {
+    void serveThumbnail(req, res, recorder, matchId, file);
+    return true;
+  }
+
+  serveRecordingFile(req, res, recorder, matchId, file);
   return true;
+}
+
+/** A poster frame for one video, generated on first request and cached on
+ *  disk. 404 when the file has no frame to give (a failed capture, or a host
+ *  without ffmpeg) so the page can fall back to a placeholder. */
+async function serveThumbnail(
+  req: IncomingMessage,
+  res: ServerResponse,
+  recorder: MatchRecorder,
+  matchId: string,
+  file: string,
+): Promise<void> {
+  let path: string | undefined;
+  try {
+    path = await recorder.thumbnail(matchId, file);
+  } catch (err) {
+    console.warn(`Recordings: thumbnail for ${matchId}/${file} failed: ${(err as Error).message}`);
+  }
+  if (!path) {
+    json(res, 404, { error: 'No thumbnail' });
+    return;
+  }
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    json(res, 404, { error: 'No thumbnail' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'image/jpeg',
+    'Content-Length': String(size),
+    // The frame never changes once made, and the directory is deleted whole.
+    'Cache-Control': 'private, max-age=86400',
+  });
+  if ((req.method ?? 'GET') === 'HEAD') {
+    res.end();
+    return;
+  }
+  const stream = createReadStream(path);
+  stream.on('error', () => res.destroy());
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
 }
 
 /** Stream one recording with Range support; `?download=1` sends an attachment
@@ -56,7 +127,7 @@ export function serveRecordingFile(
   const method = req.method ?? 'GET';
   const dir = recorder.matchDirectory(matchId);
   // Only plain MP4 names inside the match directory — no traversal, no sidecars.
-  if (!dir || !/^[A-Za-z0-9._-]{1,120}\.mp4$/.test(file) || file.includes('..')) {
+  if (!dir || !isRecordingFileName(file)) {
     json(res, 404, { error: 'No such recording' });
     return;
   }

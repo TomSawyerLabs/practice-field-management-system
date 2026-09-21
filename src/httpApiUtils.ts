@@ -1,3 +1,4 @@
+import { createReadStream, statSync } from 'node:fs';
 import { IncomingMessage, ServerResponse } from 'http';
 import { URL } from 'url';
 import CIDRMatcher from 'cidr-matcher';
@@ -89,4 +90,47 @@ export function checkAuth(req: IncomingMessage, apiKeyStore: ApiKeyStore, truste
   apiKeyStore.recordPendingDevice(sourceIp, userAgent, presentedKey, req.url);
 
   return false;
+}
+
+/**
+ * Send one recording sidecar (`metadata.json`, `scores.csv`,
+ * `telemetry.csv`) — small enough to read in one go, so no Range support.
+ * `?download=1` sends it as an attachment named `downloadName`.
+ *
+ * Shared by the team's practice-day link and the admin's recordings table,
+ * which reach the same files by different credentials.
+ */
+export function serveSidecar(
+  req: IncomingMessage,
+  res: ServerResponse,
+  path: string,
+  file: string,
+  downloadName: string,
+): void {
+  let size: number;
+  try {
+    const st = statSync(path);
+    if (!st.isFile()) throw new Error('not a file');
+    size = st.size;
+  } catch {
+    json(res, 404, { error: 'No such file' });
+    return;
+  }
+  const query = (req.url ?? '').split('?')[1] ?? '';
+  const headers: Record<string, string> = {
+    'Content-Type': file.endsWith('.json') ? 'application/json' : 'text/csv; charset=utf-8',
+    'Content-Length': String(size),
+    'Cache-Control': 'private, max-age=60',
+    'Access-Control-Allow-Origin': '*',
+  };
+  if (/(^|&)download=1(&|$)/.test(query)) headers['Content-Disposition'] = `attachment; filename="${downloadName}"`;
+  res.writeHead(200, headers);
+  if (req.method === 'HEAD') {
+    res.end();
+    return;
+  }
+  const stream = createReadStream(path);
+  stream.on('error', () => res.destroy());
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
 }
