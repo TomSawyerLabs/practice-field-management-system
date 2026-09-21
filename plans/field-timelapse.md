@@ -145,8 +145,17 @@ last one, stops when a match leaves idle/created. One ffmpeg per stream,
 x264 veryfast at the configured crf, fragmented MP4 with `-g 30` so a killed
 process still leaves a playable chunk. Rotated every 30 minutes.
 
-**Rendering:** on demand, one at a time, concat demuxer over the frame JPEGs
-at the chosen fps and height.
+**Rendering:** on demand, one at a time, concat demuxer — over the frame
+JPEGs at the chosen fps for the season film, or over the practice chunks
+(`-c copy`, re-encoding only if their settings changed mid-range) for a
+date-range practice film.
+
+**Viewing (added 2026-09-20, after Cameron asked):** the admin section plays
+everything in place. A 480 px thumbnail is written beside each archival frame
+in the same ffmpeg pass (~40 kB, so a gallery is affordable);
+`/api/timelapse/list?from=&to=` scans the disk for what exists; the section
+shows each day as a thumbnail strip plus play buttons for its practice films,
+and a list of built films with play/download/delete.
 
 ### Verified against the real stream (2026-09-20)
 
@@ -157,6 +166,10 @@ at the chosen fps and height.
 - 56 s of field time → a 297 KB chunk, 1920×1714, 30 fps, 28 frames, 0.93 s
   of film = **60× speed, 19 MB per field-hour** — matching the prediction
 - film renders from the frames and is served over `/api/timelapse/render/…`
+- a practice film for a date range is a stream copy (289,432 → 289,466 bytes),
+  i.e. seconds, not minutes
+- the admin page was driven in a browser against this data: thumbnails load at
+  480 px, and the player decoded a built film at 1210×1080
 
 ### Known gaps
 
@@ -166,6 +179,8 @@ at the chosen fps and height.
   lost — at most a second of film.
 - The frames are stills only: there is no "film the whole day at 1 frame a
   minute" mode between the two. Nobody has asked for one.
+- Viewing is admin-only. There is no team-facing or public timelapse page,
+  and no share link like the practice-day one.
 
 ## Decisions already made (don't re-ask)
 
@@ -207,6 +222,8 @@ Earlier decisions, unchanged:
 - [x] HTTP serving of frames, chunks and renders (`src/timelapseApi.ts`).
 - [x] Admin UI section (`TimelapseSection.tsx`), README + docs.
 - [x] Verified end to end against the live field stream.
+- [x] Viewer: thumbnails, day browser, in-page player, film library,
+      date-range practice films (2026-09-20).
 - [ ] Deploy to steamboat, switch it on, and write the Home Assistant
       pre/post actions for the bay lights (needs a long-lived HA token and
       Cameron's per-change authorisation for anything touching HA).
