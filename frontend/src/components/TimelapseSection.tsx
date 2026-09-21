@@ -3,6 +3,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
+import Checkbox from '@mui/material/Checkbox';
 import Chip from '@mui/material/Chip';
 import Divider from '@mui/material/Divider';
 import Link from '@mui/material/Link';
@@ -14,11 +15,14 @@ import {
   TIMELAPSE_DEFAULTS,
   type TimelapseAction,
   type TimelapseConfig,
+  type TimelapseLightEntity,
+  type TimelapseLights,
   type TimelapseListing,
   type TimelapseSource,
 } from '../../../src/types';
 import {
   fetchTimelapseListing,
+  probeTimelapseLights,
   sendCaptureTimelapseFrame,
   sendDeleteTimelapseRender,
   sendRenderTimelapse,
@@ -186,6 +190,131 @@ function ActionListEditor({
 }
 
 /**
+ * The managed way in: point pFMS at Home Assistant, prove the token, and tick
+ * the lights. pFMS works out the calls — including expanding a group to its
+ * members so the restore puts each fixture back the way it was.
+ */
+function HomeAssistantEditor({
+  lights,
+  onChange,
+}: {
+  lights: Extract<TimelapseLights, { mode: 'homeAssistant' }>;
+  onChange: (lights: Extract<TimelapseLights, { mode: 'homeAssistant' }>) => void;
+}) {
+  const [entities, setEntities] = useState<TimelapseLightEntity[] | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const connect = async () => {
+    setBusy(true);
+    setStatus(null);
+    // An untouched token field means "use the saved one"; the page never has it.
+    const probe = await probeTimelapseLights(lights.baseUrl, lights.token === SECRET_KEPT ? undefined : lights.token);
+    setBusy(false);
+    setEntities(probe.ok ? probe.lights : null);
+    setStatus({
+      ok: probe.ok,
+      text: probe.ok
+        ? `Home Assistant ${probe.version ?? ''} — ${probe.lights.length} lights`.trim()
+        : (probe.error ?? 'could not reach Home Assistant'),
+    });
+  };
+
+  const toggle = (entityId: string) => {
+    const on = lights.entityIds.includes(entityId);
+    onChange({
+      ...lights,
+      entityIds: on ? lights.entityIds.filter(e => e !== entityId) : [...lights.entityIds, entityId],
+    });
+  };
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+        <TextField
+          size="small"
+          label="Home Assistant URL"
+          placeholder="http://homeassistant.local:8123"
+          value={lights.baseUrl}
+          onChange={e => onChange({ ...lights, baseUrl: e.target.value })}
+          sx={{ flex: 1, minWidth: 280 }}
+        />
+        <TextField
+          size="small"
+          label="Long-lived access token"
+          type="password"
+          value={lights.token ?? ''}
+          onChange={e => onChange({ ...lights, token: e.target.value || undefined })}
+          sx={{ flex: 1, minWidth: 240 }}
+          helperText={
+            lights.token === SECRET_KEPT
+              ? 'A token is saved. Type over this to replace it.'
+              : 'Home Assistant → your profile → Security → Long-lived access tokens'
+          }
+        />
+        <Button variant="outlined" onClick={() => void connect()} disabled={busy || !lights.baseUrl}>
+          {busy ? 'Connecting…' : 'Connect'}
+        </Button>
+      </Box>
+      {status && (
+        <Chip
+          size="small"
+          color={status.ok ? 'success' : 'error'}
+          variant="outlined"
+          label={status.text}
+          sx={{ alignSelf: 'flex-start' }}
+        />
+      )}
+
+      {lights.entityIds.length > 0 && (
+        <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            Turning on:
+          </Typography>
+          {lights.entityIds.map(id => (
+            <Chip key={id} size="small" label={id} onDelete={() => toggle(id)} />
+          ))}
+        </Box>
+      )}
+
+      {entities && (
+        <Box
+          sx={{ maxHeight: 260, overflowY: 'auto', border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 1 }}
+        >
+          {entities.map(e => (
+            <Box key={e.entityId} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox
+                size="small"
+                checked={lights.entityIds.includes(e.entityId)}
+                onChange={() => toggle(e.entityId)}
+              />
+              <Typography variant="body2" sx={{ minWidth: 220 }}>
+                {e.name}
+              </Typography>
+              <Typography variant="caption" sx={{ color: 'text.secondary', minWidth: 200 }}>
+                {e.entityId}
+              </Typography>
+              <Chip size="small" variant="outlined" label={e.state} />
+              {e.members && (
+                <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                  group of {e.members.length}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
+      {!entities && (
+        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+          Connect to list the lights. Groups are fine to pick — pFMS snapshots the individual fixtures behind them, so
+          the ones that are normally off stay off afterwards.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+/**
  * Admin → Field timelapse. Two things behind one switch: a few archival
  * frames a day (optionally with the shop lights driven to a known level), and
  * a fast timelapse of every stretch when robots are on the field.
@@ -324,25 +453,72 @@ export function TimelapseSection() {
           Lights around each archival frame
         </Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          Two optional HTTP calls, so every frame is lit the same way. They are skipped — the frame is still taken —
-          whenever a match is running or a robot is enabled. For Home Assistant, snapshot the lights into a scene in the
-          first call and turn that scene back on in the second, so they end up exactly as they were.
+          Every frame looks the same only if the field is lit the same way. Point pFMS at Home Assistant and tick the
+          lights, or write your own HTTP calls for anything else. Either way the lights are only touched when nobody is
+          here — if a match is running, a robot is enabled, or any Driver Station has been heard from recently, the
+          frame is still taken but the lights are left exactly as whoever is in the shop set them. Whatever was on
+          before the frame is put back after it.
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <ActionListEditor
-            label="Before the shutter"
-            help="Run in order. For Home Assistant: snapshot the lights into a scene, then turn them on."
-            actions={draft.preActions}
-            resetKey={resetKey}
-            onChange={a => edit({ preActions: a })}
-          />
-          <ActionListEditor
-            label="After the shutter"
-            help="Run in order, even if the capture failed. For Home Assistant: turn the snapshot scene back on."
-            actions={draft.postActions}
-            resetKey={resetKey}
-            onChange={a => edit({ postActions: a })}
-          />
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Control them with:
+            </Typography>
+            {(
+              [
+                ['none', 'Nothing'],
+                ['homeAssistant', 'Home Assistant'],
+                ['http', 'My own HTTP calls'],
+              ] as const
+            ).map(([mode, label]) => (
+              <Button
+                key={mode}
+                size="small"
+                variant={draft.lights.mode === mode ? 'contained' : 'outlined'}
+                color={draft.lights.mode === mode ? 'primary' : 'inherit'}
+                onClick={() =>
+                  edit({
+                    lights:
+                      mode === 'none'
+                        ? { mode: 'none' }
+                        : mode === 'http'
+                          ? { mode: 'http' }
+                          : { mode: 'homeAssistant', baseUrl: 'http://homeassistant.local:8123', entityIds: [] },
+                  })
+                }
+              >
+                {label}
+              </Button>
+            ))}
+          </Box>
+
+          {draft.lights.mode === 'homeAssistant' && (
+            <HomeAssistantEditor key={`ha-${resetKey}`} lights={draft.lights} onChange={lights => edit({ lights })} />
+          )}
+
+          {draft.lights.mode === 'http' && (
+            <>
+              <ActionListEditor
+                label="Before the shutter"
+                help="Run in order, then the shutter fires."
+                actions={draft.lights.preActions}
+                resetKey={resetKey}
+                onChange={a =>
+                  edit({ lights: { ...(draft.lights as Extract<TimelapseLights, { mode: 'http' }>), preActions: a } })
+                }
+              />
+              <ActionListEditor
+                label="After the shutter"
+                help="Run in order, even if the capture failed — this is what puts the lights back."
+                actions={draft.lights.postActions}
+                resetKey={resetKey}
+                onChange={a =>
+                  edit({ lights: { ...(draft.lights as Extract<TimelapseLights, { mode: 'http' }>), postActions: a } })
+                }
+              />
+            </>
+          )}
+
           <TextField
             size="small"
             type="number"

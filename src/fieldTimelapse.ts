@@ -34,12 +34,16 @@ import { join } from 'node:path';
 import { inputArgs, runCommand, slugify } from './matchRecorder.js';
 import {
   TIMELAPSE_DEFAULTS,
+  TIMELAPSE_RESTORE_SCENE,
   type MatchState,
   type RecordingStreamConfig,
   type TimelapseAction,
   type TimelapseConfig,
   type TimelapseDayListing,
   type TimelapseFrameEntry,
+  type TimelapseLightEntity,
+  type TimelapseLights,
+  type TimelapseLightsProbe,
   type TimelapseListing,
   type TimelapseRenderFile,
   type TimelapseRenderState,
@@ -78,7 +82,10 @@ const LOG_KEEP = 500;
 
 /** Just enough of `fetch` for the pre/post actions, so a test can stand in
  *  for it without building a whole Response. */
-export type TimelapseFetch = (url: string, init: RequestInit) => Promise<{ ok: boolean; status: number }>;
+export type TimelapseFetch = (
+  url: string,
+  init: RequestInit,
+) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
 export interface FieldTimelapseOptions {
   /** Recordings root; the store is `<directory>/.timelapse`. */
@@ -307,20 +314,21 @@ export class FieldTimelapse {
     const entry: TimelapseFrameEntry = { day, slot, at: now, files: [], lights: 'none' };
     this.capturingFrame = true;
     try {
-      const pre = config.preActions ?? [];
-      const post = config.postActions ?? [];
-      const hasActions = pre.length + post.length > 0;
+      const hasLights = config.lights.mode !== 'none';
       // Only ever touch the lights in an empty shop. When anyone is here they
       // have already turned the lights on, so there is nothing to gain and a
       // flicker to lose.
       const occupied = this.opts.isFieldBusy() || this.robotsPresent();
-      if (withActions && hasActions && occupied) entry.lights = 'skipped-field-in-use';
+      if (withActions && hasLights && occupied) entry.lights = 'skipped-field-in-use';
 
-      if (!withActions || !hasActions || occupied) {
+      if (!withActions || !hasLights || occupied) {
         await this.shoot(entry, day, slot);
       } else {
+        let post: TimelapseAction[] = [];
         try {
-          for (const action of pre) await this.runAction(action);
+          const plan = await this.lightPlan(config.lights);
+          post = plan.post;
+          for (const action of plan.pre) await this.runAction(action);
           entry.lights = 'ran';
           if (config.settleSeconds > 0) await sleep(config.settleSeconds * 1000);
         } catch (err) {
@@ -417,6 +425,126 @@ export class FieldTimelapse {
       }
     }
     if (errors.length > 0) entry.error = errors.join('; ');
+  }
+
+  /**
+   * The calls to make either side of the shutter.
+   *
+   * `http` hands back what the operator wrote. `homeAssistant` is built here,
+   * so the operator only picks entities: snapshot the current state into a
+   * scene, turn the chosen entities on, and restore that scene afterwards.
+   */
+  private async lightPlan(lights: TimelapseLights): Promise<{ pre: TimelapseAction[]; post: TimelapseAction[] }> {
+    if (lights.mode === 'none') return { pre: [], post: [] };
+    if (lights.mode === 'http') return { pre: lights.preActions ?? [], post: lights.postActions ?? [] };
+
+    if (lights.entityIds.length === 0) throw new Error('no Home Assistant entities are selected');
+    if (!lights.token) throw new Error('no Home Assistant token is saved');
+
+    // Snapshot the leaves, not the groups: a group's state is derived from
+    // its members, so restoring the group turns on members that were off.
+    const leaves = await this.expandEntities(lights, lights.entityIds);
+    const call = (service: string, body: unknown): TimelapseAction => ({
+      method: 'POST',
+      url: `${lights.baseUrl.replace(/\/+$/, '')}/api/services/${service}`,
+      headers: { Authorization: `Bearer ${lights.token}` },
+      body: JSON.stringify(body),
+    });
+    return {
+      pre: [
+        call('scene/create', { scene_id: TIMELAPSE_RESTORE_SCENE, snapshot_entities: leaves }),
+        call('light/turn_on', { entity_id: lights.entityIds }),
+      ],
+      post: [call('scene/turn_on', { entity_id: `scene.${TIMELAPSE_RESTORE_SCENE}` })],
+    };
+  }
+
+  /** Walk light groups down to the fixtures they are made of. A group states
+   *  its members in its own `entity_id` attribute; anything without that is a
+   *  leaf. Depth-limited, and cycle-safe via `seen`. */
+  private async expandEntities(
+    ha: { baseUrl: string; token?: string },
+    entityIds: string[],
+    seen = new Set<string>(),
+    depth = 0,
+  ): Promise<string[]> {
+    if (depth > 5) return entityIds;
+    const out: string[] = [];
+    for (const id of entityIds) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      let members: string[] | undefined;
+      try {
+        const state = (await this.haGet(ha, `/api/states/${encodeURIComponent(id)}`)) as {
+          attributes?: { entity_id?: unknown };
+        };
+        const listed = state?.attributes?.entity_id;
+        if (Array.isArray(listed) && listed.every(m => typeof m === 'string')) members = listed as string[];
+      } catch {
+        // Unreadable entity: keep it as-is rather than dropping it from the
+        // snapshot, which would leave it unrestored.
+      }
+      if (members && members.length > 0) out.push(...(await this.expandEntities(ha, members, seen, depth + 1)));
+      else out.push(id);
+    }
+    return out;
+  }
+
+  /** One authenticated GET against Home Assistant, parsed. */
+  private async haGet(ha: { baseUrl: string; token?: string }, path: string): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
+    try {
+      const res = await this.fetchImpl(`${ha.baseUrl.replace(/\/+$/, '')}${path}`, {
+        method: 'GET',
+        headers: ha.token ? { Authorization: `Bearer ${ha.token}` } : {},
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new Error(
+          res.status === 401 ? 'Home Assistant refused the token (401)' : `Home Assistant said ${res.status}`,
+        );
+      }
+      return JSON.parse(await res.text());
+    } catch (err) {
+      throw new Error((err as Error).name === 'AbortError' ? 'Home Assistant timed out' : (err as Error).message);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Reach Home Assistant and list its lights, for the admin panel's entity
+   * picker. Doubles as the "does this token work" check — the picker filling
+   * in is the proof.
+   */
+  async probeLights(baseUrl: string, token: string | undefined): Promise<TimelapseLightsProbe> {
+    const ha = { baseUrl, token };
+    try {
+      const root = (await this.haGet(ha, '/api/')) as { message?: string };
+      if (typeof root?.message !== 'string') throw new Error('that does not look like a Home Assistant API');
+      const config = (await this.haGet(ha, '/api/config').catch(() => ({}))) as { version?: string };
+      const states = (await this.haGet(ha, '/api/states')) as {
+        entity_id?: string;
+        state?: string;
+        attributes?: { friendly_name?: string; entity_id?: unknown };
+      }[];
+      const lights: TimelapseLightEntity[] = (Array.isArray(states) ? states : [])
+        .filter(e => typeof e.entity_id === 'string' && e.entity_id.startsWith('light.'))
+        .map(e => {
+          const members = e.attributes?.entity_id;
+          return {
+            entityId: e.entity_id!,
+            name: e.attributes?.friendly_name ?? e.entity_id!,
+            state: e.state ?? 'unknown',
+            members: Array.isArray(members) ? (members as string[]) : undefined,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      return { type: 'timelapseLightsProbe', ok: true, version: config?.version, lights };
+    } catch (err) {
+      return { type: 'timelapseLightsProbe', ok: false, error: (err as Error).message, lights: [] };
+    }
   }
 
   /** Fire one configured HTTP action. Failures are reported, never thrown at

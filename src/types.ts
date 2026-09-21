@@ -314,6 +314,62 @@ export function isTimelapseAction(v: unknown): v is TimelapseAction {
   return true;
 }
 
+/**
+ * How the lights are driven around an archival frame.
+ *
+ * Two ways in, because they suit different people:
+ *
+ *  - `homeAssistant` is the managed one. Point pFMS at Home Assistant, give
+ *    it a token, tick the lights you want on, and it builds the calls: it
+ *    snapshots the current state, turns your entities on, and restores the
+ *    snapshot afterwards. It expands light *groups* to their members for the
+ *    snapshot, because a group's state is derived — restoring the group
+ *    would turn on members that were deliberately off.
+ *  - `http` is the escape hatch: your own list of calls, run in order. Hue,
+ *    Shelly, a relay board, a shell script behind a webhook — anything that
+ *    answers HTTP, with no support needed from pFMS.
+ */
+export type TimelapseLights =
+  | { mode: 'none' }
+  | { mode: 'http'; preActions?: TimelapseAction[]; postActions?: TimelapseAction[] }
+  | {
+      mode: 'homeAssistant';
+      /** Base URL, e.g. `http://homeassistant.local:8123`. */
+      baseUrl: string;
+      /** Long-lived access token. Masked on the way out to clients, like any
+       *  other secret in the settings. */
+      token?: string;
+      /** What to turn on. Groups are fine — they are expanded for the
+       *  snapshot so per-fixture state survives the restore. */
+      entityIds: string[];
+    };
+
+/** Scene pFMS creates to hold the pre-capture light state. */
+export const TIMELAPSE_RESTORE_SCENE = 'pfms_timelapse_restore';
+
+export function isTimelapseLights(v: unknown): v is TimelapseLights {
+  const l = v as TimelapseLights;
+  if (typeof l !== 'object' || l === null) return false;
+  if (l.mode === 'none') return true;
+  if (l.mode === 'http') {
+    const ok = (a: unknown[] | undefined) =>
+      a === undefined || (Array.isArray(a) && a.length <= 4 && a.every(isTimelapseAction));
+    return ok(l.preActions) && ok(l.postActions);
+  }
+  if (l.mode === 'homeAssistant') {
+    return (
+      typeof l.baseUrl === 'string' &&
+      /^https?:\/\/[^\s]+$/.test(l.baseUrl) &&
+      l.baseUrl.length <= 300 &&
+      (l.token === undefined || (typeof l.token === 'string' && l.token.length <= 2000 && !/[\r\n]/.test(l.token))) &&
+      Array.isArray(l.entityIds) &&
+      l.entityIds.length <= 100 &&
+      l.entityIds.every(e => typeof e === 'string' && /^[a-z_]+\.[a-z0-9_]+$/.test(e))
+    );
+  }
+  return false;
+}
+
 /** How the fast (robots-present) timelapse samples the stream. `keyframes`
  *  decodes only keyframes — a fifth of the CPU of `everySecond`, at whatever
  *  rate the source's GOP gives (0.5 fps on the stitched field stream). */
@@ -334,13 +390,10 @@ export interface TimelapseConfig {
   activeRetentionDays: number;
   /** Days to keep the daily archival frames; 0 keeps them forever. */
   frameRetentionDays: number;
-  /** Run in order before the shutter. Home Assistant needs two calls to
-   *  snapshot the lights and then turn them on, which is why this is a list
-   *  rather than one call — nothing has to be built inside HA. */
-  preActions?: TimelapseAction[];
-  /** Run in order after the shutter, even if the capture failed. */
-  postActions?: TimelapseAction[];
-  /** Seconds between the pre actions and the shutter, for lights to settle. */
+  /** How the lights are driven around each archival frame. */
+  lights: TimelapseLights;
+  /** Seconds between turning the lights on and the shutter, for them to
+   *  settle (and for a fluorescent to come up to colour). */
   settleSeconds: number;
 }
 
@@ -357,54 +410,66 @@ export const SECRET_KEPT = '••• unchanged •••';
 
 /** The settings with every secret masked, safe to send to clients. */
 export function redactSetupSettings(settings: SetupSettings): SetupSettings {
-  const mask = (action: TimelapseAction): TimelapseAction => {
-    if (!action.headers) return action;
-    const headers: Record<string, string> = {};
-    for (const name of Object.keys(action.headers)) headers[name] = SECRET_KEPT;
-    return { ...action, headers };
-  };
-  if (!settings.timelapse) return settings;
-  const { preActions, postActions } = settings.timelapse;
-  const anySecret = [...(preActions ?? []), ...(postActions ?? [])].some(a => a.headers !== undefined);
-  if (!anySecret) return settings;
-  return {
-    ...settings,
-    timelapse: {
-      ...settings.timelapse,
-      preActions: preActions?.map(mask),
-      postActions: postActions?.map(mask),
-    },
-  };
+  const lights = settings.timelapse?.lights;
+  if (!lights || lights.mode === 'none') return settings;
+
+  let masked: TimelapseLights;
+  if (lights.mode === 'homeAssistant') {
+    if (lights.token === undefined) return settings;
+    masked = { ...lights, token: SECRET_KEPT };
+  } else {
+    const maskAction = (action: TimelapseAction): TimelapseAction => {
+      if (!action.headers) return action;
+      const headers: Record<string, string> = {};
+      for (const name of Object.keys(action.headers)) headers[name] = SECRET_KEPT;
+      return { ...action, headers };
+    };
+    const anySecret = [...(lights.preActions ?? []), ...(lights.postActions ?? [])].some(a => a.headers !== undefined);
+    if (!anySecret) return settings;
+    masked = {
+      ...lights,
+      preActions: lights.preActions?.map(maskAction),
+      postActions: lights.postActions?.map(maskAction),
+    };
+  }
+  return { ...settings, timelapse: { ...settings.timelapse!, lights: masked } };
 }
 
 /**
- * Put the real secrets back into a patch from a client, matching them up by
- * header name with what is already stored. A masked header whose name is not
- * stored yet is dropped rather than saved as the mask — the alternative is
- * sending `••• unchanged •••` to Home Assistant as a bearer token.
+ * Put the real secrets back into a patch from a client, matching them up with
+ * what is already stored. A masked value with nothing stored behind it is
+ * dropped rather than saved as the mask — the alternative is sending
+ * `••• unchanged •••` to Home Assistant as a bearer token.
  */
 export function restoreSetupSecrets(patch: Partial<SetupSettings>, stored: SetupSettings): Partial<SetupSettings> {
-  if (!patch.timelapse) return patch;
-  const unmask = (incoming: TimelapseAction, old: TimelapseAction | undefined): TimelapseAction => {
-    if (!incoming.headers) return incoming;
-    const headers: Record<string, string> = {};
-    for (const [name, value] of Object.entries(incoming.headers)) {
-      if (value !== SECRET_KEPT) headers[name] = value;
-      else if (old?.headers?.[name] !== undefined) headers[name] = old.headers[name];
-    }
-    return { ...incoming, headers: Object.keys(headers).length > 0 ? headers : undefined };
-  };
-  // Matched up by position: the admin page edits a list in place, so call n
-  // of the patch is call n of what is stored.
-  const old = stored.timelapse;
-  return {
-    ...patch,
-    timelapse: {
-      ...patch.timelapse,
-      preActions: patch.timelapse.preActions?.map((a, i) => unmask(a, old?.preActions?.[i])),
-      postActions: patch.timelapse.postActions?.map((a, i) => unmask(a, old?.postActions?.[i])),
-    },
-  };
+  const lights = patch.timelapse?.lights;
+  if (!lights || lights.mode === 'none') return patch;
+  const old = stored.timelapse?.lights;
+
+  let restored: TimelapseLights;
+  if (lights.mode === 'homeAssistant') {
+    const oldToken = old?.mode === 'homeAssistant' ? old.token : undefined;
+    restored = lights.token === SECRET_KEPT ? { ...lights, token: oldToken } : lights;
+  } else {
+    const unmask = (incoming: TimelapseAction, previous: TimelapseAction | undefined): TimelapseAction => {
+      if (!incoming.headers) return incoming;
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(incoming.headers)) {
+        if (value !== SECRET_KEPT) headers[name] = value;
+        else if (previous?.headers?.[name] !== undefined) headers[name] = previous.headers[name];
+      }
+      return { ...incoming, headers: Object.keys(headers).length > 0 ? headers : undefined };
+    };
+    // Matched up by position: the admin page edits a list in place, so call n
+    // of the patch is call n of what is stored.
+    const oldHttp = old?.mode === 'http' ? old : undefined;
+    restored = {
+      ...lights,
+      preActions: lights.preActions?.map((a, i) => unmask(a, oldHttp?.preActions?.[i])),
+      postActions: lights.postActions?.map((a, i) => unmask(a, oldHttp?.postActions?.[i])),
+    };
+  }
+  return { ...patch, timelapse: { ...patch.timelapse!, lights: restored } };
 }
 
 export const TIMELAPSE_DEFAULTS: TimelapseConfig = {
@@ -416,6 +481,7 @@ export const TIMELAPSE_DEFAULTS: TimelapseConfig = {
   activeWidth: 1920,
   activeRetentionDays: 60,
   frameRetentionDays: 0,
+  lights: { mode: 'none' },
   settleSeconds: 5,
 };
 
@@ -451,10 +517,7 @@ export function isTimelapseConfig(v: unknown): v is TimelapseConfig {
     Number.isInteger(c.frameRetentionDays) &&
     c.frameRetentionDays >= 0 &&
     c.frameRetentionDays <= 3650 &&
-    (c.preActions === undefined || (Array.isArray(c.preActions) && c.preActions.every(isTimelapseAction))) &&
-    (c.postActions === undefined || (Array.isArray(c.postActions) && c.postActions.every(isTimelapseAction))) &&
-    (c.preActions?.length ?? 0) <= 4 &&
-    (c.postActions?.length ?? 0) <= 4 &&
+    isTimelapseLights(c.lights) &&
     typeof c.settleSeconds === 'number' &&
     c.settleSeconds >= 0 &&
     c.settleSeconds <= 120
@@ -3238,6 +3301,20 @@ export interface PublicPracticeDay {
   items: PublicPracticeItem[];
 }
 
+/** Where the action is inside one recording, for the list's activity strip:
+ *  how many balls scored in each slice of the video, and when this team's
+ *  robot was actually enabled. Small enough to ship with the listing (a
+ *  couple of hundred numbers), so the strip needs no extra fetch. */
+export interface RecordingActivity {
+  /** Seconds of video each bin covers. */
+  binSeconds: number;
+  /** Balls that counted in each bin, per alliance. Both are `bins` long. */
+  red: number[];
+  blue: number[];
+  /** Spans (seconds into the video) when this team's robot was enabled. */
+  enabled: { from: number; to: number }[];
+}
+
 export interface PublicPracticeItem {
   kind: 'match' | 'practice';
   id: string;
@@ -3257,6 +3334,8 @@ export interface PublicPracticeItem {
   scored?: Record<Alliance, number>;
   /** Battery range seen for this team during the window, when telemetry was available. */
   battery?: { min: number; max: number };
+  /** Scoring density and enabled spans across the video, when metadata exists. */
+  activity?: RecordingActivity;
   recordings: {
     name: string;
     file: string;
@@ -3500,4 +3579,48 @@ export interface TimelapseListing {
 export function isTimelapseListing(msg: unknown): msg is TimelapseListing {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as TimelapseListing).type === 'timelapseListing';
+}
+
+/** Admin asks pFMS to reach Home Assistant and list its lights, to fill the
+ *  entity picker and prove the token works. The token may be omitted, in
+ *  which case the stored one is used. */
+export interface TestTimelapseLights {
+  type: 'testTimelapseLights';
+  baseUrl: string;
+  token?: string;
+}
+
+export function isTestTimelapseLights(msg: unknown): msg is TestTimelapseLights {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as TestTimelapseLights;
+  return (
+    m.type === 'testTimelapseLights' &&
+    typeof m.baseUrl === 'string' &&
+    /^https?:\/\/[^\s]+$/.test(m.baseUrl) &&
+    m.baseUrl.length <= 300 &&
+    (m.token === undefined || (typeof m.token === 'string' && m.token.length <= 2000))
+  );
+}
+
+/** One light Home Assistant knows about, for the picker. */
+export interface TimelapseLightEntity {
+  entityId: string;
+  name: string;
+  state: string;
+  /** Members, when this is a group. Picking a group is fine; pFMS expands it. */
+  members?: string[];
+}
+
+export interface TimelapseLightsProbe {
+  type: 'timelapseLightsProbe';
+  ok: boolean;
+  error?: string;
+  /** Home Assistant version, when it answered. */
+  version?: string;
+  lights: TimelapseLightEntity[];
+}
+
+export function isTimelapseLightsProbe(msg: unknown): msg is TimelapseLightsProbe {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TimelapseLightsProbe).type === 'timelapseLightsProbe';
 }

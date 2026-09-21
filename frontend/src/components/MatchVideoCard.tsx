@@ -165,7 +165,7 @@ export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
   const status = !canRecord
     ? (practice?.unavailableReason ?? 'Recording is not set up on this field')
     : runInProgress
-      ? 'Recording now — the clip ends 3 s after you disable.'
+      ? 'Recording now — the clip ends 3 s after you disable, and coming back within 6 s keeps it one video.'
       : optedIn
         ? practice?.buffering
           ? 'Ready: enabling your robot starts a clip (with 3 s before and after).'

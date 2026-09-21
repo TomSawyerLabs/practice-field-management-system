@@ -15,7 +15,9 @@
  *
  * Every robot gets its own clip. Six robots running independently produce
  * six files, each cut to that robot's own enable/disable times, all of the
- * same field view; the buffer is shared, the runs are not.
+ * same field view; the buffer is shared, the runs are not. A robot that
+ * disables and comes back within MERGE_WINDOW_MS keeps the same clip,
+ * including the gap, so a quick reposition or re-home stays one video.
  *
  * Timing uses segment mtimes: a segment's mtime is when ffmpeg closed it, i.e.
  * the wall-clock end of its footage (minus the source's own latency, which
@@ -47,8 +49,12 @@ const PAD_MS = PRACTICE_PAD_SECONDS * 1000;
 const SEGMENT_SECONDS = 1;
 /** Segments older than this are deleted unless a run still needs them. */
 const BUFFER_KEEP_MS = 15_000;
-/** A disable followed by a re-enable within this window stays one clip. */
-const MERGE_GRACE_MS = 2000;
+/** A disable followed by a re-enable within this long stays one clip, gap
+ *  and all — drivers stop to reposition, reset a mechanism or re-home, and
+ *  chopping that into two videos loses the thing they were working on.
+ *  Measured from the disable, so it is the window a driver actually feels.
+ *  Checked once a TICK_MS, so the real cutoff is this to this + 1 s. */
+const MERGE_WINDOW_MS = 6000;
 /** Telemetry silence after which a station is treated as gone (and disabled). */
 const PRESENCE_TIMEOUT_MS = 15_000;
 /** Longest single clip; a robot enabled longer than this gets a second clip. */
@@ -292,7 +298,9 @@ export class PracticeRecorder {
         // The team unticked the box mid-run: drop it, nothing is kept.
         this.runs.delete(run.station);
         this.emit();
-      } else if (run.disabledAt !== undefined && now >= run.disabledAt + PAD_MS + MERGE_GRACE_MS) {
+      } else if (run.disabledAt !== undefined && now >= run.disabledAt + MERGE_WINDOW_MS) {
+        // The clip still ends one pad after the disable; the rest of the
+        // merge window was only us waiting to see whether they came back.
         this.closeRun(run, run.disabledAt + PAD_MS, 'robot disabled');
       } else if (now - run.startedAt >= MAX_RUN_MS) {
         // Split a marathon enable so the clip stays manageable; the next

@@ -23,7 +23,14 @@ import type { MatchRecorder } from './matchRecorder.js';
 import { practiceDayLabel, practiceDayOf, type PracticeStore } from './practiceStore.js';
 import { isShareToken } from './publicMatchApi.js';
 import { serveRecordingFile } from './recordingsApi.js';
-import { METADATA_FILE, SCORES_CSV, TELEMETRY_CSV, readMetadata, summarizeMetadata } from './sessionMetadata.js';
+import {
+  METADATA_FILE,
+  SCORES_CSV,
+  TELEMETRY_CSV,
+  activityFor,
+  readMetadata,
+  summarizeMetadata,
+} from './sessionMetadata.js';
 import type { MatchHistoryEntry, PracticeRunEntry, PublicPracticeDay, PublicPracticeItem } from './types.js';
 import { ZipWriter, zipSizeEstimate } from './zipStream.js';
 
@@ -201,6 +208,7 @@ function summarizeDay(
           : undefined,
       scored: summary?.scored,
       battery: summary?.battery,
+      activity: meta ? activityFor(meta, teamNumber) : undefined,
       recordings: item.recordings
         .filter(r => r.status !== 'failed')
         .map(r => ({

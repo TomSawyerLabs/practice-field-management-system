@@ -49,9 +49,11 @@ import {
   MatchHistoryState,
   isMatchRecordingState,
   isTimelapseState,
+  isTimelapseLightsProbe,
   MatchRecordingState,
   TimelapseState,
   TimelapseListing,
+  TimelapseLightsProbe,
   RenderTimelapse,
   isRecordingStreamTestResult,
   RecordingStreamTestResult,
@@ -821,6 +823,11 @@ function receiveMessage(detail: Message) {
 
   if (isTimelapseState(detail)) {
     handleTimelapseState(detail);
+    return;
+  }
+
+  if (isTimelapseLightsProbe(detail)) {
+    events.dispatchEvent(new CustomEvent('timelapseLightsProbe', { detail }));
     return;
   }
 
@@ -2017,6 +2024,27 @@ export function sendCaptureTimelapseFrame(withActions: boolean) {
 /** Build a film for a date range; progress arrives in the state. */
 export function sendRenderTimelapse(opts: Omit<RenderTimelapse, 'type'>) {
   sendWhenOpen({ type: 'renderTimelapse', ...opts });
+}
+
+/**
+ * Ask the server to reach Home Assistant and list its lights — the entity
+ * picker's source, and the proof that the token works. Omit the token to use
+ * the one already saved (the page never holds it).
+ */
+export function probeTimelapseLights(baseUrl: string, token?: string): Promise<TimelapseLightsProbe> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => {
+      events.removeEventListener('timelapseLightsProbe', handler);
+      resolve({ type: 'timelapseLightsProbe', ok: false, error: 'No answer from the server', lights: [] });
+    }, 20_000);
+    const handler = (e: Event) => {
+      clearTimeout(timer);
+      events.removeEventListener('timelapseLightsProbe', handler);
+      resolve((e as CustomEvent<TimelapseLightsProbe>).detail);
+    };
+    events.addEventListener('timelapseLightsProbe', handler);
+    sendWhenOpen({ type: 'testTimelapseLights', baseUrl, ...(token ? { token } : {}) });
+  });
 }
 
 /** Throw away a film that was built earlier. */

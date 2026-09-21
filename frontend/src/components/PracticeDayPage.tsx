@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 import DownloadIcon from '@mui/icons-material/Download';
 import type { PublicPracticeDay, PublicPracticeItem } from '../../../src/types';
 import { formatBytes } from './MatchVideoCard';
+import { ActivityStrip } from './ActivityStrip';
 
 /**
  * A team's practice day: every match and every "record while enabled" run
@@ -124,6 +125,19 @@ function describeCounts(matches: number, runs: number): string {
 function ItemCard({ item, teamNumber }: { item: PublicPracticeItem; teamNumber: number }) {
   const when = new Date(item.startedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const others = item.teams.filter(t => t.teamNumber !== teamNumber).map(t => t.teamNumber);
+  // Every stream of this recording is the same moment from a different
+  // camera, so a jump from the activity strip moves all of them together.
+  const videos = useRef<(HTMLVideoElement | null)[]>([]);
+  const seek = (seconds: number) => {
+    for (const v of videos.current) {
+      if (!v) continue;
+      try {
+        v.currentTime = seconds;
+      } catch {
+        // Not seekable yet (metadata still loading) — harmless.
+      }
+    }
+  };
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
@@ -164,13 +178,17 @@ function ItemCard({ item, teamNumber }: { item: PublicPracticeItem; teamNumber: 
           )}
         </Box>
 
+        {item.activity && (
+          <ActivityStrip activity={item.activity} durationSeconds={item.durationSeconds} onSeek={seek} />
+        )}
+
         {item.recordings.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No usable video was captured.
           </Typography>
         ) : (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {item.recordings.map(rec => (
+            {item.recordings.map((rec, i) => (
               <Box key={rec.file}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
                   <Typography sx={{ fontWeight: 600 }}>{rec.name}</Typography>
@@ -187,7 +205,12 @@ function ItemCard({ item, teamNumber }: { item: PublicPracticeItem; teamNumber: 
                 </Box>
                 <video
                   controls
-                  preload="none"
+                  // metadata, not none: the strip seeks into these, and a
+                  // player that knows its duration can be scrubbed at once.
+                  preload="metadata"
+                  ref={el => {
+                    videos.current[i] = el;
+                  }}
                   src={rec.url}
                   style={{ width: '100%', borderRadius: 4, background: '#000' }}
                 />

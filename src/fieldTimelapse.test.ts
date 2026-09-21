@@ -6,13 +6,17 @@ import { join } from 'node:path';
 import { FieldTimelapse, localDay, slotTime } from './fieldTimelapse.js';
 import {
   isTimelapseConfig,
+  isTimelapseLights,
+  TIMELAPSE_RESTORE_SCENE,
   redactSetupSettings,
   restoreSetupSecrets,
   SECRET_KEPT,
   TIMELAPSE_DEFAULTS,
   type MatchState,
   type SetupSettings,
+  type TimelapseAction,
   type TimelapseConfig,
+  type TimelapseLights,
 } from './types.js';
 
 const ffmpeg = process.env.FFMPEG_PATH ?? 'ffmpeg';
@@ -50,25 +54,41 @@ describe('isTimelapseConfig', () => {
     expect(ok({ dailyTimes: ['9:00'] })).toBe(false);
     expect(ok({ dailyTimes: ['09:60'] })).toBe(false);
   });
-  test('an action needs a real http(s) URL and a known method', () => {
-    expect(ok({ preActions: [{ method: 'POST', url: 'http://ha.local/api/services/light/turn_on' }] })).toBe(true);
-    expect(ok({ preActions: [{ method: 'DELETE' as 'POST', url: 'http://ha.local/x' }] })).toBe(false);
-    expect(ok({ preActions: [{ method: 'POST', url: 'file:///etc/passwd' }] })).toBe(false);
+  const http = (preActions: TimelapseAction[]): TimelapseLights => ({ mode: 'http', preActions });
+
+  test('a custom call needs a real http(s) URL and a known method', () => {
+    expect(ok({ lights: http([{ method: 'POST', url: 'http://ha.local/api/services/light/turn_on' }]) })).toBe(true);
+    expect(ok({ lights: http([{ method: 'DELETE' as 'POST', url: 'http://ha.local/x' }]) })).toBe(false);
+    expect(ok({ lights: http([{ method: 'POST', url: 'file:///etc/passwd' }]) })).toBe(false);
   });
   test('a slot takes a short list of calls, not an unbounded one', () => {
     const call = { method: 'POST' as const, url: 'http://ha.local/x' };
-    expect(ok({ preActions: [call, call] })).toBe(true);
-    expect(ok({ preActions: [call, call, call, call] })).toBe(true);
-    expect(ok({ preActions: [call, call, call, call, call] })).toBe(false);
+    expect(ok({ lights: http([call, call]) })).toBe(true);
+    expect(ok({ lights: http([call, call, call, call]) })).toBe(true);
+    expect(ok({ lights: http([call, call, call, call, call]) })).toBe(false);
   });
   test('header values may not smuggle in extra headers', () => {
-    expect(ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'Bearer t' } }] })).toBe(
+    expect(ok({ lights: http([{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'Bearer t' } }]) })).toBe(
       true,
     );
     expect(
-      ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'a\r\nX-Evil: 1' } }] }),
+      ok({ lights: http([{ method: 'GET', url: 'http://x/y', headers: { Authorization: 'a\r\nX-Evil: 1' } }]) }),
     ).toBe(false);
-    expect(ok({ preActions: [{ method: 'GET', url: 'http://x/y', headers: { 'Bad Name': 'v' } }] })).toBe(false);
+    expect(ok({ lights: http([{ method: 'GET', url: 'http://x/y', headers: { 'Bad Name': 'v' } }]) })).toBe(false);
+  });
+  test('the Home Assistant mode wants a base URL and real entity ids', () => {
+    const ha = (patch: Partial<Extract<TimelapseLights, { mode: 'homeAssistant' }>>): TimelapseLights => ({
+      mode: 'homeAssistant',
+      baseUrl: 'http://homeassistant.local:8123',
+      entityIds: ['light.all_lights'],
+      ...patch,
+    });
+    expect(isTimelapseLights(ha({}))).toBe(true);
+    expect(isTimelapseLights(ha({ token: 'abc' }))).toBe(true);
+    expect(isTimelapseLights(ha({ baseUrl: 'homeassistant.local' }))).toBe(false);
+    expect(isTimelapseLights(ha({ entityIds: ['not an entity'] }))).toBe(false);
+    expect(isTimelapseLights({ mode: 'nope' })).toBe(false);
+    expect(isTimelapseLights({ mode: 'none' })).toBe(true);
   });
   test('quality and retention are bounded', () => {
     expect(ok({ activeCrf: 13 })).toBe(false);
@@ -78,63 +98,245 @@ describe('isTimelapseConfig', () => {
   });
 });
 
-describe('timelapse action secrets', () => {
+describe('timelapse light secrets', () => {
   // setupConfigState reaches every internal client, station pages included,
-  // so a bearer token in an action header must never ride along in it.
-  const stored = (): SetupSettings => ({
+  // so a token must never ride along in it — in either mode.
+  const storedHttp = (): SetupSettings => ({
     timelapse: {
       ...TIMELAPSE_DEFAULTS,
-      preActions: [
-        {
-          method: 'POST',
-          url: 'http://homeassistant.tsl:8123/api/services/light/turn_on',
-          headers: { Authorization: 'Bearer real-token', 'X-Other': 'plain' },
-          body: '{"entity_id":"light.all_lights"}',
-        },
-      ],
-      postActions: [{ method: 'POST', url: 'http://homeassistant.tsl:8123/api/services/scene/turn_on' }],
+      lights: {
+        mode: 'http',
+        preActions: [
+          {
+            method: 'POST',
+            url: 'http://homeassistant.tsl:8123/api/services/light/turn_on',
+            headers: { Authorization: 'Bearer real-token', 'X-Other': 'plain' },
+            body: '{"entity_id":"light.all_lights"}',
+          },
+        ],
+        postActions: [{ method: 'POST', url: 'http://homeassistant.tsl:8123/api/services/scene/turn_on' }],
+      },
     },
   });
 
-  test('header values are masked on the way out, everything else is kept', () => {
-    const out = redactSetupSettings(stored());
-    expect(out.timelapse!.preActions![0].headers).toEqual({ Authorization: SECRET_KEPT, 'X-Other': SECRET_KEPT });
-    expect(out.timelapse!.preActions![0].url).toBe('http://homeassistant.tsl:8123/api/services/light/turn_on');
-    expect(out.timelapse!.preActions![0].body).toBe('{"entity_id":"light.all_lights"}');
+  const storedHa = (): SetupSettings => ({
+    timelapse: {
+      ...TIMELAPSE_DEFAULTS,
+      lights: {
+        mode: 'homeAssistant',
+        baseUrl: 'http://homeassistant.tsl:8123',
+        token: 'real-token',
+        entityIds: ['light.all_lights'],
+      },
+    },
+  });
+
+  const httpLights = (settings: SetupSettings) =>
+    settings.timelapse!.lights as Extract<TimelapseLights, { mode: 'http' }>;
+  const haLights = (settings: SetupSettings) =>
+    settings.timelapse!.lights as Extract<TimelapseLights, { mode: 'homeAssistant' }>;
+
+  test('custom header values are masked on the way out, everything else kept', () => {
+    const out = redactSetupSettings(storedHttp());
+    expect(httpLights(out).preActions![0].headers).toEqual({ Authorization: SECRET_KEPT, 'X-Other': SECRET_KEPT });
+    expect(httpLights(out).preActions![0].url).toBe('http://homeassistant.tsl:8123/api/services/light/turn_on');
+    expect(httpLights(out).preActions![0].body).toBe('{"entity_id":"light.all_lights"}');
     expect(JSON.stringify(out)).not.toContain('real-token');
   });
 
-  test('settings without an action are passed through untouched', () => {
+  test('the Home Assistant token is masked, the rest of the config is not', () => {
+    const out = redactSetupSettings(storedHa());
+    expect(haLights(out).token).toBe(SECRET_KEPT);
+    expect(haLights(out).baseUrl).toBe('http://homeassistant.tsl:8123');
+    expect(haLights(out).entityIds).toEqual(['light.all_lights']);
+    expect(JSON.stringify(out)).not.toContain('real-token');
+  });
+
+  test('settings with no light control are passed through untouched', () => {
     const plain: SetupSettings = { publicUrl: 'https://pfms.example.org' };
     expect(redactSetupSettings(plain)).toBe(plain);
     expect(redactSetupSettings({ timelapse: TIMELAPSE_DEFAULTS })).toEqual({ timelapse: TIMELAPSE_DEFAULTS });
   });
 
   test('a masked value coming back keeps the stored secret', () => {
-    const current = stored();
-    const patch = redactSetupSettings(current);
-    const saved = restoreSetupSecrets(patch, current);
-    expect(saved.timelapse!.preActions![0].headers).toEqual({ Authorization: 'Bearer real-token', 'X-Other': 'plain' });
+    for (const current of [storedHttp(), storedHa()]) {
+      const saved = restoreSetupSecrets(redactSetupSettings(current), current);
+      expect(JSON.stringify(saved)).toContain('real-token');
+    }
   });
 
-  test('a newly typed value replaces the stored one', () => {
-    const current = stored();
+  test('a newly typed token replaces the stored one', () => {
+    const current = storedHa();
     const patch = redactSetupSettings(current);
-    patch.timelapse!.preActions![0].headers = { Authorization: 'Bearer new-token' };
-    const saved = restoreSetupSecrets(patch, current);
-    expect(saved.timelapse!.preActions![0].headers).toEqual({ Authorization: 'Bearer new-token' });
+    haLights(patch).token = 'brand-new';
+    expect(haLights(restoreSetupSecrets(patch, current) as SetupSettings).token).toBe('brand-new');
   });
 
-  test('a masked header with nothing stored behind it is dropped, not saved as the mask', () => {
+  test('a masked secret with nothing stored behind it is dropped, not saved as the mask', () => {
     const patch: Partial<SetupSettings> = {
       timelapse: {
         ...TIMELAPSE_DEFAULTS,
-        preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: SECRET_KEPT } }],
+        lights: {
+          mode: 'http',
+          preActions: [{ method: 'GET', url: 'http://x/y', headers: { Authorization: SECRET_KEPT } }],
+        },
       },
     };
-    const saved = restoreSetupSecrets(patch, {});
-    expect(saved.timelapse!.preActions![0].headers).toBeUndefined();
+    const saved = restoreSetupSecrets(patch, {}) as SetupSettings;
+    expect(httpLights(saved).preActions![0].headers).toBeUndefined();
+
+    const haPatch: Partial<SetupSettings> = {
+      timelapse: {
+        ...TIMELAPSE_DEFAULTS,
+        lights: { mode: 'homeAssistant', baseUrl: 'http://ha/', token: SECRET_KEPT, entityIds: [] },
+      },
+    };
+    expect(haLights(restoreSetupSecrets(haPatch, {}) as SetupSettings).token).toBeUndefined();
   });
+});
+
+describe('FieldTimelapse talking to Home Assistant', () => {
+  // The shape of TSL's shop: a group of groups, with leaf fixtures at the
+  // bottom, some of which are deliberately off.
+  const tree: Record<string, { state: string; members?: string[]; name?: string }> = {
+    'light.all_lights': { state: 'on', members: ['light.main_lights', 'light.edge_lights'], name: 'All Lights' },
+    'light.main_lights': { state: 'on', members: ['light.bay_1', 'light.bay_2'] },
+    'light.edge_lights': { state: 'on', members: ['light.bay_3'] },
+    'light.bay_1': { state: 'on' },
+    'light.bay_2': { state: 'off' },
+    'light.bay_3': { state: 'on' },
+  };
+
+  function haInstance(dir: string) {
+    const requests: { url: string; method: string; body?: string; auth?: string }[] = [];
+    const timelapse = new FieldTimelapse({
+      directory: dir,
+      ffmpegPath: 'ffmpeg-not-used-here',
+      getStreams: () => [],
+      getConfig: () => ({
+        ...TIMELAPSE_DEFAULTS,
+        lights: {
+          mode: 'homeAssistant',
+          baseUrl: 'http://homeassistant.tsl:8123/',
+          token: 'tok',
+          entityIds: ['light.all_lights'],
+        },
+      }),
+      isAvailable: () => true,
+      isFieldBusy: () => false,
+      tickMs: 60_000,
+      fetchImpl: async (url, init) => {
+        const headers = (init.headers ?? {}) as Record<string, string>;
+        requests.push({
+          url,
+          method: String(init.method),
+          body: init.body as string | undefined,
+          auth: headers.Authorization,
+        });
+        const state = /\/api\/states\/(.+)$/.exec(url);
+        if (state) {
+          const entity = tree[decodeURIComponent(state[1])];
+          if (!entity) return { ok: false, status: 404, text: async () => 'not found' };
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                entity_id: decodeURIComponent(state[1]),
+                state: entity.state,
+                attributes: entity.members ? { entity_id: entity.members } : {},
+              }),
+          };
+        }
+        if (url.endsWith('/api/')) return { ok: true, status: 200, text: async () => '{"message":"API running."}' };
+        if (url.endsWith('/api/config')) return { ok: true, status: 200, text: async () => '{"version":"2026.9.1"}' };
+        if (url.endsWith('/api/states')) {
+          const all = Object.entries(tree).map(([entity_id, e]) => ({
+            entity_id,
+            state: e.state,
+            attributes: { friendly_name: e.name, ...(e.members ? { entity_id: e.members } : {}) },
+          }));
+          return { ok: true, status: 200, text: async () => JSON.stringify([...all, { entity_id: 'sensor.temp' }]) };
+        }
+        return { ok: true, status: 200, text: async () => '{}' };
+      },
+    });
+    return { timelapse, requests };
+  }
+
+  test('a frame snapshots the leaf fixtures, turns the group on, and restores', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pfms-ha-'));
+    const { timelapse, requests } = haInstance(dir);
+    // No streams configured, so no ffmpeg runs — the light calls are the
+    // whole point of this test.
+    await timelapse.captureFrame('manual', true);
+    await timelapse.stop();
+
+    const services = requests.filter(r => r.url.includes('/api/services/'));
+    expect(services.map(r => r.url.replace('http://homeassistant.tsl:8123/api/services/', ''))).toEqual([
+      'scene/create',
+      'light/turn_on',
+      'scene/turn_on',
+    ]);
+    // The group was expanded to its leaves — snapshotting the group itself
+    // would restore light.bay_2 as on, and it is deliberately off.
+    expect(JSON.parse(services[0].body!)).toEqual({
+      scene_id: TIMELAPSE_RESTORE_SCENE,
+      snapshot_entities: ['light.bay_1', 'light.bay_2', 'light.bay_3'],
+    });
+    expect(JSON.parse(services[1].body!)).toEqual({ entity_id: ['light.all_lights'] });
+    expect(JSON.parse(services[2].body!)).toEqual({ entity_id: `scene.${TIMELAPSE_RESTORE_SCENE}` });
+    // Every call carries the token, and the doubled slash is not.
+    expect(services.every(r => r.auth === 'Bearer tok')).toBe(true);
+    expect(services.every(r => !r.url.includes('8123//'))).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  }, 20_000);
+
+  test('the picker lists lights and reports the version', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pfms-ha-'));
+    const { timelapse } = haInstance(dir);
+    const probe = await timelapse.probeLights('http://homeassistant.tsl:8123', 'tok');
+    await timelapse.stop();
+
+    expect(probe.ok).toBe(true);
+    expect(probe.version).toBe('2026.9.1');
+    // Lights only — the sensor is not offered — and groups say so.
+    expect(probe.lights.map(l => l.entityId).sort()).toEqual([
+      'light.all_lights',
+      'light.bay_1',
+      'light.bay_2',
+      'light.bay_3',
+      'light.edge_lights',
+      'light.main_lights',
+    ]);
+    expect(probe.lights.find(l => l.entityId === 'light.all_lights')?.members).toEqual([
+      'light.main_lights',
+      'light.edge_lights',
+    ]);
+    expect(probe.lights.find(l => l.entityId === 'light.bay_2')?.state).toBe('off');
+    rmSync(dir, { recursive: true, force: true });
+  }, 20_000);
+
+  test('a refused token is reported, not thrown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pfms-ha-'));
+    const timelapse = new FieldTimelapse({
+      directory: dir,
+      ffmpegPath: 'ffmpeg-not-used-here',
+      getStreams: () => [],
+      getConfig: () => TIMELAPSE_DEFAULTS,
+      isAvailable: () => true,
+      isFieldBusy: () => false,
+      tickMs: 60_000,
+      fetchImpl: async () => ({ ok: false, status: 401, text: async () => '401: Unauthorized' }),
+    });
+    const probe = await timelapse.probeLights('http://homeassistant.tsl:8123', 'wrong');
+    await timelapse.stop();
+
+    expect(probe.ok).toBe(false);
+    expect(probe.error).toContain('401');
+    expect(probe.lights).toHaveLength(0);
+    rmSync(dir, { recursive: true, force: true });
+  }, 20_000);
 });
 
 describe('FieldTimelapse', () => {
@@ -178,7 +380,7 @@ describe('FieldTimelapse', () => {
       tickMs: 250,
       fetchImpl: async (url, init) => {
         calls.push({ url: String(url), method: String(init.method), body: init.body as string | undefined });
-        return { ok: true, status: 200 };
+        return { ok: true, status: 200, text: async () => '{}' };
       },
     });
     timelapse.start();
@@ -194,12 +396,15 @@ describe('FieldTimelapse', () => {
   });
 
   test('an archival frame is a full-resolution JPEG per stream, with the light actions around it', async () => {
-    // Home Assistant's shape: snapshot, then turn on, then restore after.
-    config.preActions = [
-      { method: 'POST', url: 'http://lights.invalid/snapshot', body: '{"scene_id":"pfms_restore"}' },
-      { method: 'POST', url: 'http://lights.invalid/on', body: '{"entity_id":"light.all_lights"}' },
-    ];
-    config.postActions = [{ method: 'POST', url: 'http://lights.invalid/restore' }];
+    // The custom-calls mode: two before the shutter, one after.
+    config.lights = {
+      mode: 'http',
+      preActions: [
+        { method: 'POST', url: 'http://lights.invalid/snapshot', body: '{"scene_id":"pfms_restore"}' },
+        { method: 'POST', url: 'http://lights.invalid/on', body: '{"entity_id":"light.all_lights"}' },
+      ],
+      postActions: [{ method: 'POST', url: 'http://lights.invalid/restore' }],
+    };
     calls.length = 0;
 
     const entry = await timelapse.captureFrame('manual', true);
@@ -244,7 +449,7 @@ describe('FieldTimelapse', () => {
       tickMs: 60_000,
       fetchImpl: async url => {
         seen.push(String(url));
-        return { ok: true, status: 200 };
+        return { ok: true, status: 200, text: async () => '{}' };
       },
     });
     occupied.onTelemetry();
@@ -257,7 +462,7 @@ describe('FieldTimelapse', () => {
   }, 20_000);
 
   test('the lights are restored even when the capture itself fails', async () => {
-    const good = config.preActions;
+    const good = config.lights;
     calls.length = 0;
     const broken = new FieldTimelapse({
       directory: dir,
@@ -269,12 +474,12 @@ describe('FieldTimelapse', () => {
       tickMs: 60_000,
       fetchImpl: async (url, init) => {
         calls.push({ url: String(url), method: String(init.method) });
-        return { ok: true, status: 200 };
+        return { ok: true, status: 200, text: async () => '{}' };
       },
     });
     const entry = await broken.captureFrame('manual', true);
     await broken.stop();
-    config.preActions = good;
+    config.lights = good;
 
     expect(entry.error).toBeTruthy();
     expect(entry.files).toHaveLength(0);
@@ -291,7 +496,7 @@ describe('FieldTimelapse', () => {
       isFieldBusy: () => false,
       inputPrefixArgs: ['-re', '-stream_loop', '-1'],
       tickMs: 60_000,
-      fetchImpl: async () => ({ ok: false, status: 503 }),
+      fetchImpl: async () => ({ ok: false, status: 503, text: async () => '' }),
     });
     const entry = await failing.captureFrame('manual', true);
     await failing.stop();
@@ -302,8 +507,7 @@ describe('FieldTimelapse', () => {
   });
 
   test('robots showing up start a timelapse that plays back at 30 fps', async () => {
-    config.preActions = undefined;
-    config.postActions = undefined;
+    config.lights = { mode: 'none' };
     expect(timelapse.getState().capturing).toBe(false);
 
     timelapse.onTelemetry();

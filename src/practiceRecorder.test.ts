@@ -256,6 +256,50 @@ describe('PracticeRecorder', () => {
     expect(recorder.getState().buffering).toBe(true);
   }, 60_000);
 
+  test('a disable and a quick re-enable stay one video, gap and all', async () => {
+    // The buffer is still running from the previous test; keep the station
+    // present while it refills past the pre-roll.
+    for (let i = 0; i < 3; i++) {
+      await sleep(1000);
+      recorder.onTelemetry(telemetry(false));
+    }
+    const before = store.getRuns().length;
+
+    const enabledAt = Date.now();
+    recorder.onTelemetry(telemetry(true));
+    await sleep(2000);
+    recorder.onTelemetry(telemetry(false));
+
+    // Back inside the 6 s merge window (the old 2 s grace would have cut here).
+    const gapStart = Date.now();
+    while (Date.now() - gapStart < 5200) {
+      await sleep(400);
+      recorder.onTelemetry(telemetry(false));
+    }
+    expect(store.getRuns().length).toBe(before);
+    expect(recorder.getState().activeRuns.map(r => r.teamNumber)).toEqual([5940]);
+
+    recorder.onTelemetry(telemetry(true));
+    await sleep(2000);
+    const lastDisableAt = Date.now();
+    recorder.onTelemetry(telemetry(false));
+
+    const deadline = Date.now() + 30_000;
+    while (store.getRuns().length === before && Date.now() < deadline) {
+      await sleep(500);
+      recorder.onTelemetry(telemetry(false));
+    }
+    const runs = store.getRuns();
+    expect(runs.length).toBe(before + 1); // one clip across the gap, not two
+    const run = runs[runs.length - 1];
+    expect(run.teamNumber).toBe(5940);
+    expect(run.startedAt).toBeLessThanOrEqual(enabledAt - 3000 + 50);
+    expect(run.endedAt).toBeGreaterThanOrEqual(lastDisableAt + 3000 - 50);
+    // 3 pad + 2 enabled + ~5.2 stopped + 2 enabled + 3 pad.
+    expect(run.recordings[0].durationSeconds).toBeGreaterThanOrEqual(13);
+    expect(run.recordings[0].durationSeconds).toBeLessThanOrEqual(19);
+  }, 60_000);
+
   test('the buffer stops when no opted-in robot has been heard from', async () => {
     const deadline = Date.now() + 25_000;
     while (recorder.getState().buffering && Date.now() < deadline) await sleep(500);

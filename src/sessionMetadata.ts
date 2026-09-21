@@ -16,7 +16,14 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProcessedScoreEvent, RecordingMetadata, StationName, TelemetrySample, TelemetryUpdate } from './types.js';
+import type {
+  ProcessedScoreEvent,
+  RecordingActivity,
+  RecordingMetadata,
+  StationName,
+  TelemetrySample,
+  TelemetryUpdate,
+} from './types.js';
 
 const DEFAULT_WINDOW_MS = 30 * 60 * 1000;
 const PRUNE_EVERY = 500;
@@ -242,4 +249,60 @@ export function summarizeMetadata(
     scored,
     battery: Number.isFinite(min) && Number.isFinite(max) ? { min, max } : undefined,
   };
+}
+
+/** Bin sizes we are willing to use, smallest first. */
+const BIN_LADDER = [0.5, 1, 2, 5, 10, 15, 30, 60];
+/** Enough resolution to see a burst, few enough to ship with the listing. */
+const MAX_BINS = 120;
+/** Enabled spans closer together than this are one span — telemetry is
+ *  coalesced per station, so a single frame can blink the enabled bit. */
+const SPAN_MERGE_SECONDS = 0.25;
+
+/** A ball counted: the same test the score totals use. */
+function counted(e: ProcessedScoreEvent): boolean {
+  return !e.deduplicated && !e.phaseRestricted && !e.outsideMatch && !e.goalInactive;
+}
+
+/**
+ * Where the action is inside a recording: balls per slice of video and the
+ * spans in which `teamNumber`'s robot was enabled. Times are seconds from
+ * the start of the video, so they line up with a player's scrub bar.
+ */
+export function activityFor(meta: RecordingMetadata, teamNumber?: number): RecordingActivity {
+  const duration = Math.max(0, (meta.endedAt - meta.startedAt) / 1000);
+  const binSeconds = BIN_LADDER.find(b => duration / b <= MAX_BINS) ?? BIN_LADDER[BIN_LADDER.length - 1];
+  const bins = Math.max(1, Math.ceil(duration / binSeconds));
+  const red = new Array<number>(bins).fill(0);
+  const blue = new Array<number>(bins).fill(0);
+  for (const e of meta.scoreEvents) {
+    if (!counted(e)) continue;
+    const t = (e.occurredAt - meta.startedAt) / 1000;
+    if (t < 0 || t > duration) continue;
+    const i = Math.min(bins - 1, Math.floor(t / binSeconds));
+    (e.awardedTo === 'red' ? red : blue)[i] += e.count;
+  }
+
+  const samples = meta.telemetry
+    .filter(s => s.enabled !== undefined && (teamNumber === undefined || s.teamNumber === teamNumber))
+    .sort((a, b) => a.t - b.t);
+  const enabled: { from: number; to: number }[] = [];
+  const close = (from: number, to: number) => {
+    const last = enabled[enabled.length - 1];
+    if (last && from - last.to <= SPAN_MERGE_SECONDS) last.to = Math.max(last.to, to);
+    else enabled.push({ from, to });
+  };
+  let openedAt: number | undefined;
+  for (const s of samples) {
+    const t = Math.min(duration, Math.max(0, (s.t - meta.startedAt) / 1000));
+    if (s.enabled && openedAt === undefined) openedAt = t;
+    else if (!s.enabled && openedAt !== undefined) {
+      close(openedAt, t);
+      openedAt = undefined;
+    }
+  }
+  // Still enabled when the recording ended (the clip was cut mid-run).
+  if (openedAt !== undefined) close(openedAt, duration);
+
+  return { binSeconds, red, blue, enabled };
 }

@@ -92,6 +92,7 @@ import {
   restoreSetupSecrets,
   isCaptureTimelapseFrame,
   isDeleteTimelapseRender,
+  isTestTimelapseLights,
   isRenderTimelapse,
   isDeleteRecording,
   isDeleteRecordingsBefore,
@@ -1425,6 +1426,32 @@ export function setupWebSocket(
               .renderFilm(data)
               .catch((err: Error) => ws.send(JSON.stringify({ error: `Film failed: ${err.message}` })));
             ws.send(JSON.stringify({ info: 'Building the film…' }));
+          }
+        }
+      } else if (isTestTimelapseLights(data)) {
+        // Admin only: it spends the saved token against an admin-named host,
+        // and hands back what that host knows.
+        if (setup?.timelapse) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
+          } else {
+            // No token in the message means "use the one already saved" —
+            // the page never has it to send back.
+            const saved = setup.configStore.get().settings.timelapse?.lights;
+            const token = data.token ?? (saved?.mode === 'homeAssistant' ? saved.token : undefined);
+            void setup.timelapse
+              .probeLights(data.baseUrl, token)
+              .then(probe => ws.send(JSON.stringify(probe)))
+              .catch((err: Error) =>
+                ws.send(
+                  JSON.stringify({
+                    type: 'timelapseLightsProbe',
+                    ok: false,
+                    error: err.message,
+                    lights: [],
+                  }),
+                ),
+              );
           }
         }
       } else if (isDeleteTimelapseRender(data)) {
