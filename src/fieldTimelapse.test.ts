@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FieldTimelapse, localDay, slotTime } from './fieldTimelapse.js';
@@ -230,11 +230,57 @@ describe('FieldTimelapse', () => {
     const day = localDay(Date.now());
     expect(readdirSync(join(dir, '.timelapse', 'frames', day)).length).toBeGreaterThan(1);
 
-    await timelapse.renderFilm({ fps: 12, height: 240, stream: 'All field' });
+    await timelapse.renderFilm({ source: 'frames', fps: 12, height: 240, stream: 'All field' });
     const render = timelapse.getState().render;
     expect(render?.status).toBe('done');
     expect(render?.file).toMatch(/^timelapse-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
     expect(timelapse.filePath('render', render!.file!)).toBeTruthy();
+    // And it shows up in the list the admin page reads.
+    expect(timelapse.getState().renders.map(r => r.file)).toContain(render!.file!);
+  }, 30_000);
+
+  test('every frame gets a gallery-sized copy beside it', async () => {
+    const entry = await timelapse.captureFrame('manual', false);
+    const file = entry.files[0];
+
+    expect(file.thumb).toBeTruthy();
+    const thumb = timelapse.filePath('frame', file.thumb!);
+    expect(thumb).toBeTruthy();
+    // Small enough to put a page of them on screen, and smaller than the
+    // frame it came from.
+    expect(statSync(thumb!).size).toBeLessThan(file.bytes);
+  }, 20_000);
+
+  test('the listing reads the disk, with thumbnails and practice chunks', () => {
+    const today = localDay(Date.now());
+    const listing = timelapse.listing();
+    const day = listing.days.find(d => d.day === today);
+
+    expect(day).toBeTruthy();
+    expect(day!.frames.length).toBeGreaterThan(1);
+    expect(day!.frames.some(f => f.thumb !== undefined)).toBe(true);
+    // The thumbnails are not listed as frames in their own right.
+    expect(day!.frames.some(f => f.file.endsWith('.thumb.jpg'))).toBe(false);
+    expect(day!.practice.length).toBeGreaterThan(0);
+
+    // A range that predates everything comes back empty rather than erroring.
+    expect(timelapse.listing({ to: '2000-01-01' }).days).toHaveLength(0);
+  });
+
+  test('a practice film for a date range is joined from the chunks', async () => {
+    await timelapse.renderFilm({ source: 'practice', fps: 30, height: 240, stream: 'All field' });
+    const render = timelapse.getState().render;
+
+    expect(render?.status).toBe('done');
+    expect(render?.source).toBe('practice');
+    expect(render?.file).toMatch(/^practice-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
+    const built = timelapse.filePath('render', render!.file!);
+    expect(built).toBeTruthy();
+
+    // And it can be thrown away again.
+    expect(timelapse.deleteRender(render!.file!)).toBe(true);
+    expect(timelapse.filePath('render', render!.file!)).toBeUndefined();
+    expect(timelapse.deleteRender('../../etc/passwd')).toBe(false);
   }, 30_000);
 
   test('the store sits where the match sweep will not touch it', () => {

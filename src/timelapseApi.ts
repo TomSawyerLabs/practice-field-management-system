@@ -7,6 +7,7 @@ import { json } from './httpApiUtils.js';
  * Serve what the field timelapse has collected.
  *
  *   GET /api/timelapse                         current state (same as the WS message)
+ *   GET /api/timelapse/list?from=&to=          what is on disk, day by day
  *   GET /api/timelapse/frame/<day>/<name>.jpg  one archival frame
  *   GET /api/timelapse/active/<day>/<name>.mp4 one robots-present chunk
  *   GET /api/timelapse/render/<name>.mp4       a finished film; `?download=1`
@@ -27,6 +28,17 @@ export function handleTimelapseRequest(req: IncomingMessage, res: ServerResponse
       return true;
     }
     json(res, 200, timelapse.getState());
+    return true;
+  }
+
+  if (path === '/api/timelapse/list') {
+    if (method !== 'GET') {
+      json(res, 405, { error: 'Method not allowed' });
+      return true;
+    }
+    const params = new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
+    const day = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
+    json(res, 200, timelapse.listing({ from: day(params.get('from')), to: day(params.get('to')) }));
     return true;
   }
 

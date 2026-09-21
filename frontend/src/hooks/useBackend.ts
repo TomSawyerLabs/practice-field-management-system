@@ -51,6 +51,7 @@ import {
   isTimelapseState,
   MatchRecordingState,
   TimelapseState,
+  TimelapseListing,
   RenderTimelapse,
   isRecordingStreamTestResult,
   RecordingStreamTestResult,
@@ -2013,9 +2014,29 @@ export function sendCaptureTimelapseFrame(withActions: boolean) {
   sendWhenOpen({ type: 'captureTimelapseFrame', withActions });
 }
 
-/** Build a film from the archival frames; progress arrives in the state. */
+/** Build a film for a date range; progress arrives in the state. */
 export function sendRenderTimelapse(opts: Omit<RenderTimelapse, 'type'>) {
   sendWhenOpen({ type: 'renderTimelapse', ...opts });
+}
+
+/** Throw away a film that was built earlier. */
+export function sendDeleteTimelapseRender(file: string) {
+  sendWhenOpen({ type: 'deleteTimelapseRender', file });
+}
+
+/** What the timelapse has on disk, day by day. Scanned on demand rather than
+ *  broadcast, like the recordings inventory. */
+export async function fetchTimelapseListing(from?: string, to?: string): Promise<TimelapseListing | null> {
+  const query = new URLSearchParams();
+  if (from) query.set('from', from);
+  if (to) query.set('to', to);
+  try {
+    const res = await fetch(`/api/timelapse/list${query.size > 0 ? `?${query}` : ''}`);
+    if (!res.ok) return null;
+    return (await res.json()) as TimelapseListing;
+  } catch {
+    return null;
+  }
 }
 
 /** Ask the server to probe a stream URL; resolves with the result (or a

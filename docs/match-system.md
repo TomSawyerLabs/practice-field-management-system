@@ -407,9 +407,23 @@ Everything lives in `<recordings>/.timelapse/` — `frames/<day>/`,
 retention sweep; the timelapse sweeps itself, with separate retention for
 frames (default: forever) and practice films (default: 60 days).
 
-**Build a film** in the same section: pick a date range, frame rate and
-height, and the archival frames are rendered into one MP4 you can download.
-Rendering is on demand, one at a time, so it never competes with a match.
+### Watching it, and taking it away
+
+Everything is viewable in the admin section itself, no file browser needed:
+
+- **Browse** a date range to get each day's frames as a strip of thumbnails
+  (a small copy is written beside every archival frame at capture time, so a
+  page of them costs ~40 kB each rather than 3 MB) and its practice films as
+  play buttons. Clicking either loads it into a player at the top of the
+  section — full-resolution frame, or the film with a scrubber.
+- **Build one film for a date range** from either source: the daily frames
+  encoded at a frame rate you pick (the season film), or every practice film
+  in the range joined end to end. Joining is a stream copy when the chunks
+  match, so it is near-instant; it falls back to a re-encode only if the
+  capture settings changed partway through the range.
+- **Films built** lists every film still on disk with its size, and plays,
+  downloads or deletes each one. Rendering is on demand and one at a time, so
+  it never competes with a match.
 
 ### Lights, and other pre/post actions
 
@@ -467,7 +481,9 @@ timelapse at its capture rate costs roughly 20× more for identical frames.
 Files are served at `/api/timelapse/frame/<day>/<name>.jpg`,
 `/api/timelapse/active/<day>/<name>.mp4` and
 `/api/timelapse/render/<name>.mp4`, with Range support and the same trust as
-`/api/recordings`.
+`/api/recordings`; `?download=1` sends an attachment. What exists is listed at
+`/api/timelapse/list?from=&to=`, scanned off the disk rather than from the
+log, so the page is right even after files are tidied by hand.
 
 ## WebSocket Message Reference
 
@@ -475,7 +491,8 @@ Match control happens over the app WebSocket. The main message types
 (see `src/types.ts` for payloads):
 
 - **Field timelapse:** `captureTimelapseFrame` (admin takes a frame now,
-  optionally running the light actions), `renderTimelapse` (build a film) →
+  optionally running the light actions), `renderTimelapse` (build a film from
+  the frames or the practice chunks), `deleteTimelapseRender` →
   `timelapseState` broadcasts.
 - **Practice recording:** `setPracticeRecording` (a station page ticks
   "record while enabled" for its team), `requestPracticeDayLink` → a

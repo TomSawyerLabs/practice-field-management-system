@@ -3275,8 +3275,9 @@ export interface TimelapseFrameEntry {
   /** Scheduled time that produced it, `HH:MM`, or `manual`. */
   slot: string;
   at: number;
-  /** One per enabled stream. */
-  files: { stream: string; file: string; bytes: number }[];
+  /** One per enabled stream. `thumb` is a small copy of the same frame,
+   *  written alongside it so a gallery does not have to load 3 MB a tile. */
+  files: { stream: string; file: string; thumb?: string; bytes: number }[];
   /** Whether the pre/post actions ran, and what happened if they didn't. */
   lights: 'none' | 'ran' | 'skipped-field-in-use' | 'failed';
   lightsError?: string;
@@ -3316,6 +3317,15 @@ export interface TimelapseState {
   renderBytes: number;
   directory: string;
   render?: TimelapseRenderState;
+  /** Films built so far, newest first. */
+  renders: TimelapseRenderFile[];
+}
+
+/** A finished film sitting in `renders/`. */
+export interface TimelapseRenderFile {
+  file: string;
+  bytes: number;
+  at: number;
 }
 
 export function isTimelapseState(msg: unknown): msg is TimelapseState {
@@ -3326,6 +3336,8 @@ export function isTimelapseState(msg: unknown): msg is TimelapseState {
 /** A film being built (or the last one built) from the archival frames. */
 export interface TimelapseRenderState {
   status: 'running' | 'done' | 'failed';
+  /** What it was built from. */
+  source?: TimelapseSource;
   file?: string;
   bytes?: number;
   frames?: number;
@@ -3347,9 +3359,14 @@ export function isCaptureTimelapseFrame(msg: unknown): msg is CaptureTimelapseFr
   return m.type === 'captureTimelapseFrame' && typeof m.withActions === 'boolean';
 }
 
-/** Admin builds a film from the archival frames in a date range. */
+/** What a film is built out of: the archival stills, or the chunks captured
+ *  while robots were on the field. */
+export type TimelapseSource = 'frames' | 'practice';
+
+/** Admin builds a film from a date range. */
 export interface RenderTimelapse {
   type: 'renderTimelapse';
+  source: TimelapseSource;
   /** `YYYY-MM-DD`; omitted means "everything". */
   from?: string;
   to?: string;
@@ -3368,6 +3385,7 @@ export function isRenderTimelapse(msg: unknown): msg is RenderTimelapse {
   const m = msg as RenderTimelapse;
   return (
     m.type === 'renderTimelapse' &&
+    (m.source === 'frames' || m.source === 'practice') &&
     (m.from === undefined || isDay(m.from)) &&
     (m.to === undefined || isDay(m.to)) &&
     Number.isInteger(m.fps) &&
@@ -3378,4 +3396,36 @@ export function isRenderTimelapse(msg: unknown): msg is RenderTimelapse {
     m.height <= 2160 &&
     (m.stream === undefined || (typeof m.stream === 'string' && m.stream.length <= 60))
   );
+}
+
+/** Admin deletes a film that was built earlier. */
+export interface DeleteTimelapseRender {
+  type: 'deleteTimelapseRender';
+  file: string;
+}
+
+export function isDeleteTimelapseRender(msg: unknown): msg is DeleteTimelapseRender {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as DeleteTimelapseRender;
+  return m.type === 'deleteTimelapseRender' && typeof m.file === 'string' && /^[A-Za-z0-9._-]{1,120}$/.test(m.file);
+}
+
+/** Everything the timelapse has on disk for a range of days, scanned on
+ *  demand (like the recordings inventory) rather than broadcast. */
+export interface TimelapseDayListing {
+  day: string;
+  frames: { slot: string; at: number; stream: string; file: string; thumb?: string; bytes: number }[];
+  practice: { file: string; stream: string; at: number; bytes: number }[];
+}
+
+export interface TimelapseListing {
+  type: 'timelapseListing';
+  /** Newest day first. */
+  days: TimelapseDayListing[];
+  scannedAt: number;
+}
+
+export function isTimelapseListing(msg: unknown): msg is TimelapseListing {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TimelapseListing).type === 'timelapseListing';
 }

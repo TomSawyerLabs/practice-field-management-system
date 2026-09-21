@@ -89,6 +89,7 @@ import {
   isRequestPracticeDayLink,
   isRequestRecordingsInventory,
   isCaptureTimelapseFrame,
+  isDeleteTimelapseRender,
   isRenderTimelapse,
   isDeleteRecording,
   isDeleteRecordingsBefore,
@@ -1414,6 +1415,15 @@ export function setupWebSocket(
               .renderFilm(data)
               .catch((err: Error) => ws.send(JSON.stringify({ error: `Film failed: ${err.message}` })));
             ws.send(JSON.stringify({ info: 'Building the film…' }));
+          }
+        }
+      } else if (isDeleteTimelapseRender(data)) {
+        if (setup?.timelapse) {
+          if (!adminConnections.has(ws)) {
+            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
+          } else {
+            const ok = setup.timelapse.deleteRender(data.file);
+            ws.send(JSON.stringify(ok ? { info: `Deleted ${data.file}` } : { error: 'No such film' }));
           }
         }
       } else if (isRequestPracticeDayLink(data)) {

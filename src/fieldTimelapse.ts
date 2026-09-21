@@ -38,8 +38,12 @@ import {
   type RecordingStreamConfig,
   type TimelapseAction,
   type TimelapseConfig,
+  type TimelapseDayListing,
   type TimelapseFrameEntry,
+  type TimelapseListing,
+  type TimelapseRenderFile,
   type TimelapseRenderState,
+  type TimelapseSource,
   type TimelapseSessionEntry,
   type TimelapseState,
 } from './types.js';
@@ -60,6 +64,9 @@ const ACTION_TIMEOUT_MS = 10_000;
 const RENDER_TIMEOUT_MS = 60 * 60_000;
 /** Playback rate of every timelapse this module writes. */
 const PLAYBACK_FPS = 30;
+/** Width of the small copy written beside each archival frame. A gallery of
+ *  12 MP originals would be 3 MB a tile; these are ~40 KB. */
+const THUMB_WIDTH = 480;
 const RESPAWN_DELAY_MS = 5000;
 const STOP_GRACE_MS = 8000;
 const STDERR_KEEP_LINES = 8;
@@ -208,6 +215,7 @@ export class FieldTimelapse {
       ...this.totals,
       directory: this.root,
       render: this.render,
+      renders: this.listRenders(),
     };
   }
 
@@ -354,9 +362,14 @@ export class FieldTimelapse {
     const stamp = slot === 'manual' ? hhmmss(this.now()) : slot.replace(':', '');
     const errors: string[] = [];
     for (const stream of this.streams()) {
-      const name = `${stamp}-${slugify(stream.name)}.jpg`;
+      const slug = slugify(stream.name);
+      const name = `${stamp}-${slug}.jpg`;
+      const thumbName = `${stamp}-${slug}.thumb.jpg`;
       const out = join(dir, name);
+      const thumb = join(dir, thumbName);
       try {
+        // Two outputs, one connection: the archival frame at full size and a
+        // gallery-sized copy of the very same frame.
         await runCommand(
           this.opts.ffmpegPath,
           [
@@ -372,13 +385,29 @@ export class FieldTimelapse {
             '2',
             '-y',
             out,
+            '-frames:v',
+            '1',
+            '-vf',
+            // Quoted min(…) so a source narrower than this is copied rather
+            // than blown up; the quotes keep the comma out of the filtergraph.
+            `scale='min(${THUMB_WIDTH},iw)':-2`,
+            '-q:v',
+            '6',
+            '-y',
+            thumb,
           ],
           FRAME_TIMEOUT_MS,
         );
-        entry.files.push({ stream: stream.name, file: `${day}/${name}`, bytes: statSync(out).size });
+        entry.files.push({
+          stream: stream.name,
+          file: `${day}/${name}`,
+          thumb: existsSync(thumb) ? `${day}/${thumbName}` : undefined,
+          bytes: statSync(out).size,
+        });
       } catch (err) {
         errors.push(`${stream.name}: ${errText(err)}`);
         rmSync(out, { force: true });
+        rmSync(thumb, { force: true });
       }
     }
     if (errors.length > 0) entry.error = errors.join('; ');
@@ -600,48 +629,63 @@ export class FieldTimelapse {
   // ── rendering ──────────────────────────────────────────────────────
 
   /**
-   * Build a film from the archival frames. One at a time: a season of 12 MP
-   * JPEGs is minutes of decoding, and two at once would fight the recorders
-   * for CPU.
+   * Build one downloadable film for a date range, from either source:
+   *
+   *  - `frames`: the archival stills, encoded at the chosen rate. This is the
+   *    season film — a year of three-a-day at 12 fps is about 90 seconds.
+   *  - `practice`: the chunks captured while robots were here, joined in
+   *    order. They were already encoded at capture time, so this is a stream
+   *    copy when their settings match, and a re-encode only when they do not
+   *    (someone changed the width or crf partway through the range).
+   *
+   * One at a time: a season of 12 MP JPEGs is minutes of decoding, and two at
+   * once would fight the recorders for CPU.
    */
-  async renderFilm(opts: { from?: string; to?: string; fps: number; height: number; stream?: string }): Promise<void> {
+  async renderFilm(opts: {
+    source: TimelapseSource;
+    from?: string;
+    to?: string;
+    fps: number;
+    height: number;
+    stream?: string;
+  }): Promise<void> {
     if (this.render?.status === 'running') throw new Error('a film is already being built');
     const streamName = opts.stream ?? this.streams()[0]?.name;
     if (!streamName) throw new Error('no streams are configured');
     const slug = slugify(streamName);
-    const frames: string[] = [];
-    for (const day of this.days(this.framesRoot)) {
-      if (opts.from && day < opts.from) continue;
-      if (opts.to && day > opts.to) continue;
-      const dir = join(this.framesRoot, day);
-      for (const name of readdirSync(dir).sort()) {
-        if (name.endsWith(`-${slug}.jpg`)) frames.push(join(dir, name));
-      }
-    }
-    if (frames.length < 2) throw new Error(`only ${frames.length} frame(s) match — nothing to build yet`);
+    const parts = opts.source === 'frames' ? this.framesIn(slug, opts) : this.chunksIn(slug, opts);
+    if (parts.length === 0) throw new Error('nothing in that range to build from');
+    if (opts.source === 'frames' && parts.length < 2) throw new Error('only one frame in that range — nothing to play');
 
     const started = this.now();
-    this.render = { status: 'running', startedAt: started, frames: frames.length };
+    this.render = { status: 'running', source: opts.source, startedAt: started, frames: parts.length };
     this.emit();
     mkdirSync(this.rendersRoot, { recursive: true });
-    const name = `timelapse-${localDay(started)}-${hhmmss(started)}.mp4`;
+    const name = `${opts.source === 'frames' ? 'timelapse' : 'practice'}-${localDay(started)}-${hhmmss(started)}.mp4`;
     const out = join(this.rendersRoot, name);
     const list = join(this.rendersRoot, `.${name}.txt`);
     try {
-      writeFileSync(list, frames.map(f => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n') + '\n');
-      await runCommand(
-        this.opts.ffmpegPath,
-        [
-          '-hide_banner',
-          '-loglevel',
-          'error',
-          '-nostdin',
-          '-f',
-          'concat',
-          '-safe',
-          '0',
-          '-i',
-          list,
+      writeFileSync(list, parts.map(f => `file '${f.replace(/\\/g, '/').replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+      if (opts.source === 'practice') {
+        try {
+          await this.concat(list, out, ['-c', 'copy']);
+        } catch {
+          // Mismatched chunks (settings changed mid-range): re-encode instead.
+          await this.concat(list, out, [
+            '-vf',
+            `scale=-2:${opts.height}`,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'medium',
+            '-crf',
+            '22',
+            '-pix_fmt',
+            'yuv420p',
+          ]);
+        }
+      } else {
+        await this.concat(list, out, [
           '-vf',
           `scale=-2:${opts.height},setpts=N/${opts.fps}/TB`,
           '-r',
@@ -654,28 +698,25 @@ export class FieldTimelapse {
           '20',
           '-pix_fmt',
           'yuv420p',
-          '-movflags',
-          '+faststart',
-          '-y',
-          out,
-        ],
-        RENDER_TIMEOUT_MS,
-      );
+        ]);
+      }
       const bytes = statSync(out).size;
       this.render = {
         status: 'done',
+        source: opts.source,
         file: name,
         bytes,
-        frames: frames.length,
+        frames: parts.length,
         startedAt: started,
         finishedAt: this.now(),
       };
-      console.log(`Timelapse film built: ${name} (${frames.length} frames, ${(bytes / 1e6).toFixed(0)} MB)`);
+      console.log(`Timelapse film built: ${name} (${parts.length} parts, ${(bytes / 1e6).toFixed(0)} MB)`);
     } catch (err) {
       rmSync(out, { force: true });
       this.render = {
         status: 'failed',
-        frames: frames.length,
+        source: opts.source,
+        frames: parts.length,
         startedAt: started,
         finishedAt: this.now(),
         error: errText(err),
@@ -686,6 +727,154 @@ export class FieldTimelapse {
       this.refreshTotals();
       this.emit();
     }
+  }
+
+  private concat(list: string, out: string, encodeArgs: string[]): Promise<string> {
+    return runCommand(
+      this.opts.ffmpegPath,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-nostdin',
+        '-f',
+        'concat',
+        '-safe',
+        '0',
+        '-i',
+        list,
+        ...encodeArgs,
+        '-movflags',
+        '+faststart',
+        '-y',
+        out,
+      ],
+      RENDER_TIMEOUT_MS,
+    );
+  }
+
+  /** Archival frames for one stream in a day range, oldest first. Thumbnails
+   *  are skipped — they end `.thumb.jpg`, not `-<slug>.jpg`. */
+  private framesIn(slug: string, range: { from?: string; to?: string }): string[] {
+    const out: string[] = [];
+    for (const day of this.daysIn(this.framesRoot, range)) {
+      const dir = join(this.framesRoot, day);
+      for (const name of readdirSync(dir).sort()) {
+        if (name.endsWith(`-${slug}.jpg`)) out.push(join(dir, name));
+      }
+    }
+    return out;
+  }
+
+  /** Robots-present chunks for one stream in a day range, oldest first. */
+  private chunksIn(slug: string, range: { from?: string; to?: string }): string[] {
+    const out: string[] = [];
+    for (const day of this.daysIn(this.activeRoot, range)) {
+      const dir = join(this.activeRoot, day);
+      for (const name of readdirSync(dir).sort()) {
+        if (name.startsWith(`${slug}-`) && name.endsWith('.mp4')) out.push(join(dir, name));
+      }
+    }
+    return out;
+  }
+
+  private daysIn(root: string, range: { from?: string; to?: string }): string[] {
+    return this.days(root).filter(d => (!range.from || d >= range.from) && (!range.to || d <= range.to));
+  }
+
+  /** Films built so far, newest first. */
+  listRenders(): TimelapseRenderFile[] {
+    if (!existsSync(this.rendersRoot)) return [];
+    const out: TimelapseRenderFile[] = [];
+    for (const file of readdirSync(this.rendersRoot)) {
+      if (!file.endsWith('.mp4')) continue;
+      try {
+        const st = statSync(join(this.rendersRoot, file));
+        out.push({ file, bytes: st.size, at: st.mtimeMs });
+      } catch {
+        // deleted underneath us
+      }
+    }
+    return out.sort((a, b) => b.at - a.at);
+  }
+
+  /** Delete one built film. Returns false if the name is not one of ours. */
+  deleteRender(file: string): boolean {
+    const full = this.filePath('render', file);
+    if (!full) return false;
+    rmSync(full, { force: true });
+    console.log(`Timelapse film deleted by admin: ${file}`);
+    if (this.render?.file === file) this.render = undefined;
+    this.refreshTotals();
+    this.emit();
+    return true;
+  }
+
+  /**
+   * Everything on disk for a range of days, read from the filesystem rather
+   * than the log so it stays right across restarts and manual tidying.
+   */
+  listing(range: { from?: string; to?: string } = {}): TimelapseListing {
+    const byDay = new Map<string, TimelapseDayListing>();
+    const dayOf = (day: string): TimelapseDayListing => {
+      let entry = byDay.get(day);
+      if (!entry) {
+        entry = { day, frames: [], practice: [] };
+        byDay.set(day, entry);
+      }
+      return entry;
+    };
+
+    for (const day of this.daysIn(this.framesRoot, range)) {
+      const dir = join(this.framesRoot, day);
+      const names = readdirSync(dir).sort();
+      const thumbs = new Set(names.filter(n => n.endsWith('.thumb.jpg')));
+      for (const name of names) {
+        if (!name.endsWith('.jpg') || name.endsWith('.thumb.jpg')) continue;
+        const m = /^(\d{4,6})-(.+)\.jpg$/.exec(name);
+        if (!m) continue;
+        const thumbName = `${m[1]}-${m[2]}.thumb.jpg`;
+        try {
+          const st = statSync(join(dir, name));
+          dayOf(day).frames.push({
+            // A four-digit stamp is a scheduled slot; six means "capture now".
+            slot: m[1].length === 4 ? `${m[1].slice(0, 2)}:${m[1].slice(2)}` : 'manual',
+            at: st.mtimeMs,
+            stream: m[2],
+            file: `${day}/${name}`,
+            thumb: thumbs.has(thumbName) ? `${day}/${thumbName}` : undefined,
+            bytes: st.size,
+          });
+        } catch {
+          // deleted underneath us
+        }
+      }
+    }
+
+    for (const day of this.daysIn(this.activeRoot, range)) {
+      const dir = join(this.activeRoot, day);
+      for (const name of readdirSync(dir).sort()) {
+        if (!name.endsWith('.mp4')) continue;
+        const m = /^(.+)-(\d{6})\.mp4$/.exec(name);
+        try {
+          const st = statSync(join(dir, name));
+          dayOf(day).practice.push({
+            file: `${day}/${name}`,
+            stream: m?.[1] ?? name,
+            at: st.mtimeMs,
+            bytes: st.size,
+          });
+        } catch {
+          // deleted underneath us
+        }
+      }
+    }
+
+    return {
+      type: 'timelapseListing',
+      days: [...byDay.values()].sort((a, b) => b.day.localeCompare(a.day)),
+      scannedAt: this.now(),
+    };
   }
 
   // ── files on disk ──────────────────────────────────────────────────
