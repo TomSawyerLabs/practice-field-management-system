@@ -104,8 +104,11 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 16. [x] Merge window is 6 s from the disable, and every recording in the
         practice-day list carries an activity strip (scoring density per
         alliance + enabled spans, tap to seek) — 2026-09-20.
-17. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
-18. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
+17. [x] Deployed to steamboat 2026-09-21 00:06 PDT (a782360, 13 changes
+        announced). Backend reports a782360; practice recorder up; the public
+        practice API and `/practice/<token>` both serve from the internet.
+18. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
+19. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
 
 ## Findings / gotchas
 
@@ -121,6 +124,12 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
   (`RobotPacketCapture`) carry `dsStatus.enabled`; the practice recorder
   listens to the coalesced telemetry stream, so either source works.
 - **No `zip` on steamboat** — hence the in-process store-only ZIP64 writer.
+- **A concurrent thread's broad `git add` swept this work into its own
+  commit** (f029c9e, the timelapse lights commit) on 2026-09-20. Nothing was
+  lost and nothing was rewritten — the user-facing news for the merge window
+  and the activity strip rides in a782360 instead. If a commit here ever
+  looks like it contains two unrelated features, that is why; stage by path
+  in this shared tree.
 - **Prettier pads markdown table cells**, so scripted edits to the docs
   tables must match on the cell text, not the whole padded line.
 - **`handlePublicMatchRequest` claimed all of `/api/public/*`** and 404'd
