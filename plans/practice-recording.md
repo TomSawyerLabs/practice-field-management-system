@@ -49,7 +49,9 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
   transcoding.
 - **One run per robot, never coalesced** (Cameron, 2026-09-19 review): each
   opted-in station's enable starts its own run and its disable ends it, 3 s
-  padded, with a 2 s merge window for a quick disable/re-enable. Six robots
+  padded, with a **6 s** merge window for a quick disable/re-enable
+  (Cameron, 2026-09-20: drivers stop to reposition and re-home; the clip
+  keeps the gap). Six robots
   running independently produce six files of the same field view, each cut
   to that robot's own times. The ring buffer is shared; the runs are not.
 - **Not during matches.** While the match engine is in any active phase
@@ -99,8 +101,11 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
 13. [x] Cameron authorised the Caddy change and the deploy (2026-09-19); reworked to per-robot runs and automatic Slack delivery.
 14. [x] ops Caddy change pushed (cedfaae, CI run 35469957830 green); pFMS deployed twice (6148723, then 3e4ba78 with the public-route fix); /practice/<token> page and /api/public/practice/<token> answer from the internet; a bot DM to a user id works with the existing scopes (tested against Cameron Test).
 15. [x] Admin → Recordings on Disk (100f4db, deployed 2026-09-19 15:06 PDT): inventory, per-team totals, used/free, days-until-full, delete one / delete older than N days.
-16. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
-17. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
+16. [x] Merge window is 6 s from the disable, and every recording in the
+        practice-day list carries an activity strip (scoring density per
+        alliance + enabled spans, tap to seek) — 2026-09-20.
+17. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
+18. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
 
 ## Findings / gotchas
 

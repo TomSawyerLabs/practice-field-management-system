@@ -313,10 +313,15 @@ How it works (`src/practiceRecorder.ts`):
   transcoding. The buffer stops when no opted-in robot has been heard from
   for 15 s.
 - An enable (the DS status's enabled bit, outside a match) starts that
-  robot's run; its disable ends it. A disable followed by a re-enable within
-  2 s stays one clip; a run longer than 20 minutes is split. Every robot gets
-  its own clip cut to its own times — six robots running independently make
-  six files of the same field view, not one.
+  robot's run; its disable ends it. Every robot gets its own clip cut to its
+  own times — six robots running independently make six files of the same
+  field view, not one.
+- **A disable and a re-enable within 6 s stay one clip**, gap and all.
+  Drivers stop to reposition, reset a mechanism or re-home, and cutting
+  there would split the thing they were working on across two videos. The
+  window is measured from the disable and checked once a second, so the real
+  cutoff is 6–7 s; the clip still ends one 3 s pad after the _last_ disable.
+  A run longer than 20 minutes is split regardless.
 - The segments spanning the window are joined (`-c copy`, `+faststart`)
   into `recordings/practice-<stamp>-<id>/<stream>.mp4` with the same
   `recording.json` sidecar matches have, so the retention sweep treats runs
@@ -352,6 +357,16 @@ Each team gets one link per practice day, `/practice/<token>`, listing every
 match and practice run the team was part of that day with the videos,
 the sidecars, and one **Download everything** zip (store-only, ZIP64, built
 by `src/zipStream.ts` — MP4s don't compress, and a day can exceed 4 GB).
+Each entry carries an **activity strip**: a thin map of the video showing
+how many balls were scored in each slice (red above, blue below) and the
+spans where that team's robot was enabled. It is what makes a column of
+clips comparable at a glance — where the scoring bursts were, and where the
+driver was stopped, including the gaps inside a merged clip. Tapping it
+jumps every player for that recording to the moment under your finger. The
+data is binned server-side from `metadata.json` (`activityFor` in
+`src/sessionMetadata.ts`, at most 120 bins) and ships with the listing, so
+the strip costs no extra request.
+
 A practice day runs 04:00–04:00 local, so a session past midnight stays
 together. The token is 32 random characters minted with the day's first
 recording; it grants that team's recordings for that day and nothing else,
