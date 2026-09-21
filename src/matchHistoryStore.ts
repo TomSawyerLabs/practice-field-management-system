@@ -10,7 +10,7 @@ import type {
   MatchReviewResult,
   StationName,
 } from './types.js';
-import { StationNameList, isChallengeConfig, type ChallengeTally } from './types.js';
+import { StationNameList, isChallengeConfig, challengePenalties, type ChallengeTally } from './types.js';
 import { mintShareToken } from './matchEngine.js';
 
 /** Only alliances that actually had a robot on the field are recorded — a
@@ -140,8 +140,15 @@ export class MatchHistoryStore {
           blueScore: 0,
         };
         if (isChallengeConfig(state.config) && state.challenge) {
+          // The costs are recorded, not looked up later: changing them
+          // mid-event must not silently re-score the morning's runs.
+          const costs = challengePenalties({
+            penaltyLaps: state.config.challengePenaltyLaps,
+            penaltySeconds: state.config.challengePenaltySeconds,
+          });
           entry.challenge = {
             timing: state.config.challengeTiming ?? 'window',
+            ...costs,
             tally: challengeTallyFor(teams, state.challenge),
           };
         }

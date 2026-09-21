@@ -59,7 +59,7 @@ export function leaderboardRows(matches: MatchHistoryEntry[], timing: ChallengeT
       if (teams.length === 0) continue;
 
       const key = teams.join('+');
-      const { laps, seconds } = challengeScore(tally, timing);
+      const { laps, seconds } = challengeScore(tally, timing, match.challenge);
       const attempt: ChallengeAttempt = { teams, key, laps, seconds, at: match.endedAt, attempts: 1 };
 
       const best = byTeams.get(key);

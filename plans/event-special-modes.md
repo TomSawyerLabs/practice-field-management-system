@@ -52,8 +52,12 @@ system.
    better.
 5. **Results get a TV leaderboard, history entries with video links, and a
    penalty button** — all three were asked for.
-6. Penalty weights (my call, flagged): **−1 lap** in window mode, **+5 s** in
-   stopwatch mode. Constants, not yet configurable.
+6. Penalty costs are **set per run on the setup screen** (default −1 lap /
+   +5 s), not baked-in constants — the user asked for this after the first
+   pass. They carry over between runs like the window does, so an event host
+   sets them once. Zero is allowed, meaning "tally fouls but don't score
+   them". Each finished run records the cost it was scored under, so changing
+   it mid-event applies from the next run rather than re-scoring the morning.
 
 ## Findings that constrain the design
 
@@ -178,7 +182,14 @@ the way `shiftState` is) so it can be unit-tested.
    end-to-end tests add ~14 s of real waiting because the 3 s countdown is
    driven by real timers (`setInterval`), not fakeable ones.
 
-5. **`AllianceScoreBox` was reusable for laps.** Its `freePlayLabel` prop
+5. **A stepper reading its value from the last broadcast loses taps.** Two
+   presses inside one round trip both compute from the same stale number and
+   send the same result — and even with local state, a burst inside one render
+   repeats, because the handler closes over the rendered value. `useStepped`
+   in `MatchTimeline.tsx` holds the value in a ref and steps from that;
+   verified by firing three same-tick clicks and getting +3.
+
+6. **`AllianceScoreBox` was reusable for laps.** Its `freePlayLabel` prop
    renders a caption under the big number, so laps + "LAPS" needed no new
    component — and its chase/flourish animations are all gated on
    `isFreePlay`, which is false in match mode.
@@ -202,20 +213,22 @@ the way `shiftState` is) so it can be unit-tested.
 - [x] Driven in the real app (DRY_RUN backend + vite): create → Speed Challenge
       → window chips → stopwatch toggle → cancel → create all behave, and the
       format/window/timing carry over to the next run as intended.
+- [x] Penalty costs made settable per run (laps / seconds kept separately,
+      zero allowed, recorded with each run so the leaderboard is stable).
 - [ ] **Try it on real hardware before the weekend.** Everything so far is
       typecheck + unit tests; no challenge run has been driven from an actual
       Driver Station.
 
 ## Open questions for the user
 
-1. Penalty weights are guesses (−1 lap / +5 s). Worth confirming before the
-   event, but not blocking.
-2. Is 60 s the right default window? Trivial to change.
-3. The UI and the config path are verified in the real app, but nothing has
+1. Is 60 s the right default window, and are 1 lap / 5 s the right _default_
+   penalty costs? All three are now settable on the setup screen, so this is
+   only about what a fresh field starts at.
+2. The UI and the config path are verified in the real app, but nothing has
    been exercised against a real DS yet — the countdown, enable
    and buzzer all run through the normal match path, so they should behave,
    but a dry run on the field before Saturday is the only way to know.
-4. Not built, and not asked for: a public shareable leaderboard link (the
+3. Not built, and not asked for: a public shareable leaderboard link (the
    board is on `/match` and the TV only).
 
 ## Things not to do

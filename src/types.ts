@@ -974,10 +974,34 @@ export const CHALLENGE_MIN_DURATION = 10;
 export const CHALLENGE_MAX_DURATION = 300;
 export const CHALLENGE_DEFAULT_DURATION = 60;
 
-/** One penalty costs a lap in window timing, or five seconds on the clock in
- *  stopwatch timing. */
+/** What one penalty costs when nobody has said otherwise: a lap in window
+ *  timing, five seconds on the clock in stopwatch timing. Both are settable
+ *  per run — see `challengePenaltyLaps` / `challengePenaltySeconds`. */
 export const CHALLENGE_PENALTY_LAPS = 1;
 export const CHALLENGE_PENALTY_SECONDS = 5;
+
+/** Bounds on the penalty cost. Zero is deliberately allowed: staff may want to
+ *  count fouls without them changing the result. */
+export const CHALLENGE_MAX_PENALTY_LAPS = 10;
+export const CHALLENGE_MAX_PENALTY_SECONDS = 60;
+
+/** The cost of one penalty, in each timing's own unit. */
+export type ChallengePenalties = {
+  penaltyLaps: number;
+  penaltySeconds: number;
+};
+
+/** Resolve the penalty costs in force, from a config or a recorded run.
+ *  Anything absent or nonsensical falls back to the default, so a record
+ *  written before these were settable still scores the way it did then. */
+export function challengePenalties(source: Partial<ChallengePenalties> | undefined): ChallengePenalties {
+  const clamp = (value: number | undefined, fallback: number, max: number) =>
+    Number.isFinite(value) ? Math.min(max, Math.max(0, Math.round(value!))) : fallback;
+  return {
+    penaltyLaps: clamp(source?.penaltyLaps, CHALLENGE_PENALTY_LAPS, CHALLENGE_MAX_PENALTY_LAPS),
+    penaltySeconds: clamp(source?.penaltySeconds, CHALLENGE_PENALTY_SECONDS, CHALLENGE_MAX_PENALTY_SECONDS),
+  };
+}
 
 export type MatchConfig = {
   autoDuration: number;
@@ -990,6 +1014,10 @@ export type MatchConfig = {
   format?: MatchFormat;
   /** Only meaningful when `format` is `challenge`. Absent means `window`. */
   challengeTiming?: ChallengeTiming;
+  /** What one penalty costs a window run, in laps. Absent means the default. */
+  challengePenaltyLaps?: number;
+  /** What one penalty costs a stopwatch run, in seconds. Absent means the default. */
+  challengePenaltySeconds?: number;
 };
 
 /** True for anything that isn't a regulation match. Centralised so the
@@ -1013,11 +1041,15 @@ export type ChallengeTally = {
 export function challengeScore(
   tally: ChallengeTally | undefined,
   timing: ChallengeTiming | undefined,
+  /** The costs in force for this run — its own recorded ones for a finished
+   *  run, the live config for one still going. */
+  costs?: Partial<ChallengePenalties>,
 ): { laps: number; seconds: number | null } {
-  const laps = (tally?.laps ?? 0) - (tally?.penalties ?? 0) * CHALLENGE_PENALTY_LAPS;
+  const { penaltyLaps, penaltySeconds } = challengePenalties(costs);
+  const laps = (tally?.laps ?? 0) - (tally?.penalties ?? 0) * penaltyLaps;
   if (timing !== 'stopwatch') return { laps, seconds: null };
   if (tally?.finishedAt === undefined) return { laps, seconds: null };
-  return { laps, seconds: tally.finishedAt + (tally.penalties ?? 0) * CHALLENGE_PENALTY_SECONDS };
+  return { laps, seconds: tally.finishedAt + (tally.penalties ?? 0) * penaltySeconds };
 }
 
 /** A position within a match: alliance + slot number. Semantically distinct from StationName
@@ -1255,6 +1287,9 @@ export function isUpdateMatchConfig(msg: unknown): msg is UpdateMatchConfig {
     return false;
   if (m.config.format !== undefined && !['official', 'challenge'].includes(m.config.format)) return false;
   if (m.config.challengeTiming !== undefined && !['window', 'stopwatch'].includes(m.config.challengeTiming))
+    return false;
+  if (m.config.challengePenaltyLaps !== undefined && !Number.isFinite(m.config.challengePenaltyLaps)) return false;
+  if (m.config.challengePenaltySeconds !== undefined && !Number.isFinite(m.config.challengePenaltySeconds))
     return false;
   return true;
 }
@@ -3054,6 +3089,11 @@ export interface MatchHistoryEntry {
    *  rather than a store of its own. */
   challenge?: {
     timing: ChallengeTiming;
+    /** The penalty costs in force when this run happened. Recorded rather
+     *  than looked up, so changing them mid-event doesn't silently re-score
+     *  the morning's runs. Absent on runs from before they were settable. */
+    penaltyLaps?: number;
+    penaltySeconds?: number;
     tally: Partial<Record<Alliance, ChallengeTally>>;
   };
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -22,6 +22,9 @@ import {
   CHALLENGE_DEFAULT_DURATION,
   CHALLENGE_MIN_DURATION,
   CHALLENGE_MAX_DURATION,
+  CHALLENGE_MAX_PENALTY_LAPS,
+  CHALLENGE_MAX_PENALTY_SECONDS,
+  challengePenalties,
   isChallengeConfig,
 } from '../../../src/types';
 import { sendUpdateMatchConfig } from '../hooks/useBackend';
@@ -183,6 +186,43 @@ export function MatchTimeline(props: MatchTimelineProps) {
   return isChallengeConfig(props.config) ? <ChallengeTimeline {...props} /> : <OfficialTimeline {...props} />;
 }
 
+/**
+ * A number the server owns but the UI steps a tap at a time.
+ *
+ * Reading the value straight off the last broadcast loses taps: two presses
+ * inside one round trip both compute from the same stale number and send the
+ * same result. So hold the local guess, and adopt the server's whenever it
+ * differs — which is either our own value coming back, or someone else
+ * editing. Callers clamp before committing, so the server never disagrees
+ * with a value we chose.
+ */
+function useStepped(
+  serverValue: number,
+  send: (value: number) => void,
+): [number, (next: (current: number) => number) => void] {
+  const [local, setLocal] = useState(serverValue);
+  const sent = useRef(serverValue);
+
+  useEffect(() => {
+    if (serverValue === sent.current) return;
+    sent.current = serverValue;
+    setLocal(serverValue);
+  }, [serverValue]);
+
+  return [
+    local,
+    // Computed from the ref, not from the rendered value, so a burst of taps
+    // inside one render still steps once each.
+    (next: (current: number) => number) => {
+      const value = next(sent.current);
+      if (value === sent.current) return;
+      sent.current = value;
+      setLocal(value);
+      send(value);
+    },
+  ];
+}
+
 /** Switch between a regulation match and a field event. Config mode only —
  *  the format is fixed once a match starts. */
 function FormatSwitch({ config, disabled }: { config: MatchConfig; disabled?: boolean }) {
@@ -230,14 +270,35 @@ function FormatSwitch({ config, disabled }: { config: MatchConfig; disabled?: bo
  */
 function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchTimelineProps) {
   const isProgressMode = progress !== undefined;
-  const duration = config.teleopDuration;
   const timing: ChallengeTiming = config.challengeTiming ?? 'window';
 
-  const setDuration = (seconds: number) => {
-    const clamped = Math.min(CHALLENGE_MAX_DURATION, Math.max(CHALLENGE_MIN_DURATION, seconds));
-    if (clamped === duration) return;
-    sendUpdateMatchConfig({ ...config, teleopDuration: clamped });
-  };
+  // One penalty's cost, in whichever unit this run is scored in. The two are
+  // stored separately so switching timing can't reinterpret "5 seconds" as
+  // "5 laps".
+  const { penaltyLaps, penaltySeconds } = challengePenalties({
+    penaltyLaps: config.challengePenaltyLaps,
+    penaltySeconds: config.challengePenaltySeconds,
+  });
+  const penaltyMax = timing === 'stopwatch' ? CHALLENGE_MAX_PENALTY_SECONDS : CHALLENGE_MAX_PENALTY_LAPS;
+
+  const [duration, commitDuration] = useStepped(config.teleopDuration, seconds =>
+    sendUpdateMatchConfig({ ...config, teleopDuration: seconds }),
+  );
+  const clampDuration = (seconds: number) =>
+    Math.min(CHALLENGE_MAX_DURATION, Math.max(CHALLENGE_MIN_DURATION, seconds));
+  const setDuration = (seconds: number) => commitDuration(() => clampDuration(seconds));
+  const stepDuration = (delta: number) => commitDuration(current => clampDuration(current + delta));
+
+  const [penaltyCost, commitPenalty] = useStepped(timing === 'stopwatch' ? penaltySeconds : penaltyLaps, value =>
+    sendUpdateMatchConfig({
+      ...config,
+      ...(timing === 'stopwatch' ? { challengePenaltySeconds: value } : { challengePenaltyLaps: value }),
+    }),
+  );
+  const stepPenalty = (delta: number) => commitPenalty(current => Math.min(penaltyMax, Math.max(0, current + delta)));
+
+  const penaltyLabel =
+    timing === 'stopwatch' ? `${penaltyCost}s` : `${penaltyCost} ${penaltyCost === 1 ? 'lap' : 'laps'}`;
 
   const barLabel = isProgressMode
     ? `${Math.ceil(Math.max(0, remainingTime ?? 0))}s`
@@ -313,7 +374,7 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
                 size="small"
                 sx={{ textTransform: 'none' }}
                 disabled={disabled || duration <= CHALLENGE_MIN_DURATION}
-                onClick={() => setDuration(duration - 5)}
+                onClick={() => stepDuration(-5)}
               >
                 −5s
               </Button>
@@ -324,7 +385,7 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
                 size="small"
                 sx={{ textTransform: 'none' }}
                 disabled={disabled || duration >= CHALLENGE_MAX_DURATION}
-                onClick={() => setDuration(duration + 5)}
+                onClick={() => stepDuration(5)}
               >
                 +5s
               </Button>
@@ -355,6 +416,38 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
                 : 'Clock counts up; the window above is the cap, and running it out is a DNF.'}
             </Typography>
           </FormControl>
+
+          <Box>
+            <FormLabel sx={{ fontSize: '0.75rem', display: 'block', mb: 0.5 }}>What one penalty costs</FormLabel>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button
+                size="small"
+                sx={{ textTransform: 'none' }}
+                disabled={disabled || penaltyCost <= 0}
+                onClick={() => stepPenalty(-1)}
+              >
+                −1
+              </Button>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', minWidth: 90, textAlign: 'center' }}>
+                {penaltyLabel}
+              </Typography>
+              <Button
+                size="small"
+                sx={{ textTransform: 'none' }}
+                disabled={disabled || penaltyCost >= penaltyMax}
+                onClick={() => stepPenalty(1)}
+              >
+                +1
+              </Button>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              {penaltyCost === 0
+                ? 'Penalties are tallied but cost nothing — the count is just a record.'
+                : timing === 'window'
+                  ? 'Taken off the lap count before ranking.'
+                  : 'Added to the finishing time before ranking.'}
+            </Typography>
+          </Box>
         </Box>
       )}
     </Box>

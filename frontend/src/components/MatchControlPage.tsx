@@ -1382,7 +1382,7 @@ function challengeResultLabel(match: MatchHistoryEntry, alliance: Alliance): str
   if (!match.challenge) return null;
   const tally = match.challenge.tally[alliance];
   if (!tally) return null;
-  const { laps, seconds } = challengeScore(tally, match.challenge.timing);
+  const { laps, seconds } = challengeScore(tally, match.challenge.timing, match.challenge);
   if (match.challenge.timing === 'stopwatch') return seconds === null ? 'DNF' : `${seconds.toFixed(1)}s`;
   return `${laps}`;
 }

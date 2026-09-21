@@ -8,8 +8,8 @@ import {
   MatchSlot,
   MatchState,
   MatchEndReason,
-  ChallengeTiming,
   ChallengeTally,
+  challengePenalties,
   CHALLENGE_DEFAULT_DURATION,
   CHALLENGE_MIN_DURATION,
   CHALLENGE_MAX_DURATION,
@@ -80,8 +80,14 @@ function emptyChallengeTally(): Record<Alliance, ChallengeTally> {
   return { red: { laps: 0, penalties: 0 }, blue: { laps: 0, penalties: 0 } };
 }
 
-function challengeConfig(duration: number | undefined, timing: ChallengeTiming | undefined): MatchConfig {
+function challengeConfig(requestedConfig: Partial<MatchConfig>): MatchConfig {
+  const duration = requestedConfig.teleopDuration;
   const requested = Number.isFinite(duration) ? Math.round(duration!) : CHALLENGE_DEFAULT_DURATION;
+  // challengePenalties clamps to sane bounds and fills in the defaults.
+  const { penaltyLaps, penaltySeconds } = challengePenalties({
+    penaltyLaps: requestedConfig.challengePenaltyLaps,
+    penaltySeconds: requestedConfig.challengePenaltySeconds,
+  });
   return {
     autoDuration: 0,
     teleopDuration: Math.min(CHALLENGE_MAX_DURATION, Math.max(CHALLENGE_MIN_DURATION, requested)),
@@ -90,7 +96,9 @@ function challengeConfig(duration: number | undefined, timing: ChallengeTiming |
     skipAuto: true,
     autoWinner: 'scores',
     format: 'challenge',
-    challengeTiming: timing === 'stopwatch' ? 'stopwatch' : 'window',
+    challengeTiming: requestedConfig.challengeTiming === 'stopwatch' ? 'stopwatch' : 'window',
+    challengePenaltyLaps: penaltyLaps,
+    challengePenaltySeconds: penaltySeconds,
   };
 }
 
@@ -369,7 +377,7 @@ export class MatchEngine {
     // other pending choice resets. The created-phase UI states the format
     // loudly so a real match can't quietly inherit a challenge clock.
     this.pendingConfig = isChallengeConfig(this.pendingConfig)
-      ? challengeConfig(this.pendingConfig.teleopDuration, this.pendingConfig.challengeTiming)
+      ? challengeConfig(this.pendingConfig)
       : { ...OFFICIAL_CONFIG };
     this.config = null;
     this.portToSlot.clear();
@@ -668,7 +676,7 @@ export class MatchEngine {
       // A field event, not a match: the host picks the window. This is the
       // ONLY path that may set a duration — an official match is always
       // OFFICIAL_CONFIG, whatever a client sends.
-      this.pendingConfig = challengeConfig(config.teleopDuration, config.challengeTiming);
+      this.pendingConfig = challengeConfig(config);
     } else {
       // Only accept skipAuto and autoWinner — durations are official
       this.pendingConfig = {

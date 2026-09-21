@@ -241,10 +241,10 @@ Pick it from the format switch on `/match` while setting a match up. The
 window is 30/45/60/90/120 s as one-tap chips, or stepped 5 s at a time
 between 10 s and 5 minutes. Two timing styles:
 
-| Timing      | Clock       | Ends when                              | Ranked by                  |
-| ----------- | ----------- | -------------------------------------- | -------------------------- |
-| `window`    | Counts down | The buzzer                             | Laps, less one per penalty |
-| `stopwatch` | Counts up   | Staff press Finish (window is the cap) | Time, plus 5 s per penalty |
+| Timing      | Clock       | Ends when                              | Ranked by                   |
+| ----------- | ----------- | -------------------------------------- | --------------------------- |
+| `window`    | Counts down | The buzzer                             | Laps, less the penalty cost |
+| `stopwatch` | Counts up   | Staff press Finish (window is the cap) | Time, plus the penalty cost |
 
 Everything else about a match still applies: the ready check, the 3-2-1
 countdown and horn, E-Stop and A-Stop, pause and resume, video recording,
@@ -255,6 +255,16 @@ goal ever goes inactive during one, and balls scored count normally.
 The format sticks between runs, so an event host picks it once rather than
 every time. The setup card and the TV both say "Speed Challenge" so a run
 can't be mistaken for a 0–0 match.
+
+**What a penalty costs** is set on the same screen: a lap (default 1) in a
+window run, or seconds on the clock (default 5) in a stopwatch run. The two
+are stored separately, so switching timing can't reinterpret "5 seconds" as
+"5 laps". **Zero is allowed** — staff can tally fouls for the record without
+them changing the result.
+
+Each finished run records the cost that was in force when it happened, and the
+leaderboard scores it with that. Changing the cost part-way through an event
+therefore applies from the next run on; it does not re-score the morning.
 
 ### Tallying
 

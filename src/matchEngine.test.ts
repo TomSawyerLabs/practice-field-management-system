@@ -6,7 +6,15 @@ import { randomUUID } from 'node:crypto';
 import { MatchEngine } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { ScoringEngine } from './scoringEngine.js';
-import { challengeScore, CHALLENGE_MAX_DURATION, CHALLENGE_MIN_DURATION, type MatchConfig } from './types.js';
+import {
+  challengeScore,
+  CHALLENGE_MAX_DURATION,
+  CHALLENGE_MAX_PENALTY_SECONDS,
+  CHALLENGE_MIN_DURATION,
+  CHALLENGE_PENALTY_LAPS,
+  CHALLENGE_PENALTY_SECONDS,
+  type MatchConfig,
+} from './types.js';
 
 /** A client asking for a config. Durations are only honoured for a challenge. */
 function request(over: Partial<MatchConfig>): MatchConfig {
@@ -63,6 +71,33 @@ describe('challenge format', () => {
     expect(engine.getState().config.teleopDuration).toBe(CHALLENGE_MIN_DURATION);
   });
 
+  test('penalty costs are settable, and carried with the config', () => {
+    const engine = created();
+    engine.updateMatchConfig(request({ format: 'challenge', challengePenaltyLaps: 3, challengePenaltySeconds: 10 }));
+    const { config } = engine.getState();
+    expect(config.challengePenaltyLaps).toBe(3);
+    expect(config.challengePenaltySeconds).toBe(10);
+  });
+
+  test('a penalty may be made free, but not negative or absurd', () => {
+    const engine = created();
+    engine.updateMatchConfig(request({ format: 'challenge', challengePenaltyLaps: 0, challengePenaltySeconds: 0 }));
+    expect(engine.getState().config.challengePenaltyLaps).toBe(0);
+    expect(engine.getState().config.challengePenaltySeconds).toBe(0);
+
+    engine.updateMatchConfig(request({ format: 'challenge', challengePenaltyLaps: -4, challengePenaltySeconds: 9999 }));
+    expect(engine.getState().config.challengePenaltyLaps).toBe(0);
+    expect(engine.getState().config.challengePenaltySeconds).toBe(CHALLENGE_MAX_PENALTY_SECONDS);
+  });
+
+  test('penalty costs default when a client says nothing', () => {
+    const engine = created();
+    engine.updateMatchConfig(request({ format: 'challenge' }));
+    const { config } = engine.getState();
+    expect(config.challengePenaltyLaps).toBe(CHALLENGE_PENALTY_LAPS);
+    expect(config.challengePenaltySeconds).toBe(CHALLENGE_PENALTY_SECONDS);
+  });
+
   test('stopwatch timing is carried', () => {
     const engine = created();
     engine.updateMatchConfig(request({ format: 'challenge', challengeTiming: 'stopwatch' }));
@@ -79,13 +114,16 @@ describe('challenge format', () => {
 
   test('the format carries over to the next run, the rest resets', () => {
     const engine = created();
-    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 90, challengeTiming: 'stopwatch' }));
+    engine.updateMatchConfig(
+      request({ format: 'challenge', teleopDuration: 90, challengeTiming: 'stopwatch', challengePenaltySeconds: 2 }),
+    );
     engine.cancelMatch();
     engine.createMatch();
     const { config } = engine.getState();
     expect(config.format).toBe('challenge');
     expect(config.teleopDuration).toBe(90);
     expect(config.challengeTiming).toBe('stopwatch');
+    expect(config.challengePenaltySeconds).toBe(2);
   });
 
   test('switching back to official restores official timing', () => {
@@ -108,6 +146,24 @@ describe('challengeScore', () => {
   test('window runs are worth their laps, less a lap per penalty', () => {
     expect(challengeScore({ laps: 7, penalties: 0 }, 'window')).toEqual({ laps: 7, seconds: null });
     expect(challengeScore({ laps: 7, penalties: 2 }, 'window')).toEqual({ laps: 5, seconds: null });
+  });
+
+  test('the cost of a penalty is whatever the run was set to', () => {
+    expect(challengeScore({ laps: 7, penalties: 2 }, 'window', { penaltyLaps: 3 }).laps).toBe(1);
+    expect(challengeScore({ laps: 1, penalties: 2, finishedAt: 30 }, 'stopwatch', { penaltySeconds: 10 }).seconds).toBe(
+      50,
+    );
+  });
+
+  test('a free penalty leaves the result alone', () => {
+    expect(challengeScore({ laps: 7, penalties: 2 }, 'window', { penaltyLaps: 0 }).laps).toBe(7);
+    expect(challengeScore({ laps: 1, penalties: 2, finishedAt: 30 }, 'stopwatch', { penaltySeconds: 0 }).seconds).toBe(
+      30,
+    );
+  });
+
+  test('a run recorded before costs were settable scores the way it did then', () => {
+    expect(challengeScore({ laps: 7, penalties: 2 }, 'window', {}).laps).toBe(5);
   });
 
   test('enough penalties push a run below zero, so it ranks behind a clean one', () => {
@@ -209,7 +265,7 @@ describe('a challenge run lands in match history', () => {
     history.attach(engine, new ScoringEngine());
 
     engine.createMatch();
-    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 10 }));
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 10, challengePenaltyLaps: 2 }));
     engine.joinStationAlliance('slot1', 'red');
     for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
     engine.setReadyRequested(true);
@@ -221,7 +277,13 @@ describe('a challenge run lands in match history', () => {
     engine.stopMatch();
 
     const entry = history.getState().matches.at(-1)!;
-    expect(entry.challenge).toEqual({ timing: 'window', tally: { red: { laps: 4, penalties: 0 } } });
+    expect(entry.challenge).toEqual({
+      timing: 'window',
+      // Recorded with the run, so a later change of heart can't re-score it
+      penaltyLaps: 2,
+      penaltySeconds: CHALLENGE_PENALTY_SECONDS,
+      tally: { red: { laps: 4, penalties: 0 } },
+    });
     // Blue never took the field, so it isn't on the board at all
     expect(entry.challenge!.tally.blue).toBeUndefined();
 

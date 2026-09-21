@@ -8,6 +8,7 @@ let nextEnd = 1_700_000_000_000;
 function run(
   timing: ChallengeTiming,
   alliances: Partial<Record<Alliance, { teams: number[]; tally: ChallengeTally }>>,
+  costs?: { penaltyLaps?: number; penaltySeconds?: number },
 ): MatchHistoryEntry {
   const endedAt = (nextEnd += 60_000);
   const tally: Partial<Record<Alliance, ChallengeTally>> = {};
@@ -31,7 +32,7 @@ function run(
     teams,
     redScore: 0,
     blueScore: 0,
-    challenge: { timing, tally },
+    challenge: { timing, ...costs, tally },
   };
 }
 
@@ -134,5 +135,35 @@ describe('the two timings never mix', () => {
     const match = run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 0 } } });
     delete match.challenge;
     expect(leaderboardRows([match], 'window')).toEqual([]);
+  });
+});
+
+describe('each run is ranked by the penalty cost it was run under', () => {
+  test('a run recorded with a heavier penalty keeps it', () => {
+    const rows = leaderboardRows(
+      [
+        // Five laps, two penalties, but penalties cost 2 laps that run: 1
+        run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 2 } } }, { penaltyLaps: 2 }),
+        // Four laps, one penalty at the default 1 lap: 3
+        run('window', { red: { teams: [254], tally: { laps: 4, penalties: 1 } } }),
+      ],
+      'window',
+    );
+    expect(rows.map(r => r.teams[0])).toEqual([254, 5940]);
+    expect(rows.map(r => r.laps)).toEqual([3, 1]);
+  });
+
+  test('a free penalty leaves a stopwatch time untouched', () => {
+    const rows = leaderboardRows(
+      [
+        run(
+          'stopwatch',
+          { red: { teams: [5940], tally: { laps: 1, penalties: 4, finishedAt: 20 } } },
+          { penaltySeconds: 0 },
+        ),
+      ],
+      'stopwatch',
+    );
+    expect(rows[0].seconds).toBe(20);
   });
 });

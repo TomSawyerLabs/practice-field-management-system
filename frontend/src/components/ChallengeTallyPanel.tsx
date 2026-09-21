@@ -20,7 +20,7 @@ import {
   MatchState,
   StationControlState,
   StationName,
-  CHALLENGE_PENALTY_SECONDS,
+  challengePenalties,
 } from '../../../src/types';
 import { sendMatchChallengeAdjust, sendMatchChallengeFinish } from '../hooks/useBackend';
 import { formatName } from '../utils/matchFormat';
@@ -42,6 +42,11 @@ export function ChallengeTallyPanel({ matchState }: { matchState: MatchState }) 
   if (!challenge) return null;
 
   const stopwatch = config.challengeTiming === 'stopwatch';
+  const { penaltyLaps, penaltySeconds } = challengePenalties({
+    penaltyLaps: config.challengePenaltyLaps,
+    penaltySeconds: config.challengePenaltySeconds,
+  });
+  const penaltyCost = stopwatch ? penaltySeconds : penaltyLaps;
   const teams = participants(stationStates);
   const onField = (['red', 'blue'] as Alliance[]).filter(a => teams[a].length > 0);
   if (onField.length === 0) return null;
@@ -64,6 +69,7 @@ export function ChallengeTallyPanel({ matchState }: { matchState: MatchState }) 
               teams={teams[alliance]}
               tally={challenge[alliance]}
               stopwatch={stopwatch}
+              penaltyCost={penaltyCost}
               running={running}
             />
           ))}
@@ -78,12 +84,15 @@ function AllianceTally({
   teams,
   tally,
   stopwatch,
+  penaltyCost,
   running,
 }: {
   alliance: Alliance;
   teams: number[];
   tally: ChallengeTally;
   stopwatch: boolean;
+  /** What one penalty costs, in this run's own unit. */
+  penaltyCost: number;
   running: boolean;
 }) {
   const color = ALLIANCE_COLOR[alliance];
@@ -158,9 +167,11 @@ function AllianceTally({
       </Box>
 
       <Typography variant="caption" color="text.secondary">
-        {stopwatch
-          ? `Each penalty adds ${CHALLENGE_PENALTY_SECONDS}s to the finishing time.`
-          : 'Each penalty takes away a lap.'}
+        {penaltyCost === 0
+          ? 'Penalties are tallied but cost nothing this run.'
+          : stopwatch
+            ? `Each penalty adds ${penaltyCost}s to the finishing time.`
+            : `Each penalty takes away ${penaltyCost === 1 ? 'a lap' : `${penaltyCost} laps`}.`}
       </Typography>
 
       {stopwatch && (

@@ -479,7 +479,10 @@ export function ScoreboardPage() {
   // actually set up — otherwise free-play scoring reads "0 LAPS".
   const isChallenge = isChallengeConfig(matchState?.config) && matchState?.phase !== 'idle';
   const challengeLaps = (alliance: Alliance): number =>
-    challengeScore(matchState?.challenge?.[alliance], matchState?.config.challengeTiming).laps;
+    challengeScore(matchState?.challenge?.[alliance], matchState?.config.challengeTiming, {
+      penaltyLaps: matchState?.config.challengePenaltyLaps,
+      penaltySeconds: matchState?.config.challengePenaltySeconds,
+    }).laps;
   const boxTotal = (alliance: Alliance): number =>
     isChallenge ? challengeLaps(alliance) : (score?.[alliance].total ?? 0);
   const boxLabel = (alliance: Alliance, freePlay: string | null): string | null => {
