@@ -39,7 +39,12 @@ class RadioManager {
   private updateListeners: StatusListener[] = [];
   private configChangeListeners: (() => void)[] = [];
   private commitCompleteListeners: (() => void)[] = [];
-  private activeConfig = {} as Record<StationName, { ssid: string; wpaKey: string; internetAccess?: boolean }>;
+  /** Active station configs. `connectedAt` is pFMS bookkeeping, not part of
+   *  the radio's config — see buildRadioStationConfig, which strips it. */
+  private activeConfig = {} as Record<
+    StationName,
+    { ssid: string; wpaKey: string; internetAccess?: boolean; connectedAt?: number }
+  >;
   private readonly activeConfigPath = process.env.ACTIVE_CONFIG_FILE ?? 'active-config.json';
   /** Staged changes — written on stage, merged into activeConfig on commit. */
   private stagedChanges = {} as Record<StationName, { ssid: string; wpaKey: string; internetAccess?: boolean } | null>;
@@ -130,6 +135,25 @@ class RadioManager {
     }
   }
 
+  /** Put a config on a station, stamping when the team took the slot. A team
+   *  that is already there keeps its original timestamp — re-applying the same
+   *  SSID (an internet-access toggle, a reconcile, a re-commit) must not look
+   *  like a fresh connection, or the admin console's default ordering would
+   *  shuffle for no reason. */
+  private setActiveStationConfig(
+    station: StationName,
+    config: { ssid: string; wpaKey: string; internetAccess?: boolean },
+  ): void {
+    const existing = this.activeConfig[station];
+    const connectedAt = existing?.ssid === config.ssid ? (existing.connectedAt ?? Date.now()) : Date.now();
+    this.activeConfig[station] = { ...config, connectedAt };
+  }
+
+  /** Epoch ms when the station's current team took the slot (null if empty). */
+  getConnectedAtForStation(station: StationName): number | null {
+    return this.activeConfig[station]?.connectedAt ?? null;
+  }
+
   private saveActiveConfig(): void {
     try {
       writeFileSync(this.activeConfigPath, JSON.stringify(this.activeConfig, null, 2));
@@ -159,10 +183,19 @@ class RadioManager {
           typeof (config as any).ssid === 'string' &&
           typeof (config as any).wpaKey === 'string'
         ) {
-          this.activeConfig[station as StationName] = config as {
+          const { ssid, wpaKey, internetAccess, connectedAt } = config as {
             ssid: string;
             wpaKey: string;
             internetAccess?: boolean;
+            connectedAt?: unknown;
+          };
+          this.activeConfig[station as StationName] = {
+            ssid,
+            wpaKey,
+            internetAccess,
+            // Configs written before pFMS tracked this have no timestamp;
+            // leave it undefined rather than inventing "connected at restart".
+            connectedAt: typeof connectedAt === 'number' ? connectedAt : undefined,
           };
         }
       }
@@ -416,7 +449,7 @@ class RadioManager {
       }
     } else {
       // Immediate: apply to activeConfig and commit
-      if (config) this.activeConfig[stationId] = config;
+      if (config) this.setActiveStationConfig(stationId, config);
       else {
         delete this.activeConfig[stationId];
         this.lastLinked.delete(stationId);
@@ -597,7 +630,7 @@ class RadioManager {
           changed = true;
         }
       } else {
-        this.activeConfig[station] = staged;
+        this.setActiveStationConfig(station, staged);
         changed = true;
       }
       delete this.stagedChanges[station];
@@ -617,9 +650,13 @@ class RadioManager {
   > {
     const radioConfig = {} as Record<RadioStationName, { ssid: string; wpaKey: string; internetAccess?: boolean }>;
     for (const slot of StationNameList) {
-      if (this.activeConfig[slot]) {
-        radioConfig[defaultSlotToRadio[slot]] = this.activeConfig[slot];
-      }
+      const config = this.activeConfig[slot];
+      if (!config) continue;
+      // Pick the radio's fields explicitly — activeConfig also carries pFMS
+      // bookkeeping (connectedAt), and the radio applies /configuration as a
+      // full replacement, so anything extra goes over the wire verbatim.
+      const { ssid, wpaKey, internetAccess } = config;
+      radioConfig[defaultSlotToRadio[slot]] = { ssid, wpaKey, internetAccess };
     }
     return radioConfig;
   }

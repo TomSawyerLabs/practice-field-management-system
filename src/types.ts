@@ -993,6 +993,17 @@ export type StationControlState = {
   /** Set when the field's control-system policy forbids this robot: why it
    *  cannot be enabled. The field holds it disabled in and out of matches. */
   blockedReason?: string;
+  /** Epoch ms when this team took this station — when its SSID became the
+   *  station's active radio config. Unlike the DS/radio heartbeats this is a
+   *  connect *time*, so it survives a robot dropping and coming back, which
+   *  makes it the stable sort key for "who has been on the field longest".
+   *  Undefined for an empty slot, or for a config restored from a file
+   *  written before pFMS tracked this. */
+  connectedAt?: number;
+  /** Epoch ms the field last enabled this station (match start, resume, or an
+   *  admin/self re-enable). Stays set after the robot is disabled again, so
+   *  it reads as "last drove at". Undefined if never enabled. */
+  lastEnabledAt?: number;
 };
 
 export type MatchEndReason = 'normal' | 'stopped' | 'estop' | 'abandoned';

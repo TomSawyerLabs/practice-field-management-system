@@ -139,6 +139,16 @@ The `/admin` page provides safety overrides independent of the
 self-service system: global e-stop, per-station e-stop / disable / enable,
 clear e-stop, and force-stop match.
 
+**Teams & Controls** lists every team on the field as one flat table — a
+team appears as soon as a radio slot is configured for it, and slots with
+no team are not shown. It is ordered by how long each team has been
+connected (longest first), because that reads as the queue teams arrived
+in and does not reshuffle when a robot drops its link or gets enabled.
+Any column heading reorders the table: team number, slot, connection time,
+or when the field last enabled that robot. "Connected" counts from the
+moment the team's SSID became the slot's active radio config, so it
+survives a robot dropping and coming back.
+
 **Global e-stop is field-wide in the strongest sense**: it e-stops all six
 stations and sends E-Stop packets to every station whose Driver Station
 address is known — including robots merely free-driving outside the match.

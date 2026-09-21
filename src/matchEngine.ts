@@ -123,6 +123,9 @@ export class MatchEngine {
   private shareToken: string | null = null;
   private endReason: MatchEndReason | undefined;
   private teamResolver: TeamResolver;
+  /** When each station's team took the slot, supplied by index.ts from the
+   *  radio's active config. Null = no team, or a config that predates this. */
+  private connectedAtResolver?: (station: StationName) => number | null;
   /** Why a station's robot may not be enabled (field control-system policy),
    *  supplied by index.ts. Null/undefined = allowed. */
   private enableBlocked?: (station: StationName) => string | null;
@@ -294,6 +297,12 @@ export class MatchEngine {
   /** Set callback used to determine auto winner from scoring data. */
   setAutoScoreResolver(resolver: () => { red: number; blue: number }) {
     this.autoScoreResolver = resolver;
+  }
+
+  /** Supply when each station's team took its slot, for clients that order
+   *  teams by how long they have been on the field. */
+  setConnectedAtResolver(resolver: (station: StationName) => number | null) {
+    this.connectedAtResolver = resolver;
   }
 
   // ── Match lifecycle (controller actions) ────────────────────────────
@@ -1144,10 +1153,14 @@ export class MatchEngine {
     const stationStates: Partial<Record<StationName, StationControlState>> = {};
     for (const station of StationNameList) {
       const blockedReason = this.enableBlocked?.(station) ?? undefined;
+      const connectedAt = this.connectedAtResolver?.(station) ?? undefined;
       const state = {
         ...this.stationStates.get(station)!,
         dsAttached: this.isDsAttached(station),
         ...(blockedReason ? { blockedReason } : {}),
+        ...(connectedAt !== undefined ? { connectedAt } : {}),
+        // Kept after the disable so clients can show "last drove at"
+        lastEnabledAt: this.lastFmsEnable.get(station),
       };
       // When not in active match or postMatch, resolve live team numbers; during a match, use the snapshot
       if (!this.isMatchActive() && this.phase !== 'postMatch') state.teamNumber = this.teamResolver(station);

@@ -5,7 +5,6 @@ import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
-import Grid from '@mui/material/Grid';
 import { MatchTimeline } from './MatchTimeline';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
@@ -18,8 +17,9 @@ import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
+import TableSortLabel from '@mui/material/TableSortLabel';
 
-import type { MatchPhase, StationName, ControllerPolicy } from '../../../src/types';
+import type { MatchPhase, StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
 import { prettyStationName } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
@@ -123,114 +123,268 @@ function GlobalEStopSection() {
   );
 }
 
-// ── Per-Station Controls ────────────────────────────────────────────
+// ── Connected Teams ─────────────────────────────────────────────────
 
-function StationControlCard({ station }: { station: StationName }) {
+/** How the team list is ordered. Connection time is the default: it reads as
+ *  the queue the teams arrived in, and it does not reshuffle when a robot
+ *  drops its radio link or gets enabled. */
+type TeamSortKey = 'connected' | 'team' | 'enabled' | 'slot';
+
+const teamSortLabels: Record<TeamSortKey, string> = {
+  connected: 'Connected',
+  team: 'Team',
+  enabled: 'Last enabled',
+  slot: 'Slot',
+};
+
+/** Ascending means "smallest first" for the column's own value; for the two
+ *  time columns that is the oldest, which is the order worth landing on when
+ *  you first pick them. */
+const teamSortDefaultDirection: Record<TeamSortKey, 'asc' | 'desc'> = {
+  connected: 'asc',
+  team: 'asc',
+  enabled: 'desc',
+  slot: 'asc',
+};
+
+/** A compact elapsed time — finer than hour-rounding, because a team that has
+ *  been on the field 2h40m should not read the same as one at 2h05m. */
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+type TeamRow = {
+  station: StationName;
+  teamNumber: number;
+  state: StationControlState;
+  isRobotLinked: boolean;
+};
+
+/** One row per team on the field. Slots with no team are left out entirely —
+ *  an unconfigured slot has nothing to control and nothing to report. */
+function useConnectedTeamRows(): TeamRow[] {
   const matchState = useMatchState();
   const latest = useLatest();
-  const stationState = matchState?.stationStates[station];
-  const teamNumber = stationState?.teamNumber ?? null;
-  const isRobotLinked = latest?.radioUpdate?.stationStatuses[station]?.isLinked ?? false;
 
-  const title = teamNumber ? `Team ${teamNumber}` : prettyStationName(station);
-  const subtitle = teamNumber ? prettyStationName(station) : null;
+  return StationNameList.flatMap(station => {
+    const state = matchState?.stationStates[station];
+    if (!state || state.teamNumber === null) return [];
+    return [
+      {
+        station,
+        teamNumber: state.teamNumber,
+        state,
+        isRobotLinked: latest?.radioUpdate?.stationStatuses[station]?.isLinked ?? false,
+      },
+    ];
+  });
+}
+
+function sortTeamRows(rows: TeamRow[], key: TeamSortKey, direction: 'asc' | 'desc'): TeamRow[] {
+  const value = (row: TeamRow): number => {
+    switch (key) {
+      case 'team':
+        return row.teamNumber;
+      case 'slot':
+        return StationNameList.indexOf(row.station);
+      // A missing timestamp sorts as the oldest: a team restored from a config
+      // written before pFMS tracked this has, in fact, been here a while.
+      case 'connected':
+        return row.state.connectedAt ?? 0;
+      case 'enabled':
+        return row.state.lastEnabledAt ?? 0;
+    }
+  };
+  const sign = direction === 'asc' ? 1 : -1;
+  // Slot order is the tiebreak, so equal values (a whole field enabled in the
+  // same instant) stay put instead of jittering between renders.
+  return [...rows].sort(
+    (a, b) => sign * (value(a) - value(b)) || StationNameList.indexOf(a.station) - StationNameList.indexOf(b.station),
+  );
+}
+
+/** The team's control state, as the chips the admin actually acts on. */
+function TeamStateChips({ state, isRobotLinked }: { state: StationControlState; isRobotLinked: boolean }) {
+  return (
+    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
+      {isRobotLinked ? (
+        <Chip label="Robot linked" size="small" color="success" variant="outlined" />
+      ) : (
+        <Chip label="No robot" size="small" color="warning" variant="outlined" />
+      )}
+      {state.joined && <Chip label="Joined" size="small" color="primary" variant="outlined" />}
+      {state.eStop && <Chip label="E-STOP" size="small" color="error" />}
+      {state.aStop && <Chip label="A-STOP" size="small" color="warning" />}
+      {state.enabled && <Chip label="Enabled" size="small" color="success" />}
+      {!state.enabled && !state.eStop && !state.aStop && <Chip label="Disabled" size="small" variant="outlined" />}
+      {state.blockedReason && <Chip label="Blocked" size="small" color="warning" variant="outlined" />}
+    </Box>
+  );
+}
+
+function TeamControlButtons({ station, state }: { station: StationName; state: StationControlState }) {
+  const matchState = useMatchState();
+  const robotsRunning =
+    matchState?.phase === 'auto' || matchState?.phase === 'teleop' || matchState?.phase === 'endgame';
 
   return (
-    <Card sx={{ mb: 1 }}>
-      <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <TeamAvatar teamNumber={teamNumber} size={28} />
-            <Typography variant="subtitle1" fontWeight="bold">
-              {title}
-              {subtitle && (
-                <Typography component="span" variant="body2" sx={{ ml: 1, color: 'text.secondary' }}>
-                  {subtitle}
-                </Typography>
-              )}
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
-              {isRobotLinked ? (
-                <Chip label="Robot Linked" size="small" color="success" variant="outlined" />
-              ) : teamNumber ? (
-                <Chip label="No Robot" size="small" variant="outlined" color="warning" />
-              ) : (
-                <Chip label="No Team" size="small" variant="outlined" />
-              )}
-              {stationState?.joined && <Chip label="Joined" size="small" color="primary" variant="outlined" />}
-              {stationState?.eStop && <Chip label="E-STOP" size="small" color="error" />}
-              {stationState?.aStop && <Chip label="A-STOP" size="small" color="warning" />}
-              {stationState?.enabled && <Chip label="Enabled" size="small" color="success" />}
-              {!stationState?.enabled && !stationState?.eStop && !stationState?.aStop && (
-                <Chip label="Disabled" size="small" variant="outlined" />
-              )}
-            </Box>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            {stationState?.eStop ? (
-              <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
-                Clear E-Stop
-              </Button>
-            ) : stationState?.enabled ? (
-              <Button size="small" variant="contained" color="warning" onClick={() => sendAdminStationDisable(station)}>
-                Disable
-              </Button>
-            ) : (
-              // Recovery: put a stopped robot back in the match (works for team
-              // disables and after a cleared e-stop; robots-running phases only)
-              <Button
-                size="small"
-                variant="outlined"
-                color="success"
-                onClick={() => sendAdminStationEnable(station)}
-                disabled={
-                  !stationState?.joined ||
-                  stationState?.aStop ||
-                  !(matchState?.phase === 'auto' || matchState?.phase === 'teleop' || matchState?.phase === 'endgame')
-                }
-              >
-                Enable
-              </Button>
-            )}
-            {!stationState?.eStop && (
-              <Tooltip title="Emergency stop — use only for safety" arrow>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="error"
-                  onClick={() => sendAdminStationEStop(station)}
-                  sx={{ minWidth: 0, px: 1, fontSize: '0.7rem' }}
-                >
-                  E-Stop One
-                </Button>
-              </Tooltip>
-            )}
-          </Box>
+    <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+      {state.eStop ? (
+        <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
+          Clear E-Stop
+        </Button>
+      ) : state.enabled ? (
+        <Button size="small" variant="contained" color="warning" onClick={() => sendAdminStationDisable(station)}>
+          Disable
+        </Button>
+      ) : (
+        // Recovery: put a stopped robot back in the match (works for team
+        // disables and after a cleared e-stop; robots-running phases only)
+        <Button
+          size="small"
+          variant="outlined"
+          color="success"
+          onClick={() => sendAdminStationEnable(station)}
+          disabled={!state.joined || state.aStop || !robotsRunning}
+        >
+          Enable
+        </Button>
+      )}
+      {!state.eStop && (
+        <Button
+          size="small"
+          variant="outlined"
+          color="error"
+          onClick={() => sendAdminStationEStop(station)}
+          sx={{ minWidth: 0, px: 1, fontSize: '0.7rem' }}
+        >
+          E-Stop
+        </Button>
+      )}
+    </Box>
+  );
+}
+
+function ConnectedTeamRow({ row }: { row: TeamRow }) {
+  const { station, teamNumber, state, isRobotLinked } = row;
+  const now = Date.now();
+
+  return (
+    <TableRow hover>
+      <TableCell>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TeamAvatar teamNumber={teamNumber} size={28} />
+          <Typography variant="subtitle1" fontWeight="bold" sx={{ whiteSpace: 'nowrap' }}>
+            {teamNumber}
+          </Typography>
         </Box>
-      </CardContent>
-    </Card>
+      </TableCell>
+      <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>{prettyStationName(station)}</TableCell>
+      <TableCell>
+        <TeamStateChips state={state} isRobotLinked={isRobotLinked} />
+      </TableCell>
+      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+        {state.connectedAt === undefined ? (
+          <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+            unknown
+          </Typography>
+        ) : (
+          <Typography variant="body2">{formatElapsed(now - state.connectedAt)}</Typography>
+        )}
+      </TableCell>
+      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+        {state.enabled ? (
+          <Typography variant="body2" sx={{ color: 'success.main', fontWeight: 'bold' }}>
+            now
+          </Typography>
+        ) : state.lastEnabledAt === undefined ? (
+          <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+            never
+          </Typography>
+        ) : (
+          <Typography variant="body2">{formatElapsed(now - state.lastEnabledAt)} ago</Typography>
+        )}
+      </TableCell>
+      <TableCell align="right">
+        <TeamControlButtons station={station} state={state} />
+      </TableCell>
+    </TableRow>
   );
 }
 
 function StationControlSection() {
+  const rows = useConnectedTeamRows();
+  const [sortKey, setSortKey] = useState<TeamSortKey>('connected');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(teamSortDefaultDirection.connected);
+  const [, setTick] = useState(0);
+
+  // Re-render every second so the elapsed-time columns stay honest
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const sortBy = (key: TeamSortKey) => {
+    if (key === sortKey) setSortDirection(d => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDirection(teamSortDefaultDirection[key]);
+    }
+  };
+
+  const sorted = sortTeamRows(rows, sortKey, sortDirection);
+
+  const sortableHeader = (key: TeamSortKey) => (
+    <TableCell sortDirection={sortKey === key ? sortDirection : false} sx={{ whiteSpace: 'nowrap' }}>
+      <TableSortLabel
+        active={sortKey === key}
+        direction={sortKey === key ? sortDirection : teamSortDefaultDirection[key]}
+        onClick={() => sortBy(key)}
+      >
+        {teamSortLabels[key]}
+      </TableSortLabel>
+    </TableCell>
+  );
+
   return (
     <Card sx={{ mb: 3 }}>
       <CardContent>
-        <Typography variant="h5" gutterBottom>
-          Teams & Controls
+        <Typography variant="h5">Teams &amp; Controls</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          Every team on the field, longest-connected first. Tap a column heading to reorder. Slots with no team are not
+          listed.
         </Typography>
-        <Grid container spacing={2}>
-          <Grid size={{ xs: 12, md: 6 }}>
-            {StationNameList.slice(0, 3).map(s => (
-              <StationControlCard key={s} station={s} />
-            ))}
-          </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
-            {StationNameList.slice(3).map(s => (
-              <StationControlCard key={s} station={s} />
-            ))}
-          </Grid>
-        </Grid>
+
+        {sorted.length === 0 ? (
+          <Typography variant="body2" sx={{ color: 'text.secondary', py: 2 }}>
+            No teams are on the field. A team appears here once a radio slot is configured for it.
+          </Typography>
+        ) : (
+          <Box sx={{ overflowX: 'auto' }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  {sortableHeader('team')}
+                  {sortableHeader('slot')}
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>State</TableCell>
+                  {sortableHeader('connected')}
+                  {sortableHeader('enabled')}
+                  <TableCell />
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {sorted.map(row => (
+                  <ConnectedTeamRow key={row.station} row={row} />
+                ))}
+              </TableBody>
+            </Table>
+          </Box>
+        )}
       </CardContent>
     </Card>
   );

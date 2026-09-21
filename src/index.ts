@@ -320,6 +320,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Every enable in the match engine goes through this gate.
   matchEngine.setEnableBlocked(policyBlockReason);
 
+  // How long each team has been on the field, for the admin team list.
+  matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
+
   // Initialize match audio (plays FRC field sounds on phase transitions)
   const matchAudio = new MatchAudio();
   await matchAudio.init();
