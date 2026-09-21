@@ -311,6 +311,7 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
               ))}
               <Button
                 size="small"
+                sx={{ textTransform: 'none' }}
                 disabled={disabled || duration <= CHALLENGE_MIN_DURATION}
                 onClick={() => setDuration(duration - 5)}
               >
@@ -321,6 +322,7 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
               </Typography>
               <Button
                 size="small"
+                sx={{ textTransform: 'none' }}
                 disabled={disabled || duration >= CHALLENGE_MAX_DURATION}
                 onClick={() => setDuration(duration + 5)}
               >
