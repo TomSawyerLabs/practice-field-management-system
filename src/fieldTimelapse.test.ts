@@ -4,7 +4,16 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FieldTimelapse, localDay, slotTime } from './fieldTimelapse.js';
-import { isTimelapseConfig, TIMELAPSE_DEFAULTS, type MatchState, type TimelapseConfig } from './types.js';
+import {
+  isTimelapseConfig,
+  redactSetupSettings,
+  restoreSetupSecrets,
+  SECRET_KEPT,
+  TIMELAPSE_DEFAULTS,
+  type MatchState,
+  type SetupSettings,
+  type TimelapseConfig,
+} from './types.js';
 
 const ffmpeg = process.env.FFMPEG_PATH ?? 'ffmpeg';
 const ffprobe = process.env.FFPROBE_PATH ?? 'ffprobe';
@@ -58,6 +67,63 @@ describe('isTimelapseConfig', () => {
     expect(ok({ activeCrf: 41 })).toBe(false);
     expect(ok({ activeRetentionDays: 0 })).toBe(false);
     expect(ok({ frameRetentionDays: 0 })).toBe(true); // 0 = keep forever
+  });
+});
+
+describe('timelapse action secrets', () => {
+  // setupConfigState reaches every internal client, station pages included,
+  // so a bearer token in an action header must never ride along in it.
+  const stored = (): SetupSettings => ({
+    timelapse: {
+      ...TIMELAPSE_DEFAULTS,
+      preAction: {
+        method: 'POST',
+        url: 'http://homeassistant.tsl:8123/api/services/light/turn_on',
+        headers: { Authorization: 'Bearer real-token', 'X-Other': 'plain' },
+        body: '{"entity_id":"light.bay_1_2_lights"}',
+      },
+      postAction: { method: 'POST', url: 'http://homeassistant.tsl:8123/api/services/scene/turn_on' },
+    },
+  });
+
+  test('header values are masked on the way out, everything else is kept', () => {
+    const out = redactSetupSettings(stored());
+    expect(out.timelapse!.preAction!.headers).toEqual({ Authorization: SECRET_KEPT, 'X-Other': SECRET_KEPT });
+    expect(out.timelapse!.preAction!.url).toBe('http://homeassistant.tsl:8123/api/services/light/turn_on');
+    expect(out.timelapse!.preAction!.body).toBe('{"entity_id":"light.bay_1_2_lights"}');
+    expect(JSON.stringify(out)).not.toContain('real-token');
+  });
+
+  test('settings without an action are passed through untouched', () => {
+    const plain: SetupSettings = { publicUrl: 'https://pfms.example.org' };
+    expect(redactSetupSettings(plain)).toBe(plain);
+    expect(redactSetupSettings({ timelapse: TIMELAPSE_DEFAULTS })).toEqual({ timelapse: TIMELAPSE_DEFAULTS });
+  });
+
+  test('a masked value coming back keeps the stored secret', () => {
+    const current = stored();
+    const patch = redactSetupSettings(current);
+    const saved = restoreSetupSecrets(patch, current);
+    expect(saved.timelapse!.preAction!.headers).toEqual({ Authorization: 'Bearer real-token', 'X-Other': 'plain' });
+  });
+
+  test('a newly typed value replaces the stored one', () => {
+    const current = stored();
+    const patch = redactSetupSettings(current);
+    patch.timelapse!.preAction!.headers = { Authorization: 'Bearer new-token' };
+    const saved = restoreSetupSecrets(patch, current);
+    expect(saved.timelapse!.preAction!.headers).toEqual({ Authorization: 'Bearer new-token' });
+  });
+
+  test('a masked header with nothing stored behind it is dropped, not saved as the mask', () => {
+    const patch: Partial<SetupSettings> = {
+      timelapse: {
+        ...TIMELAPSE_DEFAULTS,
+        preAction: { method: 'GET', url: 'http://x/y', headers: { Authorization: SECRET_KEPT } },
+      },
+    };
+    const saved = restoreSetupSecrets(patch, {});
+    expect(saved.timelapse!.preAction!.headers).toBeUndefined();
   });
 });
 

@@ -88,6 +88,8 @@ import {
   isSetPracticeRecording,
   isRequestPracticeDayLink,
   isRequestRecordingsInventory,
+  redactSetupSettings,
+  restoreSetupSecrets,
   isCaptureTimelapseFrame,
   isDeleteTimelapseRender,
   isRenderTimelapse,
@@ -462,7 +464,14 @@ export function setupWebSocket(
 
   function setupConfigMessage(): SetupConfigState {
     const store = setup!.configStore;
-    return { type: 'setupConfigState', config: store.get(), nextStep: store.nextStep() };
+    const config = store.get();
+    // Every internal client gets this on connect, station pages included, so
+    // secrets in the settings (timelapse action headers) go out masked.
+    return {
+      type: 'setupConfigState',
+      config: { ...config, settings: redactSetupSettings(config.settings) },
+      nextStep: store.nextStep(),
+    };
   }
 
   async function runAndBroadcastProbe(): Promise<void> {
@@ -1259,7 +1268,8 @@ export function setupWebSocket(
           if (!setupWritesAllowed(ws)) {
             ws.send(JSON.stringify({ error: 'Admin authentication required to change setup settings' }));
           } else {
-            setup.configStore.updateSettings(data.settings);
+            // A masked secret coming back means "keep the stored one".
+            setup.configStore.updateSettings(restoreSetupSecrets(data.settings, setup.configStore.get().settings));
             // Settings change what the probe reports, so re-run immediately.
             void runAndBroadcastProbe();
           }

@@ -10,6 +10,7 @@ import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import {
+  SECRET_KEPT,
   TIMELAPSE_DEFAULTS,
   type TimelapseAction,
   type TimelapseConfig,
@@ -122,7 +123,12 @@ function ActionEditor({
         minRows={2}
         value={headerText}
         error={parsed.error !== undefined}
-        helperText={parsed.error}
+        helperText={
+          parsed.error ??
+          (headerText.includes(SECRET_KEPT)
+            ? 'Saved header values are never sent back to a browser. Type over one to replace it.'
+            : undefined)
+        }
         onChange={e => {
           setHeaderText(e.target.value);
           const next = textToHeaders(e.target.value);

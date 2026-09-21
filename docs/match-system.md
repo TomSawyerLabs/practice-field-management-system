@@ -459,6 +459,14 @@ After:   POST http://homeassistant.local:8123/api/services/scene/turn_on
 Only one call fits in each slot, so when two steps are needed (snapshot then
 turn on), point the pre action at a Home Assistant script that does both.
 
+**Header values are secrets.** The settings go out to every internal client
+on connect — station pages are not authenticated — so header values are
+masked (`••• unchanged •••`) on the way out and restored on the way back in.
+The token itself never leaves the server after it is saved, and lives in
+`setup-config.json` alongside the other settings. A Home Assistant token is
+worth scoping: make it from a non-admin Home Assistant user, so a leak cannot
+reconfigure the house.
+
 Use **Capture now (with lights)** to prove the whole chain works; the frame
 list says whether the lights ran, were skipped, or failed and why.
 

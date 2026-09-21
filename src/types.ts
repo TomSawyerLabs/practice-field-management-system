@@ -284,7 +284,10 @@ export function isRecordingStreamConfig(v: unknown): v is RecordingStreamConfig 
  * action drives the lights to a known level, the post action puts them back,
  * and pFMS does not need to know which of Home Assistant, Hue, Shelly or a
  * shop-specific endpoint is on the other end. `headers` is where a bearer
- * token goes — it is admin-only config and is never echoed back to clients.
+ * token goes, so header values are treated as secrets: they are replaced with
+ * `SECRET_KEPT` on the way out to clients and restored on the way back in
+ * (see `redactSetupSettings`). Without that they would ride along in the
+ * `setupConfigState` every station page receives on connect.
  */
 export interface TimelapseAction {
   method: 'GET' | 'POST' | 'PUT';
@@ -335,6 +338,65 @@ export interface TimelapseConfig {
   postAction?: TimelapseAction;
   /** Seconds between the pre action and the shutter, for lights to settle. */
   settleSeconds: number;
+}
+
+/**
+ * Stand-in for a stored secret in settings sent to clients.
+ *
+ * `setupConfigState` goes to every internal client on connect — station pages
+ * included, and those are not authenticated. Anything secret in the settings
+ * therefore has to be masked on the way out. A client that sends this value
+ * back is saying "leave that one alone", which is what lets the admin page
+ * edit the rest of an action without ever holding the token.
+ */
+export const SECRET_KEPT = '••• unchanged •••';
+
+/** The settings with every secret masked, safe to send to clients. */
+export function redactSetupSettings(settings: SetupSettings): SetupSettings {
+  const mask = (action: TimelapseAction | undefined): TimelapseAction | undefined => {
+    if (!action?.headers) return action;
+    const headers: Record<string, string> = {};
+    for (const name of Object.keys(action.headers)) headers[name] = SECRET_KEPT;
+    return { ...action, headers };
+  };
+  if (!settings.timelapse) return settings;
+  const { preAction, postAction } = settings.timelapse;
+  if (!preAction?.headers && !postAction?.headers) return settings;
+  return {
+    ...settings,
+    timelapse: { ...settings.timelapse, preAction: mask(preAction), postAction: mask(postAction) },
+  };
+}
+
+/**
+ * Put the real secrets back into a patch from a client, matching them up by
+ * header name with what is already stored. A masked header whose name is not
+ * stored yet is dropped rather than saved as the mask — the alternative is
+ * sending `••• unchanged •••` to Home Assistant as a bearer token.
+ */
+export function restoreSetupSecrets(patch: Partial<SetupSettings>, stored: SetupSettings): Partial<SetupSettings> {
+  if (!patch.timelapse) return patch;
+  const unmask = (
+    incoming: TimelapseAction | undefined,
+    old: TimelapseAction | undefined,
+  ): TimelapseAction | undefined => {
+    if (!incoming?.headers) return incoming;
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(incoming.headers)) {
+      if (value !== SECRET_KEPT) headers[name] = value;
+      else if (old?.headers?.[name] !== undefined) headers[name] = old.headers[name];
+    }
+    return { ...incoming, headers: Object.keys(headers).length > 0 ? headers : undefined };
+  };
+  const old = stored.timelapse;
+  return {
+    ...patch,
+    timelapse: {
+      ...patch.timelapse,
+      preAction: unmask(patch.timelapse.preAction, old?.preAction),
+      postAction: unmask(patch.timelapse.postAction, old?.postAction),
+    },
+  };
 }
 
 export const TIMELAPSE_DEFAULTS: TimelapseConfig = {
