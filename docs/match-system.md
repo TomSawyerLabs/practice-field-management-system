@@ -425,58 +425,52 @@ Everything is viewable in the admin section itself, no file browser needed:
   downloads or deletes each one. Rendering is on demand and one at a time, so
   it never competes with a match.
 
-### Lights, and other pre/post actions
+### Lights
 
 Every archival frame looks the same only if the field is lit the same way.
-Rather than teach pFMS about any particular light system, each slot takes a
-short list of HTTP calls — method, URL, headers, JSON body — run in order
-either side of the shutter, with a settle delay in between (default 5 s). A
-list rather than a single call, so a two-step sequence like Home Assistant's
-snapshot-then-turn-on needs nothing built inside Home Assistant.
+There are two ways to arrange that, and doing nothing is the default.
 
-They only run **when nobody is here**: a running match, an enabled robot, or
-any Driver Station heard from in the last five minutes all skip them. The
-frame is still taken — the lights are simply left as whoever is in the shop
-set them, which is the point, since a shop with people in it already has its
-lights on. The post calls also run when the capture itself failed, so the
-lights are never left up.
+**Home Assistant** is the managed one. Paste the base URL
+(`http://homeassistant.local:8123`) and a long-lived access token, press
+**Connect**, and tick the lights from the list that comes back. pFMS works
+out the calls itself:
 
-For Home Assistant, snapshot into a scene first and restore that scene
-afterwards, so they end up exactly as they were — including off:
+1. `scene/create` snapshotting the current state,
+2. `light/turn_on` for the entities you ticked,
+3. after the shutter, `scene/turn_on` to put everything back.
 
-```
-Before the shutter, call 1:
-  POST http://homeassistant.local:8123/api/services/scene/create
-  Authorization: Bearer <long-lived token>
-  {"scene_id":"pfms_timelapse_restore","snapshot_entities":["light.…", …]}
+**Groups are expanded before the snapshot.** A light group's state is derived
+from its members, so snapshotting the group and restoring it would turn on
+members that were deliberately off. pFMS walks each picked entity down to the
+fixtures behind it and snapshots those, so a shop where (say) one fixture per
+row is always off still looks like itself afterwards. Ticking a group is
+therefore the right thing to do — the expansion happens at capture time, so
+it follows changes made in Home Assistant.
 
-Before the shutter, call 2:
-  POST http://homeassistant.local:8123/api/services/light/turn_on
-  Authorization: Bearer <long-lived token>
-  {"entity_id":"light.all_lights"}
+**Your own HTTP calls** is the escape hatch, for Hue, Shelly, a relay board
+or a shell script behind a webhook: a short list of calls (method, URL,
+headers, JSON body) for each slot, run in order. Nothing about pFMS needs to
+know what is on the other end.
 
-After the shutter:
-  POST http://homeassistant.local:8123/api/services/scene/turn_on
-  Authorization: Bearer <long-lived token>
-  {"entity_id":"scene.pfms_timelapse_restore"}
-```
+Either way, the lights are only touched **when nobody is here**: a running
+match, an enabled robot, or any Driver Station heard from in the last five
+minutes all skip them. The frame is still taken — the lights are simply left
+as whoever is in the shop set them, which is the point, since an occupied
+shop already has its lights on. The restore also runs when the capture itself
+failed, so the lights are never left up. `settleSeconds` (default 5) is the
+pause between turning them on and the shutter.
 
-**Snapshot the individual fixtures, not a group.** A light group's state is
-derived from its members, so snapshotting the group and restoring it turns
-_every_ member on — losing the ones that were deliberately off. List the leaf
-entities in `snapshot_entities` and target whatever you like with
-`light.turn_on`.
-
-**Header values are secrets.** The settings go out to every internal client
-on connect — station pages are not authenticated — so header values are
-masked (`••• unchanged •••`) on the way out and restored on the way back in.
-The token itself never leaves the server after it is saved, and lives in
-`setup-config.json` alongside the other settings. A Home Assistant token is
-worth scoping: make it from a non-admin Home Assistant user, so a leak cannot
+**Tokens are secrets, and are treated as such.** The settings go out to every
+internal client on connect — station pages are not authenticated — so the
+Home Assistant token and any custom header values are masked
+(`••• unchanged •••`) on the way out and restored on the way back in. The
+token never leaves the server after it is saved; it lives in
+`setup-config.json` with the other settings. Make it from a **non-admin**
+Home Assistant user: HA tokens are not scoped, so a leak of an admin one can
 reconfigure the house.
 
-Use **Capture now (with lights)** to prove the whole chain works; the frame
-list says whether the lights ran, were skipped, or failed and why.
+Use **Capture now (with lights)** to prove the whole chain; the frame list
+says whether the lights ran, were skipped, or failed and why.
 
 ### What it costs
 

@@ -229,77 +229,35 @@ What was checked, so a future session does not redo it:
   off ones on. Tree: `all_lights → main_lights + edge_lights → per-bay
 main/edge groups → light.bay_{12,23,34,45}_{north,south}_{1..4}`.
 
-### The three calls to paste into Admin → Field Timelapse
+### How it is wired now (2026-09-20, after Cameron asked for both)
 
-Headers on each: `Authorization: Bearer <long-lived token>` — from a
-**non-admin** HA user if possible, since HA tokens are not scoped.
+pFMS talks to Home Assistant **natively**; hand-written HTTP calls remain as
+the escape hatch. `TimelapseLights` is a union of three modes:
 
-**Before the shutter, call 1** — `POST`
-`http://homeassistant.tsl:8123/api/services/scene/create`
+- `none` — the default.
+- `homeAssistant` — base URL, token, and a list of entity ids. pFMS builds
+  `scene/create` (snapshot) + `light/turn_on` before, `scene/turn_on` after.
+  It expands each picked entity down to its leaf fixtures for the snapshot,
+  at capture time, so the expansion follows changes made in HA.
+- `http` — the operator's own list of calls per slot, up to four each.
 
-```json
-{
-  "scene_id": "pfms_timelapse_restore",
-  "snapshot_entities": [
-    "light.bay_12_north_1",
-    "light.bay_12_north_2",
-    "light.bay_12_north_3",
-    "light.bay_12_north_4",
-    "light.bay_12_south_1",
-    "light.bay_12_south_2",
-    "light.bay_12_south_3",
-    "light.bay_12_south_4",
-    "light.bay_23_north_1",
-    "light.bay_23_north_2",
-    "light.bay_23_north_3",
-    "light.bay_23_north_4",
-    "light.bay_23_south_1",
-    "light.bay_23_south_2",
-    "light.bay_23_south_3",
-    "light.bay_23_south_4",
-    "light.bay_34_north_1",
-    "light.bay_34_north_2",
-    "light.bay_34_north_3",
-    "light.bay_34_north_4",
-    "light.bay_34_south_1",
-    "light.bay_34_south_2",
-    "light.bay_34_south_3",
-    "light.bay_34_south_4",
-    "light.bay_45_north_1",
-    "light.bay_45_north_2",
-    "light.bay_45_north_3",
-    "light.bay_45_north_4",
-    "light.bay_45_south_1",
-    "light.bay_45_south_2",
-    "light.bay_45_south_3",
-    "light.bay_45_south_4"
-  ]
-}
-```
+The admin panel has an entity picker: **Connect** sends
+`testTimelapseLights` (admin-only) → the server calls `/api/`, `/api/config`
+and `/api/states` with the token → the page gets the light list back and the
+HA version, and never sees the token. Verified end to end on 2026-09-20
+against the real instance: with no token the UI shows "Home Assistant refused
+the token (401)", which is the whole path working.
 
-**Before the shutter, call 2** — `POST`
-`http://homeassistant.tsl:8123/api/services/light/turn_on`
-
-```json
-{ "entity_id": "light.all_lights" }
-```
-
-**After the shutter** — `POST`
-`http://homeassistant.tsl:8123/api/services/scene/turn_on`
-
-```json
-{ "entity_id": "scene.pfms_timelapse_restore" }
-```
-
-The scene is re-created on every capture, so it does not matter that
-`scene.create` scenes do not survive an HA restart.
+So for TSL the remaining setup is: **Home Assistant** mode, URL
+`http://homeassistant.tsl:8123`, a token, and tick `light.all_lights`. The
+32-leaf snapshot list no longer has to be pasted by hand — pFMS derives it.
 
 ### Not done, deliberately
 
-The calls above were **not** fired to test them: they turn on every light in
-the shop, which is a physical change to Cameron's building and needs his
-per-change say-so (and a time of day he picks). "Capture now (with lights)"
-in the admin page is the way to try it once the token is in.
+No light has been switched. Firing the calls turns on every light in the
+shop, which is a physical change to Cameron's building and needs his
+per-change say-so at a time he picks. "Capture now (with lights)" is the way
+to try it once the token is in.
 
 ## Progress log
 
@@ -323,7 +281,10 @@ in the admin page is the way to try it once the token is in.
 - [x] Fixed a leak found on the way: the settings message every station page
       receives carried the action headers, so a token would have gone out on
       the field network. Masked now.
-- [ ] Cameron: create the long-lived HA token and paste the three calls in.
+- [x] Native Home Assistant mode with an entity picker, plus the custom-HTTP
+      escape hatch (2026-09-20). Group expansion is done by pFMS.
+- [ ] Cameron: create the long-lived HA token, pick Home Assistant mode, tick
+      `light.all_lights`.
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
       estimate and settle the retention numbers.
