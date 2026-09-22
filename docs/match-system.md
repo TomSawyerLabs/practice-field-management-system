@@ -548,17 +548,39 @@ HA    → restore what it recorded (or restore anyway, if pFMS goes quiet
         for longer than the automation's timeout)
 ```
 
-The admin panel **generates the two webhook ids and writes the YAML** — the
-`rest_command` for `configuration.yaml` and the automation itself, with your
-entities and timings filled in. Copy it into Home Assistant before leaving
-the page: the ids are secrets, so once saved the server never sends them back
-to a browser (regenerate if you need the YAML again, and update the
-automation to match).
+The admin panel **generates the two webhook ids and writes the YAML** — a
+`rest_command` for `configuration.yaml` (then `rest_command.reload`, no
+restart), a one-line script, and the automation itself, with your entities
+and timings filled in. Copy it into Home Assistant before leaving the page:
+the ids are secrets, so once saved the server never sends them back to a
+browser (regenerate if you need the YAML again, and update the automation to
+match).
+
+**Two traps, both learned the hard way on the reference field:**
+
+_The callback must not be able to kill its caller._ Calling the
+`rest_command` straight from the automation reads better and is wrong:
+`continue_on_error` does **not** suppress a missing-service error, so if the
+command is absent — not yet reloaded, renamed, mistyped — the run aborts at
+that step, the restore never happens, and every light stays on. That is why
+the generated automation calls a one-line script with `script.turn_on`
+instead: it is fire-and-forget, so whatever happens in there, the wait and
+the restore below it still run. Verified by leaving the service missing on
+purpose and watching the lights go back anyway.
+
+_Reach Home Assistant over IPv4._ `local_only: true` is judged on the source
+address, and a globally-scoped IPv6 address fails that test even from the
+same rack. Pointing pFMS at a dual-stack name got the request answered with
+`200` and silently dropped — the only evidence was
+`Received remote request for local webhook …` in the Home Assistant log,
+because HA answers unregistered and rejected webhooks identically. Give the
+base URL as an IPv4 address, or a name that only resolves to one.
 
 Why the callback rather than just firing a webhook and waiting: Home
 Assistant's webhook handler runs the automation with
 `hass.async_run_hass_job(...)` and returns an empty `200` _before any of it
-happens_, and custom webhook responses are still unimplemented. A bare
+happens_ (measured on the reference field: 8 ms, against a sequence that takes
+seconds), and custom webhook responses are still unimplemented. A bare
 webhook therefore cannot tell you whether the lights came on — every failure
 looks like success. The callback is the only honest signal. If it does not
 arrive within the configured window (default 20 s) the frame is still taken,

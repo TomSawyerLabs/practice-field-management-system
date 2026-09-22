@@ -320,6 +320,59 @@ frames are still running — 2026-09-22 09:00 was captured unattended.
   being committed there is fine (they are LAN-only capabilities, rotatable
   from the admin page in seconds).
 
+## Wired up at TSL, end to end (2026-09-22)
+
+Cameron said "can you do it all?", so the Home Assistant side was built too.
+What now exists **inside Home Assistant** (2026.9.3, supervised):
+
+| Object                             | What it is                                                           |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| `configuration.yaml` → `notify:`   | `notify.pfms_lights_ready`, a `rest` notify platform posting to pFMS |
+| `script.pfms_lights_ready`         | One step: call that notify with the nonce                            |
+| `automation.pfms_timelapse_lights` | The seven-step sequence, triggered by the start webhook              |
+
+And in pFMS on steamboat: `setup-config.json` → `timelapse.lights` is
+`haWebhook`, pointing at `http://10.255.0.9:8123` with the two webhook ids
+(backups of the file are beside it, `setup-config.json.bak-*`).
+
+### Two traps, both hit for real
+
+**`local_only` is judged on the source address, and IPv6 fails it.**
+`homeassistant.tsl` resolves to a _global_ IPv6 address, so steamboat's
+request arrived from a GUA and HA logged
+`Received remote request for local webhook …` and dropped it. The webhook had
+answered `200` — HA answers unregistered and rejected webhooks identically —
+so the only evidence was that log line and `last_triggered: null`. Fixed by
+addressing HA as `http://10.255.0.9:8123` (its DHCP reservation). Not an
+IPv6-disabling change: pFMS simply talks to this host over v4.
+
+**`continue_on_error` does not cover a missing service, and that left every
+light in the shop on.** The first automation called `notify.pfms_lights_ready`
+directly, with `continue_on_error: true`. The notify platform had not loaded
+yet (legacy notify needs a full restart), so the action raised a
+_misconfiguration_ error, which `continue_on_error` explicitly does not
+suppress — the run aborted at that step and the restore never executed. The
+lights were restored by hand from the snapshot scene the run had already
+created.
+
+The fix, since HA has no try/finally: the call to pFMS goes through
+`script.turn_on`, which is fire-and-forget, so nothing that happens inside it
+can abort the automation. Re-tested with the notify service still missing:
+lights on, script failed internally, wait and restore both ran, all 32
+fixtures returned to their exact prior states — including `bay_45_north_4`,
+which is off while its three siblings are on. That fixture is the proof the
+group is being expanded to leaves rather than snapshotted whole.
+
+The admin page's YAML generator now emits the same shape (rest_command +
+script + automation) rather than the direct call it had before.
+
+### Restart
+
+Adding the `notify` platform needed a full HA restart (no `notify.reload`
+exists; `rest_command.reload` does, which is why the generated YAML prefers
+`rest_command` for anyone doing this by hand). All timers were idle first;
+HA was back in ~40 s.
+
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
@@ -345,8 +398,11 @@ frames are still running — 2026-09-22 09:00 was captured unattended.
 - [x] Native Home Assistant mode with an entity picker, plus the custom-HTTP
       escape hatch (2026-09-20). Group expansion is done by pFMS.
 - [x] Webhook handshake mode built and verified over real HTTP (2026-09-21).
-- [ ] Cameron: paste the generated YAML into HA, pick the webhook mode, save.
-      (The token path stays available if the webhook route is abandoned.)
+- [x] Home Assistant side built and verified (2026-09-22): notify platform,
+      script, automation; pFMS switched to webhook mode over IPv4.
+- [ ] Watch a real scheduled capture (13:00/17:00) and confirm
+      `lights: ran` rather than a timeout.
+- [ ] Track the automation and script in ops (`homeassistant/ha-tsl`).
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
       estimate and settle the retention numbers.

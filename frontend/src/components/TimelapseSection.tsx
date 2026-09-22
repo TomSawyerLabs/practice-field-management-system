@@ -241,15 +241,41 @@ function HaWebhookEditor({
   const target = entityList.length === 1 ? entityList[0] : `[${entityList.join(', ')}]`;
   const snapshot = entityList.map(e => `expand('${e}')`).join(' + ');
   const yaml = shown
-    ? `# configuration.yaml — lets Home Assistant call pFMS back
+    ? `# 1. configuration.yaml — lets Home Assistant call pFMS back.
+#    Afterwards run rest_command.reload (Developer tools > Actions); no
+#    restart needed.
 rest_command:
   pfms_lights_ready:
     url: "${callback}/api/timelapse/lights-ready"
     method: post
     content_type: "application/json"
     payload: '{"nonce": "{{ nonce }}"}'
+    timeout: 10
 
-# Settings → Automations & scenes → new automation → Edit in YAML
+# 2. A script that does nothing but make that call.
+#    Settings > Automations & scenes > Scripts > new > Edit in YAML.
+#    It exists so that it CANNOT kill its caller: the automation starts it
+#    with script.turn_on and moves on, so a missing service, a typo or a
+#    pFMS that is down can never skip the restore below. Calling the
+#    rest_command straight from the automation looks tidier and is a trap —
+#    continue_on_error does not suppress a missing-service error, the run
+#    aborts, and every light stays on.
+alias: pFMS lights ready
+mode: parallel
+max: 10
+fields:
+  nonce:
+    description: One-shot token from pFMS
+    required: true
+    selector:
+      text:
+sequence:
+  - action: rest_command.pfms_lights_ready
+    data:
+      nonce: "{{ nonce }}"
+
+# 3. The automation itself.
+#    Settings > Automations & scenes > new automation > Edit in YAML.
 alias: pFMS timelapse lights
 mode: single
 triggers:
@@ -258,25 +284,27 @@ triggers:
     allowed_methods: [POST]
     local_only: true
 actions:
-  # 2. record what is on right now — the fixtures, not the group, so the
-  #    ones that are normally off go back to off
+  # record what is on right now — the fixtures, not the group, so the ones
+  # that are normally off go back to off
   - action: scene.create
     data:
       scene_id: pfms_timelapse_restore
       snapshot_entities: "{{ (${snapshot}) | map(attribute='entity_id') | list }}"
-  # 3. turn them on
   - action: light.turn_on
     target:
       entity_id: ${target}
-  # 4. wait until they report on
+  # proceed as soon as they are on — wait_template, not wait_for_trigger,
+  # so it also passes when they were already on
   - wait_template: "{{ ${entityList.map(e => `is_state('${e}', 'on')`).join(' and ')} }}"
     timeout: "00:00:10"
     continue_on_timeout: true
-  # 5. tell pFMS
-  - action: rest_command.pfms_lights_ready
+  - action: script.turn_on
+    target:
+      entity_id: script.pfms_lights_ready
     data:
-      nonce: "{{ trigger.json.nonce }}"
-  # 6. wait for pFMS to say it has the frame — or give up after ${doneSeconds}s
+      variables:
+        nonce: "{{ trigger.json.nonce }}"
+  # wait for pFMS to say it has the frame — or give up after ${doneSeconds}s
   - wait_for_trigger:
       - trigger: webhook
         webhook_id: ${shown.done}
@@ -284,7 +312,6 @@ actions:
         local_only: true
     timeout: "00:0${Math.floor(doneSeconds / 60)}:${String(doneSeconds % 60).padStart(2, '0')}"
     continue_on_timeout: true
-  # 7. put everything back
   - action: scene.turn_on
     target:
       entity_id: scene.pfms_timelapse_restore
@@ -296,7 +323,9 @@ actions:
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
         Home Assistant does the work and calls pFMS back when the lights are actually on, so pFMS stores no token and
         shoots the moment they are lit rather than after a guessed delay. If the call back never comes, the frame is
-        still taken and the lights are recorded as failed.
+        still taken and the lights are recorded as failed. Give the URL as an IPv4 address or a name that resolves to
+        one: the webhooks are local-only, and Home Assistant judges that by the source address — a global IPv6 address
+        is rejected as remote even from the next rack over.
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
