@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FieldTimelapse, localDay, slotTime } from './fieldTimelapse.js';
+import { FieldTimelapse, localDay, pinnedFetch, slotTime } from './fieldTimelapse.js';
 import {
   isTimelapseConfig,
   isTimelapseLights,
@@ -193,6 +195,61 @@ describe('timelapse light secrets', () => {
     };
     expect(haLights(restoreSetupSecrets(haPatch, {}) as SetupSettings).token).toBeUndefined();
   });
+});
+
+describe('pinnedFetch', () => {
+  // Home Assistant judges a webhook "local" by the client address, and a
+  // LAN running IPv6 hands out global ones. Pinning the connection to the
+  // v4 address is how an https:// URL still arrives from a private address.
+  test('connects to the given address while keeping the hostname', async () => {
+    const seen: { host?: string; url?: string; body: string }[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', c => chunks.push(c as Buffer));
+      req.on('end', () => {
+        seen.push({ host: req.headers.host, url: req.url, body: Buffer.concat(chunks).toString() });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":true}');
+      });
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as AddressInfo).port;
+
+    // A name that resolves to nothing at all: only the pin can reach this.
+    const res = await pinnedFetch(
+      `http://pfms-pinning-test.invalid:${port}/api/webhook/abc`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"nonce":"n1"}' },
+      '127.0.0.1',
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"ok":true}');
+    expect(seen).toHaveLength(1);
+    // The hostname is preserved — that is what TLS would be verified against.
+    expect(seen[0].host).toBe(`pfms-pinning-test.invalid:${port}`);
+    expect(seen[0].url).toBe('/api/webhook/abc');
+    expect(seen[0].body).toBe('{"nonce":"n1"}');
+    server.close();
+  }, 20_000);
+
+  test('a refusal comes back as a status, not a throw', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(404).end('nope');
+    });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    const port = (server.address() as AddressInfo).port;
+
+    const res = await pinnedFetch(`http://pfms-pinning-test.invalid:${port}/`, { method: 'GET' }, '127.0.0.1');
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(404);
+    server.close();
+  }, 20_000);
+
+  test('an unreachable address rejects rather than hanging', async () => {
+    // Port 1 on loopback: refused immediately.
+    await expect(pinnedFetch('http://pfms-pinning-test.invalid:1/', { method: 'GET' }, '127.0.0.1')).rejects.toThrow();
+  }, 20_000);
 });
 
 describe('FieldTimelapse light handshake over webhooks', () => {

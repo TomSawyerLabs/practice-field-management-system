@@ -30,6 +30,8 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inputArgs, runCommand, slugify } from './matchRecorder.js';
@@ -459,7 +461,7 @@ export class FieldTimelapse {
       const ready = new Promise<void>(resolve => {
         this.pendingReady = { nonce, resolve };
       });
-      await this.runAction(hook(lights.startWebhookId));
+      await this.runAction(hook(lights.startWebhookId), lights.connectAddress);
       const arrived = await this.raceTimeout(ready, lights.readyTimeoutSeconds * 1000);
       if (arrived) {
         entry.lights = 'ran';
@@ -482,7 +484,7 @@ export class FieldTimelapse {
       // waiting for a "done" that is not coming.
       if (lights.doneWebhookId) {
         try {
-          await this.runAction(hook(lights.doneWebhookId));
+          await this.runAction(hook(lights.doneWebhookId), lights.connectAddress);
         } catch (err) {
           entry.lights = 'failed';
           entry.lightsError = `could not tell Home Assistant we were done: ${(err as Error).message}`;
@@ -639,7 +641,7 @@ export class FieldTimelapse {
 
   /** Fire one configured HTTP action. Failures are reported, never thrown at
    *  the scheduler — a light that would not turn on must not cost the frame. */
-  private async runAction(action: TimelapseAction): Promise<void> {
+  private async runAction(action: TimelapseAction, connectAddress?: string): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
     try {
@@ -647,7 +649,10 @@ export class FieldTimelapse {
         ...(action.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(action.headers ?? {}),
       };
-      const res = await this.fetchImpl(action.url, {
+      const send = connectAddress
+        ? (url: string, init: RequestInit) => pinnedFetch(url, init, connectAddress)
+        : this.fetchImpl;
+      const res = await send(action.url, {
         method: action.method,
         headers,
         body: action.body,
@@ -1236,6 +1241,53 @@ export class FieldTimelapse {
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
+
+/**
+ * `fetch`, but connecting to a fixed address instead of resolving the host —
+ * the same thing `curl --resolve` does.
+ *
+ * Node's fetch gives no way to pin an address or prefer a family per call,
+ * and `dns.setDefaultResultOrder` would change every lookup this process
+ * makes. So this one goes through `node:https`, which takes a `lookup`. The
+ * URL keeps its hostname, so SNI and certificate verification are unchanged
+ * — this pins *where* to connect, never *what to trust*.
+ */
+export function pinnedFetch(
+  url: string,
+  init: RequestInit,
+  address: string,
+): Promise<{ ok: boolean; status: number; text: () => Promise<string> }> {
+  const target = new URL(url);
+  const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const req = send(
+      target,
+      {
+        method: (init.method as string) ?? 'GET',
+        headers: (init.headers as Record<string, string>) ?? {},
+        // Hand net.connect the address we were given, whatever DNS says.
+        lookup: (_hostname, _options, callback) =>
+          callback(null, [{ address, family: address.includes(':') ? 6 : 4 }] as never, undefined as never),
+      },
+      res => {
+        const chunks: Buffer[] = [];
+        res.on('data', c => chunks.push(c as Buffer));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            text: async () => Buffer.concat(chunks).toString('utf8'),
+          });
+        });
+      },
+    );
+    req.on('error', reject);
+    if (init.signal) init.signal.addEventListener('abort', () => req.destroy(new Error('aborted')));
+    if (init.body) req.write(init.body as string);
+    req.end();
+  });
+}
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 

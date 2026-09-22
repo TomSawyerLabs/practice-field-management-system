@@ -568,13 +568,21 @@ instead: it is fire-and-forget, so whatever happens in there, the wait and
 the restore below it still run. Verified by leaving the service missing on
 purpose and watching the lights go back anyway.
 
-_Reach Home Assistant over IPv4._ `local_only: true` is judged on the source
-address, and a globally-scoped IPv6 address fails that test even from the
-same rack. Pointing pFMS at a dual-stack name got the request answered with
-`200` and silently dropped — the only evidence was
-`Received remote request for local webhook …` in the Home Assistant log,
-because HA answers unregistered and rejected webhooks identically. Give the
-base URL as an IPv4 address, or a name that only resolves to one.
+_The request must arrive at Home Assistant from a private address._
+`local_only: true` accepts private, loopback and link-local sources only. A
+LAN running IPv6 hands out globally-scoped addresses, so a request from the
+next rack over is judged remote — answered `200` and silently dropped, with
+`Received remote request for local webhook …` in the log the only evidence
+(HA answers unregistered and rejected webhooks identically).
+
+That does **not** mean giving up `https://`. Keep the real hostname, so the
+certificate is properly verified, and set **Connect to** to the IPv4 address:
+pFMS then connects there rather than to whatever DNS returns — exactly what
+`curl --resolve` does. Verified on the reference field: `https://` to the
+public name, pinned to the LAN v4 address, valid Let's Encrypt certificate,
+webhook accepted. What makes it work is the last hop — Home Assistant's own
+reverse proxy forwards `X-Forwarded-For: <the v4 client>`, which is private,
+so HA calls it local.
 
 Why the callback rather than just firing a webhook and waiting: Home
 Assistant's webhook handler runs the automation with

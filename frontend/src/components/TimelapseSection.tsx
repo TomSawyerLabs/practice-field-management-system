@@ -323,9 +323,11 @@ actions:
       <Typography variant="caption" sx={{ color: 'text.secondary' }}>
         Home Assistant does the work and calls pFMS back when the lights are actually on, so pFMS stores no token and
         shoots the moment they are lit rather than after a guessed delay. If the call back never comes, the frame is
-        still taken and the lights are recorded as failed. Give the URL as an IPv4 address or a name that resolves to
-        one: the webhooks are local-only, and Home Assistant judges that by the source address — a global IPv6 address
-        is rejected as remote even from the next rack over.
+        still taken and the lights are recorded as failed. Home Assistant only treats a webhook as local when the
+        request arrives from a private, loopback or link-local address — on a LAN running IPv6 that is none of them, and
+        the call is refused as remote with a cheerful 200 and a line in the log. If the name resolves to IPv6, keep the
+        https:// URL and put the IPv4 address in “Connect to”: the connection goes there, while the certificate is still
+        checked against the name.
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -336,6 +338,15 @@ actions:
           value={lights.baseUrl}
           onChange={e => onChange({ ...lights, baseUrl: e.target.value })}
           sx={{ flex: 1, minWidth: 260 }}
+        />
+        <TextField
+          size="small"
+          label="Connect to (optional)"
+          placeholder="10.0.0.9"
+          value={lights.connectAddress ?? ''}
+          onChange={e => onChange({ ...lights, connectAddress: e.target.value || undefined })}
+          sx={{ width: 190 }}
+          helperText="IPv4, if the name gives IPv6"
         />
         <TextField
           size="small"

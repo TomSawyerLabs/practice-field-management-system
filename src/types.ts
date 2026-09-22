@@ -349,6 +349,20 @@ export type TimelapseLights =
        */
       mode: 'haWebhook';
       baseUrl: string;
+      /**
+       * Connect to this address instead of resolving `baseUrl`'s host —
+       * curl's `--resolve`. TLS is still verified against the hostname, so
+       * an `https://` URL stays a real certificate check.
+       *
+       * Why it exists: Home Assistant decides a webhook is "local" from the
+       * client address, and only private/loopback/link-local count. A LAN
+       * that runs IPv6 hands out globally-scoped addresses, so a request
+       * from the next rack over is judged remote and dropped — with a 200
+       * and nothing but a line in HA's log. Pinning the connection to the
+       * v4 address keeps the pretty https:// name and lands the request
+       * from a private address.
+       */
+      connectAddress?: string;
       startWebhookId: string;
       doneWebhookId?: string;
       /** How long to wait for "the lights are on" before shooting anyway. */
@@ -389,6 +403,8 @@ export function isTimelapseLights(v: unknown): v is TimelapseLights {
       l.baseUrl.length <= 300 &&
       id(l.startWebhookId) &&
       (l.doneWebhookId === undefined || id(l.doneWebhookId)) &&
+      (l.connectAddress === undefined ||
+        (typeof l.connectAddress === 'string' && /^[0-9a-fA-F.:]{3,45}$/.test(l.connectAddress))) &&
       typeof l.readyTimeoutSeconds === 'number' &&
       l.readyTimeoutSeconds >= 1 &&
       l.readyTimeoutSeconds <= 120 &&
