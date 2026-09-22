@@ -292,11 +292,33 @@ Verified over real HTTP both directions
 | HA never answers (3 s)    | `lights: failed`, frame still taken, done webhook still sent |
 | Callback nobody asked for | `409 No capture is waiting for that nonce`                   |
 
+### One timer, not two (corrected 2026-09-21)
+
+Step 7's "restore after x seconds" is the _timeout_ on step 6, not an extra
+hold: the lights go back the moment pFMS says it has the frame, and x (10 s
+default) only applies when pFMS never answers. The admin page warns if x is
+set below pFMS's own light-wait plus capture time, since Home Assistant would
+otherwise restore the lights mid-shutter.
+
+### Deployed 2026-09-22
+
+`17366d1` is live on steamboat. `/api/timelapse/lights-ready` answers (a
+bogus nonce gets `409 No capture is waiting for that nonce`), and the daily
+frames are still running — 2026-09-22 09:00 was captured unattended.
+
 ### Still to do
 
 - Cameron pastes the generated YAML into HA (a `rest_command` in
-  `configuration.yaml` plus one automation) and saves the mode in pFMS.
-- Nothing has been changed inside Home Assistant by this work.
+  `configuration.yaml` plus one automation) and picks the webhook mode in
+  the admin panel. **Nothing inside Home Assistant has been changed by this
+  work**, so light control is not active yet.
+- Then track the automation in ops: append its `entity_id` to
+  `homeassistant/ha-tsl/export.yaml` under a `pfms-timelapse:` key, run
+  `cd homeassistant && bun run export`, write the comment header, commit.
+  That repo exports from the box rather than deploying to it, so the
+  automation has to exist in HA first. Cameron has said the webhook ids
+  being committed there is fine (they are LAN-only capabilities, rotatable
+  from the admin page in seconds).
 
 ## Progress log
 
