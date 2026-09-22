@@ -216,7 +216,8 @@ function HaWebhookEditor({
   onChange: (lights: Extract<TimelapseLights, { mode: 'haWebhook' }>) => void;
 }) {
   const [entities, setEntities] = useState('light.all_lights');
-  const [holdSeconds, setHoldSeconds] = useState('10');
+  /** How long Home Assistant waits for pFMS's "done" before restoring anyway. */
+  const [doneTimeout, setDoneTimeout] = useState('10');
   // Kept here so the YAML survives a save: once saved, the server masks the
   // ids and the page can never see them again.
   const [shown, setShown] = useState<{ start: string; done: string } | null>(null);
@@ -228,6 +229,11 @@ function HaWebhookEditor({
   };
 
   const callback = (lights.callbackUrl || window.location.origin).replace(/\/+$/, '');
+  const doneSeconds = Math.max(1, Math.min(599, Number(doneTimeout) || 10));
+  // pFMS waits `readyTimeoutSeconds` for the lights, then still has to open
+  // the stream and grab a frame. If Home Assistant gives up before that, it
+  // restores the lights out from under the shutter.
+  const tooTight = doneSeconds < lights.readyTimeoutSeconds + 10;
   const entityList = entities
     .split(',')
     .map(e => e.trim())
@@ -270,16 +276,15 @@ actions:
   - action: rest_command.pfms_lights_ready
     data:
       nonce: "{{ trigger.json.nonce }}"
-  # 6. wait for pFMS to say it has the frame, or give up
+  # 6. wait for pFMS to say it has the frame — or give up after ${doneSeconds}s
   - wait_for_trigger:
       - trigger: webhook
         webhook_id: ${shown.done}
         allowed_methods: [POST]
         local_only: true
-    timeout: "00:01:00"
+    timeout: "00:0${Math.floor(doneSeconds / 60)}:${String(doneSeconds % 60).padStart(2, '0')}"
     continue_on_timeout: true
   # 7. put everything back
-  - delay: "00:00:${String(Math.max(0, Math.min(59, Number(holdSeconds) || 0))).padStart(2, '0')}"
   - action: scene.turn_on
     target:
       entity_id: scene.pfms_timelapse_restore
@@ -339,10 +344,16 @@ actions:
         <TextField
           size="small"
           type="number"
-          label="Hold before restoring (s)"
-          value={holdSeconds}
-          onChange={e => setHoldSeconds(e.target.value)}
+          label="HA waits for pFMS (s)"
+          value={doneTimeout}
+          onChange={e => setDoneTimeout(e.target.value)}
           sx={{ width: 200 }}
+          error={tooTight}
+          helperText={
+            tooTight
+              ? `Shorter than pFMS needs — it may restore mid-shutter. Try ${lights.readyTimeoutSeconds + 10}s.`
+              : 'Then it restores the lights regardless'
+          }
         />
       </Box>
 

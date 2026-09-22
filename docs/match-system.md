@@ -544,7 +544,8 @@ HA    → record the current light state, turn the lights on,
 HA    → POST <pfms>/api/timelapse/lights-ready   {"nonce": "…"}
 pFMS  → shutter, immediately
 pFMS  → POST /api/webhook/<done id>    {"nonce": "…"}
-HA    → hold briefly, then restore what it recorded
+HA    → restore what it recorded (or restore anyway, if pFMS goes quiet
+        for longer than the automation's timeout)
 ```
 
 The admin panel **generates the two webhook ids and writes the YAML** — the
