@@ -195,6 +195,130 @@ describe('timelapse light secrets', () => {
   });
 });
 
+describe('FieldTimelapse light handshake over webhooks', () => {
+  if (!ffmpegAvailable()) {
+    test.skip('needs ffmpeg on PATH', () => {});
+    return;
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'pfms-hook-'));
+  const source = join(dir, 'source.ts');
+
+  beforeAll(() => {
+    execFileSync(
+      ffmpeg,
+      // prettier-ignore
+      [
+        '-v', 'error', '-y',
+        '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=30',
+        '-t', '4', '-c:v', 'libx264', '-preset', 'ultrafast',
+        '-f', 'mpegts', source,
+      ],
+      { stdio: 'inherit' },
+    );
+  });
+
+  afterAll(() => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Windows may still hold a handle; the temp dir is disposable.
+    }
+  });
+
+  /** `onStart` lets a test decide how Home Assistant behaves. */
+  function instance(onStart: (nonce: string, tl: FieldTimelapse) => void, readyTimeoutSeconds = 2) {
+    const posted: { url: string; nonce: string }[] = [];
+    const timelapse: FieldTimelapse = new FieldTimelapse({
+      directory: dir,
+      ffmpegPath: ffmpeg,
+      getStreams: () => [{ name: 'All field', url: source, enabled: true }],
+      getConfig: () => ({
+        ...TIMELAPSE_DEFAULTS,
+        enabled: true,
+        lights: {
+          mode: 'haWebhook',
+          baseUrl: 'http://homeassistant.tsl:8123',
+          startWebhookId: 'pfms_lights_start_abcdefgh',
+          doneWebhookId: 'pfms_lights_done_abcdefgh',
+          readyTimeoutSeconds,
+        },
+      }),
+      isAvailable: () => true,
+      isFieldBusy: () => false,
+      inputPrefixArgs: ['-re', '-stream_loop', '-1'],
+      tickMs: 60_000,
+      fetchImpl: async (url, init) => {
+        const nonce = String(JSON.parse(String(init.body ?? '{}')).nonce ?? '');
+        posted.push({ url, nonce });
+        if (url.includes('pfms_lights_start')) onStart(nonce, timelapse);
+        return { ok: true, status: 200, text: async () => '' };
+      },
+    });
+    return { timelapse, posted };
+  }
+
+  test('the callback releases the shutter, and both webhooks are called', async () => {
+    // Home Assistant answers a moment later, as it would after the lights
+    // report on.
+    const { timelapse, posted } = instance((nonce, tl) => {
+      setTimeout(() => tl.notifyLightsReady(nonce), 150);
+    });
+    const started = Date.now();
+    const entry = await timelapse.captureFrame('manual', true);
+    await timelapse.stop();
+
+    expect(entry.lights).toBe('ran');
+    expect(entry.lightsError).toBeUndefined();
+    expect(entry.files).toHaveLength(1);
+    // Shot on the callback, not on a timeout.
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(posted.map(p => p.url.split('/').pop())).toEqual([
+      'pfms_lights_start_abcdefgh',
+      'pfms_lights_done_abcdefgh',
+    ]);
+    // Same nonce both ways, so the automation can match them up.
+    expect(posted[0].nonce).toBe(posted[1].nonce);
+    expect(posted[0].nonce).toMatch(/^[0-9a-f]{32}$/);
+  }, 30_000);
+
+  test('no callback still takes the frame, and says the lights failed', async () => {
+    const { timelapse, posted } = instance(() => {
+      // Home Assistant never answers.
+    }, 1);
+    const entry = await timelapse.captureFrame('manual', true);
+    await timelapse.stop();
+
+    expect(entry.lights).toBe('failed');
+    expect(entry.lightsError).toContain('did not confirm');
+    // The frame is what matters — it is still taken.
+    expect(entry.files).toHaveLength(1);
+    // And the automation is still released, so the lights are not left up.
+    expect(posted.map(p => p.url.split('/').pop())).toContain('pfms_lights_done_abcdefgh');
+  }, 30_000);
+
+  test('a wrong or stale nonce is refused', async () => {
+    let captured = '';
+    const { timelapse } = instance((nonce, tl) => {
+      captured = nonce;
+      expect(tl.notifyLightsReady('not-the-nonce')).toBe(false);
+      setTimeout(() => tl.notifyLightsReady(nonce), 100);
+    });
+    const entry = await timelapse.captureFrame('manual', true);
+
+    expect(entry.lights).toBe('ran');
+    // Once used, the same nonce is dead — a replay cannot trip a later frame.
+    expect(timelapse.notifyLightsReady(captured)).toBe(false);
+    await timelapse.stop();
+  }, 30_000);
+
+  test('nobody is listening between captures', async () => {
+    const { timelapse } = instance((nonce, tl) => tl.notifyLightsReady(nonce));
+    expect(timelapse.notifyLightsReady('anything')).toBe(false);
+    await timelapse.stop();
+  });
+});
+
 describe('FieldTimelapse talking to Home Assistant', () => {
   // The shape of TSL's shop: a group of groups, with leaf fixtures at the
   // bottom, some of which are deliberately off.

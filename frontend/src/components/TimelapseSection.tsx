@@ -20,6 +20,7 @@ import {
   type TimelapseListing,
   type TimelapseSource,
 } from '../../../src/types';
+import { CopyToClipboard } from './CopyToClipboard';
 import {
   fetchTimelapseListing,
   probeTimelapseLights,
@@ -185,6 +186,203 @@ function ActionListEditor({
           onChange={next => set(next ? list.map((x, j) => (j === i ? next : x)) : list.filter((_, j) => j !== i))}
         />
       ))}
+    </Box>
+  );
+}
+
+/** 22 random characters: a webhook id is a capability, so make it unguessable. */
+function newWebhookId(prefix: string): string {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const rand = [...bytes]
+    .map(b => b.toString(36).padStart(2, '0'))
+    .join('')
+    .slice(0, 20);
+  return `${prefix}_${rand}`;
+}
+
+/**
+ * The no-credential way in: Home Assistant owns the lights and tells pFMS
+ * when they are actually on, so there is no token here and no guessed delay.
+ *
+ * The admin page generates the webhook ids and writes the YAML, because both
+ * are easy to get subtly wrong by hand.
+ */
+function HaWebhookEditor({
+  lights,
+  onChange,
+}: {
+  lights: Extract<TimelapseLights, { mode: 'haWebhook' }>;
+  onChange: (lights: Extract<TimelapseLights, { mode: 'haWebhook' }>) => void;
+}) {
+  const [entities, setEntities] = useState('light.all_lights');
+  const [holdSeconds, setHoldSeconds] = useState('10');
+  // Kept here so the YAML survives a save: once saved, the server masks the
+  // ids and the page can never see them again.
+  const [shown, setShown] = useState<{ start: string; done: string } | null>(null);
+
+  const generate = () => {
+    const ids = { start: newWebhookId('pfms_lights_start'), done: newWebhookId('pfms_lights_done') };
+    setShown(ids);
+    onChange({ ...lights, startWebhookId: ids.start, doneWebhookId: ids.done });
+  };
+
+  const callback = (lights.callbackUrl || window.location.origin).replace(/\/+$/, '');
+  const entityList = entities
+    .split(',')
+    .map(e => e.trim())
+    .filter(Boolean);
+  const target = entityList.length === 1 ? entityList[0] : `[${entityList.join(', ')}]`;
+  const snapshot = entityList.map(e => `expand('${e}')`).join(' + ');
+  const yaml = shown
+    ? `# configuration.yaml — lets Home Assistant call pFMS back
+rest_command:
+  pfms_lights_ready:
+    url: "${callback}/api/timelapse/lights-ready"
+    method: post
+    content_type: "application/json"
+    payload: '{"nonce": "{{ nonce }}"}'
+
+# Settings → Automations & scenes → new automation → Edit in YAML
+alias: pFMS timelapse lights
+mode: single
+triggers:
+  - trigger: webhook
+    webhook_id: ${shown.start}
+    allowed_methods: [POST]
+    local_only: true
+actions:
+  # 2. record what is on right now — the fixtures, not the group, so the
+  #    ones that are normally off go back to off
+  - action: scene.create
+    data:
+      scene_id: pfms_timelapse_restore
+      snapshot_entities: "{{ (${snapshot}) | map(attribute='entity_id') | list }}"
+  # 3. turn them on
+  - action: light.turn_on
+    target:
+      entity_id: ${target}
+  # 4. wait until they report on
+  - wait_template: "{{ ${entityList.map(e => `is_state('${e}', 'on')`).join(' and ')} }}"
+    timeout: "00:00:10"
+    continue_on_timeout: true
+  # 5. tell pFMS
+  - action: rest_command.pfms_lights_ready
+    data:
+      nonce: "{{ trigger.json.nonce }}"
+  # 6. wait for pFMS to say it has the frame, or give up
+  - wait_for_trigger:
+      - trigger: webhook
+        webhook_id: ${shown.done}
+        allowed_methods: [POST]
+        local_only: true
+    timeout: "00:01:00"
+    continue_on_timeout: true
+  # 7. put everything back
+  - delay: "00:00:${String(Math.max(0, Math.min(59, Number(holdSeconds) || 0))).padStart(2, '0')}"
+  - action: scene.turn_on
+    target:
+      entity_id: scene.pfms_timelapse_restore
+`
+    : '';
+
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+        Home Assistant does the work and calls pFMS back when the lights are actually on, so pFMS stores no token and
+        shoots the moment they are lit rather than after a guessed delay. If the call back never comes, the frame is
+        still taken and the lights are recorded as failed.
+      </Typography>
+
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <TextField
+          size="small"
+          label="Home Assistant URL"
+          placeholder="http://homeassistant.local:8123"
+          value={lights.baseUrl}
+          onChange={e => onChange({ ...lights, baseUrl: e.target.value })}
+          sx={{ flex: 1, minWidth: 260 }}
+        />
+        <TextField
+          size="small"
+          label="Where Home Assistant reaches pFMS"
+          value={lights.callbackUrl ?? ''}
+          placeholder={window.location.origin}
+          onChange={e => onChange({ ...lights, callbackUrl: e.target.value || undefined })}
+          sx={{ flex: 1, minWidth: 260 }}
+          helperText="Only used to write the YAML below"
+        />
+      </Box>
+
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+        <Button variant="outlined" onClick={generate}>
+          {lights.startWebhookId ? 'Generate new ids' : 'Generate webhook ids'}
+        </Button>
+        <TextField
+          size="small"
+          type="number"
+          label="Wait for lights (s)"
+          value={lights.readyTimeoutSeconds}
+          onChange={e =>
+            onChange({ ...lights, readyTimeoutSeconds: Math.max(1, Math.min(120, Number(e.target.value) || 20)) })
+          }
+          sx={{ width: 170 }}
+        />
+        <TextField
+          size="small"
+          label="Lights"
+          value={entities}
+          onChange={e => setEntities(e.target.value)}
+          sx={{ width: 240 }}
+          helperText="For the YAML; comma separated"
+        />
+        <TextField
+          size="small"
+          type="number"
+          label="Hold before restoring (s)"
+          value={holdSeconds}
+          onChange={e => setHoldSeconds(e.target.value)}
+          sx={{ width: 200 }}
+        />
+      </Box>
+
+      {lights.startWebhookId && !shown && (
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          Webhook ids are saved and hidden — they are secrets, so the server never sends them back to a browser.
+          Generate new ones if you need the YAML again (remember to update the automation).
+        </Typography>
+      )}
+
+      {shown && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography variant="subtitle2">Paste this into Home Assistant</Typography>
+            <CopyToClipboard text={yaml}>
+              <Button size="small" variant="outlined">
+                Copy YAML
+              </Button>
+            </CopyToClipboard>
+            <Typography variant="caption" sx={{ color: 'warning.main' }}>
+              Copy it before you leave this page — the ids are hidden once saved.
+            </Typography>
+          </Box>
+          <Box
+            component="pre"
+            sx={{
+              m: 0,
+              p: 1,
+              maxHeight: 320,
+              overflow: 'auto',
+              fontSize: 12,
+              bgcolor: 'action.hover',
+              borderRadius: 1,
+              whiteSpace: 'pre',
+            }}
+          >
+            {yaml}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -467,7 +665,8 @@ export function TimelapseSection() {
             {(
               [
                 ['none', 'Nothing'],
-                ['homeAssistant', 'Home Assistant'],
+                ['haWebhook', 'Home Assistant webhooks'],
+                ['homeAssistant', 'Home Assistant token'],
                 ['http', 'My own HTTP calls'],
               ] as const
             ).map(([mode, label]) => (
@@ -483,7 +682,14 @@ export function TimelapseSection() {
                         ? { mode: 'none' }
                         : mode === 'http'
                           ? { mode: 'http' }
-                          : { mode: 'homeAssistant', baseUrl: 'http://homeassistant.local:8123', entityIds: [] },
+                          : mode === 'haWebhook'
+                            ? {
+                                mode: 'haWebhook',
+                                baseUrl: 'http://homeassistant.local:8123',
+                                startWebhookId: '',
+                                readyTimeoutSeconds: 20,
+                              }
+                            : { mode: 'homeAssistant', baseUrl: 'http://homeassistant.local:8123', entityIds: [] },
                   })
                 }
               >
@@ -491,6 +697,10 @@ export function TimelapseSection() {
               </Button>
             ))}
           </Box>
+
+          {draft.lights.mode === 'haWebhook' && (
+            <HaWebhookEditor key={`hook-${resetKey}`} lights={draft.lights} onChange={lights => edit({ lights })} />
+          )}
 
           {draft.lights.mode === 'homeAssistant' && (
             <HomeAssistantEditor key={`ha-${resetKey}`} lights={draft.lights} onChange={lights => edit({ lights })} />

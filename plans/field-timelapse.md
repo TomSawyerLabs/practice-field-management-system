@@ -259,6 +259,45 @@ shop, which is a physical change to Cameron's building and needs his
 per-change say-so at a time he picks. "Capture now (with lights)" is the way
 to try it once the token is in.
 
+## Light control: the webhook handshake (2026-09-21)
+
+Cameron picked Home Assistant's built-in webhooks over a stored token, and
+specified the sequence: receive request → record light state → turn lights on
+→ wait for them to be on → notify pFMS → wait for pFMS to finish (or time
+out) → restore after a short hold.
+
+Facts established before building:
+
+- **A webhook cannot answer.** `homeassistant/components/webhook/trigger.py`
+  does `hass.async_run_hass_job(trigger.job, …)` and returns `None`, so
+  aiohttp sends an empty `200` before the automation has run. Custom webhook
+  responses have been requested since 2021 and are still unimplemented. A
+  bare webhook therefore cannot report whether the lights came on.
+- **So HA calls back.** `rest_command` gives the automation an outbound POST;
+  pFMS waits on it with a nonce, shoots on arrival, and reports
+  `lights: failed` if it never comes.
+- **Addressing:** `pfms.tsl` is a CNAME to `steamboat.tsl` (10.255.0.5) and
+  pFMS listens on `*:9005`; HA is 10.255.0.9 on the same /20, so
+  `http://pfms.tsl:9005` works from HA. HA is 2026.9.3, supervised.
+- **Webhook ids are capabilities**, so they are masked like a token. The
+  admin page keeps the generated ids in component state only long enough to
+  render the YAML — after a save or reload they are gone from the browser.
+
+Verified over real HTTP both directions
+(`scripts.local/webhook-handshake-check.ts`, a fake HA + the real API):
+
+| Case                      | Result                                                       |
+| ------------------------- | ------------------------------------------------------------ |
+| HA confirms               | `lights: ran`, frame taken 528 ms after the start webhook    |
+| HA never answers (3 s)    | `lights: failed`, frame still taken, done webhook still sent |
+| Callback nobody asked for | `409 No capture is waiting for that nonce`                   |
+
+### Still to do
+
+- Cameron pastes the generated YAML into HA (a `rest_command` in
+  `configuration.yaml` plus one automation) and saves the mode in pFMS.
+- Nothing has been changed inside Home Assistant by this work.
+
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
@@ -283,8 +322,9 @@ to try it once the token is in.
       the field network. Masked now.
 - [x] Native Home Assistant mode with an entity picker, plus the custom-HTTP
       escape hatch (2026-09-20). Group expansion is done by pFMS.
-- [ ] Cameron: create the long-lived HA token, pick Home Assistant mode, tick
-      `light.all_lights`.
+- [x] Webhook handshake mode built and verified over real HTTP (2026-09-21).
+- [ ] Cameron: paste the generated YAML into HA, pick the webhook mode, save.
+      (The token path stays available if the webhook route is abandoned.)
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
       estimate and settle the retention numbers.

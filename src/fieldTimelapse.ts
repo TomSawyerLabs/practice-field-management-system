@@ -29,6 +29,7 @@
  * footage already exists at full rate.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inputArgs, runCommand, slugify } from './matchRecorder.js';
@@ -144,6 +145,8 @@ export class FieldTimelapse {
   private listeners: ((state: TimelapseState) => void)[] = [];
   private capturingFrame = false;
   private render?: TimelapseRenderState;
+  /** Set while a capture is waiting for Home Assistant's "lights are on". */
+  private pendingReady: { nonce: string; resolve: () => void } | null = null;
   private totals = { frameCount: 0, frameBytes: 0, sessionBytes: 0, renderBytes: 0 };
   private stopping = false;
 
@@ -323,6 +326,8 @@ export class FieldTimelapse {
 
       if (!withActions || !hasLights || occupied) {
         await this.shoot(entry, day, slot);
+      } else if (config.lights.mode === 'haWebhook') {
+        await this.captureWithHandshake(entry, day, slot, config.lights);
       } else {
         let post: TimelapseAction[] = [];
         try {
@@ -428,6 +433,89 @@ export class FieldTimelapse {
   }
 
   /**
+   * Home Assistant drives the lights and tells us when they are actually on.
+   *
+   * pFMS posts a nonce to the start webhook and waits for the automation to
+   * call `/api/timelapse/lights-ready` back with it, then shoots immediately
+   * — no guessed settle delay. If the callback never comes the frame is
+   * still taken, recorded as `lights: failed`, which is the failure mode a
+   * fire-and-forget webhook cannot give us: HA answers 200 before it has
+   * done anything, so the callback is the only real proof.
+   */
+  private async captureWithHandshake(
+    entry: TimelapseFrameEntry,
+    day: string,
+    slot: string,
+    lights: Extract<TimelapseLights, { mode: 'haWebhook' }>,
+  ): Promise<void> {
+    const nonce = randomBytes(16).toString('hex');
+    const hook = (id: string): TimelapseAction => ({
+      method: 'POST',
+      url: `${lights.baseUrl.replace(/\/+$/, '')}/api/webhook/${id}`,
+      body: JSON.stringify({ nonce }),
+    });
+
+    try {
+      const ready = new Promise<void>(resolve => {
+        this.pendingReady = { nonce, resolve };
+      });
+      await this.runAction(hook(lights.startWebhookId));
+      const arrived = await this.raceTimeout(ready, lights.readyTimeoutSeconds * 1000);
+      if (arrived) {
+        entry.lights = 'ran';
+      } else {
+        entry.lights = 'failed';
+        entry.lightsError = `Home Assistant did not confirm the lights within ${lights.readyTimeoutSeconds}s`;
+        console.warn(`Timelapse: ${entry.lightsError}`);
+      }
+    } catch (err) {
+      entry.lights = 'failed';
+      entry.lightsError = (err as Error).message;
+    } finally {
+      this.pendingReady = null;
+    }
+
+    try {
+      await this.shoot(entry, day, slot);
+    } finally {
+      // Always release the automation, so the lights are never left up
+      // waiting for a "done" that is not coming.
+      if (lights.doneWebhookId) {
+        try {
+          await this.runAction(hook(lights.doneWebhookId));
+        } catch (err) {
+          entry.lights = 'failed';
+          entry.lightsError = `could not tell Home Assistant we were done: ${(err as Error).message}`;
+          console.error(`Timelapse: ${entry.lightsError}`);
+        }
+      }
+    }
+  }
+
+  /** Resolves true if the promise won, false if the clock did. */
+  private raceTimeout(promise: Promise<void>, ms: number): Promise<boolean> {
+    return new Promise(resolve => {
+      const timer = setTimeout(() => resolve(false), ms);
+      void promise.then(() => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+  }
+
+  /**
+   * Home Assistant reporting that the lights are on. Unauthenticated by
+   * design — the nonce is the credential: unguessable, single use, and only
+   * live while a capture is actually waiting for it.
+   */
+  notifyLightsReady(nonce: string): boolean {
+    if (!this.pendingReady || this.pendingReady.nonce !== nonce) return false;
+    this.pendingReady.resolve();
+    this.pendingReady = null;
+    return true;
+  }
+
+  /**
    * The calls to make either side of the shutter.
    *
    * `http` hands back what the operator wrote. `homeAssistant` is built here,
@@ -437,6 +525,8 @@ export class FieldTimelapse {
   private async lightPlan(lights: TimelapseLights): Promise<{ pre: TimelapseAction[]; post: TimelapseAction[] }> {
     if (lights.mode === 'none') return { pre: [], post: [] };
     if (lights.mode === 'http') return { pre: lights.preActions ?? [], post: lights.postActions ?? [] };
+    // The webhook handshake is not a pre/post pair — captureFrame runs it.
+    if (lights.mode === 'haWebhook') return { pre: [], post: [] };
 
     if (lights.entityIds.length === 0) throw new Error('no Home Assistant entities are selected');
     if (!lights.token) throw new Error('no Home Assistant token is saved');

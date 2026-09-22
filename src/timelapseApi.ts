@@ -1,7 +1,7 @@
 import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { FieldTimelapse } from './fieldTimelapse.js';
-import { json } from './httpApiUtils.js';
+import { json, readBody } from './httpApiUtils.js';
 
 /**
  * Serve what the field timelapse has collected.
@@ -12,10 +12,19 @@ import { json } from './httpApiUtils.js';
  *   GET /api/timelapse/active/<day>/<name>.mp4 one robots-present chunk
  *   GET /api/timelapse/render/<name>.mp4       a finished film; `?download=1`
  *                                              sends it as an attachment
+ *   POST /api/timelapse/lights-ready           Home Assistant saying the
+ *                                              lights are on (see below)
  *
  * Same trust as `/api/recordings`: no API key, because these are pictures of
  * the field that anyone on the field network can already see, and Caddy's
  * cookie check gates `/api/*` from outside.
+ *
+ * `lights-ready` is the one write, and it is unauthenticated on purpose: the
+ * whole point of the webhook light mode is that neither side stores a
+ * credential. Its credential is the nonce pFMS just minted — 128 bits, single
+ * use, and only accepted while a capture is actually waiting for it. The most
+ * a caller can do with a lucky guess is make one archival frame fire a few
+ * seconds early.
  */
 export function handleTimelapseRequest(req: IncomingMessage, res: ServerResponse, timelapse: FieldTimelapse): boolean {
   const [path] = (req.url ?? '').split('?');
@@ -39,6 +48,15 @@ export function handleTimelapseRequest(req: IncomingMessage, res: ServerResponse
     const params = new URLSearchParams((req.url ?? '').split('?')[1] ?? '');
     const day = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined);
     json(res, 200, timelapse.listing({ from: day(params.get('from')), to: day(params.get('to')) }));
+    return true;
+  }
+
+  if (path === '/api/timelapse/lights-ready') {
+    if (method !== 'POST') {
+      json(res, 405, { error: 'Method not allowed' });
+      return true;
+    }
+    void handleLightsReady(req, res, timelapse);
     return true;
   }
 
@@ -114,4 +132,24 @@ function serveFile(req: IncomingMessage, res: ServerResponse, full: string, cont
   stream.on('error', () => res.destroy());
   res.on('close', () => stream.destroy());
   stream.pipe(res);
+}
+
+/** `{"nonce":"…"}` in the body, or `?nonce=…` for a caller that finds a JSON
+ *  body awkward. Answers 409 when nobody is waiting, so a misconfigured
+ *  automation shows up as an error in Home Assistant rather than silence. */
+async function handleLightsReady(req: IncomingMessage, res: ServerResponse, timelapse: FieldTimelapse): Promise<void> {
+  let nonce = new URLSearchParams((req.url ?? '').split('?')[1] ?? '').get('nonce') ?? '';
+  if (!nonce) {
+    try {
+      const body = await readBody(req);
+      if (body) nonce = String((JSON.parse(body) as { nonce?: unknown }).nonce ?? '');
+    } catch {
+      // Not JSON, or too big — treated as no nonce at all.
+    }
+  }
+  if (nonce && timelapse.notifyLightsReady(nonce)) {
+    json(res, 200, { ok: true });
+    return;
+  }
+  json(res, 409, { error: 'No capture is waiting for that nonce' });
 }

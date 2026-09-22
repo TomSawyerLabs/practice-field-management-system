@@ -333,6 +333,31 @@ export type TimelapseLights =
   | { mode: 'none' }
   | { mode: 'http'; preActions?: TimelapseAction[]; postActions?: TimelapseAction[] }
   | {
+      /**
+       * Home Assistant owns the whole sequence; pFMS holds no credential.
+       *
+       * pFMS posts to `startWebhookId` with a nonce; the automation records
+       * the light state, turns the lights on, waits for them to report on,
+       * and calls pFMS back at `/api/timelapse/lights-ready` with that nonce.
+       * pFMS shoots the moment the callback lands (or after
+       * `readyTimeoutSeconds`, recording the lights as failed), then posts to
+       * `doneWebhookId` so the automation restores what it recorded.
+       *
+       * The webhook ids are the only secret, and each is a capability for one
+       * automation rather than a key to the whole house — so they are masked
+       * on the way out to clients exactly like a token.
+       */
+      mode: 'haWebhook';
+      baseUrl: string;
+      startWebhookId: string;
+      doneWebhookId?: string;
+      /** How long to wait for "the lights are on" before shooting anyway. */
+      readyTimeoutSeconds: number;
+      /** Where HA should call back. Not used by the server — it only fills in
+       *  the ready-to-paste YAML in the admin panel. */
+      callbackUrl?: string;
+    }
+  | {
       mode: 'homeAssistant';
       /** Base URL, e.g. `http://homeassistant.local:8123`. */
       baseUrl: string;
@@ -355,6 +380,21 @@ export function isTimelapseLights(v: unknown): v is TimelapseLights {
     const ok = (a: unknown[] | undefined) =>
       a === undefined || (Array.isArray(a) && a.length <= 4 && a.every(isTimelapseAction));
     return ok(l.preActions) && ok(l.postActions);
+  }
+  if (l.mode === 'haWebhook') {
+    const id = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(v);
+    return (
+      typeof l.baseUrl === 'string' &&
+      /^https?:\/\/[^\s]+$/.test(l.baseUrl) &&
+      l.baseUrl.length <= 300 &&
+      id(l.startWebhookId) &&
+      (l.doneWebhookId === undefined || id(l.doneWebhookId)) &&
+      typeof l.readyTimeoutSeconds === 'number' &&
+      l.readyTimeoutSeconds >= 1 &&
+      l.readyTimeoutSeconds <= 120 &&
+      (l.callbackUrl === undefined ||
+        (typeof l.callbackUrl === 'string' && /^https?:\/\/[^\s]+$/.test(l.callbackUrl) && l.callbackUrl.length <= 300))
+    );
   }
   if (l.mode === 'homeAssistant') {
     return (
@@ -414,7 +454,13 @@ export function redactSetupSettings(settings: SetupSettings): SetupSettings {
   if (!lights || lights.mode === 'none') return settings;
 
   let masked: TimelapseLights;
-  if (lights.mode === 'homeAssistant') {
+  if (lights.mode === 'haWebhook') {
+    masked = {
+      ...lights,
+      startWebhookId: SECRET_KEPT,
+      doneWebhookId: lights.doneWebhookId === undefined ? undefined : SECRET_KEPT,
+    };
+  } else if (lights.mode === 'homeAssistant') {
     if (lights.token === undefined) return settings;
     masked = { ...lights, token: SECRET_KEPT };
   } else {
@@ -447,7 +493,16 @@ export function restoreSetupSecrets(patch: Partial<SetupSettings>, stored: Setup
   const old = stored.timelapse?.lights;
 
   let restored: TimelapseLights;
-  if (lights.mode === 'homeAssistant') {
+  if (lights.mode === 'haWebhook') {
+    const previous = old?.mode === 'haWebhook' ? old : undefined;
+    const keep = (incoming: string | undefined, stored: string | undefined) =>
+      incoming === SECRET_KEPT ? stored : incoming;
+    restored = {
+      ...lights,
+      startWebhookId: keep(lights.startWebhookId, previous?.startWebhookId) ?? '',
+      doneWebhookId: keep(lights.doneWebhookId, previous?.doneWebhookId),
+    };
+  } else if (lights.mode === 'homeAssistant') {
     const oldToken = old?.mode === 'homeAssistant' ? old.token : undefined;
     restored = lights.token === SECRET_KEPT ? { ...lights, token: oldToken } : lights;
   } else {

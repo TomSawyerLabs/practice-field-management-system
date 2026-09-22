@@ -530,49 +530,79 @@ Everything is viewable in the admin section itself, no file browser needed:
 ### Lights
 
 Every archival frame looks the same only if the field is lit the same way.
-There are two ways to arrange that, and doing nothing is the default.
+Three ways to arrange that, and doing nothing is the default.
 
-**Home Assistant** is the managed one. Paste the base URL
-(`http://homeassistant.local:8123`) and a long-lived access token, press
-**Connect**, and tick the lights from the list that comes back. pFMS works
-out the calls itself:
+#### Home Assistant webhooks — no credential either way
 
-1. `scene/create` snapshotting the current state,
-2. `light/turn_on` for the entities you ticked,
-3. after the shutter, `scene/turn_on` to put everything back.
+The recommended one. Home Assistant owns the whole sequence; pFMS holds no
+token, and does not guess how long the lights take:
 
-**Groups are expanded before the snapshot.** A light group's state is derived
-from its members, so snapshotting the group and restoring it would turn on
-members that were deliberately off. pFMS walks each picked entity down to the
-fixtures behind it and snapshots those, so a shop where (say) one fixture per
-row is always off still looks like itself afterwards. Ticking a group is
-therefore the right thing to do — the expansion happens at capture time, so
-it follows changes made in Home Assistant.
+```
+pFMS  → POST /api/webhook/<start id>   {"nonce": "…"}
+HA    → record the current light state, turn the lights on,
+        wait until they report on
+HA    → POST <pfms>/api/timelapse/lights-ready   {"nonce": "…"}
+pFMS  → shutter, immediately
+pFMS  → POST /api/webhook/<done id>    {"nonce": "…"}
+HA    → hold briefly, then restore what it recorded
+```
 
-**Your own HTTP calls** is the escape hatch, for Hue, Shelly, a relay board
-or a shell script behind a webhook: a short list of calls (method, URL,
-headers, JSON body) for each slot, run in order. Nothing about pFMS needs to
-know what is on the other end.
+The admin panel **generates the two webhook ids and writes the YAML** — the
+`rest_command` for `configuration.yaml` and the automation itself, with your
+entities and timings filled in. Copy it into Home Assistant before leaving
+the page: the ids are secrets, so once saved the server never sends them back
+to a browser (regenerate if you need the YAML again, and update the
+automation to match).
 
-Either way, the lights are only touched **when nobody is here**: a running
-match, an enabled robot, or any Driver Station heard from in the last five
-minutes all skip them. The frame is still taken — the lights are simply left
-as whoever is in the shop set them, which is the point, since an occupied
-shop already has its lights on. The restore also runs when the capture itself
-failed, so the lights are never left up. `settleSeconds` (default 5) is the
-pause between turning them on and the shutter.
+Why the callback rather than just firing a webhook and waiting: Home
+Assistant's webhook handler runs the automation with
+`hass.async_run_hass_job(...)` and returns an empty `200` _before any of it
+happens_, and custom webhook responses are still unimplemented. A bare
+webhook therefore cannot tell you whether the lights came on — every failure
+looks like success. The callback is the only honest signal. If it does not
+arrive within the configured window (default 20 s) the frame is still taken,
+recorded as `lights: failed` with the reason, and the done webhook still
+fires so the automation is released and the lights are never left up.
 
-**Tokens are secrets, and are treated as such.** The settings go out to every
-internal client on connect — station pages are not authenticated — so the
-Home Assistant token and any custom header values are masked
-(`••• unchanged •••`) on the way out and restored on the way back in. The
-token never leaves the server after it is saved; it lives in
-`setup-config.json` with the other settings. Make it from a **non-admin**
-Home Assistant user: HA tokens are not scoped, so a leak of an admin one can
-reconfigure the house.
+`/api/timelapse/lights-ready` is unauthenticated on purpose — the whole point
+is that neither side stores a credential. Its credential is the 128-bit nonce
+pFMS just minted: single use, and only accepted while a capture is actually
+waiting. The worst a lucky guess achieves is one archival frame taken a few
+seconds early.
 
-Use **Capture now (with lights)** to prove the whole chain; the frame list
-says whether the lights ran, were skipped, or failed and why.
+#### Home Assistant token — the managed one
+
+Paste the base URL and a long-lived access token, press **Connect**, and tick
+the lights from the list that comes back. pFMS builds `scene/create`,
+`light/turn_on` and `scene/turn_on` itself, and expands groups to their member
+fixtures before snapshotting — a group's state is derived, so snapshotting the
+group and restoring it would turn on members that were deliberately off.
+
+This mode reports real errors (a failed service call comes back non-2xx), at
+the cost of storing a token that can do anything its Home Assistant user can.
+Make it from a **non-admin** user; HA tokens are not scoped.
+
+#### Your own HTTP calls — the escape hatch
+
+A short list of calls (method, URL, headers, JSON body) for each slot, run in
+order, for Hue, Shelly, a relay board or a script behind a webhook.
+
+#### Rules that apply to all of them
+
+The lights are only touched **when nobody is here**: a running match, an
+enabled robot, or any Driver Station heard from in the last five minutes all
+skip them. The frame is still taken — the lights are left as whoever is in
+the shop set them, since an occupied shop already has its lights on. Whatever
+was recorded before the frame is restored after it, including in the failure
+paths.
+
+**Secrets are masked.** The settings go out to every internal client on
+connect — station pages are not authenticated — so tokens, webhook ids and
+custom header values are replaced with `••• unchanged •••` on the way out and
+restored on the way back in. They live in `setup-config.json` on the server.
+
+Use **Capture now (with lights)** to prove the chain; the frame list says
+whether the lights ran, were skipped, or failed and why.
 
 ### What it costs
 
