@@ -338,6 +338,7 @@ And in pFMS on steamboat: `setup-config.json` → `timelapse.lights` is
 ### Two traps, both hit for real
 
 **`local_only` is judged on the source address, and IPv6 fails it.**
+(Resolved 2026-09-22 with `connectAddress` — see "https, kept" below.)
 `homeassistant.tsl` resolves to a _global_ IPv6 address, so steamboat's
 request arrived from a GUA and HA logged
 `Received remote request for local webhook …` and dropped it. The webhook had
@@ -372,6 +373,45 @@ Adding the `notify` platform needed a full HA restart (no `notify.reload`
 exists; `rest_command.reload` does, which is why the generated YAML prefers
 `rest_command` for anyone doing this by hand). All timers were idle first;
 HA was back in ~40 s.
+
+## https, kept (2026-09-22)
+
+Cameron wanted `https://homeassistant.tomsawyerlabs.com`, not a bare IP. That
+works **and** keeps `local_only: true`, because only the _last hop into HA_
+has to be IPv4:
+
+- The HA box answers 443 on its v4 address (10.255.0.9) with a real Let's
+  Encrypt certificate for the public name.
+- Its own Caddy then forwards `X-Forwarded-For: 10.255.0.5` to HA core, and
+  HA trusts 127.0.0.1 as a proxy, so the client reads as private → local.
+
+Proven before writing any code, with a throwaway `local_only` webhook and
+`curl --resolve` (no lights touched): the same POST was **dropped** via the
+public name over IPv6 and **accepted** via the same name pinned to v4.
+
+So pFMS gained an optional **`connectAddress`**: connect to this address,
+keep the hostname. That is `curl --resolve` semantics — SNI and certificate
+verification are untouched, only the address is pinned. Implemented over
+`node:https`, because Node's `fetch` offers no per-call address or family
+control and `dns.setDefaultResultOrder` would change every lookup the
+process makes.
+
+Live config: `baseUrl = https://homeassistant.tomsawyerlabs.com`,
+`connectAddress = 10.255.0.9`. Verified against the deployed build on
+steamboat: `pinnedFetch` to `/api/` returned 401 in 45 ms — a completed TLS
+handshake checked against the hostname, over the pinned v4 address.
+
+### Not needed: the `onlink` Caddy matcher
+
+Worth recording since it came up. `ops/containers/caddy-custom/onlink` solves
+exactly this class of bug — "a LAN device arrives from a global, ISP-delegated
+address and is treated as a stranger" — but on Caddy's side of the fence. It
+cannot change HA's verdict, because HA runs its own `is_local()` further down.
+Using it would mean setting `local_only: false` and having Caddy police
+locality instead, which is weaker here: the HA box has its own globally
+routable IPv6 address and its own Caddy, so a Caddy rule on steamboat does
+not necessarily sit in front of every path to HA. Pinning the address keeps
+HA's own check doing the work.
 
 ## Progress log
 
