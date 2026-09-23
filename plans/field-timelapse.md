@@ -413,6 +413,20 @@ routable IPv6 address and its own Caddy, so a Caddy rule on steamboat does
 not necessarily sit in front of every path to HA. Pinning the address keeps
 HA's own check doing the work.
 
+## Schedule at TSL
+
+`09:00, 13:00, 17:00, 21:00` local. The evening pair is the point: teams are
+usually in from about 18:00 to 21:00, so 17:00 is the "before" and 21:00 the
+"after" of a practice night (Cameron, 2026-09-22).
+
+Caveat on 21:00: the lights are only driven when nobody is here, and presence
+is "any Driver Station packet in the last five minutes". A night that runs
+late gets the frame with the shop lit however the team left it, recorded as
+`lights: skipped-field-in-use`. If those frames turn out inconsistent, move
+the slot later rather than weakening the presence rule.
+
+Four full-resolution frames a day is about 12 MB/day, ~4.4 GB/year.
+
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
@@ -440,8 +454,10 @@ HA's own check doing the work.
 - [x] Webhook handshake mode built and verified over real HTTP (2026-09-21).
 - [x] Home Assistant side built and verified (2026-09-22): notify platform,
       script, automation; pFMS switched to webhook mode over IPv4.
-- [ ] Watch a real scheduled capture (13:00/17:00) and confirm
-      `lights: ran` rather than a timeout.
+- [x] Real scheduled captures confirmed on 2026-09-22: 13:00 and 17:00 both
+      `lights: ran`, unattended.
+- [ ] Check the first 21:00 frame — the slot most likely to find the shop
+      still occupied.
 - [ ] Track the automation and script in ops (`homeassistant/ha-tsl`).
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
