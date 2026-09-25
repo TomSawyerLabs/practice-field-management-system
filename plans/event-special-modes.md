@@ -238,3 +238,100 @@ the way `shiftState` is) so it can be unit-tested.
 - Do not build a second robot-control path outside `MatchEngine` (finding 1).
 - Do not leave shift scoring active for a non-140 s teleop (finding 5).
 - Do not pre-set `autoWinnerAlliance` to satisfy the skip-auto guard (finding 6) — it leaks alliance tinting and a game-data byte into a non-match.
+
+---
+
+# Relay race — 2026-09-25
+
+## Goal
+
+Review the (untested on hardware) speed challenge code and add a third
+timing style: a **relay race**. Each alliance runs its robots one at a time —
+red1 and blue1 go on the horn, do the course, come home, and hand off to the
+next robot on their alliance. Whichever alliance gets all of its robots home
+first wins. No autonomous period anywhere in this.
+
+## Decisions already made (don't re-ask)
+
+1. **Relay is a `challengeTiming` (`'relay'`), not a new format.** It is a
+   stopwatch run with FMS-managed legs: same count-up clock, same Finish
+   semantics on the last leg, same penalty-seconds, same "fastest time" ranking
+   in its own leaderboard table. Everything that keys off "not a regulation
+   match" (shift bypasses, purple styling, history) comes for free.
+2. **Three hand-off styles, chosen on the setup card (`relayHandoff`):**
+   - `manual` — every robot is enabled at once, the clock runs, staff press
+     Finish. The drivers police their own hand-offs. The user's "simple timer
+     while all robots are enabled".
+   - `staff` — one robot per alliance is enabled at a time. A line ref presses
+     **Next robot** when the runner crosses the line; the FMS disables the
+     runner and enables the next. On the last leg the same button is Finish.
+   - `ds` — as `staff`, but the trigger is the running robot's own Driver
+     Station disabling itself (Enter key / the station console's Disable).
+     The line-ref button stays available as a backup.
+     Both of the user's proposed triggers are built rather than picking one,
+     because the engine work is identical and only the trigger differs.
+3. **Leg order is the match-slot order** (red1, red2, red3 = join order),
+   frozen at start. No reordering UI — swap/kick before the run if needed.
+4. **The `ds` trigger only works with the legacy NI Driver Station.** The 2027
+   DS never sets the "enabled" status bit and pFMS only honours a disable
+   from it after an enabled→disabled transition (see
+   `ds2027-systemcore-fms-support` memory), so its self-disable never
+   registers as a hand-off. The setup card says so; `staff` is the default.
+
+## Review findings on the speed challenge (fixed in this pass)
+
+1. **Pause/resume re-enabled a finished stopwatch alliance.** `completeResume()`
+   called `enableParticipating()`, which enables every joined station — a red
+   robot that had already pressed Finish drove again after a safety pause.
+2. **A finished robot could re-enable itself.** `challengeFinish` cleared
+   `enabled` but left `disabledBy` null, so the team's "Re-enable robot"
+   button (and the DS-side path through `undisable`) brought it back.
+3. **Finish times carried up to 250 ms of tick jitter.** Elapsed was
+   `totalMatchTime − 3`, but the countdown→run transition happens on a 250 ms
+   tick boundary, so "3" was really 3.0–3.25 s and varied per run. The engine
+   now stamps the run's start and reports `runElapsed` in the state; the
+   frontend clock and every recorded time read that instead.
+4. **Finish was accepted for an alliance with nobody on the field.** Harmless
+   in history (`challengeTallyFor` drops it) but it left a phantom time in the
+   live state. Now refused.
+5. **A run could idle to the cap after the last running robot left**, if the
+   other alliance had already finished. `leaveStation` now re-checks whether
+   everyone left is done.
+6. **The host-page timer pulsed at 140 s shift boundaries during a challenge**
+   (remaining 50 s, 25 s… on a 60 s window). Now pulses only in the last 3 s
+   of a challenge.
+
+Not bugs, noted: `getActiveColor` is safe (no auto winner ⇒ no tint); the
+history store's post-buzzer follow is correct; `stopMatch` mid-stopwatch
+correctly yields DNFs.
+
+## Design notes
+
+- `ChallengeTally.splits?: number[]` — elapsed seconds at each completed leg.
+  Leg _i_ belongs to match slot `${alliance}${i+1}`, so history (which stores
+  `matchSlot` per team) can name the runner without a new field.
+- `MatchState.runElapsed` — seconds since the robots went live, pauses
+  excluded. Source of truth for finish times and splits.
+- Engine: `relayOrder` (per alliance, frozen at start), `relayAdvance()`,
+  `enableParticipating()` only enables the current runner in `staff`/`ds`
+  relays and never a finished alliance; `undisable()` refuses non-runners and
+  finished alliances; `dsReportedStatus`/`stationDisable('self')` feed
+  `relayAdvance` in `ds` mode; a runner leaving mid-run counts as a hand-off.
+- `disabledBy: 'relay'` — new value, so the station console says "your leg is
+  done" instead of "disabled by field staff" and refuses re-enable.
+- Staff page: `/staff?role=scorekeeper&alliance=red` shows that side's
+  tally/hand-off panel — the "line ref per side" buttons.
+
+## Progress log
+
+- [x] Review of the challenge code (findings above).
+- [x] Engine + types + tests for the relay and the review fixes (7 new
+      engine tests: stopwatch hold-down through pause/resume, finish refused
+      off-field, early end on leave, staff/ds/manual relays; 1 ranking test).
+- [x] Frontend: setup card (timing + hand-off radios), tally/hand-off panel
+      with leg list and splits, `/staff?alliance=` line-ref view, TV big
+      number = robots home, "Fastest relay" leaderboard table, station
+      console "Relay — not your leg".
+- [x] Docs (README bullet, docs/match-system.md "Relay race").
+- [ ] Deploy to steamboat.
+- [ ] **Unverified on real hardware** — same caveat as the speed challenge.
