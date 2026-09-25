@@ -333,5 +333,5 @@ correctly yields DNFs.
       number = robots home, "Fastest relay" leaderboard table, station
       console "Relay — not your leg".
 - [x] Docs (README bullet, docs/match-system.md "Relay race").
-- [ ] Deploy to steamboat.
+- [x] Deployed to steamboat 2026-09-25 15:39 (e38e602), Slack announcement posted.
 - [ ] **Unverified on real hardware** — same caveat as the speed challenge.
