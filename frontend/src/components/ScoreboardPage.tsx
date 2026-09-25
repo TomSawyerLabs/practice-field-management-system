@@ -23,7 +23,7 @@ import { StationNameList } from '../../../src/types';
 import { getAllianceShiftState, getAllianceScoringShifts, getMatchSubPeriod } from '../utils/shiftState';
 import type { MatchSubPeriod } from '../utils/shiftState';
 import { isChallengeConfig, formatName, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
-import { challengeScore } from '../../../src/types';
+import { challengeScore, isCountUpTiming } from '../../../src/types';
 import { MatchTimeline } from './MatchTimeline';
 import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { MatchTimer, getActiveColor } from './MatchTimer';
@@ -483,14 +483,23 @@ export function ScoreboardPage() {
       penaltyLaps: matchState?.config.challengePenaltyLaps,
       penaltySeconds: matchState?.config.challengePenaltySeconds,
     }).laps;
+  // A relay has no laps: the big number is how many robots are home.
+  const isRelay = isChallenge && matchState?.config.challengeTiming === 'relay';
+  const relayLegsHome = (alliance: Alliance): number => matchState?.challenge?.[alliance]?.splits?.length ?? 0;
   const boxTotal = (alliance: Alliance): number =>
-    isChallenge ? challengeLaps(alliance) : (score?.[alliance].total ?? 0);
+    isRelay ? relayLegsHome(alliance) : isChallenge ? challengeLaps(alliance) : (score?.[alliance].total ?? 0);
   const boxLabel = (alliance: Alliance, freePlay: string | null): string | null => {
     if (!isChallenge) return freePlay;
     // Once a stopwatch alliance has stopped the clock, its time is the
     // headline fact about the run — the lap count stays as the big number.
     const finishedAt = matchState?.challenge?.[alliance]?.finishedAt;
     if (finishedAt !== undefined) return `${finishedAt.toFixed(1)}S`;
+    if (isRelay) {
+      const robots = Object.values(matchState?.stationStates ?? {}).filter(
+        s => s?.joined && s.alliance === alliance,
+      ).length;
+      return robots > 0 ? `OF ${robots} HOME` : 'HOME';
+    }
     return 'LAPS';
   };
 
@@ -993,7 +1002,7 @@ function CenterMatchDisplay({
   if (matchState?.phase === 'postMatch' && matchState.shareToken) {
     return <PostMatchQR token={matchState.shareToken} />;
   }
-  const countUp = matchState?.config.challengeTiming === 'stopwatch' && isChallengeConfig(matchState?.config);
+  const countUp = isCountUpTiming(matchState?.config.challengeTiming) && isChallengeConfig(matchState?.config);
   const timer = (
     <MatchTimer
       remainingTime={countUp && matchState ? challengeElapsed(matchState) : remainingTime}

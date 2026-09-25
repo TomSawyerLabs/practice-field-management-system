@@ -1140,6 +1140,12 @@ export function sendMatchChallengeFinish(alliance: Alliance) {
   ws?.send(JSON.stringify({ type: 'matchChallengeFinish', alliance }));
 }
 
+/** Line ref: this alliance's running robot is home — send the next one, or
+ *  stop the clock if it was the last. */
+export function sendMatchRelayAdvance(alliance: Alliance) {
+  ws?.send(JSON.stringify({ type: 'matchRelayAdvance', alliance }));
+}
+
 /** Host opens or retracts the ready check. */
 export function sendMatchRequestReady(requested: boolean) {
   ws?.send(JSON.stringify({ type: 'matchRequestReady', requested }));

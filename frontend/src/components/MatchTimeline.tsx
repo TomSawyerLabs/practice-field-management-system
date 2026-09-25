@@ -26,6 +26,8 @@ import {
   CHALLENGE_MAX_PENALTY_SECONDS,
   challengePenalties,
   isChallengeConfig,
+  isCountUpTiming,
+  RelayHandoff,
 } from '../../../src/types';
 import { sendUpdateMatchConfig } from '../hooks/useBackend';
 import { CHALLENGE_COLOR } from '../utils/matchFormat';
@@ -279,7 +281,8 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
     penaltyLaps: config.challengePenaltyLaps,
     penaltySeconds: config.challengePenaltySeconds,
   });
-  const penaltyMax = timing === 'stopwatch' ? CHALLENGE_MAX_PENALTY_SECONDS : CHALLENGE_MAX_PENALTY_LAPS;
+  const countUp = isCountUpTiming(timing);
+  const penaltyMax = countUp ? CHALLENGE_MAX_PENALTY_SECONDS : CHALLENGE_MAX_PENALTY_LAPS;
 
   const [duration, commitDuration] = useStepped(config.teleopDuration, seconds =>
     sendUpdateMatchConfig({ ...config, teleopDuration: seconds }),
@@ -289,22 +292,24 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
   const setDuration = (seconds: number) => commitDuration(() => clampDuration(seconds));
   const stepDuration = (delta: number) => commitDuration(current => clampDuration(current + delta));
 
-  const [penaltyCost, commitPenalty] = useStepped(timing === 'stopwatch' ? penaltySeconds : penaltyLaps, value =>
+  const [penaltyCost, commitPenalty] = useStepped(countUp ? penaltySeconds : penaltyLaps, value =>
     sendUpdateMatchConfig({
       ...config,
-      ...(timing === 'stopwatch' ? { challengePenaltySeconds: value } : { challengePenaltyLaps: value }),
+      ...(countUp ? { challengePenaltySeconds: value } : { challengePenaltyLaps: value }),
     }),
   );
   const stepPenalty = (delta: number) => commitPenalty(current => Math.min(penaltyMax, Math.max(0, current + delta)));
 
-  const penaltyLabel =
-    timing === 'stopwatch' ? `${penaltyCost}s` : `${penaltyCost} ${penaltyCost === 1 ? 'lap' : 'laps'}`;
+  const penaltyLabel = countUp ? `${penaltyCost}s` : `${penaltyCost} ${penaltyCost === 1 ? 'lap' : 'laps'}`;
 
   const barLabel = isProgressMode
     ? `${Math.ceil(Math.max(0, remainingTime ?? 0))}s`
     : timing === 'stopwatch'
       ? `STOPWATCH — ${formatDuration(duration)} CAP`
-      : `SPEED CHALLENGE — ${formatDuration(duration)}`;
+      : timing === 'relay'
+        ? `RELAY — ${formatDuration(duration)} CAP`
+        : `SPEED CHALLENGE — ${formatDuration(duration)}`;
+  const handoff: RelayHandoff = config.relayHandoff ?? 'staff';
 
   return (
     <Box sx={{ mb: isProgressMode ? 0 : 2 }}>
@@ -409,13 +414,55 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
                 control={<Radio size="small" />}
                 label={<Typography variant="body2">Stopwatch — staff press Finish</Typography>}
               />
+              <FormControlLabel
+                value="relay"
+                control={<Radio size="small" />}
+                label={<Typography variant="body2">Relay — robots run one at a time</Typography>}
+              />
             </RadioGroup>
             <Typography variant="caption" color="text.secondary">
               {timing === 'window'
                 ? 'Clock counts down; the buzzer ends the run. Staff tally laps as they happen.'
-                : 'Clock counts up; the window above is the cap, and running it out is a DNF.'}
+                : timing === 'relay'
+                  ? 'Each alliance runs its robots in slot order (red1, red2, red3). First alliance with every robot home wins. The window above is the cap.'
+                  : 'Clock counts up; the window above is the cap, and running it out is a DNF.'}
             </Typography>
           </FormControl>
+
+          {timing === 'relay' && (
+            <FormControl disabled={disabled}>
+              <FormLabel sx={{ fontSize: '0.75rem' }}>Hand-off — how the next robot gets sent</FormLabel>
+              <RadioGroup
+                value={handoff}
+                onChange={e => sendUpdateMatchConfig({ ...config, relayHandoff: e.target.value as RelayHandoff })}
+              >
+                <FormControlLabel
+                  value="staff"
+                  control={<Radio size="small" />}
+                  label={
+                    <Typography variant="body2">Line ref button — staff press Home when a robot crosses</Typography>
+                  }
+                />
+                <FormControlLabel
+                  value="ds"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Driver Station — the running robot disables itself</Typography>}
+                />
+                <FormControlLabel
+                  value="manual"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Manual — every robot enabled, drivers take turns</Typography>}
+                />
+              </RadioGroup>
+              <Typography variant="caption" color="text.secondary">
+                {handoff === 'staff'
+                  ? 'Only one robot per alliance is enabled at a time. Pressing Home disables it and enables the next; on the last robot it stops the clock.'
+                  : handoff === 'ds'
+                    ? 'Only one robot per alliance is enabled at a time. When the runner presses Disable on its DS, the next robot is enabled. Legacy NI Driver Stations only — the 2027 DS does not report its disable, so use the line ref button for those. The button stays as a backup.'
+                    : 'A plain timer: all robots are live from the horn and staff press Finish when the last one is home.'}
+              </Typography>
+            </FormControl>
+          )}
 
           <Box>
             <FormLabel sx={{ fontSize: '0.75rem', display: 'block', mb: 0.5 }}>What one penalty costs</FormLabel>
@@ -443,9 +490,9 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
             <Typography variant="caption" color="text.secondary">
               {penaltyCost === 0
                 ? 'Penalties are tallied but cost nothing — the count is just a record.'
-                : timing === 'window'
-                  ? 'Taken off the lap count before ranking.'
-                  : 'Added to the finishing time before ranking.'}
+                : countUp
+                  ? 'Added to the finishing time before ranking.'
+                  : 'Taken off the lap count before ranking.'}
             </Typography>
           </Box>
         </Box>

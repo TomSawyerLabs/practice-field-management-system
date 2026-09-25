@@ -14,6 +14,9 @@ import {
   CHALLENGE_MIN_DURATION,
   CHALLENGE_MAX_DURATION,
   isChallengeConfig,
+  isCountUpTiming,
+  isFmsHandoff,
+  RelayHandoff,
   StationName,
   StationNameList,
   StationNumber,
@@ -80,6 +83,9 @@ function emptyChallengeTally(): Record<Alliance, ChallengeTally> {
   return { red: { laps: 0, penalties: 0 }, blue: { laps: 0, penalties: 0 } };
 }
 
+const CHALLENGE_TIMINGS = ['window', 'stopwatch', 'relay'] as const;
+const RELAY_HANDOFFS: RelayHandoff[] = ['manual', 'staff', 'ds'];
+
 function challengeConfig(requestedConfig: Partial<MatchConfig>): MatchConfig {
   const duration = requestedConfig.teleopDuration;
   const requested = Number.isFinite(duration) ? Math.round(duration!) : CHALLENGE_DEFAULT_DURATION;
@@ -96,7 +102,8 @@ function challengeConfig(requestedConfig: Partial<MatchConfig>): MatchConfig {
     skipAuto: true,
     autoWinner: 'scores',
     format: 'challenge',
-    challengeTiming: requestedConfig.challengeTiming === 'stopwatch' ? 'stopwatch' : 'window',
+    challengeTiming: CHALLENGE_TIMINGS.find(t => t === requestedConfig.challengeTiming) ?? 'window',
+    relayHandoff: RELAY_HANDOFFS.find(h => h === requestedConfig.relayHandoff) ?? 'staff',
     challengePenaltyLaps: penaltyLaps,
     challengePenaltySeconds: penaltySeconds,
   };
@@ -180,6 +187,12 @@ export class MatchEngine {
   private autoWinnerAlliance: Alliance | null = null;
   /** Challenge tally for the run being set up or running. Reset per match. */
   private challengeTally: Record<Alliance, ChallengeTally> = emptyChallengeTally();
+  /** `totalMatchTime` at the instant the robots went live, or null before
+   *  the horn. Finish times and splits are measured from here. */
+  private runStartedAt: number | null = null;
+  /** Relay running order per alliance — match-slot order, frozen at start.
+   *  Leg i is run by `relayOrder[alliance][i]`. */
+  private relayOrder: Record<Alliance, StationName[]> = { red: [], blue: [] };
   /** Optional callback to get auto-period scores for auto winner determination.
    *  Returns { red: number, blue: number } totals. */
   private autoScoreResolver?: () => { red: number; blue: number };
@@ -492,41 +505,160 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  /** Stop the clock for one alliance (stopwatch timing). Its robots are
-   *  disabled where they stand; when every alliance on the field has
-   *  finished, the run ends rather than waiting out the cap. */
-  challengeFinish(alliance: Alliance) {
+  /** Seconds since the robots went live, pauses excluded. Undefined before
+   *  the horn. */
+  private runElapsed(): number | undefined {
+    if (this.runStartedAt === null) return undefined;
+    return Math.max(0, this.totalMatchTime - this.runStartedAt);
+  }
+
+  /** Whether an alliance's clock has stopped in a count-up run. */
+  private allianceFinished(alliance: Alliance | null): boolean {
+    return alliance !== null && this.challengeTally[alliance].finishedAt !== undefined;
+  }
+
+  /** Common guard for stopping an alliance's clock. Returns the elapsed time
+   *  to record, or undefined (with the reason logged) when it can't be. */
+  private checkCanFinish(alliance: Alliance, what: string): number | undefined {
     const config = this.config;
     if (!config || !isChallengeConfig(config)) {
-      appWarn(`Challenge finish ignored for ${alliance}: the field is not running a challenge`);
-      return;
+      appWarn(`${what} ignored for ${alliance}: the field is not running a challenge`);
+      return undefined;
     }
-    if (config.challengeTiming !== 'stopwatch') {
-      appWarn(`Challenge finish ignored for ${alliance}: this run is timed by the window, not a stopwatch`);
-      return;
+    if (!isCountUpTiming(config.challengeTiming)) {
+      appWarn(`${what} ignored for ${alliance}: this run is timed by the window, not a stopwatch`);
+      return undefined;
     }
     if (!robotsEnabledPhase(this.phase)) {
-      appWarn(`Challenge finish ignored for ${alliance} in phase ${this.phase}`);
+      appWarn(`${what} ignored for ${alliance} in phase ${this.phase}`);
+      return undefined;
+    }
+    if (!this.participatingAlliances().includes(alliance)) {
+      appWarn(`${what} ignored for ${alliance}: no robot on the field for that alliance`);
+      return undefined;
+    }
+    if (this.allianceFinished(alliance)) return undefined;
+    return this.runElapsed() ?? 0;
+  }
+
+  /** Stop the clock for one alliance (stopwatch, or a manual relay). Its
+   *  robots are disabled where they stand; when every alliance on the field
+   *  has finished, the run ends rather than waiting out the cap. */
+  challengeFinish(alliance: Alliance) {
+    if (isFmsHandoff(this.config)) {
+      appWarn(`Challenge finish ignored for ${alliance}: a relay finishes through its last hand-off`);
       return;
     }
-    if (this.challengeTally[alliance].finishedAt !== undefined) return;
+    const elapsed = this.checkCanFinish(alliance, 'Challenge finish');
+    if (elapsed === undefined) return;
+    this.recordFinish(alliance, elapsed, 'admin');
+  }
 
-    const elapsed = Math.max(0, this.totalMatchTime - COUNTDOWN_SECONDS);
+  /** Stop an alliance's clock and hold its robots down for the rest of the
+   *  run. `disabledBy` is what keeps them down: a finished robot must not
+   *  come back through a resume or the team's re-enable button. */
+  private recordFinish(alliance: Alliance, elapsed: number, disabledBy: 'admin' | 'relay') {
     this.challengeTally[alliance].finishedAt = elapsed;
-    for (const station of StationNameList) {
+    for (const station of this.allianceStations(alliance)) {
       const state = this.stationStates.get(station)!;
-      if (state.joined && state.alliance === alliance) state.enabled = false;
+      state.enabled = false;
+      state.disabledBy = disabledBy;
     }
     this.sendPacketsToAll();
     console.log(`Challenge: ${alliance} finished at ${elapsed.toFixed(2)}s`);
+    this.endRunIfEveryoneFinished();
+  }
 
-    const stillRunning = this.participatingAlliances().filter(a => this.challengeTally[a].finishedAt === undefined);
+  /** End the run once no participating alliance is still on the clock.
+   *  Broadcasts either way. */
+  private endRunIfEveryoneFinished() {
+    const stillRunning = this.participatingAlliances().filter(a => !this.allianceFinished(a));
     if (stillRunning.length === 0) {
       console.log('Challenge: every alliance has finished — ending the run');
       this.endChallengeRun();
       return;
     }
     this.broadcast();
+  }
+
+  // ── Relay ─────────────────────────────────────────────────────────
+
+  /** The station whose leg it is, or undefined when the alliance has no
+   *  legs left (finished, or nobody on that alliance). */
+  private relayRunner(alliance: Alliance): StationName | undefined {
+    if (this.allianceFinished(alliance)) return undefined;
+    return this.relayOrder[alliance][this.challengeTally[alliance].splits?.length ?? 0];
+  }
+
+  /** The runner is home: record the split, hold that robot down, and send
+   *  the next one — or stop the clock if it was the last. Reached from the
+   *  line ref's button, or in `ds` hand-off from the runner disabling itself. */
+  relayAdvance(alliance: Alliance, source: 'staff' | 'ds' = 'staff') {
+    if (!isFmsHandoff(this.config)) {
+      appWarn(`Relay hand-off ignored for ${alliance}: the field is not running a relay with FMS hand-offs`);
+      return;
+    }
+    const elapsed = this.checkCanFinish(alliance, 'Relay hand-off');
+    if (elapsed === undefined) return;
+
+    const tally = this.challengeTally[alliance];
+    const runner = this.relayRunner(alliance);
+    tally.splits = [...(tally.splits ?? []), elapsed];
+    const leg = tally.splits.length;
+    if (runner) {
+      const state = this.stationStates.get(runner)!;
+      state.enabled = false;
+      state.disabledBy = 'relay';
+    }
+    console.log(`Relay: ${alliance} leg ${leg} (${runner ?? 'nobody'}) home at ${elapsed.toFixed(2)}s (${source})`);
+
+    const next = this.relayRunner(alliance);
+    if (!next) {
+      this.recordFinish(alliance, elapsed, 'relay');
+      return;
+    }
+    this.enableStation(next, 'teleOp');
+    this.sendPacketsToAll();
+    this.broadcast();
+  }
+
+  /** A runner's own disable is the hand-off, when the relay is set up that
+   *  way. Anyone else's disable is just a disable. */
+  private relayHandoffFromDisable(station: StationName) {
+    if (!isFmsHandoff(this.config) || this.config?.relayHandoff !== 'ds') return;
+    if (!robotsEnabledPhase(this.phase)) return;
+    const alliance = this.stationStates.get(station)!.alliance;
+    if (!alliance || this.relayRunner(alliance) !== station) return;
+    this.relayAdvance(alliance, 'ds');
+  }
+
+  /** Enable one station for the run, honouring e-stop, a-stop and field
+   *  policy. Returns false (with the reason logged) if it stayed down. */
+  private enableStation(station: StationName, mode: 'auto' | 'teleOp'): boolean {
+    const state = this.stationStates.get(station)!;
+    const blocked = this.enableBlocked?.(station);
+    if (blocked) {
+      state.enabled = false;
+      console.log(`Not enabling ${station}: ${blocked}`);
+      return false;
+    }
+    if (!state.joined || state.eStop || state.aStop) {
+      if (state.joined) console.log(`Not enabling ${station}: ${state.eStop ? 'e-stop' : 'a-stop'} is latched`);
+      return false;
+    }
+    state.enabled = true;
+    state.mode = mode;
+    state.disabledBy = null;
+    this.markFmsEnabled(station);
+    return true;
+  }
+
+  /** Joined stations of one alliance, in match-slot order. */
+  private allianceStations(alliance: Alliance): StationName[] {
+    return StationNameList.filter(s => {
+      const state = this.stationStates.get(s)!;
+      return state.joined && state.alliance === alliance;
+    });
   }
 
   /** Which alliances have a robot on the field for this run. */
@@ -618,6 +750,12 @@ export class MatchEngine {
     if (wasMatchActive && this.getJoinedCount() === 0) {
       this.endMatchEmpty();
       return; // endMatchEmpty broadcasts
+    }
+    // In a count-up challenge the departure may have been the last robot
+    // still on the clock — don't leave the field idling to the cap.
+    if (wasMatchActive && robotsEnabledPhase(this.phase) && isCountUpTiming(this.config?.challengeTiming)) {
+      this.endRunIfEveryoneFinished();
+      return; // broadcasts either way
     }
 
     // A pre-match departure changes the roster — re-close the ready check.
@@ -860,6 +998,7 @@ export class MatchEngine {
 
     this.config = { ...this.pendingConfig };
     this.challengeTally = emptyChallengeTally();
+    this.runStartedAt = null;
     this.matchNumber++;
     this.matchId = randomUUID();
     this.shareToken = mintShareToken();
@@ -886,6 +1025,9 @@ export class MatchEngine {
       this.portToSlot.set(blueStations[i], slot);
       this.stationStates.get(blueStations[i])!.matchSlot = slot;
     }
+    // Relay legs run in slot order, and the order is frozen here so a
+    // station leaving mid-run can't renumber everyone else's legs.
+    this.relayOrder = { red: [...redStations], blue: [...blueStations] };
 
     // Handle skipAuto: if enabled, start directly in countdown → teleop
     const effectiveAutoDuration = this.config.skipAuto ? 0 : this.config.autoDuration;
@@ -1127,11 +1269,15 @@ export class MatchEngine {
 
   stationDisable(station: StationName, source: 'admin' | 'self' = 'admin') {
     const state = this.stationStates.get(station)!;
+    const wasEnabled = state.enabled;
     state.enabled = false;
     state.disabledBy = source;
     console.log(`Disabled: ${station} (by ${source})`);
     this.sendDSPacket(station);
     this.broadcast();
+    // The team's own Disable is a hand-off in a `ds` relay — same as the
+    // DS Enter key, just from the station console.
+    if (wasEnabled && source === 'self') this.relayHandoffFromDisable(station);
   }
 
   /** Re-enable a station stopped mid-match — the recovery path for a team
@@ -1160,6 +1306,16 @@ export class MatchEngine {
     }
     if (state.disabledBy === 'admin' && !byAdmin) {
       appWarn(`Cannot re-enable ${station}: disabled by field staff — clear it from the admin console`);
+      return;
+    }
+    // A robot whose clock has stopped stays stopped — even for the admin
+    // console, which would otherwise put a finished robot back on the course.
+    if (this.allianceFinished(state.alliance)) {
+      appWarn(`Cannot re-enable ${station}: ${state.alliance} has finished its run`);
+      return;
+    }
+    if (isFmsHandoff(this.config) && state.alliance && this.relayRunner(state.alliance) !== station) {
+      appWarn(`Cannot re-enable ${station}: it is not ${state.alliance}'s turn in the relay`);
       return;
     }
     if (state.enabled) return;
@@ -1219,6 +1375,7 @@ export class MatchEngine {
       this.broadcast();
     }
     let changed = false;
+    let handedOff = false;
     if (dsEStop && !state.eStop) {
       state.eStop = true;
       state.enabled = false;
@@ -1256,6 +1413,7 @@ export class MatchEngine {
           const raw = rawStatus === undefined ? '?' : `0x${rawStatus.toString(16).padStart(2, '0')}`;
           console.log(`DS disable reported: ${station} (raw=${raw})`);
           changed = true;
+          handedOff = true;
         }
       }
     }
@@ -1264,6 +1422,7 @@ export class MatchEngine {
       // and the periodic tick/heartbeat transmits the latched state anyway.
       this.broadcast();
     }
+    if (handedOff) this.relayHandoffFromDisable(station);
   }
 
   clearEStop(station?: StationName) {
@@ -1367,6 +1526,7 @@ export class MatchEngine {
       challenge: isChallengeConfig(this.config ?? this.pendingConfig)
         ? { red: { ...this.challengeTally.red }, blue: { ...this.challengeTally.blue } }
         : undefined,
+      runElapsed: this.runElapsed(),
     };
   }
 
@@ -1444,12 +1604,14 @@ export class MatchEngine {
           // Skip auto — go straight to teleop
           this.phase = 'teleop';
           this.remainingTime = this.config.teleopDuration;
+          this.runStartedAt = this.totalMatchTime;
           this.enableParticipating('teleOp');
           this.sendPacketsToAll();
           console.log('Teleop period started (auto skipped)');
         } else {
           this.phase = 'auto';
           this.remainingTime = this.config.autoDuration;
+          this.runStartedAt = this.totalMatchTime;
           this.enableParticipating('auto');
           this.sendPacketsToAll();
           console.log('Autonomous period started');
@@ -1610,6 +1772,17 @@ export class MatchEngine {
   }
 
   private enableParticipating(mode: 'auto' | 'teleOp') {
+    // Reached at the horn and again after every resume. In a count-up run
+    // an alliance that has stopped its clock stays down; in a relay with
+    // FMS hand-offs only the current runner of each alliance goes live.
+    const fmsHandoff = isFmsHandoff(this.config);
+    const runners = new Set<StationName>();
+    if (fmsHandoff) {
+      for (const alliance of ['red', 'blue'] as Alliance[]) {
+        const runner = this.relayRunner(alliance);
+        if (runner) runners.add(runner);
+      }
+    }
     for (const station of StationNameList) {
       const state = this.stationStates.get(station)!;
       // A-Stop only lasts through the autonomous period — release it at teleop
@@ -1617,20 +1790,18 @@ export class MatchEngine {
         state.aStop = false;
         console.log(`A-Stop released for teleop: ${station}`);
       }
-      const blocked = this.enableBlocked?.(station);
-      if (blocked) {
-        // Field policy forbids this control system — hold it disabled for the
-        // whole match rather than enabling with everyone else.
+      if (!state.joined) continue;
+      if (this.allianceFinished(state.alliance)) continue;
+      if (fmsHandoff && !runners.has(station)) {
+        // Waiting for its leg (or done with it). Marked so the station
+        // console says why, and refuses the team's re-enable button.
         state.enabled = false;
-        console.log(`Not enabling ${station}: ${blocked}`);
+        state.disabledBy = 'relay';
         continue;
       }
-      if (state.joined && !state.eStop && !state.aStop) {
-        state.enabled = true;
-        state.mode = mode;
-        state.disabledBy = null;
-        this.markFmsEnabled(station);
-      }
+      // Field policy forbids this control system — hold it disabled for the
+      // whole match rather than enabling with everyone else.
+      this.enableStation(station, mode);
     }
   }
 

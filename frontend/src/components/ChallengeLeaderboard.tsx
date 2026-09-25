@@ -4,19 +4,26 @@
  * ranking is a matter of reading them back.
  *
  * One row per set of teams, showing their best attempt. Window runs rank by
- * laps (penalties already deducted); stopwatch runs rank by time (penalties
- * already added), and a run that never finished is a DNF and sorts last.
- * The two are never mixed in one table — they aren't comparable.
+ * laps (penalties already deducted); stopwatch and relay runs rank by time
+ * (penalties already added), and a run that never finished is a DNF and
+ * sorts last. The three are never mixed in one table — they aren't
+ * comparable.
  */
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Typography from '@mui/material/Typography';
-import { ChallengeTiming, MatchHistoryEntry } from '../../../src/types';
+import { ChallengeTiming, MatchHistoryEntry, isCountUpTiming } from '../../../src/types';
 import { leaderboardRows } from '../../../src/challengeRanking';
 import { CHALLENGE_COLOR } from '../utils/matchFormat';
 
 const MEDALS = ['🥇', '🥈', '🥉'];
+
+const TABLE_TITLES: Record<ChallengeTiming, string> = {
+  window: 'Most laps',
+  stopwatch: 'Fastest run',
+  relay: 'Fastest relay',
+};
 
 export function ChallengeLeaderboard({
   matches,
@@ -28,7 +35,7 @@ export function ChallengeLeaderboard({
   compact?: boolean;
   limit?: number;
 }) {
-  const tables = (['window', 'stopwatch'] as ChallengeTiming[])
+  const tables = (['window', 'stopwatch', 'relay'] as ChallengeTiming[])
     .map(timing => ({ timing, rows: leaderboardRows(matches, timing) }))
     .filter(t => t.rows.length > 0);
 
@@ -48,7 +55,7 @@ export function ChallengeLeaderboard({
               mb: 0.5,
             }}
           >
-            {timing === 'stopwatch' ? 'Fastest run' : 'Most laps'}
+            {TABLE_TITLES[timing]}
           </Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: compact ? 0.75 : 0.5 }}>
             {rows.slice(0, limit ?? rows.length).map((row, i) => (
@@ -97,7 +104,7 @@ export function ChallengeLeaderboard({
                     textAlign: 'right',
                   }}
                 >
-                  {timing === 'stopwatch'
+                  {isCountUpTiming(timing)
                     ? row.seconds === null
                       ? 'DNF'
                       : `${row.seconds.toFixed(1)}s`

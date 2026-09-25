@@ -36,18 +36,26 @@ export function phaseLabel(phase: MatchPhase, config?: Pick<MatchConfig, 'format
   return (isChallengeConfig(config) ? CHALLENGE_PHASE_LABELS : OFFICIAL_PHASE_LABELS)[phase];
 }
 
-/** "Speed Challenge" / "Stopwatch Challenge" / "Match" — for chips and headings. */
+/** "Speed Challenge" / "Stopwatch Challenge" / "Relay Race" / "Match" — for
+ *  chips and headings. */
 export function formatName(config?: Pick<MatchConfig, 'format' | 'challengeTiming'>): string {
   if (!isChallengeConfig(config)) return 'Match';
-  return config?.challengeTiming === 'stopwatch' ? 'Stopwatch Challenge' : 'Speed Challenge';
+  switch (config?.challengeTiming) {
+    case 'stopwatch':
+      return 'Stopwatch Challenge';
+    case 'relay':
+      return 'Relay Race';
+    default:
+      return 'Speed Challenge';
+  }
 }
 
 /** The colour that marks challenge UI apart from match UI. */
 export const CHALLENGE_COLOR = '#7e57c2';
 
 /** Seconds elapsed in the run itself (countdown excluded), for count-up
- *  displays. `totalMatchTime` starts ticking at the countdown. */
-export function challengeElapsed(state: Pick<MatchState, 'totalMatchTime' | 'phase'>): number {
-  if (state.phase === 'idle' || state.phase === 'created' || state.phase === 'countdown') return 0;
-  return Math.max(0, state.totalMatchTime - 3);
+ *  displays. The engine stamps the run start, so this is the same number
+ *  the finish times and splits are measured against. */
+export function challengeElapsed(state: Pick<MatchState, 'runElapsed'>): number {
+  return state.runElapsed ?? 0;
 }

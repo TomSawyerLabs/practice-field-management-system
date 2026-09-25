@@ -167,3 +167,21 @@ describe('each run is ranked by the penalty cost it was run under', () => {
     expect(rows[0].seconds).toBe(20);
   });
 });
+
+describe('relay runs rank like stopwatch runs, in their own table', () => {
+  test('fastest relay first, DNFs last, and never mixed with stopwatch runs', () => {
+    const matches = [
+      run('relay', {
+        red: { teams: [1, 2, 3], tally: { laps: 0, penalties: 0, splits: [20, 41, 65], finishedAt: 65 } },
+      }),
+      run('relay', { blue: { teams: [4, 5], tally: { laps: 0, penalties: 0, splits: [30] } } }),
+      run('relay', { red: { teams: [6, 7], tally: { laps: 0, penalties: 1, splits: [25, 50], finishedAt: 50 } } }),
+      run('stopwatch', { red: { teams: [8], tally: { laps: 3, penalties: 0, finishedAt: 10 } } }),
+    ];
+    const rows = leaderboardRows(matches, 'relay');
+    expect(rows.map(r => r.key)).toEqual(['6+7', '1+2+3', '4+5']);
+    expect(rows[0].seconds).toBe(55);
+    expect(rows[2].seconds).toBeNull();
+    expect(leaderboardRows(matches, 'stopwatch').map(r => r.key)).toEqual(['8']);
+  });
+});

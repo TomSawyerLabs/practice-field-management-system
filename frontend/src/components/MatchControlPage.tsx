@@ -30,6 +30,7 @@ import {
   StaffRoleLabels,
   MatchHistoryTeam,
   challengeScore,
+  isCountUpTiming,
 } from '../../../src/types';
 import {
   useMatchState,
@@ -675,8 +676,8 @@ function ActiveMatchView({
   const blueStations = joinedStations.filter(s => stationStates[s]?.alliance === 'blue');
 
   const progress = useMemo(() => computeBarProgress(totalMatchTime, config), [totalMatchTime, config]);
-  // A stopwatch run is timed by what has elapsed, not what is left.
-  const countUp = isChallengeConfig(config) && config.challengeTiming === 'stopwatch';
+  // A stopwatch or relay run is timed by what has elapsed, not what is left.
+  const countUp = isChallengeConfig(config) && isCountUpTiming(config.challengeTiming);
 
   // Pulse the timer in the last 3 seconds of each game period
   const shouldPulse = useMemo(() => {
@@ -684,6 +685,10 @@ function ActiveMatchView({
 
     // Auto / countdown: pulse at end of the phase
     if (phase === 'auto' || phase === 'countdown') return remainingTime <= 3;
+
+    // A challenge is one window with no shifts — the boundaries below are
+    // measured back from a 140 s teleop and would pulse at nonsense moments.
+    if (isChallengeConfig(config)) return remainingTime <= 3;
 
     // During teleop/endgame: pulse at the end of each sub-period boundary
     if (phase === 'teleop' || phase === 'endgame') {
@@ -709,7 +714,7 @@ function ActiveMatchView({
     }
 
     return false;
-  }, [phase, remainingTime, config.teleopDuration]);
+  }, [phase, remainingTime, config]);
 
   return (
     <>
@@ -1383,7 +1388,7 @@ function challengeResultLabel(match: MatchHistoryEntry, alliance: Alliance): str
   const tally = match.challenge.tally[alliance];
   if (!tally) return null;
   const { laps, seconds } = challengeScore(tally, match.challenge.timing, match.challenge);
-  if (match.challenge.timing === 'stopwatch') return seconds === null ? 'DNF' : `${seconds.toFixed(1)}s`;
+  if (isCountUpTiming(match.challenge.timing)) return seconds === null ? 'DNF' : `${seconds.toFixed(1)}s`;
   return `${laps}`;
 }
 
@@ -1434,7 +1439,13 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
         )}
       </Box>
       <Typography variant="body2" sx={{ color: 'text.disabled', fontWeight: 300, textAlign: 'center' }}>
-        {match.challenge ? (match.challenge.timing === 'stopwatch' ? '⏱' : '↻') : '—'}
+        {match.challenge
+          ? match.challenge.timing === 'relay'
+            ? '🏁'
+            : match.challenge.timing === 'stopwatch'
+              ? '⏱'
+              : '↻'
+          : '—'}
       </Typography>
       <Box sx={{ display: 'flex', justifyContent: 'flex-start' }}>
         {blueChallenge !== null ? (

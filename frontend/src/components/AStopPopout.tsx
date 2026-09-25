@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
-import { MatchPhase, MatchState, StationName } from '../../../src/types';
+import { DisabledBy, MatchPhase, MatchState, StationName } from '../../../src/types';
 import {
   useMatchState,
   sendStationReady,
@@ -99,7 +99,7 @@ type ConsoleState = {
   aStop: boolean;
   eStop: boolean;
   enabled: boolean;
-  disabledBy: 'ds' | 'self' | 'admin' | null;
+  disabledBy: DisabledBy | null;
   robots: ConsoleRobot[];
 };
 
@@ -222,7 +222,7 @@ function buildConsole(w: Window) {
 
   reenableBtn = mkBtn(doc, () => {
     reenableBtn?.blur();
-    if (!lastState || lastState.enabled || lastState.disabledBy === 'admin') return;
+    if (!lastState || lastState.enabled || lastState.disabledBy === 'admin' || lastState.disabledBy === 'relay') return;
     sendStationSelfUndisable(lastState.station);
   });
   reenableBtn.style.flex = '1';
@@ -379,8 +379,10 @@ function updateConsole(state: ConsoleState) {
   const showReenable = robotsRunning && !enabled && !eStop && !aStop;
   reenableBtn.style.display = showReenable ? 'block' : 'none';
   if (showReenable) {
-    if (disabledBy === 'admin') {
-      reenableBtn.textContent = 'DISABLED BY FIELD STAFF';
+    if (disabledBy === 'admin' || disabledBy === 'relay') {
+      // A relay robot is held down before and after its own leg; the FMS
+      // enables it when it's up, and nothing re-enables it once it's home.
+      reenableBtn.textContent = disabledBy === 'relay' ? 'RELAY — NOT YOUR LEG' : 'DISABLED BY FIELD STAFF';
       reenableBtn.disabled = true;
       reenableBtn.style.background = '#333';
       reenableBtn.style.border = '2px solid #777';

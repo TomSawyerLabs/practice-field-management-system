@@ -51,6 +51,7 @@ import {
   isMatchSetAutoWinner,
   isMatchChallengeAdjust,
   isMatchChallengeFinish,
+  isMatchRelayAdvance,
   isMatchRequestReady,
   isMatchStaffIgnore,
   isStaffReady,
@@ -886,6 +887,8 @@ export function setupWebSocket(
         matchEngine.challengeAdjust(data.alliance, data.laps ?? 0, data.penalties ?? 0);
       } else if (isMatchChallengeFinish(data)) {
         matchEngine.challengeFinish(data.alliance);
+      } else if (isMatchRelayAdvance(data)) {
+        matchEngine.relayAdvance(data.alliance, 'staff');
       } else if (isMatchRequestReady(data)) {
         matchEngine.setReadyRequested(data.requested);
       } else if (isMatchStaffIgnore(data)) {

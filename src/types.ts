@@ -1036,8 +1036,34 @@ export type MatchFormat = 'official' | 'challenge';
  *  - `window` — the clock counts down from the configured duration and the
  *    buzzer ends it. "How many laps in X seconds."
  *  - `stopwatch` — the clock counts up and staff press Finish; the duration
- *    is a cap, and running it out is a DNF. */
-export type ChallengeTiming = 'window' | 'stopwatch';
+ *    is a cap, and running it out is a DNF.
+ *  - `relay` — a stopwatch run where each alliance's robots go one at a
+ *    time, in match-slot order, and the clock stops when the last one is
+ *    home. How the baton passes is `relayHandoff`. */
+export type ChallengeTiming = 'window' | 'stopwatch' | 'relay';
+
+/** Who moves a relay on to its next robot.
+ *  - `manual` — nobody: every robot is enabled at once and the drivers
+ *    police their own hand-offs. A plain timer, ended by Finish.
+ *  - `staff` — a line ref presses Next when the runner crosses the line; the
+ *    FMS disables the runner and enables the next robot.
+ *  - `ds` — the running robot's own Driver Station disables itself and the
+ *    FMS takes that as the hand-off. Legacy NI DS only: the 2027 DS never
+ *    reports "enabled", so its disable is never seen as a transition. The
+ *    line-ref button stays as a backup. */
+export type RelayHandoff = 'manual' | 'staff' | 'ds';
+
+/** A relay counts up like a stopwatch; only `window` counts down. */
+export function isCountUpTiming(timing: ChallengeTiming | undefined): boolean {
+  return timing === 'stopwatch' || timing === 'relay';
+}
+
+/** True when the FMS, not the drivers, decides which relay robot runs. */
+export function isFmsHandoff(
+  config: Pick<MatchConfig, 'challengeTiming' | 'relayHandoff'> | null | undefined,
+): boolean {
+  return config?.challengeTiming === 'relay' && (config.relayHandoff ?? 'staff') !== 'manual';
+}
 
 /** Bounds on a challenge window. Long enough to be a real run, short enough
  *  that a forgotten stopwatch run doesn't hold the field all afternoon. */
@@ -1085,6 +1111,8 @@ export type MatchConfig = {
   format?: MatchFormat;
   /** Only meaningful when `format` is `challenge`. Absent means `window`. */
   challengeTiming?: ChallengeTiming;
+  /** Only meaningful when `challengeTiming` is `relay`. Absent means `staff`. */
+  relayHandoff?: RelayHandoff;
   /** What one penalty costs a window run, in laps. Absent means the default. */
   challengePenaltyLaps?: number;
   /** What one penalty costs a stopwatch run, in seconds. Absent means the default. */
@@ -1101,9 +1129,13 @@ export function isChallengeConfig(config: Pick<MatchConfig, 'format'> | undefine
 export type ChallengeTally = {
   laps: number;
   penalties: number;
-  /** Seconds into the run when staff pressed Finish (stopwatch timing only).
-   *  Absent means still running, or — once the run is over — a DNF. */
+  /** Seconds into the run when staff pressed Finish (stopwatch and relay
+   *  timing). Absent means still running, or — once the run is over — a DNF. */
   finishedAt?: number;
+  /** Relay only: seconds into the run at each completed leg, in running
+   *  order. Leg i was run by match slot `${alliance}${i + 1}`. The last
+   *  split of a finished relay equals `finishedAt`. */
+  splits?: number[];
 };
 
 /** What an alliance's run is worth, for ranking and display. Window runs
@@ -1118,7 +1150,7 @@ export function challengeScore(
 ): { laps: number; seconds: number | null } {
   const { penaltyLaps, penaltySeconds } = challengePenalties(costs);
   const laps = (tally?.laps ?? 0) - (tally?.penalties ?? 0) * penaltyLaps;
-  if (timing !== 'stopwatch') return { laps, seconds: null };
+  if (!isCountUpTiming(timing)) return { laps, seconds: null };
   if (tally?.finishedAt === undefined) return { laps, seconds: null };
   return { laps, seconds: tally.finishedAt + (tally.penalties ?? 0) * penaltySeconds };
 }
@@ -1127,6 +1159,8 @@ export function challengeScore(
  *  (which identifies a physical radio slot). A physical station "slot6" could be mapped to
  *  match slot "red1" if the team joined the red alliance. */
 export type MatchSlot = `${Alliance}${StationNumber}`;
+
+export type DisabledBy = 'ds' | 'self' | 'admin' | 'relay';
 
 export type StationControlState = {
   teamNumber: number | null;
@@ -1146,11 +1180,13 @@ export type StationControlState = {
    *  control, so letting it ready up would start a match against a dead link. */
   dsAttached?: boolean;
   /** Who latched the current disable, when it wasn't ordinary phase control:
-   *  the team's DS (Enter key), the team's own station console, or field
-   *  staff. Teams may re-enable themselves after a 'ds' or 'self' disable
-   *  (stationSelfUndisable); an 'admin' disable only clears from the admin
-   *  console. Null when enabled or when disabled by phase control. */
-  disabledBy: 'ds' | 'self' | 'admin' | null;
+   *  the team's DS (Enter key), the team's own station console, field
+   *  staff, or the relay moving on to the next robot. Teams may re-enable
+   *  themselves after a 'ds' or 'self' disable (stationSelfUndisable); an
+   *  'admin' disable only clears from the admin console, and a 'relay'
+   *  disable never clears — that robot's leg is over. Null when enabled or
+   *  when disabled by phase control. */
+  disabledBy: DisabledBy | null;
   /** Set when the field's control-system policy forbids this robot: why it
    *  cannot be enabled. The field holds it disabled in and out of matches. */
   blockedReason?: string;
@@ -1276,6 +1312,11 @@ export type MatchState = {
    *  running a challenge. Both alliances are always present, even when only
    *  one is on the field — the host page decides what to show. */
   challenge?: Record<Alliance, ChallengeTally>;
+  /** Seconds since the robots went live for this run, pauses excluded, or
+   *  undefined before the horn. Stamped at the countdown→run transition
+   *  rather than derived from `totalMatchTime − 3`, which carried a tick of
+   *  jitter. The source of truth for challenge finish times and splits. */
+  runElapsed?: number;
 };
 
 export function isMatchState(msg: unknown): msg is MatchState {
@@ -1357,8 +1398,9 @@ export function isUpdateMatchConfig(msg: unknown): msg is UpdateMatchConfig {
   if (m.config.autoWinner !== undefined && !['red', 'blue', 'scores', 'pause'].includes(m.config.autoWinner))
     return false;
   if (m.config.format !== undefined && !['official', 'challenge'].includes(m.config.format)) return false;
-  if (m.config.challengeTiming !== undefined && !['window', 'stopwatch'].includes(m.config.challengeTiming))
+  if (m.config.challengeTiming !== undefined && !['window', 'stopwatch', 'relay'].includes(m.config.challengeTiming))
     return false;
+  if (m.config.relayHandoff !== undefined && !['manual', 'staff', 'ds'].includes(m.config.relayHandoff)) return false;
   if (m.config.challengePenaltyLaps !== undefined && !Number.isFinite(m.config.challengePenaltyLaps)) return false;
   if (m.config.challengePenaltySeconds !== undefined && !Number.isFinite(m.config.challengePenaltySeconds))
     return false;
@@ -1496,6 +1538,15 @@ export function isMatchChallengeFinish(msg: unknown): msg is MatchChallengeFinis
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as MatchChallengeFinish;
   return m.type === 'matchChallengeFinish' && (m.alliance === 'red' || m.alliance === 'blue');
+}
+
+/** A line ref marks one alliance's running robot home: the FMS disables it
+ *  and enables the next robot, or stops the clock if it was the last. */
+export type MatchRelayAdvance = { type: 'matchRelayAdvance'; alliance: Alliance };
+export function isMatchRelayAdvance(msg: unknown): msg is MatchRelayAdvance {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as MatchRelayAdvance;
+  return m.type === 'matchRelayAdvance' && (m.alliance === 'red' || m.alliance === 'blue');
 }
 
 /** Host opens or retracts the ready check (from the /match page). */

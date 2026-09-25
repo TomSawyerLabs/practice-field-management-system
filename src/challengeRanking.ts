@@ -6,12 +6,14 @@
  * ranking is a matter of reading them back. One row per set of teams, showing
  * their best attempt.
  *
- * Window runs rank by laps, penalties already deducted. Stopwatch runs rank
- * by time, penalties already added, and a run that never finished is a DNF
- * and sorts last. The two are never mixed — they aren't comparable.
+ * Window runs rank by laps, penalties already deducted. Stopwatch and relay
+ * runs rank by time, penalties already added, and a run that never finished
+ * is a DNF and sorts last. The three are never mixed — they aren't
+ * comparable.
  */
 import {
   challengeScore,
+  isCountUpTiming,
   type Alliance,
   type ChallengeTally,
   type ChallengeTiming,
@@ -34,7 +36,7 @@ export interface ChallengeAttempt {
 
 /** Whichever attempt is the better result. Ties go to whoever did it first. */
 export function betterAttempt(a: ChallengeAttempt, b: ChallengeAttempt, timing: ChallengeTiming): ChallengeAttempt {
-  if (timing === 'stopwatch') {
+  if (isCountUpTiming(timing)) {
     // A finished run always beats a DNF, however many laps the DNF managed.
     if (a.seconds === null) return b.seconds === null ? (a.at <= b.at ? a : b) : b;
     if (b.seconds === null) return a;

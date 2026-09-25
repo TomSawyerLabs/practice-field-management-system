@@ -241,10 +241,11 @@ Pick it from the format switch on `/match` while setting a match up. The
 window is 30/45/60/90/120 s as one-tap chips, or stepped 5 s at a time
 between 10 s and 5 minutes. Two timing styles:
 
-| Timing      | Clock       | Ends when                              | Ranked by                   |
-| ----------- | ----------- | -------------------------------------- | --------------------------- |
-| `window`    | Counts down | The buzzer                             | Laps, less the penalty cost |
-| `stopwatch` | Counts up   | Staff press Finish (window is the cap) | Time, plus the penalty cost |
+| Timing      | Clock       | Ends when                                  | Ranked by                   |
+| ----------- | ----------- | ------------------------------------------ | --------------------------- |
+| `window`    | Counts down | The buzzer                                 | Laps, less the penalty cost |
+| `stopwatch` | Counts up   | Staff press Finish (window is the cap)     | Time, plus the penalty cost |
+| `relay`     | Counts up   | The last robot is home (window is the cap) | Time, plus the penalty cost |
 
 Everything else about a match still applies: the ready check, the 3-2-1
 countdown and horn, E-Stop and A-Stop, pause and resume, video recording,
@@ -281,13 +282,45 @@ field has finished, the run ends rather than waiting out the cap. An
 alliance that never finishes keeps no time at all — a DNF, which ranks
 behind every finish however many laps it managed.
 
+### Relay race
+
+A **relay** is a stopwatch run where each alliance's robots go one at a
+time: red 1 and blue 1 go on the horn, do the course, come home, and hand off
+to red 2 and blue 2. The first alliance with every robot home wins. Legs run
+in match-slot order (the order the teams joined), frozen when the run
+starts — swap or kick before the horn to change it.
+
+How the baton passes is the **hand-off** setting on the setup card:
+
+| Hand-off | Who is enabled             | What sends the next robot                                         |
+| -------- | -------------------------- | ----------------------------------------------------------------- |
+| `staff`  | One robot per alliance     | A line ref presses **Home** on `/match` or `/staff`               |
+| `ds`     | One robot per alliance     | The runner presses Disable on its own Driver Station (or console) |
+| `manual` | Every robot, from the horn | Nobody — a plain timer; staff press Finish when the last is home  |
+
+In `staff` and `ds` hand-offs the FMS holds every other robot disabled: the
+station console says "Relay — not your leg" and the re-enable button does
+nothing until it is that robot's turn. Pressing Home on the last robot stops
+the alliance's clock, exactly like Finish in a stopwatch run, and each
+hand-off records a split so the summary shows every leg's time.
+
+The `ds` hand-off only works with the **legacy NI Driver Station**. The
+2027 SystemCore DS never reports itself enabled, and pFMS only honours a
+disable from it after an enabled→disabled transition, so its Disable is
+never seen as a hand-off. The Home button stays available as a backup in
+`ds` mode, so a mixed field can still be run by the line ref.
+
+A line ref standing at one end of the field can open
+`/staff?role=scorekeeper&alliance=red` (or `blue`) to get just that side's
+hand-off and penalty buttons on their phone.
+
 ### Leaderboard
 
 The leaderboard is a view over match history, not a store of its own: each
 challenge run's history entry carries its timing and per-alliance tally.
 One row per set of teams showing their best attempt, with the number of
-runs they've had. Window and stopwatch runs are ranked in separate tables —
-they aren't comparable. Ties go to whoever got there first.
+runs they've had. Window, stopwatch and relay runs are ranked in separate
+tables — they aren't comparable. Ties go to whoever got there first.
 
 It appears on `/match` while the field is idle, and takes over the bottom of
 the scoreboard between runs (top 5) so the TV is the leaderboard while the

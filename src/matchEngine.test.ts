@@ -294,3 +294,159 @@ describe('a challenge run lands in match history', () => {
     rmSync(file, { force: true });
   }, 10_000);
 });
+
+/** Robots on both alliances, all readied, started. Returns after the horn. */
+async function startRace(config: Partial<MatchConfig>, stations: Record<string, 'red' | 'blue'>) {
+  const engine = new MatchEngine(() => 5940);
+  engine.createMatch();
+  engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 60, ...config }));
+  for (const [station, alliance] of Object.entries(stations)) {
+    engine.joinStationAlliance(station as 'slot1', alliance);
+  }
+  for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+  engine.setReadyRequested(true);
+  for (const station of Object.keys(stations)) engine.setReady(station as 'slot1', true);
+  engine.startMatch();
+  await Bun.sleep(3400);
+  expect(engine.getState().phase).toBe('teleop');
+  return engine;
+}
+
+describe('a stopwatch race holds a finished alliance down', () => {
+  test('through a pause and resume, and against the re-enable button', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+    engine.challengeFinish('red');
+    let s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(false);
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    expect(s.phase).toBe('teleop');
+    expect(s.runElapsed).toBeGreaterThanOrEqual(0);
+    expect(s.challenge!.red.finishedAt).toBeLessThan(1);
+
+    // Neither the team nor the admin console can put a finished robot back
+    engine.undisable('slot1', false);
+    engine.undisable('slot1', true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+
+    engine.pauseMatch();
+    engine.resumeMatch();
+    await Bun.sleep(3200);
+    s = engine.getState();
+    expect(s.phase).toBe('teleop');
+    expect(s.stationStates.slot1?.enabled).toBe(false);
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    engine.stopMatch();
+  }, 15_000);
+
+  test('finish is refused for an alliance with nobody on the field', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+    engine.challengeFinish('blue');
+    expect(engine.getState().challenge!.blue.finishedAt).toBeUndefined();
+    engine.stopMatch();
+  }, 10_000);
+
+  test('ends when the last robot still on the clock leaves', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+    engine.challengeFinish('red');
+    engine.leaveStation('slot2');
+    expect(engine.getState().phase).toBe('postMatch');
+  }, 10_000);
+});
+
+describe('a relay with staff hand-offs', () => {
+  test('runs one robot per alliance at a time and stops the clock on the last', async () => {
+    const engine = await startRace(
+      { challengeTiming: 'relay', relayHandoff: 'staff' },
+      { slot1: 'red', slot2: 'red', slot3: 'blue' },
+    );
+    let s = engine.getState();
+    expect(s.config.relayHandoff).toBe('staff');
+    expect(s.stationStates.slot1?.enabled).toBe(true);
+    expect(s.stationStates.slot2?.enabled).toBe(false);
+    expect(s.stationStates.slot2?.disabledBy).toBe('relay');
+    expect(s.stationStates.slot3?.enabled).toBe(true);
+
+    // Not slot2's turn — the re-enable button does nothing
+    engine.undisable('slot2', false);
+    expect(engine.getState().stationStates.slot2?.enabled).toBe(false);
+
+    // Finish is not how a relay ends
+    engine.challengeFinish('red');
+    expect(engine.getState().challenge!.red.finishedAt).toBeUndefined();
+
+    engine.relayAdvance('red');
+    s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(false);
+    expect(s.stationStates.slot1?.disabledBy).toBe('relay');
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    expect(s.challenge!.red.splits).toHaveLength(1);
+    expect(s.challenge!.red.finishedAt).toBeUndefined();
+
+    // Pausing and resuming brings back only the current runners
+    engine.pauseMatch();
+    engine.resumeMatch();
+    await Bun.sleep(3200);
+    s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(false);
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    expect(s.stationStates.slot3?.enabled).toBe(true);
+
+    engine.relayAdvance('red');
+    s = engine.getState();
+    expect(s.challenge!.red.splits).toHaveLength(2);
+    expect(s.challenge!.red.finishedAt).toBe(s.challenge!.red.splits![1]);
+    expect(s.stationStates.slot2?.enabled).toBe(false);
+    expect(s.phase).toBe('teleop'); // blue is still out
+
+    engine.relayAdvance('red'); // nothing left to advance
+    expect(engine.getState().challenge!.red.splits).toHaveLength(2);
+
+    engine.relayAdvance('blue');
+    s = engine.getState();
+    expect(s.challenge!.blue.finishedAt).toBeDefined();
+    expect(s.phase).toBe('postMatch');
+  }, 15_000);
+});
+
+describe('a relay with driver-station hand-offs', () => {
+  test('the runner disabling itself sends the next robot', async () => {
+    const engine = await startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
+    // The station console's own Disable counts
+    engine.stationDisable('slot1', 'self');
+    let s = engine.getState();
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    expect(s.challenge!.red.splits).toHaveLength(1);
+
+    // A DS-reported disable counts too, once the post-enable grace has passed
+    await Bun.sleep(2100);
+    engine.dsReportedStatus('slot2', false, false, false, 0x00, true);
+    s = engine.getState();
+    expect(s.challenge!.red.finishedAt).toBeDefined();
+    expect(s.phase).toBe('postMatch');
+  }, 15_000);
+
+  test('a disable from a robot that is not running is just a disable', async () => {
+    const engine = await startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
+    engine.stationDisable('slot2', 'self');
+    expect(engine.getState().challenge!.red.splits ?? []).toHaveLength(0);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
+    engine.stopMatch();
+  }, 10_000);
+});
+
+describe('a manual relay', () => {
+  test('enables everyone and ends on Finish', async () => {
+    const engine = await startRace(
+      { challengeTiming: 'relay', relayHandoff: 'manual' },
+      { slot1: 'red', slot2: 'red', slot3: 'blue' },
+    );
+    const s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(true);
+    expect(s.stationStates.slot2?.enabled).toBe(true);
+    engine.relayAdvance('red'); // no FMS hand-offs in a manual relay
+    expect(engine.getState().challenge!.red.splits).toBeUndefined();
+    engine.challengeFinish('red');
+    engine.challengeFinish('blue');
+    expect(engine.getState().phase).toBe('postMatch');
+  }, 10_000);
+});

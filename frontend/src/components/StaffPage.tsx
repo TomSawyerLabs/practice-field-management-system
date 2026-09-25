@@ -6,9 +6,21 @@ import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
-import { StaffRole, StaffRoleList, StaffRoleLabels, isStaffRole } from '../../../src/types';
+import { Alliance, StaffRole, StaffRoleList, StaffRoleLabels, isStaffRole } from '../../../src/types';
 import { useMatchState, sendStaffReady, sendStaffHeartbeat } from '../hooks/useBackend';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
+import { ChallengeTallyPanel } from './ChallengeTallyPanel';
+
+/** Optional ?alliance=red|blue: a line ref at one end of the field only
+ *  wants that side's hand-off button. */
+function allianceFromUrl(): Alliance | undefined {
+  try {
+    const a = new URLSearchParams(window.location.search).get('alliance');
+    return a === 'red' || a === 'blue' ? a : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Read the staff role from ?role=… (bookmarkable per device). */
 function roleFromUrl(): StaffRole | null {
@@ -74,6 +86,7 @@ function RolePicker() {
 function StaffConsole({ role }: { role: StaffRole }) {
   const matchState = useMatchState();
   const label = StaffRoleLabels[role];
+  const alliance = allianceFromUrl();
 
   const phase = matchState?.phase;
   const readyRequested = matchState?.readyRequested ?? false;
@@ -127,6 +140,14 @@ function StaffConsole({ role }: { role: StaffRole }) {
           <Typography color="text.secondary">{statusLine}</Typography>
         </CardContent>
       </Card>
+
+      {/* During a challenge this page is also the line ref's phone: laps,
+          penalties and — in a relay — the hand-off button for their side. */}
+      {matchState && (
+        <Box sx={{ mt: 2 }}>
+          <ChallengeTallyPanel matchState={matchState} alliance={alliance} />
+        </Box>
+      )}
     </Container>
   );
 }
