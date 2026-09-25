@@ -310,9 +310,10 @@ disable from it after an enabled→disabled transition, so its Disable is
 never seen as a hand-off. The Home button stays available as a backup in
 `ds` mode, so a mixed field can still be run by the line ref.
 
-A line ref standing at one end of the field can open
-`/staff?role=scorekeeper&alliance=red` (or `blue`) to get just that side's
-hand-off and penalty buttons on their phone.
+A line ref standing at one end of the field picks their side with the
+**Both / Red / Blue** buttons on `/staff` to get just that side's hand-off
+and penalty buttons on their phone. The choice lands in the URL
+(`?alliance=red`), so it survives a reload and can be bookmarked.
 
 ### Leaderboard
 

@@ -1,18 +1,21 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { Alliance, StaffRole, StaffRoleList, StaffRoleLabels, isStaffRole } from '../../../src/types';
 import { useMatchState, sendStaffReady, sendStaffHeartbeat } from '../hooks/useBackend';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 
-/** Optional ?alliance=red|blue: a line ref at one end of the field only
- *  wants that side's hand-off button. */
+/** Which side of the field this phone is on, kept in ?alliance=red|blue so
+ *  it survives a reload and can be bookmarked. A line ref at one end only
+ *  wants that side's hand-off button; undefined shows both. */
 function allianceFromUrl(): Alliance | undefined {
   try {
     const a = new URLSearchParams(window.location.search).get('alliance');
@@ -20,6 +23,50 @@ function allianceFromUrl(): Alliance | undefined {
   } catch {
     return undefined;
   }
+}
+
+function useSide(): [Alliance | undefined, (side: Alliance | undefined) => void] {
+  const [side, setSide] = useState<Alliance | undefined>(allianceFromUrl);
+  return [
+    side,
+    next => {
+      setSide(next);
+      const url = new URL(window.location.href);
+      if (next) url.searchParams.set('alliance', next);
+      else url.searchParams.delete('alliance');
+      window.history.replaceState(null, '', url);
+    },
+  ];
+}
+
+/** Both / Red / Blue. Shown whenever the field is set up for a challenge. */
+function SidePicker({ side, onChange }: { side: Alliance | undefined; onChange: (s: Alliance | undefined) => void }) {
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 2, flexWrap: 'wrap' }}>
+      <Typography variant="body2" color="text.secondary">
+        Your side of the field
+      </Typography>
+      <ToggleButtonGroup
+        exclusive
+        size="small"
+        value={side ?? 'both'}
+        onChange={(_, v: string | null) => {
+          if (v === null) return;
+          onChange(v === 'red' || v === 'blue' ? v : undefined);
+        }}
+      >
+        <ToggleButton value="both" sx={{ px: 2 }}>
+          Both
+        </ToggleButton>
+        <ToggleButton value="red" sx={{ px: 2, '&.Mui-selected': { backgroundColor: '#d32f2f', color: '#fff' } }}>
+          Red
+        </ToggleButton>
+        <ToggleButton value="blue" sx={{ px: 2, '&.Mui-selected': { backgroundColor: '#1565c0', color: '#fff' } }}>
+          Blue
+        </ToggleButton>
+      </ToggleButtonGroup>
+    </Box>
+  );
 }
 
 /** Read the staff role from ?role=… (bookmarkable per device). */
@@ -86,7 +133,7 @@ function RolePicker() {
 function StaffConsole({ role }: { role: StaffRole }) {
   const matchState = useMatchState();
   const label = StaffRoleLabels[role];
-  const alliance = allianceFromUrl();
+  const [alliance, setAlliance] = useSide();
 
   const phase = matchState?.phase;
   const readyRequested = matchState?.readyRequested ?? false;
@@ -143,10 +190,13 @@ function StaffConsole({ role }: { role: StaffRole }) {
 
       {/* During a challenge this page is also the line ref's phone: laps,
           penalties and — in a relay — the hand-off button for their side. */}
-      {matchState && (
-        <Box sx={{ mt: 2 }}>
-          <ChallengeTallyPanel matchState={matchState} alliance={alliance} />
-        </Box>
+      {matchState?.challenge && (
+        <>
+          <SidePicker side={alliance} onChange={setAlliance} />
+          <Box sx={{ mt: 1.5 }}>
+            <ChallengeTallyPanel matchState={matchState} alliance={alliance} />
+          </Box>
+        </>
       )}
     </Container>
   );

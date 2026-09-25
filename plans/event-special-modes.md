@@ -334,4 +334,6 @@ correctly yields DNFs.
       console "Relay — not your leg".
 - [x] Docs (README bullet, docs/match-system.md "Relay race").
 - [x] Deployed to steamboat 2026-09-25 15:39 (e38e602), Slack announcement posted.
+- [x] Staff page got a Both/Red/Blue side picker (the URL-only side select was
+      not usable from a phone); it writes ?alliance= so a bookmark still works.
 - [ ] **Unverified on real hardware** — same caveat as the speed challenge.
