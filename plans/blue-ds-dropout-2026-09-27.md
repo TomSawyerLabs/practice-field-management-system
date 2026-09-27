@@ -156,7 +156,7 @@ sends as it loses the field, not a human keypress.
 2. ~~Did anyone touch the blue laptops at 12:19:30?~~ Match 62 showed the
    same 0x78-then-silence signature three more times with no one at the
    laptops; it is the DS losing the field, not a keypress.
-3. Build the match-control-page fix for the Enable/Disable button flipping
+3. ~~Build the match-control-page fix?~~ Done, `e4e2768`, deployed 13:24. Was: the Enable/Disable button flipping
    under the cursor (see "Match 62")? My recommendation: yes, two fixed
    buttons plus a "DS offline" marker on the row.
 4. ~~Should pFMS un-latch a `disabledBy: 'ds'` station when its DS
