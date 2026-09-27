@@ -1302,7 +1302,7 @@ export class MatchEngine {
    *  e-stop was just cleared by staff. Only meaningful in the phases where
    *  robots run; every other phase disables everyone by design. Teams cannot
    *  override a staff disable; the admin console can override anything. */
-  undisable(station: StationName, byAdmin = false) {
+  undisable(station: StationName, byAdmin = false, via: 'console' | 'dsReturn' = 'console') {
     const state = this.stationStates.get(station)!;
     const blocked = this.enableBlocked?.(station);
     if (blocked) {
@@ -1343,7 +1343,8 @@ export class MatchEngine {
     state.enabled = true;
     state.disabledBy = null;
     this.markFmsEnabled(station);
-    console.log(`Re-enabled: ${station}${byAdmin ? ' (admin)' : ' (self)'}`);
+    const how = via === 'dsReturn' ? 'DS back after dropping off the field' : byAdmin ? 'admin' : 'self';
+    console.log(`Re-enabled: ${station} (${how})`);
     this.sendDSPacket(station);
     this.broadcast();
   }
@@ -1389,6 +1390,15 @@ export class MatchEngine {
     if (!wasAttached) {
       const ip = this.dsConnections.get(station)?.ip;
       console.log(`DS attached to FMS: ${station}${ip ? ` (${ip}, ${this.endpointFor(ip).protocol})` : ''}`);
+      // A DS that reported "disabled" and then went quiet for 5 s+ was
+      // reacting to losing the field, not to the driver pressing Disable —
+      // a driver's disable keeps the DS talking. Bring it straight back
+      // (2026-09-27: both blue laptops dropped off Wi-Fi for 33 s mid-match
+      // and came back latched off). markFmsEnabled's grace window keeps the
+      // returning DS's first "disabled" reports from undoing this. Staff and
+      // relay disables, e-stops and a-stops are untouched: undisable refuses
+      // those and logs why.
+      if (state.disabledBy === 'ds' && robotsEnabledPhase(this.phase)) this.undisable(station, false, 'dsReturn');
       this.broadcast();
     }
     let changed = false;
@@ -1410,7 +1420,9 @@ export class MatchEngine {
       // For the 2027 DS additionally require a real enabled→disabled
       // transition (see dsEnabledSeen); E-stop/A-stop above are unaffected.
       const transition = protocol === 'legacy' || this.dsEnabledSeen.get(station) === true;
-      if (transition && (enabledAt === undefined || Date.now() - enabledAt > FMS_ENABLE_GRACE_MS)) {
+      // Re-read: the re-attach above may just have re-enabled this station.
+      const lastEnable = this.lastFmsEnable.get(station);
+      if (transition && (lastEnable === undefined || Date.now() - lastEnable > FMS_ENABLE_GRACE_MS)) {
         if (robotComms === false) {
           // "Disabled" with no robot link is the DS reacting to a comms
           // drop, not the driver pressing Disable. Keep the station enabled

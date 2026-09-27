@@ -123,6 +123,11 @@ A stopped robot is recoverable mid-match:
   Untested: whether a Driver Station that latched its own local disable
   (the Enter key) follows that back to enabled, or has to be re-enabled at
   the DS.
+- A Driver Station that reports a disable and then goes quiet for 5 s or
+  more was reacting to losing the field, not to the driver: when it
+  re-attaches during auto/teleop/endgame, pFMS re-enables it on its own
+  (journal: `Re-enabled: slot1 (DS back after dropping off the field)`). A
+  driver's own disable keeps the DS talking, so that still latches.
 - A disable applied by field staff can only be lifted by field staff.
 - Untested: whether a Disable — or an E-Stop — pressed on the 2027 Driver
   Station reaches pFMS. That DS never sets the "enabled" bit in its status,

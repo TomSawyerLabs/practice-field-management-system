@@ -434,6 +434,52 @@ describe('a relay with driver-station hand-offs', () => {
   }, 10_000);
 });
 
+describe('a driver station that drops off the field mid-match', () => {
+  /** The DS went quiet long enough for the FMS to consider it detached. */
+  function dsGoesQuiet(engine: MatchEngine, station: 'slot1') {
+    (engine as unknown as { lastDsHeartbeat: Map<string, number> }).lastDsHeartbeat.set(station, Date.now() - 6_000);
+  }
+
+  test('comes back enabled when its last word was a disable', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+    await Bun.sleep(2100);
+    engine.dsReportedStatus('slot1', false, false, false, 0x78, true);
+    let s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(false);
+    expect(s.stationStates.slot1?.disabledBy).toBe('ds');
+
+    dsGoesQuiet(engine, 'slot1');
+    engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
+    s = engine.getState();
+    expect(s.stationStates.slot1?.enabled).toBe(true);
+    expect(s.stationStates.slot1?.disabledBy).toBeNull();
+    // Its first "still disabled" reports after the enable are the grace window, not a new disable
+    engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
+    engine.stopMatch();
+  }, 15_000);
+
+  test('a disable from a DS that keeps talking is the driver, and stays', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+    await Bun.sleep(2100);
+    engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
+    engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+    expect(engine.getState().stationStates.slot1?.disabledBy).toBe('ds');
+    engine.stopMatch();
+  }, 10_000);
+
+  test('a staff disable survives the DS coming back', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+    engine.stationDisable('slot1', 'admin');
+    dsGoesQuiet(engine, 'slot1');
+    engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+    expect(engine.getState().stationStates.slot1?.disabledBy).toBe('admin');
+    engine.stopMatch();
+  }, 10_000);
+});
+
 describe('a manual relay', () => {
   test('enables everyone and ends on Finish', async () => {
     const engine = await startRace(
