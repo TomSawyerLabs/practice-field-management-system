@@ -9,17 +9,10 @@ import GitHubIcon from '@mui/icons-material/GitHub';
 import ScoreboardIcon from '@mui/icons-material/Scoreboard';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
 import { useConnectivity, ConnectivityState } from '../hooks/useConnectivity';
-import {
-  usePendingCommit,
-  usePendingCommitState,
-  useLatest,
-  sendApplyConfig,
-  useServerStartTime,
-  serverToBrowserTime,
-} from '../hooks/useBackend';
-import { StationNameList, type StationName } from '../../../src/types';
-import { prettyStationName } from '../../../src/utils';
+import { usePendingCommitState, useLatest, useServerStartTime, serverToBrowserTime } from '../hooks/useBackend';
+import { StationNameList, type StagedStationChange } from '../../../src/types';
 import { useSupportWidget } from './SupportChatWidget';
+import { describeStationChange, holdReasonText, DEFERRED_TEXT_TEAM } from './PendingRadioChanges';
 
 type DotColor = 'success.main' | 'error.main' | 'warning.main' | 'text.disabled';
 
@@ -193,40 +186,36 @@ function SupportButton() {
   }
 }
 
-/** One line per staged station change, plus the deferred re-apply if owed.
- *  High level only: which slot, which SSID goes/comes — never a passphrase. */
+/** What is waiting to reach the radio and why. Named by robot, never by
+ *  slot — this bar is on every page, including the teams' — and never a
+ *  passphrase. There is nothing for a team to do about it; staff apply held
+ *  changes from the match or admin page. */
 function PendingChangeList() {
   const pending = usePendingCommitState();
   const latest = useLatest();
-  const active = latest?.radioUpdate?.stationStatuses;
-  const lines: string[] = [];
-  for (const station of StationNameList) {
-    const staged = pending.stagedChanges?.[station as StationName];
-    if (staged === undefined) continue;
-    const label = prettyStationName(station);
-    const current = active?.[station as StationName]?.ssid || undefined;
-    if (staged === null) {
-      lines.push(`${label}: clear${current ? ` ${current}` : ''}`);
-      continue;
-    }
-    let text: string;
-    if (!current) text = `${label}: configure ${staged.ssid}`;
-    else if (current === staged.ssid) text = `${label}: re-apply ${staged.ssid}`;
-    else text = `${label}: ${current} → ${staged.ssid}`;
-    if (staged.internetAccess !== undefined) text += ` · internet ${staged.internetAccess ? 'on' : 'off'}`;
-    lines.push(text);
-  }
-  if (pending.deferred) lines.push('Re-apply the current configuration (held back while a match was running)');
+  const radio = latest?.radioUpdate?.stationStatuses;
+  const lines = (changes: Record<string, StagedStationChange | null> | undefined) =>
+    StationNameList.filter(s => changes && s in changes).map(s =>
+      describeStationChange(changes![s] ?? null, radio?.[s]?.ssid || undefined),
+    );
+  const held = lines(pending.stagedChanges);
+  const deferred = lines(pending.deferredChanges);
+  const group = (title: string, items: string[]) =>
+    items.length > 0 && (
+      <Box sx={{ mb: 0.5 }}>
+        <Box sx={{ fontWeight: 700 }}>{title}</Box>
+        {items.map(l => (
+          <Box key={l} sx={{ whiteSpace: 'nowrap' }}>
+            • {l}
+          </Box>
+        ))}
+      </Box>
+    );
   return (
     <Box sx={{ fontSize: '0.75rem' }}>
-      <Box sx={{ fontWeight: 700, mb: lines.length ? 0.5 : 0 }}>
-        {lines.length ? 'Apply to the radio:' : 'Configuration changes are staged but not yet applied to the radio.'}
-      </Box>
-      {lines.map(l => (
-        <Box key={l} sx={{ whiteSpace: 'nowrap' }}>
-          • {l}
-        </Box>
-      ))}
+      {group(holdReasonText(pending.hold, 'team'), held)}
+      {group(DEFERRED_TEXT_TEAM, deferred)}
+      {held.length === 0 && deferred.length === 0 && 'Wi-Fi changes are waiting to reach the radio.'}
     </Box>
   );
 }
@@ -235,14 +224,8 @@ export function StatusBar() {
   const connectivity = useConnectivity();
   const internet = getInternetIndicator(connectivity);
   const pfms = getPfmsIndicator(connectivity);
-  const pendingCommit = usePendingCommit();
-  const showApply = pendingCommit;
+  const pending = usePendingCommitState();
   const serverStartTime = useServerStartTime();
-
-  const handleApply = () => {
-    // Backend already has staged changes — just commit them
-    sendApplyConfig();
-  };
 
   return (
     <Box
@@ -253,7 +236,7 @@ export function StatusBar() {
         justifyContent: 'center',
         height: 24,
         px: 1,
-        backgroundColor: showApply ? 'warning.dark' : 'background.paper',
+        backgroundColor: pending.pending ? 'info.dark' : 'background.paper',
         borderBottom: 1,
         borderColor: 'divider',
         transition: 'background-color 0.3s',
@@ -262,25 +245,14 @@ export function StatusBar() {
       <StatusDot color={internet.color} label="Internet" tooltip={internet.tooltip} />
       <StatusDot color={pfms.color} label="PFMS" tooltip={pfms.tooltip} />
       {serverStartTime != null && <UptimeDisplay serverStartTime={serverStartTime} />}
-      {showApply && (
+      {pending.pending && (
         <Tooltip title={<PendingChangeList />} arrow enterTouchDelay={0} leaveTouchDelay={4000}>
-          <Button
-            size="small"
-            variant="contained"
-            color="warning"
-            onClick={handleApply}
-            sx={{
-              ml: 1,
-              py: 0,
-              px: 1,
-              minHeight: 18,
-              fontSize: '0.65rem',
-              lineHeight: 1.2,
-              textTransform: 'none',
-            }}
+          <Typography
+            component="span"
+            sx={{ ml: 1, fontSize: '0.65rem', lineHeight: 1.2, cursor: 'default', whiteSpace: 'nowrap' }}
           >
-            Apply pending changes
-          </Button>
+            ⏳ Wi-Fi changes waiting
+          </Typography>
         </Tooltip>
       )}
       <Box sx={{ position: 'absolute', right: 4, display: 'flex', gap: 0.5, alignItems: 'center' }}>

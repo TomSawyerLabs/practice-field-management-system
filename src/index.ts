@@ -340,6 +340,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
 
+  // Teams' Wi-Fi requests are held — parked, not applied — while a match
+  // exists in any phase (created through post-match), or while an admin holds
+  // them from the admin page. Held changes apply on their own the moment the
+  // hold lifts; staff can apply them sooner with "Apply now". Read live.
+  radioManager.setShouldHold(() => {
+    if (matchEngine.getState().phase !== 'idle') return 'match';
+    if (setupConfigStore.get().settings.holdRadioChanges) return 'admin';
+    return null;
+  });
+  matchEngine.addStateListener(() => radioManager.retryHeldChanges());
+  setupConfigStore.addListener(() => radioManager.retryHeldChanges());
+
   // Initialize match audio (plays FRC field sounds on phase transitions)
   const matchAudio = new MatchAudio();
   await matchAudio.init();

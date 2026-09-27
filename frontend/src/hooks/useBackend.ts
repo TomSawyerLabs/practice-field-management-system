@@ -229,23 +229,24 @@ function processHistory(entries: StatusEntry[]) {
   }, 200); // 200ms initial delay to allow components to mount
 }
 
-export function sendNewConfig(
-  station: StationName,
-  ssid: string,
-  wpaKey: string,
-  stage = false,
-  internetAccess?: boolean,
-) {
+/** Put a robot on a station, or release it (empty SSID). The server decides
+ *  when the radio actually changes: now, once robots are disabled, or once
+ *  the match is over / staff apply it. */
+export function sendNewConfig(station: StationName, ssid: string, wpaKey: string, internetAccess?: boolean) {
   const update: StationUpdate = {
     type: 'station',
     station,
     ssid,
     wpaKey,
-    stage,
     internetAccess,
   };
-  console.log('Sending config update:', update);
+  console.log('Sending config update:', { ...update, wpaKey: '***' });
   ws?.send(JSON.stringify(update));
+}
+
+/** Withdraw a request that is still waiting (held) for a station. */
+export function sendCancelStationChange(station: StationName) {
+  ws?.send(JSON.stringify({ type: 'cancelStationChange', station }));
 }
 
 export function sendInternetToggle(station: StationName, enabled: boolean) {
@@ -1065,8 +1066,8 @@ export function sendRemoveSavedTeam(ssid: string) {
 }
 
 /** Enable a previously-saved robot by SSID — server looks up the passphrase. */
-export function sendEnableSavedRobot(station: StationName, ssid: string, stage = false) {
-  ws?.send(JSON.stringify({ type: 'enableSavedRobot', ssid, station, stage }));
+export function sendEnableSavedRobot(station: StationName, ssid: string) {
+  ws?.send(JSON.stringify({ type: 'enableSavedRobot', ssid, station }));
 }
 
 export function sendStationLeave(station: StationName) {
@@ -1254,8 +1255,8 @@ export function usePendingCommit(): boolean {
   return pending;
 }
 
-/** The whole pending-commit message: what is staged, and whether a deferred
- *  re-apply is owed. For the status bar's summary of what "Apply" will do. */
+/** The whole pending-commit message: what is held and why, and what is
+ *  waiting for robots to be disabled. */
 export function usePendingCommitState(): PendingCommitState {
   const [state, setState] = useState<PendingCommitState>(currentPendingCommitState);
 
@@ -1269,7 +1270,8 @@ export function usePendingCommitState(): PendingCommitState {
   return state;
 }
 
-/** Get the backend's staged changes (not yet committed). */
+/** The backend's held changes: requests parked until the match is over,
+ *  the admin hold is lifted, or staff apply them. null = a release. */
 export function useBackendStagedChanges(): Record<string, StagedStationChange | null> {
   const [staged, setStaged] = useState(currentStagedChanges);
 
@@ -1296,6 +1298,7 @@ export function useLastLinked(): Partial<Record<StationName, number>> {
   return timestamps;
 }
 
+/** Staff "Apply now": apply every held change regardless of the hold. */
 export function sendApplyConfig() {
   ws?.send(JSON.stringify({ type: 'applyConfig' }));
 }

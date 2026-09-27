@@ -239,6 +239,10 @@ export interface SetupSettings {
    *  control). Absent/true = on; set false via the admin switch to hold
    *  not-in-match robots disabled. */
   outOfMatchControl?: boolean;
+  /** Hold teams' Wi-Fi requests instead of applying them — same effect as a
+   *  match existing. Staff apply them from the match or admin page. Absent /
+   *  false = requests apply as they come (once robots are disabled). */
+  holdRadioChanges?: boolean;
   /** Field policy on robot control systems. 'none' (default) says nothing to
    *  teams; 'preferSystemCore' warns roboRIO teams; the block modes fail the
    *  robot check for the disallowed control system. */
@@ -748,6 +752,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   outOfMatchControl: v => typeof v === 'boolean',
+  holdRadioChanges: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
   timelapse: isTimelapseConfig,
@@ -968,25 +973,38 @@ export function isStationUpdate(update: unknown): update is StationUpdate {
   if (typeof update !== 'object') return false;
   if (!update) return false;
 
-  const { type, station, ssid, wpaKey, stage } = update as StationUpdate;
+  const { type, station, ssid, wpaKey } = update as StationUpdate;
 
   if (type !== 'station') return false;
   if (!StationNameRegex.test(station)) return false;
   if (typeof ssid !== 'string') return false;
   if (typeof wpaKey !== 'string') return false;
-  if (typeof stage !== 'undefined' && typeof stage !== 'boolean') return false;
 
   return true;
 }
 
+/** Put a robot on a station (or, with an empty SSID, release it). The server
+ *  decides whether that happens now, once robots are disabled, or once a match
+ *  is over / staff apply it — see RadioManager.configure. */
 export type StationUpdate = {
   type: 'station';
   station: StationName;
   ssid: string;
   wpaKey: string;
-  stage?: boolean;
   internetAccess?: boolean;
 };
+
+/** Withdraw a request that is still waiting (held) for a station. */
+export type CancelStationChange = {
+  type: 'cancelStationChange';
+  station: StationName;
+};
+
+export function isCancelStationChange(msg: unknown): msg is CancelStationChange {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as CancelStationChange;
+  return m.type === 'cancelStationChange' && typeof m.station === 'string' && StationNameRegex.test(m.station);
+}
 
 export type InternetToggle = {
   type: 'internetToggle';
@@ -1829,16 +1847,26 @@ export function isRoutePreferenceState(msg: unknown): msg is RoutePreferenceStat
 
 // ── Pending Commit Types ────────────────────────────────────────────
 
+/** Why Wi-Fi requests are being held rather than applied: a match exists
+ *  (created, running, or post-match), or an admin switched the hold on. */
+export type RadioHoldReason = 'match' | 'admin';
+
 /** Sent from server to client when pending commit state changes */
 export type PendingCommitState = {
   type: 'pendingCommitState';
+  /** Anything at all is waiting to reach the radio (held or deferred). */
   pending: boolean;
-  /** Staged changes per station. null = staged clear, absent = no staged change.
+  /** Held changes per station. null = release, absent = nothing held.
    *  Deliberately carries no WPA key — clients only need to describe the change. */
   stagedChanges?: Record<string, StagedStationChange | null>;
-  /** True when an immediate change was held back (e.g. a match was running)
-   *  and the current configuration still needs to be re-applied to the radio. */
+  /** Why the held changes are waiting. Absent when nothing is held. */
+  hold?: RadioHoldReason;
+  /** True when applied changes are waiting for every robot to be disabled
+   *  (or a running match to end) before the radio is reconfigured. */
   deferred?: boolean;
+  /** What that deferred reconfigure will change: stations whose applied
+   *  config the radio does not have yet. null = the station will be cleared. */
+  deferredChanges?: Record<string, StagedStationChange | null>;
 };
 
 export type StagedStationChange = {
@@ -1867,7 +1895,8 @@ export function isLastLinkedState(msg: unknown): msg is LastLinkedState {
   return (msg as LastLinkedState).type === 'lastLinkedState';
 }
 
-/** Sent from client to server to trigger a commit of pending changes */
+/** Staff "Apply now": apply every held change regardless of the hold. The
+ *  radio still waits for enabled robots to be disabled. */
 export type ApplyConfigMsg = {
   type: 'applyConfig';
 };
@@ -1949,7 +1978,6 @@ export type EnableSavedRobot = {
   type: 'enableSavedRobot';
   ssid: string;
   station: StationName;
-  stage?: boolean;
 };
 export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
   if (typeof msg !== 'object' || !msg) return false;

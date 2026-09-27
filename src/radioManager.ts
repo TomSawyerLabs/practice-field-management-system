@@ -20,6 +20,8 @@ import {
   StatusEntry,
   translateRadioUpdate,
   StagedStationChange,
+  PendingCommitState,
+  RadioHoldReason,
 } from './types.js';
 
 type StatusListener = (entry: StatusEntry) => void;
@@ -53,8 +55,11 @@ class RadioManager {
   private lastBroadcastTime: number = 0;
   private readonly maxBroadcastInterval = 15000;
   private shouldDefer?: () => boolean;
+  /** Why team requests are being parked as staged changes instead of applied
+   *  (a match exists, or an admin is holding them). Null = apply as they come. */
+  private shouldHold?: () => RadioHoldReason | null;
   private _pendingCommit = false;
-  /** True when a non-staged (immediate) commit was deferred because shouldDefer() returned true. */
+  /** True when an applied change's commit was deferred because shouldDefer() returned true. */
   private _deferredCommit = false;
   private pendingCommitListeners: ((pending: boolean) => void)[] = [];
   /** Per-station timestamp of last time a robot was linked (isLinked=true). */
@@ -403,21 +408,35 @@ class RadioManager {
     console.log('RadioManager polling stopped');
   }
 
+  /**
+   * A team's (or staff's) request to put a robot on a station — or, with an
+   * empty SSID, to release it. The server decides what happens next:
+   *
+   * - **Held** (shouldHold() says a match exists or an admin is holding
+   *   changes): parked in stagedChanges. Applied by retryHeldChanges() once
+   *   the hold lifts, or by applyPendingChanges() when staff press "Apply now".
+   * - **Otherwise applied** to activeConfig and committed. The commit itself
+   *   still waits while robots are enabled (see commitConfiguration /
+   *   setShouldDefer) and runs as soon as they are all disabled.
+   *
+   * Commits are serialized on commitQueue, so a request that arrives while
+   * the radio is mid-reconfigure simply queues behind it — never dropped.
+   */
   async configure(
     stationId: StationName,
-    {
-      ssid,
-      wpaKey,
-      stage,
-      internetAccess,
-    }: { ssid: string; wpaKey: string; stage?: boolean; internetAccess?: boolean },
+    { ssid, wpaKey, internetAccess }: { ssid: string; wpaKey: string; internetAccess?: boolean },
   ): Promise<void> {
-    if (this.configuring) {
-      console.log('Already configuring');
+    const config = ssid ? { ssid, wpaKey, internetAccess } : null;
+
+    // Releasing a station that has nothing active only withdraws whatever was
+    // waiting for it. Staging a "clear" of an empty station would otherwise sit
+    // in the pending list forever, doing nothing.
+    if (!config && !this.activeConfig[stationId]) {
+      this.cancelStagedChange(stationId);
       return;
     }
 
-    const config = ssid ? { ssid, wpaKey, internetAccess } : null;
+    const hold = this.shouldHold?.() ?? null;
 
     // Prevent duplicate SSIDs across stations.  If this SSID is already active
     // (or staged) on a *different* station, clear the old one first so we never
@@ -425,21 +444,29 @@ class RadioManager {
     if (ssid) {
       for (const other of StationNameList) {
         if (other === stationId) continue;
-        if (this.activeConfig[other]?.ssid === ssid) {
-          console.log(`Duplicate SSID "${ssid}": clearing ${other} (was active) before configuring ${stationId}`);
-          delete this.activeConfig[other];
-          this.lastLinked.delete(other);
-        }
         if (this.stagedChanges[other]?.ssid === ssid) {
           console.log(`Duplicate SSID "${ssid}": clearing staged config on ${other} before configuring ${stationId}`);
           delete this.stagedChanges[other];
         }
+        if (this.activeConfig[other]?.ssid === ssid) {
+          if (hold) {
+            // Can't touch activeConfig while holding: the radio would drift
+            // from it and the reconcile loop would push the change anyway.
+            // Release the old station together with the rest when the hold lifts.
+            console.log(`Duplicate SSID "${ssid}": holding a release of ${other} alongside ${stationId}`);
+            this.stagedChanges[other] = null;
+          } else {
+            console.log(`Duplicate SSID "${ssid}": clearing ${other} (was active) before configuring ${stationId}`);
+            delete this.activeConfig[other];
+            this.lastLinked.delete(other);
+          }
+        }
       }
     }
 
-    if (stage) {
-      // Stage: store in stagedChanges, don't touch activeConfig
-      // null means "clear this station" when committed
+    if (hold) {
+      console.log(`Holding radio change for ${stationId} (${hold}): ${config ? config.ssid : 'release'}`);
+      // null means "clear this station" when applied
       this.stagedChanges[stationId] = config ?? null;
       this.saveStagedConfig();
       if (!this._pendingCommit) {
@@ -447,30 +474,31 @@ class RadioManager {
       } else {
         this.broadcastPendingState(); // already pending, but staged changes updated
       }
-    } else {
-      // Immediate: apply to activeConfig and commit
-      if (config) this.setActiveStationConfig(stationId, config);
-      else {
-        delete this.activeConfig[stationId];
-        this.lastLinked.delete(stationId);
-      }
-
-      // Clear any stale staged change for this station — the direct apply
-      // supersedes whatever was staged, so keeping it around would leave
-      // the "pending changes" banner stuck.
-      if (this.stagedChanges[stationId] !== undefined) {
-        delete this.stagedChanges[stationId];
-        this.saveStagedConfig();
-        const hasStagedChanges = StationNameList.some(s => this.stagedChanges[s] !== undefined);
-        if (!hasStagedChanges && !this._deferredCommit) {
-          this.setPendingCommit(false);
-        }
-      }
-
-      this.saveActiveConfig();
-      this.notifyConfigChange();
-      await this.commitConfiguration();
+      return;
     }
+
+    // Apply to activeConfig and commit
+    if (config) this.setActiveStationConfig(stationId, config);
+    else {
+      delete this.activeConfig[stationId];
+      this.lastLinked.delete(stationId);
+    }
+
+    // Clear any stale staged change for this station — the direct apply
+    // supersedes whatever was staged, so keeping it around would leave
+    // the pending list stuck.
+    if (this.stagedChanges[stationId] !== undefined) {
+      delete this.stagedChanges[stationId];
+      this.saveStagedConfig();
+      const hasStagedChanges = StationNameList.some(s => this.stagedChanges[s] !== undefined);
+      if (!hasStagedChanges && !this._deferredCommit) {
+        this.setPendingCommit(false);
+      }
+    }
+
+    this.saveActiveConfig();
+    this.notifyConfigChange();
+    await this.commitConfiguration();
   }
 
   /** Cancel a staged change for a station, leaving activeConfig untouched. */
@@ -554,12 +582,37 @@ class RadioManager {
   }
 
   /**
-   * If a non-staged commit was deferred, retry it now (if no longer deferred).
+   * Set a callback that says whether (and why) requests should be held back
+   * rather than applied: a match exists, or an admin is holding changes. Held
+   * requests sit in stagedChanges until retryHeldChanges() finds the hold
+   * lifted, or staff apply them with applyPendingChanges().
+   */
+  setShouldHold(fn: () => RadioHoldReason | null) {
+    this.shouldHold = fn;
+  }
+
+  /**
+   * Apply held changes if the hold has lifted. Call whenever the hold inputs
+   * change (match state, the admin switch). Cheap no-op when nothing is held.
+   */
+  retryHeldChanges() {
+    if (!StationNameList.some(s => this.stagedChanges[s] !== undefined)) return;
+    if (this.shouldHold?.()) {
+      this.broadcastPendingState(); // still held — but the reason may have changed
+      return;
+    }
+    console.log('Hold lifted, applying held radio changes');
+    this.applyPendingChanges().catch(err => {
+      appError('Error applying held configuration: ' + (err instanceof Error ? err.message : String(err)));
+    });
+  }
+
+  /**
+   * If an applied change's commit was deferred, retry it now (if no longer deferred).
    * Call this when the defer condition clears (e.g., match ends, robots disabled).
    *
-   * Only retries commits that were originally requested as immediate (stage=false)
-   * but got deferred because shouldDefer() was true. User-staged changes (stage=true)
-   * are never auto-applied — they wait for an explicit "Apply" action.
+   * Only retries commits of changes already in activeConfig. Held (staged)
+   * changes are not touched — see retryHeldChanges().
    */
   retryDeferredCommit() {
     if (!this._deferredCommit) return;
@@ -574,9 +627,10 @@ class RadioManager {
   }
 
   /**
-   * Apply user-staged changes and commit the resulting configuration to the radio.
-   * This is the ONLY path that merges stagedChanges into activeConfig — call it
-   * when the user explicitly clicks "Apply pending changes."
+   * Apply held changes and commit the resulting configuration to the radio.
+   * This is the ONLY path that merges stagedChanges into activeConfig: staff
+   * pressing "Apply now", or the hold lifting (retryHeldChanges). It ignores
+   * the hold, but the commit still waits while robots are enabled.
    */
   applyPendingChanges(): Promise<void> {
     this.applyStagedChanges();
@@ -589,11 +643,14 @@ class RadioManager {
         console.log('Radio configuration deferred: robots enabled or match active');
       }
       this._deferredCommit = true;
-      this.broadcastPendingState();
+      // A deferred commit is pending work too — clients show "waiting for
+      // robots to be disabled" off this.
+      if (!this._pendingCommit) this.setPendingCommit(true);
+      else this.broadcastPendingState();
       return Promise.resolve();
     }
-    // DO NOT merge staged changes here — they require an explicit "Apply" action
-    // via applyPendingChanges(). This method only commits what is already in activeConfig.
+    // DO NOT merge held changes here — that is applyPendingChanges()'s job.
+    // This method only commits what is already in activeConfig.
     this._deferredCommit = false;
     const hasStagedChanges = StationNameList.some(s => this.stagedChanges[s] !== undefined);
     if (hasStagedChanges) {
@@ -699,8 +756,8 @@ class RadioManager {
     jobs.push(this.configureRadio(config));
 
     await Promise.all(jobs);
-    // Re-check pending state — staged changes may still exist even though this
-    // commit is done (staged changes are only merged by explicit "Apply" action).
+    // Re-check pending state — held changes may still exist even though this
+    // commit is done (they are only merged by applyPendingChanges).
     const hasStagedChanges = StationNameList.some(s => this.stagedChanges[s] !== undefined);
     if (hasStagedChanges || this._deferredCommit) {
       this.broadcastPendingState();
@@ -976,9 +1033,39 @@ class RadioManager {
     return result;
   }
 
-  /** An immediate commit was deferred (see setShouldDefer) and is still owed. */
+  /** A commit was deferred (see setShouldDefer) and is still owed. */
   get deferredCommit(): boolean {
     return this._deferredCommit;
+  }
+
+  /** Everything clients need to show what is waiting and why. */
+  getPendingState(): Omit<PendingCommitState, 'type'> {
+    const stagedChanges = this.getStagedChanges();
+    const hasStaged = Object.keys(stagedChanges).length > 0;
+    return {
+      pending: this._pendingCommit,
+      stagedChanges: hasStaged ? stagedChanges : undefined,
+      hold: hasStaged ? (this.shouldHold?.() ?? undefined) : undefined,
+      deferred: this._deferredCommit || undefined,
+      deferredChanges: this._deferredCommit ? this.getDeferredChanges() : undefined,
+    };
+  }
+
+  /** Stations whose active config the radio does not have yet — what the
+   *  deferred commit will change once robots are disabled. Compared against
+   *  the last radio status seen; with no radio status, every station counts. */
+  private getDeferredChanges(): Record<string, StagedStationChange | null> {
+    const onRadio = this.lastBroadcastEntry?.radioUpdate?.stationStatuses;
+    const result: Record<string, StagedStationChange | null> = {};
+    for (const station of StationNameList) {
+      const active = this.activeConfig[station];
+      const radioSsid = onRadio?.[station]?.ssid || undefined;
+      if ((active?.ssid ?? undefined) === radioSsid) continue;
+      result[station] = active
+        ? { ssid: active.ssid, internetAccess: active.internetAccess, secured: active.wpaKey.length > 0 }
+        : null;
+    }
+    return result;
   }
 
   getTeamForStation(station: StationName): number | null {

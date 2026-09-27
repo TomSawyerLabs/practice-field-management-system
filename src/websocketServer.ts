@@ -5,6 +5,7 @@ import { SiteHealthChecker } from './siteHealth.js';
 import RadioManager from './radioManager.js';
 import {
   isStationUpdate,
+  isCancelStationChange,
   isInternetToggle,
   isAdminStopMatch,
   isAdminGlobalEStop,
@@ -430,13 +431,8 @@ export function setupWebSocket(
   savedTeamStore?.addListener(broadcast);
 
   // Broadcast pending commit state changes to all clients
-  radioManager.addPendingCommitListener(pending => {
-    broadcast({
-      type: 'pendingCommitState',
-      pending,
-      stagedChanges: pending ? radioManager.getStagedChanges() : undefined,
-      deferred: pending ? radioManager.deferredCommit : undefined,
-    } satisfies PendingCommitState);
+  radioManager.addPendingCommitListener(() => {
+    broadcast({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState);
   });
 
   // Broadcast last-linked timestamp changes to all clients
@@ -619,12 +615,7 @@ export function setupWebSocket(
 
     // Send initial pending commit state
     ws.send(
-      JSON.stringify({
-        type: 'pendingCommitState',
-        pending: radioManager.pendingCommit,
-        stagedChanges: radioManager.pendingCommit ? radioManager.getStagedChanges() : undefined,
-        deferred: radioManager.pendingCommit ? radioManager.deferredCommit : undefined,
-      } satisfies PendingCommitState),
+      JSON.stringify({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState),
     );
 
     // Send initial last-linked timestamps
@@ -746,16 +737,16 @@ export function setupWebSocket(
           ws.send(JSON.stringify({ error: 'Cannot reconfigure stations during an active match' }));
         } else {
           const current = radioManager.getStationConfig(data.station);
-          const staged = radioManager.getStagedConfig(data.station);
-          const hasStagedChange = staged !== undefined; // null = staged clear, object = staged config
+          const held = radioManager.getStagedConfig(data.station);
+          const hasHeldChange = held !== undefined; // null = held release, object = held config
           const activeMatchesRequest = current && current.ssid === data.ssid && current.wpaKey === data.wpaKey;
           const internetChanged = current && !!current.internetAccess !== !!data.internetAccess;
 
-          if (activeMatchesRequest && !internetChanged && !hasStagedChange) {
+          if (activeMatchesRequest && !internetChanged && !hasHeldChange) {
             // Nothing changed at all
             ws.send(JSON.stringify({ info: 'No changes detected — configuration already active' }));
-          } else if (activeMatchesRequest && hasStagedChange) {
-            // Active config already matches — just cancel the staged change (e.g. undo a pending release)
+          } else if (activeMatchesRequest && hasHeldChange) {
+            // Active config already matches — just withdraw the held change (e.g. undo a pending release)
             radioManager.cancelStagedChange(data.station);
             if (internetChanged) {
               radioManager.toggleInternetAccess(data.station, !!data.internetAccess).catch(err => {
@@ -777,6 +768,8 @@ export function setupWebSocket(
             });
           }
         }
+      } else if (isCancelStationChange(data)) {
+        radioManager.cancelStagedChange(data.station);
       } else if (isInternetToggle(data)) {
         if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot toggle internet access during an active match' }));
@@ -953,7 +946,7 @@ export function setupWebSocket(
         // so the team can re-add the robot without it appearing "already active".
         for (const station of StationNameList) {
           if (radioManager.getStationConfig(station)?.ssid === data.ssid) {
-            radioManager.configure(station, { ssid: '', wpaKey: '', stage: true }).catch(err => {
+            radioManager.configure(station, { ssid: '', wpaKey: '' }).catch(err => {
               appError(`Error releasing station ${station} after removing saved team ${data.ssid}: ${err.message}`);
             });
             break; // SSIDs are unique across stations
@@ -978,7 +971,6 @@ export function setupWebSocket(
               .configure(data.station, {
                 ssid: saved.ssid,
                 wpaKey: saved.wpaKey,
-                stage: data.stage,
                 internetAccess: saved.internetAccess,
               })
               .catch(err => {

@@ -179,9 +179,10 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
     setOpen(false);
   };
 
-  const handleSave = (stage: boolean) => {
-    // Always send to backend — stage=true stores in pendingChanges without committing
-    sendNewConfig(station, ssid, passphrase, stage);
+  const handleSave = () => {
+    // The server decides when the radio changes: now, once robots are
+    // disabled, or once the match is over / staff apply it.
+    sendNewConfig(station, ssid, passphrase);
 
     // Auto-save to recent settings if valid
     if (ssid.trim() && passphrase.trim()) {
@@ -204,8 +205,8 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
   const handleClearStation = () => {
     // Only clear if the station is actually configured
     if (stationSsid || hasStagedChange(station)) {
-      // Stage the clear on the backend — committed when user clicks Apply
-      sendNewConfig(station, '', '', true);
+      // A release of an empty station just withdraws whatever was waiting for it.
+      sendNewConfig(station, '', '');
     }
   };
 
@@ -314,8 +315,9 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                   {stagedChanges[station]?.ssid ? (
                     <SSIDDisplay ssid={stagedChanges[station]?.ssid} secure={stagedChanges[station]?.secured} />
                   ) : (
-                    <Chip label="(clear)" size="small" variant="outlined" color="warning" sx={{ height: 20 }} />
+                    <Chip label="(release)" size="small" variant="outlined" color="warning" sx={{ height: 20 }} />
                   )}
+                  <Chip label="waiting" size="small" variant="outlined" color="warning" sx={{ height: 20 }} />
                 </>
               )}
               {/* DS IP indicator */}
@@ -994,16 +996,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
           }}
           onSubmit={e => {
             e.preventDefault();
-            // Empty SSID = clear: stage it (consistent with the X button).
-            // Non-empty SSID = save: commit immediately.
-            if (isSaveEnabled) handleSave(isSSIDEmpty);
-          }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && e.shiftKey) {
-              // Shift+Enter: Stage
-              if (isSaveEnabled) handleSave(true);
-              e.preventDefault(); // Prevent form submit
-            }
+            if (isSaveEnabled) handleSave();
           }}
         >
           <DialogTitle>Configure {pretty} Wi-Fi</DialogTitle>
@@ -1172,11 +1165,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
             <Button onClick={handleClose} color="secondary">
               Cancel
             </Button>
-            {!isSSIDEmpty && (
-              <Button onClick={() => isSaveEnabled && handleSave(true)} color="secondary" disabled={!isSaveEnabled}>
-                Stage
-              </Button>
-            )}
             <Button type="submit" color="primary" disabled={!isSaveEnabled}>
               {isSSIDEmpty ? 'Clear' : 'Save'}
             </Button>

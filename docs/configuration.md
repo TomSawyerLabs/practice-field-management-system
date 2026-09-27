@@ -91,7 +91,7 @@ State files are JSON, written to the working directory by default:
 | Variable               | Default                 | Holds                                                                                                                                                        |
 | ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                                           |
-| `STAGED_CONFIG_FILE`   | `staged-config.json`    | Staged (not yet committed) station configuration                                                                                                             |
+| `STAGED_CONFIG_FILE`   | `staged-config.json`    | Held station changes — teams' Wi-Fi requests waiting for the match to end or staff to apply them                                                             |
 | `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
 | `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
 | `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                                                       |

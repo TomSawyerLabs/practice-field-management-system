@@ -61,6 +61,7 @@ import {
   matchSummaryUrl,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
+import { PendingRadioChangesPanel } from './PendingRadioChanges';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
@@ -291,6 +292,10 @@ export function MatchControlPage() {
             variant="outlined"
           />
         </Box>
+
+        {/* Teams' Wi-Fi requests wait while a match exists; this is where the
+            match manager sees them and applies them between matches. */}
+        <PendingRadioChangesPanel />
 
         {phase === 'idle' && <IdleView />}
         {phase === 'created' && <CreatedView matchState={matchState} />}

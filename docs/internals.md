@@ -52,9 +52,20 @@ A frontend client sends a WebSocket message with
 1. **WebSocket receives message** — `websocketServer.ts` validates the
    message and calls `radioManager.configure(station, { ssid, wpaKey })`.
 
-2. **Stage or commit** — if `stage: true`, the config is saved in memory
-   for later batch commit. Otherwise, `commitConfiguration()` fires
-   immediately.
+2. **Hold, defer, or commit** — the server decides when the radio changes:
+   - **Held** while a match exists in any phase (created through
+     post-match) or the admin "Hold Wi-Fi changes" box is ticked: the
+     request is parked in `staged-config.json` and applied on its own the
+     moment the hold lifts, or sooner when staff press **Apply now** on the
+     match or admin page (`applyConfig`).
+   - **Deferred** while any robot is enabled: the change is applied to the
+     active config straight away, but `commitConfiguration()` waits and
+     re-runs as soon as the last robot is disabled.
+   - Otherwise `commitConfiguration()` fires immediately.
+
+   Clients are told what is waiting and why (`pendingCommitState`: held
+   changes, the hold reason, deferred changes), so a team sees "waiting for
+   the match to end" rather than nothing.
 
 3. **Parse team number** — extracted from the SSID (format: `1234-...`),
    used to compute the team subnet `10.TE.AM.0/24`.

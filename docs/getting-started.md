@@ -225,8 +225,10 @@ box.
    you to create one (minimum 4 characters). Anyone can claim it while
    none is set, so do this before opening the field up.
 2. **Assign a team to a station.** From the home page, enter a team
-   number to open its control page, then set the SSID and WPA key and
-   apply. The AP reconfigures in ~30 seconds.
+   number to open its control page, then add the robot's SSID and WPA key
+   and press **Enable Wi-Fi**. The AP reconfigures in ~30 seconds — later
+   if robots are enabled or a match is set up (see
+   [match-system.md](match-system.md#wi-fi-changes-and-matches)).
 3. **Check the network page.** `/network` should show the VLAN coming up
    and, once a robot connects, discovered devices on `10.TE.AM.x`.
 4. **Pick an audio device.** `/admin` → Match Audio → select your output

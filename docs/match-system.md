@@ -158,6 +158,37 @@ It is the only path in pFMS that stops robots across alliances. A
 per-station E-Stop touches only that station; there is no code path by
 which one team's E-Stop reaches their alliance partners.
 
+## Wi-Fi changes and matches
+
+A team puts a robot on the field with one button, **Enable Wi-Fi**, and
+takes it off with **Release**. Reconfiguring the radio takes about 30
+seconds and drops every robot's Wi-Fi while it does, so the server — not
+the team — decides when that happens:
+
+- **Nothing in the way** (no match, no robot enabled): straight away.
+- **Robots enabled**: the change is applied but the radio waits, and
+  reconfigures the moment the last robot is disabled. The team's page says
+  "Connecting…" with the reason.
+- **A match exists** — created, counting down, running, or post-match —
+  or the admin page's **Hold Wi-Fi changes** box is ticked: the request is
+  _held_. The team's page says "Waiting" and why, and they can cancel it.
+  Held changes apply on their own the moment the hold lifts (the match is
+  cleared, or the box is unticked).
+
+The match page and the admin page show a **Wi-Fi changes waiting** panel
+whenever something is held or deferred: each change named by robot, the
+robots currently on the field with their link and enable state, and an
+**Apply now** button. Apply now applies every held change regardless of
+the hold; it is disabled while a match is running, and if robots are
+enabled the radio still waits for them to be disabled first. This is how a
+scrimmage day works: teams queue up their robots while a match is on, and
+the match manager applies the whole batch between matches, when nobody is
+driving.
+
+Teams are never shown slot numbers — a robot is named by its SSID, and
+"the field is full" is what they see when all six slots are taken (a
+disconnected robot can be taken over from there).
+
 ## The Match Window
 
 Tapping **Join** also opens a small match window for that station:

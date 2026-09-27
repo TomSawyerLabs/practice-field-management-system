@@ -25,7 +25,8 @@ import {
   useNetworkStats,
   useSubnetScan,
   useMdnsActivity,
-  useBackendStagedChanges,
+  usePendingCommitState,
+  sendCancelStationChange,
   useLastLinked,
   sendDrive,
   sendRoutePreference,
@@ -33,6 +34,7 @@ import {
   usePortBridgeState,
   sendPortBridge,
 } from '../hooks/useBackend';
+import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
 import { MatchPanelForControl } from './MatchPanel';
 import { MatchVideoCard } from './MatchVideoCard';
 import { TeamChecksModal } from './TeamChecksModal';
@@ -63,107 +65,76 @@ function formatNumberWithThinSpace(num: number | undefined): string {
   return num.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '\u2009');
 }
 
+/** What a station will hold once everything waiting has gone through. A
+ *  held request (applied when the match is over or staff apply it) or a
+ *  change waiting for robots to be disabled beats what the radio reports
+ *  right now. `ssid` null = the station is, or is about to be, empty. */
+type ProjectedStation = { ssid: string | null; pending: 'held' | 'deferred' | null };
+
+function useProjectedStations(): Record<StationName, ProjectedStation> {
+  const latest = useLatest();
+  const pending = usePendingCommitState();
+
+  return useMemo(() => {
+    const radio = latest?.radioUpdate?.stationStatuses;
+    const result = {} as Record<StationName, ProjectedStation>;
+    for (const station of StationNameList) {
+      const held = pending.stagedChanges?.[station];
+      const deferred = pending.deferredChanges?.[station];
+      if (held !== undefined) result[station] = { ssid: held?.ssid ?? null, pending: 'held' };
+      else if (deferred !== undefined) result[station] = { ssid: deferred?.ssid ?? null, pending: 'deferred' };
+      else result[station] = { ssid: radio?.[station]?.ssid || null, pending: null };
+    }
+    return result;
+  }, [latest, pending]);
+}
+
 /**
- * Collect all SSIDs currently active or staged across ALL stations.
+ * Every SSID that is on the field, or on its way there, across ALL stations.
  * Returns a Map of ssid → stationName so callers can find which station owns an SSID.
  */
 function useAllActiveSSIDs(): Map<string, StationName> {
-  const latest = useLatest();
-  const stagedChanges = useBackendStagedChanges();
+  const projected = useProjectedStations();
 
   return useMemo(() => {
     const ssids = new Map<string, StationName>();
-    const stationStatuses = latest?.radioUpdate?.stationStatuses;
-
     for (const station of StationNameList) {
-      // A staged clear means the station is being released — skip its active SSID
-      const hasStagedClear = station in stagedChanges && stagedChanges[station] === null;
-
-      // Staged config takes precedence
-      const staged = stagedChanges[station];
-      if (staged?.ssid) {
-        ssids.set(staged.ssid, station);
-        continue;
-      }
-
-      if (hasStagedClear) continue;
-
-      const ssid = stationStatuses?.[station]?.ssid;
+      const { ssid } = projected[station];
       if (ssid) ssids.set(ssid, station);
     }
     return ssids;
-  }, [latest, stagedChanges]);
+  }, [projected]);
 }
 
 /**
- * Find ALL physical stations assigned to SSIDs belonging to a given team number.
- * Returns a Map of ssid → stationName.
- *
- * Stations with a staged clear (null) are excluded — they are pending release
- * and should not show as active for this team.
+ * Every station that belongs (or is about to belong) to a team's robots.
+ * Returns a Map of ssid → stationName. A station whose robot is on its way
+ * off the field is not included.
  */
 function useStationsForTeam(teamNumber: number): Map<string, StationName> {
-  const latest = useLatest();
-  const stagedChanges = useBackendStagedChanges();
+  const projected = useProjectedStations();
 
   return useMemo(() => {
     const result = new Map<string, StationName>();
-    const stationStatuses = latest?.radioUpdate?.stationStatuses;
-
     for (const station of StationNameList) {
-      const hasStagedClear = station in stagedChanges && stagedChanges[station] === null;
-
-      // Check staged changes first — a staged config overrides active status,
-      // and a staged clear means this station is pending release.
-      const staged = stagedChanges[station];
-      if (staged?.ssid) {
-        const num = parseInt(staged.ssid.split('-', 2)[0]);
-        if (num === teamNumber) {
-          result.set(staged.ssid, station);
-        }
-        continue; // Staged config takes precedence over active radio status
-      }
-
-      if (hasStagedClear) continue; // Station pending release — skip
-
-      // Check active radio status
-      const ssid = stationStatuses?.[station]?.ssid;
-      if (ssid) {
-        const num = parseInt(ssid.split('-', 2)[0]);
-        if (num === teamNumber) {
-          result.set(ssid, station);
-        }
-      }
+      const { ssid } = projected[station];
+      if (ssid && teamOfSsid(ssid) === teamNumber) result.set(ssid, station);
     }
     return result;
-  }, [latest, stagedChanges, teamNumber]);
+  }, [projected, teamNumber]);
 }
 
-/**
- * Find the first unconfigured station slot.
- *
- * A station is considered available if it will be empty after pending changes
- * are applied: either it has no active config and no staged config, or it has
- * an active config but a staged clear (null) pending.
- */
+/** The first station that is empty, or about to be, once everything waiting
+ *  has gone through. Null when the field is full. */
 function useFindAvailableStation(): StationName | null {
-  const latest = useLatest();
-  const stagedChanges = useBackendStagedChanges();
+  const projected = useProjectedStations();
 
   return useMemo(() => {
-    const stationStatuses = latest?.radioUpdate?.stationStatuses;
-
     for (const station of StationNameList) {
-      const hasSsid = stationStatuses?.[station]?.ssid;
-      const hasStagedConfig = station in stagedChanges && stagedChanges[station] !== null;
-      const hasStagedClear = station in stagedChanges && stagedChanges[station] === null;
-      // Available if: (no active config and no staged config) OR (staged clear pending)
-      if ((!hasSsid && !hasStagedConfig) || hasStagedClear) {
-        return station;
-      }
+      if (projected[station].ssid === null) return station;
     }
     return null;
-  }, [latest, stagedChanges]);
+  }, [projected]);
 }
 
 type DisconnectedStation = {
@@ -173,12 +144,13 @@ type DisconnectedStation = {
 };
 
 /**
- * Find all configured stations where the robot is NOT currently linked.
- * Returns them sorted by lastLinked timestamp ascending (oldest first = best takeover candidates).
+ * Every configured station whose robot is NOT currently linked, and that has
+ * nothing waiting for it. Sorted by lastLinked ascending (oldest first =
+ * best takeover candidates).
  */
 function useFindDisconnectedStations(): DisconnectedStation[] {
   const latest = useLatest();
-  const stagedChanges = useBackendStagedChanges();
+  const projected = useProjectedStations();
   const lastLinked = useLastLinked();
 
   return useMemo(() => {
@@ -186,8 +158,7 @@ function useFindDisconnectedStations(): DisconnectedStation[] {
     const disconnected: DisconnectedStation[] = [];
 
     for (const station of StationNameList) {
-      // Skip stations with staged changes — they're in flux
-      if (station in stagedChanges) continue;
+      if (projected[station].pending) continue; // in flux
 
       const status = stationStatuses?.[station];
       if (!status?.ssid) continue; // Not configured
@@ -208,7 +179,38 @@ function useFindDisconnectedStations(): DisconnectedStation[] {
       const bTime = b.lastLinked ?? 0;
       return aTime - bTime;
     });
-  }, [latest, stagedChanges, lastLinked]);
+  }, [latest, projected, lastLinked]);
+}
+
+type RobotPending = {
+  kind: 'held-enable' | 'held-release' | 'deferred-enable' | 'deferred-release';
+  station: StationName;
+} | null;
+
+/** Whether this robot has a request in flight, and which way it is going:
+ *  held (a match exists / staff hold) or deferred (robots are enabled). */
+function useRobotPending(ssid: string): RobotPending {
+  const latest = useLatest();
+  const pending = usePendingCommitState();
+
+  return useMemo(() => {
+    const radio = latest?.radioUpdate?.stationStatuses;
+    for (const station of StationNameList) {
+      const onRadio = radio?.[station]?.ssid === ssid;
+      const held = pending.stagedChanges?.[station];
+      if (held !== undefined) {
+        if (held?.ssid === ssid) return { kind: 'held-enable', station };
+        if (held === null && onRadio) return { kind: 'held-release', station };
+        continue;
+      }
+      const deferred = pending.deferredChanges?.[station];
+      if (deferred !== undefined) {
+        if (deferred?.ssid === ssid && !onRadio) return { kind: 'deferred-enable', station };
+        if (deferred === null && onRadio) return { kind: 'deferred-release', station };
+      }
+    }
+    return null;
+  }, [latest, pending, ssid]);
 }
 
 /**
@@ -324,7 +326,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       {/* All active robots' station experiences — selected robot first, full details only for selected */}
       {activeStations.size === 0 ? (
         <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-          No active robots. Stage and apply a robot above to see its status.
+          No robots on the field yet. Enable a robot&apos;s Wi-Fi above to see its status.
         </Typography>
       ) : (
         Array.from(activeStations.entries())
@@ -458,15 +460,15 @@ function RobotList({
 
         {!availableStation && disconnectedStations.length > 0 && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            All 6 radio slots are in use, but {disconnectedStations.length} disconnected robot
-            {disconnectedStations.length > 1 ? 's are' : ' is'} available to take over.
+            The field is full ({StationNameList.length} robots), but {disconnectedStations.length} of them{' '}
+            {disconnectedStations.length > 1 ? 'are' : 'is'} not connected and can be taken over.
           </Alert>
         )}
 
         {!availableStation && disconnectedStations.length === 0 && (
           <Alert severity="warning" sx={{ mb: 2 }}>
-            All 6 radio slots are in use and all robots are connected. Wait for a team to leave before enabling a new
-            robot.
+            The field is full ({StationNameList.length} robots) and every robot is connected. Wait for a team to leave
+            before enabling another robot.
           </Alert>
         )}
 
@@ -540,7 +542,11 @@ function RobotRow({
   const [showEnableHint, setShowEnableHint] = useState(false);
   const [configCooldown, setConfigCooldown] = useState(false);
   const suffix = config.ssid.includes('-') ? config.ssid.split('-').slice(1).join('-') : null;
-  const canTakeover = !isActive && !availableStation && disconnectedStations.length > 0;
+  const robotPending = useRobotPending(config.ssid);
+  const pendingState = usePendingCommitState();
+  // "Active" means the radio has it and nothing is waiting to change that.
+  const isLive = isActive && !robotPending;
+  const canTakeover = !isActive && !robotPending && !availableStation && disconnectedStations.length > 0;
 
   // Clear pending state once the server confirms (or the situation changes)
   useEffect(() => {
@@ -557,29 +563,58 @@ function RobotRow({
     setTimeout(() => setConfigCooldown(false), 2000);
   };
 
-  const handleEnable = (stage: boolean, e: React.MouseEvent) => {
+  const handleEnable = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!availableStation || configCooldown) return;
     startCooldown();
-    sendEnableSavedRobot(availableStation, config.ssid, stage);
+    sendEnableSavedRobot(availableStation, config.ssid);
     onSelect(); // Auto-select the robot being enabled
   };
 
   const handleRelease = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!activeStation || configCooldown) return;
+    const station = robotPending?.station ?? activeStation;
+    if (!station || configCooldown) return;
     startCooldown();
-    sendNewConfig(activeStation, '', '', true);
+    sendNewConfig(station, '', '');
   };
 
-  const handleTakeover = (targetStation: StationName, stage: boolean) => {
+  /** Withdraw a request that is still waiting: an enable is cancelled, a
+   *  release is kept off. */
+  const handleWithdraw = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!robotPending || configCooldown) return;
+    startCooldown();
+    if (robotPending.kind === 'deferred-release') {
+      // Already off pFMS's books — put it back (the radio never changed).
+      sendEnableSavedRobot(robotPending.station, config.ssid);
+    } else {
+      sendCancelStationChange(robotPending.station);
+    }
+  };
+
+  const handleTakeover = (targetStation: StationName) => {
     if (configCooldown) return;
     startCooldown();
-    sendNewConfig(targetStation, '', '', true);
-    sendEnableSavedRobot(targetStation, config.ssid, stage);
+    // One request: the server replaces whatever is on that station.
+    sendEnableSavedRobot(targetStation, config.ssid);
     setShowTakeover(false);
     onSelect(); // Auto-select the robot being configured
   };
+
+  const pendingChip =
+    robotPending?.kind === 'held-enable'
+      ? { label: 'Waiting', color: 'warning' as const }
+      : robotPending?.kind === 'deferred-enable'
+        ? { label: 'Connecting…', color: 'info' as const }
+        : robotPending
+          ? { label: 'Leaving', color: 'warning' as const }
+          : null;
+  const pendingReason = !robotPending
+    ? null
+    : robotPending.kind.startsWith('held')
+      ? holdReasonText(pendingState.hold, 'team')
+      : DEFERRED_TEXT_TEAM;
 
   return (
     <>
@@ -610,8 +645,17 @@ function RobotRow({
                 <CheckCircleIcon sx={{ color: 'success.main', fontSize: 18 }} />
               </Tooltip>
             )}
-            {isActive && <Chip label="Active" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
-            {isActive && isMultiRobot && (routePreference === activeStation || pendingDrive) && (
+            {isLive && <Chip label="Active" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
+            {pendingChip && (
+              <Chip
+                label={pendingChip.label}
+                color={pendingChip.color}
+                size="small"
+                variant="outlined"
+                sx={{ height: 20, fontSize: '0.7rem' }}
+              />
+            )}
+            {isLive && isMultiRobot && (routePreference === activeStation || pendingDrive) && (
               <Chip
                 label="Driving"
                 color={pendingDrive && routePreference !== activeStation ? 'default' : 'info'}
@@ -628,10 +672,31 @@ function RobotRow({
           <Typography variant="caption" color="text.secondary">
             Last used {formatAge(config.lastUsedAt)}
           </Typography>
+          {pendingReason && (
+            <Typography variant="caption" sx={{ display: 'block', color: 'warning.main' }}>
+              {pendingReason}
+            </Typography>
+          )}
         </Box>
 
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          {isActive ? (
+          {robotPending ? (
+            robotPending.kind === 'deferred-enable' ? (
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                disabled={configCooldown}
+                onClick={e => handleRelease(e)}
+              >
+                Release
+              </Button>
+            ) : (
+              <Button size="small" variant="outlined" disabled={configCooldown} onClick={e => handleWithdraw(e)}>
+                {robotPending.kind === 'held-enable' ? 'Cancel' : 'Keep'}
+              </Button>
+            )
+          ) : isActive ? (
             <>
               {isMultiRobot && !routePreference && !pendingDrive && (
                 <Button
@@ -647,27 +712,20 @@ function RobotRow({
                   Drive
                 </Button>
               )}
-              <Tooltip title="Release this robot's radio slot">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="warning"
-                  disabled={configCooldown}
-                  onClick={e => handleRelease(e)}
-                >
-                  Release
-                </Button>
-              </Tooltip>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                disabled={configCooldown}
+                onClick={e => handleRelease(e)}
+              >
+                Release
+              </Button>
             </>
           ) : availableStation ? (
-            <>
-              <Button size="small" variant="outlined" disabled={configCooldown} onClick={e => handleEnable(true, e)}>
-                Stage
-              </Button>
-              <Button size="small" variant="contained" disabled={configCooldown} onClick={e => handleEnable(false, e)}>
-                Stage and Apply
-              </Button>
-            </>
+            <Button size="small" variant="contained" disabled={configCooldown} onClick={e => handleEnable(e)}>
+              Enable Wi-Fi
+            </Button>
           ) : canTakeover ? (
             <Button
               size="small"
@@ -678,16 +736,13 @@ function RobotRow({
                 setShowTakeover(!showTakeover);
               }}
             >
-              Take Over Slot
+              Take over…
             </Button>
           ) : (
-            <Tooltip title="All slots in use and connected">
-              <span>
-                <Button size="small" variant="outlined" disabled>
-                  Stage and Apply
-                </Button>
-              </span>
-            </Tooltip>
+            // The field is full and every robot is connected — the list above says so.
+            <Button size="small" variant="contained" disabled>
+              Enable Wi-Fi
+            </Button>
           )}
         </Box>
       </Box>
@@ -695,7 +750,7 @@ function RobotRow({
       {showTakeover && (
         <TakeoverPicker
           disconnectedStations={disconnectedStations}
-          onSelect={(station, stage) => handleTakeover(station, stage)}
+          onSelect={station => handleTakeover(station)}
           onCancel={() => setShowTakeover(false)}
           disabled={configCooldown}
         />
@@ -703,7 +758,7 @@ function RobotRow({
 
       {showEnableHint && !isActive && (
         <Alert severity="info" sx={{ mx: 2, mb: 0.5 }} onClose={() => setShowEnableHint(false)}>
-          Stage and apply this robot first to view its status.
+          Enable this robot&apos;s Wi-Fi first to see its status.
         </Alert>
       )}
     </>
@@ -711,8 +766,8 @@ function RobotRow({
 }
 
 /**
- * Inline picker showing disconnected stations sorted by staleness.
- * Lets the user choose which slot to take over.
+ * Inline picker showing disconnected robots sorted by staleness.
+ * Lets the user choose which one to take over.
  */
 function TakeoverPicker({
   disconnectedStations,
@@ -721,17 +776,17 @@ function TakeoverPicker({
   disabled,
 }: {
   disconnectedStations: DisconnectedStation[];
-  onSelect: (station: StationName, stage: boolean) => void;
+  onSelect: (station: StationName) => void;
   onCancel: () => void;
   disabled?: boolean;
 }) {
   return (
     <Card variant="outlined" sx={{ mx: 2, mb: 1, p: 1.5 }}>
       <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-        Select a slot to take over
+        Pick a robot to take over
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-        The selected team&apos;s config will be cleared and replaced with yours.
+        That robot&apos;s Wi-Fi is turned off and yours takes its place.
       </Typography>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
         {disconnectedStations.map(({ station, ssid, lastLinked }) => (
@@ -756,14 +811,9 @@ function TakeoverPicker({
                 {lastLinked ? `Last connected ${formatAge(lastLinked)}` : 'Never connected'}
               </Typography>
             </Box>
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
-              <Button size="small" variant="outlined" disabled={disabled} onClick={() => onSelect(station, true)}>
-                Stage
-              </Button>
-              <Button size="small" variant="contained" disabled={disabled} onClick={() => onSelect(station, false)}>
-                Stage and Apply
-              </Button>
-            </Box>
+            <Button size="small" variant="contained" disabled={disabled} onClick={() => onSelect(station)}>
+              Take over
+            </Button>
           </Box>
         ))}
       </Box>
@@ -801,24 +851,24 @@ function AddRobotForm({
   const duplicateStation = allActiveSSIDs.get(ssid) ?? null;
   const canTakeover = !availableStation && disconnectedStations.length > 0;
 
-  const handleSubmit = (stage: boolean) => {
+  const handleSubmit = () => {
     if (!isValid || !availableStation) return;
-    sendNewConfig(availableStation, ssid, passphrase, stage);
+    sendNewConfig(availableStation, ssid, passphrase);
     onSelectRobot(ssid); // Auto-select the newly added robot
     onDone();
   };
 
-  const handleReplace = (stage: boolean) => {
+  const handleReplace = () => {
     if (!isValid || !duplicateStation) return;
-    sendNewConfig(duplicateStation, ssid, passphrase, stage);
+    sendNewConfig(duplicateStation, ssid, passphrase);
     onSelectRobot(ssid);
     onDone();
   };
 
-  const handleTakeover = (targetStation: StationName, stage: boolean) => {
+  const handleTakeover = (targetStation: StationName) => {
     if (!isValid) return;
-    sendNewConfig(targetStation, '', '', true);
-    sendNewConfig(targetStation, ssid, passphrase, stage);
+    // One request: the server replaces whatever is on that station.
+    sendNewConfig(targetStation, ssid, passphrase);
     onSelectRobot(ssid); // Auto-select the newly added robot
     onDone();
   };
@@ -837,7 +887,7 @@ function AddRobotForm({
       </Typography>
       <Typography variant="body2" color={duplicateStation ? 'warning.main' : 'text.secondary'} sx={{ mb: 1 }}>
         SSID: <strong>{ssid}</strong>
-        {duplicateStation && ` — active on ${duplicateStation}`}
+        {duplicateStation && ' — already on the field; saving replaces its passphrase'}
       </Typography>
       <TextField
         label="Suffix (optional)"
@@ -870,35 +920,13 @@ function AddRobotForm({
       />
       <Box sx={{ display: 'flex', gap: 1 }}>
         {duplicateStation ? (
-          <>
-            <Button
-              variant="outlined"
-              size="small"
-              color="warning"
-              disabled={!isValid}
-              onClick={() => handleReplace(true)}
-            >
-              Stage Replace
-            </Button>
-            <Button
-              variant="contained"
-              size="small"
-              color="warning"
-              disabled={!isValid}
-              onClick={() => handleReplace(false)}
-            >
-              Replace Now
-            </Button>
-          </>
+          <Button variant="contained" size="small" color="warning" disabled={!isValid} onClick={handleReplace}>
+            Replace
+          </Button>
         ) : availableStation ? (
-          <>
-            <Button variant="outlined" size="small" disabled={!isValid} onClick={() => handleSubmit(true)}>
-              Stage
-            </Button>
-            <Button variant="contained" size="small" disabled={!isValid} onClick={() => handleSubmit(false)}>
-              Apply Now
-            </Button>
-          </>
+          <Button variant="contained" size="small" disabled={!isValid} onClick={handleSubmit}>
+            Enable Wi-Fi
+          </Button>
         ) : canTakeover ? (
           <Button
             variant="outlined"
@@ -907,16 +935,13 @@ function AddRobotForm({
             disabled={!isValid}
             onClick={() => setShowTakeover(!showTakeover)}
           >
-            Take Over Slot
+            Take over…
           </Button>
         ) : (
-          <Tooltip title="All slots in use and connected">
-            <span>
-              <Button variant="contained" size="small" disabled>
-                No Slots Available
-              </Button>
-            </span>
-          </Tooltip>
+          // The field is full and every robot is connected — the list above says so.
+          <Button variant="contained" size="small" disabled>
+            Enable Wi-Fi
+          </Button>
         )}
         <Button variant="outlined" size="small" disabled={!isValid} onClick={handleSaveForLater}>
           Save for Later
@@ -930,7 +955,7 @@ function AddRobotForm({
         <Box sx={{ mt: 2 }}>
           <TakeoverPicker
             disconnectedStations={disconnectedStations}
-            onSelect={(station, stage) => handleTakeover(station, stage)}
+            onSelect={station => handleTakeover(station)}
             onCancel={() => setShowTakeover(false)}
           />
         </Box>
