@@ -243,6 +243,9 @@ Optional, when you need them:
   `/api/score`. See [scoring.md](scoring.md).
 - **Field staff pages** — `/staff?role=headRef` (also `scorekeeper`,
   `safety`).
+- **Field network triage** — `/csa` on a CSA's tablet: shows only what is
+  wrong (radio, Driver Station and robot links, host tables) and what to
+  try; all clear shows almost nothing.
 - **Support widget → Slack** — `/admin` → Slack Integration. See
   [support.md](support.md).
 - **Access from outside the field** — `/admin` → External Access. See

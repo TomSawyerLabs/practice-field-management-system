@@ -9,6 +9,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import ArticleIcon from '@mui/icons-material/Article';
 import LanIcon from '@mui/icons-material/Lan';
+import NetworkCheckIcon from '@mui/icons-material/NetworkCheck';
 import RouterIcon from '@mui/icons-material/Router';
 import ScoreboardIcon from '@mui/icons-material/Scoreboard';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -99,6 +100,10 @@ function TeamEntryDialog() {
           <Link href="/network" underline="hover" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <LanIcon fontSize="small" />
             Network
+          </Link>
+          <Link href="/csa" underline="hover" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <NetworkCheckIcon fontSize="small" />
+            CSA
           </Link>
           <Link href="/test" underline="hover" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
             <RouterIcon fontSize="small" />

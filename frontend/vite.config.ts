@@ -73,6 +73,10 @@ function stationRoutes(): Plugin {
         if (url === '/network') {
           req.url = '/network.html';
         }
+        // Field-staff network triage page → csa.html
+        if (url === '/csa') {
+          req.url = '/csa.html';
+        }
         if (url === '/route') {
           req.url = '/route.html';
         }
@@ -178,6 +182,7 @@ export default defineConfig({
         admin: 'admin.html',
         logs: 'logs.html',
         network: 'network.html',
+        csa: 'csa.html',
         route: 'route.html',
         test: 'test.html',
         scores: 'scores.html',

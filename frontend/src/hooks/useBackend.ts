@@ -309,11 +309,16 @@ function useEventListener(
 
 const MaxHistoryAge = 1000 * 60 * 5; // 5 minutes
 
+/** A radio status entry. When the radio is unreachable the server sends
+ *  `{ timestamp, radioUpdate: undefined }`, and JSON drops the undefined key,
+ *  so the entry arrives as a bare `{ timestamp }` — it must still count, or
+ *  pages never learn the AP went away. Every typed message has been handled
+ *  before this check runs, so "a timestamp and no type" is unambiguous. */
 function isStatusEntry(entry: unknown): entry is StatusEntry {
   if (typeof entry !== 'object') return false;
   if (!entry) return false;
-  if (!('timestamp' in entry)) return false;
-  if (!('radioUpdate' in entry)) return false;
+  if (!('timestamp' in entry) || typeof entry.timestamp !== 'number') return false;
+  if ('type' in entry) return false;
   return true;
 }
 
