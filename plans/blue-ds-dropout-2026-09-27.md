@@ -139,6 +139,13 @@ packet and followed by silence and a re-attach 10–19 s later. Red laptops
 were untouched in both matches. The a-stop bit is evidently what the NI DS
 sends as it loses the field, not a human keypress.
 
+## Match 64 (13:54–13:57): 4159 never enabled
+
+Different failure, own note: `plans/ready-requires-ds-link.md`. 4159's DS
+kept a stale field session after being moved from slot3 to slot4, never
+attached to slot4, and the team readied anyway. Fixed in `789280c` by
+gating Ready on the DS heartbeat.
+
 ## Things not to do
 
 - Don't read the 33 s silence as "the DS app crashed": the browser
