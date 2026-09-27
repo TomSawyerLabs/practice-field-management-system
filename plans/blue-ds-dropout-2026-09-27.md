@@ -101,6 +101,44 @@ field)`), going through `undisable` so e-stop/a-stop/admin/relay/finished
    is one more thing that has to succeed for a robot to come back after a
    DS-side outage.
 
+## Match 62 (12:58–13:01): 751 "disabled by admin"
+
+Same session, next match, steamboat still on `2a4188b` (fix not deployed).
+Blue: 8048 (slot2, 10.55.199.242), 751 (slot4, 10.55.165.238), 1868
+(slot6, 10.55.21.118). Red: 4159 (slot3), 581 (slot5).
+
+| Time        | Event                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 13:00:44.26 | slot4 (751) DS reports **0x78** (disabled, a-stop bit, robot comms fine) and goes quiet. Same signature as match 61.               |
+| 13:00:58.60 | Match control page: `adminStationEnable slot4` → "Re-enabled: slot4 (admin)". The DS is still offline, so nothing visible happens. |
+| 13:00:59.63 | Match control page: `adminStationDisable slot4` → "Disabled: slot4 (by admin)". **1.0 s after the Enable click.**                  |
+| 13:01:01–03 | 751's laptop returns: new DS TCP, team page websocket reconnects, DS re-attaches. Station stays down: admin disable.               |
+| 13:01:11    | slot6 (1868) DS reports 0x78 and goes quiet; re-attaches 13:01:21; driver presses Re-enable 13:01:31; 0x78 again 13:01:34.         |
+| 13:01:36    | Match complete. Red never dropped.                                                                                                 |
+
+**What happened:** on the match control page each station row has one
+button slot that reads **Enable** while the station is disabled and flips
+to **Disable** the moment the enable lands (`MatchControlPage.tsx` ~980).
+Staff clicked Enable on 751 at 13:00:58; the robot couldn't respond because
+its laptop was off the Wi-Fi, the button under the cursor had already
+turned into Disable, and the second click one second later (a double-click
+or a "nothing happened, click again") sent the admin disable. Nobody meant
+to disable it, which matches what the admins say. The DS-dropout re-enable
+fix (`594e4b8`) would not have helped here: an admin disable is meant to
+survive a DS return.
+
+**Fix to make (not yet built, awaiting a yes):** stop the button flipping
+under the cursor. Render Enable and Disable as two fixed buttons with the
+inapplicable one greyed, and/or ignore a Disable within ~1.5 s of an Enable
+on the same station, and show "DS offline" on the row (the state already
+carries `dsAttached`) so staff know why Enable did nothing.
+
+**Second data point on the 0x78 signature:** three more DS dropouts
+(751 once, 1868 twice), all blue-side laptops, all preceded by a 0x78
+packet and followed by silence and a re-attach 10–19 s later. Red laptops
+were untouched in both matches. The a-stop bit is evidently what the NI DS
+sends as it loses the field, not a human keypress.
+
 ## Things not to do
 
 - Don't read the 33 s silence as "the DS app crashed": the browser
@@ -115,9 +153,13 @@ field)`), going through `undisable` so e-stop/a-stop/admin/relay/finished
    10.55.64.219 / 10.55.48.12 (blue) vs 10.55.153.222 / 10.55.69.79 (red)
    around 12:18:15 and 12:19:32 is the oracle (I did not open UniFi).
    Answered so far: the blue station switch is not in use.
-2. Did anyone touch the blue laptops at 12:19:30? The a-stop bit in the last
-   packets is the one detail a network fault doesn't explain.
-3. ~~Should pFMS un-latch a `disabledBy: 'ds'` station when its DS
+2. ~~Did anyone touch the blue laptops at 12:19:30?~~ Match 62 showed the
+   same 0x78-then-silence signature three more times with no one at the
+   laptops; it is the DS losing the field, not a keypress.
+3. Build the match-control-page fix for the Enable/Disable button flipping
+   under the cursor (see "Match 62")? My recommendation: yes, two fixed
+   buttons plus a "DS offline" marker on the row.
+4. ~~Should pFMS un-latch a `disabledBy: 'ds'` station when its DS
    re-attaches?~~ Decided: yes, temporary comms drops must recover without
    staff (user, 2026-09-27). Built, see finding 4.
 
