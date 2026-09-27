@@ -355,7 +355,7 @@ type Stations = Record<StationName, number | undefined>;
  * rule is needed; DROP rather than REJECT keeps the gateway from seeing
  * ICMP for every packet.
  */
-async function dropHairpinForwarding(physicalInterface: string): Promise<void> {
+export async function dropHairpinForwarding(physicalInterface: string): Promise<void> {
   await net.iptables({
     chain: 'FORWARD',
     inInterface: physicalInterface,

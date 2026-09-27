@@ -18,6 +18,7 @@ import {
   bridgeName,
   restorePreviousStations,
   cleanupOldVlanInterfaces,
+  dropHairpinForwarding,
 } from './networkManager.js';
 import {
   onConfigChange as onRouteConfigChange,
@@ -209,6 +210,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
     // Enable IP forwarding once at startup (required for inter-VLAN routing)
     await net.setSysctl({ key: 'net.ipv4.ip_forward', value: '1' });
+
+    // …but never straight back out the uplink (the gateway ping-pong for team
+    // subnets that have no station here). Done here as well as on every radio
+    // commit, so a graceful restart with KEEP_NETWORK — which skips the flush
+    // and does not touch the radio — still gets the rule (2026-09-27: the
+    // first deploy of it installed nothing until the next radio change).
+    await dropHairpinForwarding(VlanInterface);
 
     // Size the kernel neighbor (ARP/NDP) table for what this host does: the
     // subnet scanner sweeps every configured team /24 every 10 s, and each
