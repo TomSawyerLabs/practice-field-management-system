@@ -469,6 +469,22 @@ describe('a driver station that drops off the field mid-match', () => {
     engine.stopMatch();
   }, 10_000);
 
+  test('an admin Disable right behind an admin Enable is a double click and is ignored', async () => {
+    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+    engine.stationDisable('slot1', 'admin');
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+    engine.undisable('slot1', true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
+    engine.stationDisable('slot1', 'admin');
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
+    // Repeated after the debounce it is a decision
+    await Bun.sleep(1600);
+    engine.stationDisable('slot1', 'admin');
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+    expect(engine.getState().stationStates.slot1?.disabledBy).toBe('admin');
+    engine.stopMatch();
+  }, 10_000);
+
   test('a staff disable survives the DS coming back', async () => {
     const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
     engine.stationDisable('slot1', 'admin');

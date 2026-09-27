@@ -39,6 +39,9 @@ const DS_ATTACHED_TIMEOUT_MS = 5_000;
  *  stale packet still carrying the pre-enable state can arrive — without the
  *  grace it would instantly re-latch the disable that was just cleared. */
 const FMS_ENABLE_GRACE_MS = 2_000;
+/** An admin Disable landing this soon after an admin Enable on the same
+ *  station is treated as a double click and ignored. */
+const ADMIN_DISABLE_DEBOUNCE_MS = 1_500;
 /** A staff role counts as connected if its page sent a heartbeat this recently.
  *  Staff pages heartbeat every ~2s, so this tolerates a couple of missed beats. */
 const STAFF_CONNECTED_TIMEOUT_MS = 6_000;
@@ -161,6 +164,9 @@ export class MatchEngine {
   private dsEnabledSeen = new Map<StationName, boolean>();
   /** Stations whose comms-loss "disabled" report has been logged this match (log once, not at 2 Hz). */
   private commsLossLogged = new Set<StationName>();
+  /** When the admin console last enabled each station, so a Disable that
+   *  lands right behind it can be recognised as a double click. */
+  private lastAdminEnable = new Map<StationName, number>();
   /** Which FMS enable (timestamp) the first-status diagnostic was logged for */
   private dsStatusLoggedFor = new Map<StationName, number>();
   /** Socket control packets are sent from. Replaced by the FMS server's
@@ -1286,6 +1292,17 @@ export class MatchEngine {
 
   stationDisable(station: StationName, source: 'admin' | 'self' = 'admin') {
     const state = this.stationStates.get(station)!;
+    // 2026-09-27: staff clicked Enable on a robot whose laptop was off the
+    // Wi-Fi, nothing visibly happened, and the second click a second later
+    // landed on the button that had meanwhile turned into Disable — an
+    // admin disable nobody meant, which then held the robot down when its
+    // laptop came back. A Disable this close behind an admin Enable is that
+    // double click, not a decision; a real one can be repeated.
+    const enabledAgo = Date.now() - (this.lastAdminEnable.get(station) ?? -Infinity);
+    if (source === 'admin' && enabledAgo < ADMIN_DISABLE_DEBOUNCE_MS) {
+      appWarn(`Ignoring Disable for ${station}: enabled from the admin console ${enabledAgo} ms ago (double click?)`);
+      return;
+    }
     const wasEnabled = state.enabled;
     state.enabled = false;
     state.disabledBy = source;
@@ -1343,6 +1360,7 @@ export class MatchEngine {
     state.enabled = true;
     state.disabledBy = null;
     this.markFmsEnabled(station);
+    if (byAdmin) this.lastAdminEnable.set(station, Date.now());
     const how = via === 'dsReturn' ? 'DS back after dropping off the field' : byAdmin ? 'admin' : 'self';
     console.log(`Re-enabled: ${station} (${how})`);
     this.sendDSPacket(station);

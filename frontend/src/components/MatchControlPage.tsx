@@ -968,6 +968,16 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
         {!isEStopped && isEnabled && (
           <Chip label="Enabled" color="success" size="small" sx={{ height: 20, fontSize: '0.65rem' }} />
         )}
+        {/* Why Enable may do nothing: the field has not heard from this DS for 5 s+ */}
+        {state?.joined && state.dsAttached === false && (
+          <Chip
+            label="DS offline"
+            color="error"
+            variant="outlined"
+            size="small"
+            sx={{ height: 20, fontSize: '0.65rem' }}
+          />
+        )}
       </Box>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         {isEStopped ? (
@@ -976,21 +986,27 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
           </Button>
         ) : (
           <>
-            {isEnabled ? (
-              <Button size="small" variant="outlined" color="warning" onClick={() => sendAdminStationDisable(station)}>
-                Disable
-              </Button>
-            ) : (
-              <Button
-                size="small"
-                variant="outlined"
-                color="success"
-                onClick={() => sendAdminStationEnable(station)}
-                disabled={!canEnable}
-              >
-                Enable
-              </Button>
-            )}
+            {/* Both buttons stay put: one that swapped Enable for Disable as soon
+                as the enable landed turned a double click into an admin disable
+                nobody meant (2026-09-27, on a robot whose DS was offline). */}
+            <Button
+              size="small"
+              variant="outlined"
+              color="success"
+              onClick={() => sendAdminStationEnable(station)}
+              disabled={isEnabled || !canEnable}
+            >
+              Enable
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="warning"
+              onClick={() => sendAdminStationDisable(station)}
+              disabled={!isEnabled}
+            >
+              Disable
+            </Button>
             <Button size="small" variant="contained" color="error" onClick={() => sendAdminStationEStop(station)}>
               E-Stop One
             </Button>
