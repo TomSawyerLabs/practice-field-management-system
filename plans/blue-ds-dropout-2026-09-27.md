@@ -130,5 +130,5 @@ field)`), going through `undisable` so e-stop/a-stop/admin/relay/finished
 - [ ] Confirm the Wi-Fi story from UniFi client history (user)
 - [x] Decide on finding 4: re-enable on DS return (user said yes)
 - [x] Implement + test + document the re-enable (`src/matchEngine.ts`, `src/matchEngine.test.ts`, `docs/match-system.md`)
-- [ ] Commit: blocked by another thread's frontend typecheck errors in `StatusBar.tsx` (pre-commit hook runs both tsc projects)
-- [ ] Deploy to steamboat and watch for `Re-enabled: … (DS back after dropping off the field)` on the next dropout
+- [x] Committed as `594e4b8` (fix) and `6517e72` (this note), both on `origin/master`
+- [ ] Deploy to steamboat (still on `2a4188b`, one commit before the fix; needs the user's yes) and watch for `Re-enabled: … (DS back after dropping off the field)` on the next dropout
