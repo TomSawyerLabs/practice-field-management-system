@@ -1301,15 +1301,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
     runFMS({
       // Station-assignment reply (0x19/0x1f). Joined stations get their slot.
-      // A station that isn't in the match gets a status-2 "not in match" reply
-      // (see makeNotInMatchReply), which is meant to hand the DS back to local
-      // control, unless the field holds it (policy block, or the admin
-      // out-of-match switch is off) — then it is assigned a slot like a joined
-      // station so the DS stays under field control, and the hold loop below
-      // keeps it disabled. FMS_TCP_REPLY_STATIONS assigns a real slot for
-      // testing. The old design sent nothing at all to freeplay DSes, on the
-      // theory that any reply locks out local enable — which is why a team had
-      // to restart the DS to drive out of a match.
+      // A station that isn't in the match gets NO reply: any reply puts the DS
+      // in FMS-controlled mode and locks out local enable, so silence is what
+      // keeps freeplay working. (The status-2 "not in match" reply that was
+      // the default 2026-09-15..27 — makeNotInMatchReply — was meant to hand a
+      // post-match DS back to local control; on the field it parked freeplay
+      // DSes instead, see plans/out-of-match-enable-check.md. The cost of
+      // silence is the old one: a DS that was in a match stays locked until
+      // the team closes and reopens it.) A station the field holds — policy
+      // block, or the admin out-of-match switch off — is assigned a slot like
+      // a joined station so the DS stays under field control, and the hold
+      // loop below keeps it disabled. FMS_TCP_REPLY_STATIONS assigns a real
+      // slot for testing.
       resolveTeamSlot: teamNumber => {
         const station = radioManager.getStationForTeam(teamNumber);
         if (!station) return undefined;
@@ -1320,10 +1323,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           // stays under field control; the hold loop's disabled packets are
           // what actually refuse the enable while the team is out of a match.
           if (outOfMatchHoldReason(station)) return matchEngine.slotForStation(station);
-          // Not in a match and not held: actively release the DS to local
-          // control (a "not in match" reply) so a driver can enable for
-          // freeplay without closing/reopening the DS.
-          return 'release';
+          // Not in a match and not held: say nothing, the DS keeps local control.
+          return undefined;
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
         // (which side of the field it shows), not the physical-port default,

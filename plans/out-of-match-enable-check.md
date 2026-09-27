@@ -129,8 +129,11 @@ to touch (ops repo / UniFi).
 - Switch **off** now really holds: unjoined DSes are assigned a slot and the
   hold loop streams disabled packets with game data `Admin disabled`
   (`AdminOff` on a 2027 DS), the same path as a policy block. Station page
-  shows `heldReason`; joining a match lifts it. Switch **on** keeps the
-  status-2 release reply (still unverified on hardware).
+  shows `heldReason`; joining a match lifts it. Switch **on** sends **no
+  reply** again (pre-09-13 behaviour). User's 12:20 question "is the button
+  just inverted?" matched the evidence: on = status 2 = parked, off = silence
+  = free. Status 2 is treated as parking the DS from here on; the reply code
+  stays in fmsServer but nothing sends it.
 - Routing loop fix lives in pFMS (`networkManager.dropHairpinForwarding`):
   `iptables -I FORWARD -i eno1 -o eno1 -j DROP` with the `pfms-` comment so
   the normal flush/cleanup covers it. Installed at `configureNetwork`. It is
@@ -147,13 +150,13 @@ to touch (ops repo / UniFi).
       resolver, matchEngine `setOutOfMatchHold` / `dsProtocolFor`,
       `heldReason` in types, MatchPanel alert, AdminPage wording, docs).
 - [x] Implement the hairpin DROP rule in networkManager.
-- [ ] **Current:** user says yes/no to deploying (firewall rule included), and
-      which robot could not be enabled (joined? DS version?).
-- [ ] Verify on the field after deploy: switch off → DS shows "Admin
-      disabled" and cannot enable; switch on → freeplay enable works (or
-      not — that answers the status-2 question at last).
-- [ ] If status 2 turns out to park DSes: replace it (no reply, or a
-      different release) and drop the "release" path.
+- [x] Switch on = no reply (status 2 parks DSes).
+- [ ] **Current:** user says yes/no to deploying (firewall rule included).
+- [ ] Verify on the field after deploy: switch on → a freshly opened DS can
+      enable out of a match; switch off → DS shows "Admin disabled" and
+      cannot. DSes parked by status 2 earlier today need one close/reopen.
+- [ ] Later: a way to un-park a post-match DS without a restart (the thing
+      status 2 was supposed to do).
 
 ## Things not to do
 

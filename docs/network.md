@@ -99,21 +99,21 @@ both directions (the robot replies to the DS's source port, so NAT works
 without extra forwarding), UDP 1150, and TCP 1250, 1740 and 5810.
 
 The station-assignment reply puts the DS in FMS-controlled mode. Joined
-stations get their alliance slot. A DS that isn't in the match is sent a
-status-2 "not in match" reply, intended to hand it back to local control so
-a driver can enable for freeplay without restarting the Driver Station
-(Cheesy Arena sends status 2 for this case). **Not confirmed on hardware** —
-if a DS treats status 2 as "connected, waiting" instead, it would park a
-freeplay DS rather than free it. Worth checking on one real out-of-match
-robot; `plans/out-of-match-enable-check.md` has what was seen from the
-server on 2026-09-27.
+stations get their alliance slot. A DS that isn't in the match gets **no
+reply**: that is what keeps local enable working for freeplay. The price is
+that a DS which was in a match stays in FMS mode until the team closes and
+reopens it. A status-2 "not in match" reply (what Cheesy Arena sends for
+this case, `makeNotInMatchReply`) was tried as the default from 2026-09-15
+to 2026-09-27 to hand such a DS back without a restart; on the field it
+parked freeplay DSes instead, so it is no longer sent
+(`plans/out-of-match-enable-check.md`).
 
 When the admin "Out-of-match robot control" switch is off, an unjoined DS is
 instead assigned a slot (FMS-controlled) and held with a stream of disabled
 packets whose game data reads `Admin disabled` (`AdminOff` on the 2027 DS,
 which shows at most 8 characters), the same mechanism that holds a
 policy-blocked control system (`Blocked`). Flipping the switch re-handshakes
-every connected DS so it takes effect at once. Joining a match lifts the hold.
+every unjoined DS so it takes effect at once. Joining a match lifts the hold.
 
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
