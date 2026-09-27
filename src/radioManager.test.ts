@@ -196,3 +196,22 @@ describe('while a match exists (or an admin is holding changes)', () => {
     });
   });
 });
+
+describe('who a station is for', () => {
+  test('the projected team follows a held request; the active team does not', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot); // 1234 on the radio
+    rm.setShouldHold(() => 'match');
+
+    await rm.configure('slot1', other); // 5678 held for the same slot
+    expect(rm.getTeamForStation('slot1')).toBe(1234);
+    expect(rm.getProjectedTeamForStation('slot1')).toBe(5678);
+
+    await rm.configure('slot1', { ssid: '', wpaKey: '' }); // now a held release
+    expect(rm.getTeamForStation('slot1')).toBe(1234);
+    expect(rm.getProjectedTeamForStation('slot1')).toBeNull();
+
+    rm.cancelStagedChange('slot1');
+    expect(rm.getProjectedTeamForStation('slot1')).toBe(1234);
+  });
+});

@@ -310,7 +310,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
 
   // Initialize match engine (for admin page match simulation & e-stop)
-  const matchEngine = new MatchEngine(s => radioManager.getTeamForStation(s));
+  const matchEngine = new MatchEngine(
+    s => radioManager.getTeamForStation(s),
+    s => radioManager.getProjectedTeamForStation(s),
+  );
+  // A joined robot whose Wi-Fi request changes during setup leaves the match.
+  // Held requests only announce themselves through the pending-commit state,
+  // so listen to both.
+  radioManager.addConfigChangeListener(() => matchEngine.reconcileJoinedTeams());
+  radioManager.addPendingCommitListener(() => matchEngine.reconcileJoinedTeams());
 
   // Which control system answered on each station, learned from the team
   // checks. Only a positive identification can block a robot, so a dropped

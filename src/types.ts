@@ -1181,6 +1181,9 @@ export type MatchSlot = `${Alliance}${StationNumber}`;
 export type DisabledBy = 'ds' | 'self' | 'admin' | 'relay';
 
 export type StationControlState = {
+  /** The robot on this station. Unjoined: the team on the radio's active
+   *  config. Joined: the team that pressed Join (held Wi-Fi changes count),
+   *  kept while joined and frozen for the match. */
   teamNumber: number | null;
   enabled: boolean;
   eStop: boolean;

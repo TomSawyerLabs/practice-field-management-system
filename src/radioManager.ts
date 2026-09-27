@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { configureNetwork, setInternetAccess } from './networkManager.js';
 import { appError } from './appLogger.js';
+import { teamOfSsid } from './utils.js';
 import {
   AdditionalChannelStatistic,
   AllChannels,
@@ -1069,18 +1070,25 @@ class RadioManager {
   }
 
   getTeamForStation(station: StationName): number | null {
-    const { ssid } = this.activeConfig[station] ?? {};
-    if (!ssid) return null;
-    const num = parseInt(ssid.split('-', 2)[0]);
-    return isNaN(num) ? null : num;
+    return teamOfSsid(this.activeConfig[station]?.ssid);
+  }
+
+  /** The team a station is, or is about to be, configured for: a held
+   *  request for the station wins over the active config. (A deferred change
+   *  is already in the active config.) This is the view the team page uses
+   *  to offer a robot its Join button while a match holds Wi-Fi changes, so
+   *  the match roster uses it to name the robot that joined. */
+  getProjectedTeamForStation(station: StationName): number | null {
+    const staged = this.stagedChanges[station];
+    if (staged !== undefined) return teamOfSsid(staged?.ssid);
+    return this.getTeamForStation(station);
   }
 
   /** Look up the WPA key for a team number from the active station configurations. */
   getWpaKeyForTeam(team: number): string | null {
     for (const config of Object.values(this.activeConfig)) {
       if (!config?.ssid) continue;
-      const num = parseInt(config.ssid.split('-', 2)[0]);
-      if (num === team && config.wpaKey) return config.wpaKey;
+      if (teamOfSsid(config.ssid) === team && config.wpaKey) return config.wpaKey;
     }
     return null;
   }

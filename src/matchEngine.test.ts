@@ -512,3 +512,90 @@ describe('a manual relay', () => {
     expect(engine.getState().phase).toBe('postMatch');
   }, 10_000);
 });
+
+describe('the roster names the robot that joined, not the slot radio', () => {
+  /** Radio active config (what is on the Wi-Fi) and the projected view (held
+   *  requests win), both editable mid-test. */
+  function field() {
+    const onRadio: Partial<Record<string, number | null>> = { slot3: 111 };
+    const projected: Partial<Record<string, number | null>> = { slot3: 111 };
+    const engine = new MatchEngine(
+      s => onRadio[s] ?? null,
+      s => projected[s] ?? null,
+    );
+    engine.createMatch();
+    return { engine, onRadio, projected };
+  }
+
+  test('a team joining while its Wi-Fi request is held shows under its own number', () => {
+    const { engine, projected } = field();
+    // 111 releases and 222 asks for the slot; both requests are held by the match.
+    projected.slot3 = 222;
+    engine.joinStationAlliance('slot3', 'blue');
+    expect(engine.getState().stationStates.slot3?.teamNumber).toBe(222);
+  });
+
+  test('an unjoined station still shows whoever is on the radio', () => {
+    const { engine, projected } = field();
+    projected.slot3 = 222;
+    expect(engine.getState().stationStates.slot3?.teamNumber).toBe(111);
+  });
+
+  test('leaving goes back to the radio team', () => {
+    const { engine, projected } = field();
+    projected.slot3 = 222;
+    engine.joinStationAlliance('slot3', 'red');
+    engine.leaveStation('slot3');
+    expect(engine.getState().stationStates.slot3?.teamNumber).toBe(111);
+  });
+
+  test('the match snapshot keeps the joined robot', async () => {
+    const { engine, projected } = field();
+    projected.slot3 = 222;
+    engine.joinStationAlliance('slot3', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    engine.setReady('slot3', true);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('countdown');
+    expect(engine.getState().stationStates.slot3?.teamNumber).toBe(222);
+    engine.stopMatch();
+  });
+
+  test('a joined station whose robot changes during setup leaves the match', () => {
+    const { engine, projected } = field();
+    engine.joinStationAlliance('slot3', 'red');
+    engine.reconcileJoinedTeams(); // nothing changed
+    expect(engine.getState().stationStates.slot3?.joined).toBe(true);
+
+    projected.slot3 = null; // 111 released its Wi-Fi (held)
+    engine.reconcileJoinedTeams();
+    const s = engine.getState().stationStates.slot3!;
+    expect(s.joined).toBe(false);
+    expect(s.alliance).toBeNull();
+    expect(s.teamNumber).toBe(111); // still on the radio until the release applies
+  });
+
+  test('the same team changing its SSID suffix stays joined', () => {
+    const { engine, projected } = field();
+    engine.joinStationAlliance('slot3', 'red');
+    projected.slot3 = 111; // "111" → "111-beta": same team
+    engine.reconcileJoinedTeams();
+    expect(engine.getState().stationStates.slot3?.joined).toBe(true);
+  });
+
+  test('a running match is not touched by a Wi-Fi request', async () => {
+    const { engine, projected } = field();
+    engine.joinStationAlliance('slot3', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    engine.setReady('slot3', true);
+    engine.startMatch();
+    projected.slot3 = 333;
+    engine.reconcileJoinedTeams();
+    const s = engine.getState().stationStates.slot3!;
+    expect(s.joined).toBe(true);
+    expect(s.teamNumber).toBe(111);
+    engine.stopMatch();
+  });
+});

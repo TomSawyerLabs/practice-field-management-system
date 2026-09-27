@@ -48,6 +48,13 @@ export function prettyStationName(station: StationName) {
   return `Slot ${match[1]}`;
 }
 
+/** Team number out of a robot's SSID ("1234-Comp" → 1234), or null. */
+export function teamOfSsid(ssid: string | null | undefined): number | null {
+  if (!ssid) return null;
+  const num = parseInt(ssid.split('-', 2)[0], 10);
+  return Number.isNaN(num) ? null : num;
+}
+
 /**
  * Convert ip to CIDR format for CIDRMatcher
  */

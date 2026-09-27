@@ -6,15 +6,10 @@ import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
 import { StationNameList, type RadioHoldReason, type StagedStationChange, type StationName } from '../../../src/types';
-import { prettyStationName } from '../../../src/utils';
+import { prettyStationName, teamOfSsid } from '../../../src/utils';
 import { useLatest, useMatchState, usePendingCommitState, sendApplyConfig } from '../hooks/useBackend';
 
-/** Team number out of an SSID ("1234-Comp" → 1234), or null. */
-export function teamOfSsid(ssid: string | null | undefined): number | null {
-  if (!ssid) return null;
-  const num = parseInt(ssid.split('-', 2)[0], 10);
-  return Number.isNaN(num) ? null : num;
-}
+export { teamOfSsid };
 
 /** One line for a station change, named by robot — never by slot — so the
  *  same words work for teams and staff. `current` is what the radio has now. */

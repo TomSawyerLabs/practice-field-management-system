@@ -181,6 +181,10 @@ export class MatchEngine {
   private shareToken: string | null = null;
   private endReason: MatchEndReason | undefined;
   private teamResolver: TeamResolver;
+  /** The team a station is about to be configured for once held Wi-Fi
+   *  changes apply — a match holds them, so this is who actually presses
+   *  Join. Falls back to teamResolver when not supplied. */
+  private projectedTeamResolver: TeamResolver;
   /** When each station's team took the slot, supplied by index.ts from the
    *  radio's active config. Null = no team, or a config that predates this. */
   private connectedAtResolver?: (station: StationName) => number | null;
@@ -208,8 +212,9 @@ export class MatchEngine {
    *  Returns { red: number, blue: number } totals. */
   private autoScoreResolver?: () => { red: number; blue: number };
 
-  constructor(teamResolver?: TeamResolver) {
+  constructor(teamResolver?: TeamResolver, projectedTeamResolver?: TeamResolver) {
     this.teamResolver = teamResolver ?? (() => null);
+    this.projectedTeamResolver = projectedTeamResolver ?? this.teamResolver;
     this.udpSocket = dgram.createSocket('udp4');
     for (const station of StationNameList) {
       this.stationStates.set(station, {
@@ -739,12 +744,46 @@ export class MatchEngine {
       }
       return;
     }
+    // The roster names the robot that joined, not whatever the slot's radio
+    // holds right now: while a match exists Wi-Fi changes are held, so the
+    // radio may still carry the previous team. Kept until the station leaves.
+    state.teamNumber = this.projectedTeamResolver(station);
     state.joined = true;
     state.ready = false;
     state.alliance = alliance;
     state.matchSlot = null;
     this.closeReadyCheck();
-    console.log(`Station ${station} joined ${alliance} alliance`);
+    console.log(`Station ${station} (team ${state.teamNumber ?? 'none'}) joined ${alliance} alliance`);
+    this.broadcast();
+  }
+
+  /** A joined station's robot changed underneath it during setup — its team
+   *  released the Wi-Fi, staff released the slot, or a held request was
+   *  withdrawn or replaced by another team. The roster entry would otherwise
+   *  keep naming a robot that is no longer coming, so the station leaves.
+   *  Call when the radio's active or held config changes. Only acts during
+   *  setup: once a match runs the roster is the record of who played. */
+  reconcileJoinedTeams() {
+    if (this.phase !== 'created') return;
+    let changed = false;
+    for (const station of StationNameList) {
+      const state = this.stationStates.get(station)!;
+      if (!state.joined) continue;
+      const now = this.projectedTeamResolver(station);
+      if (now === state.teamNumber) continue;
+      console.log(
+        `Station ${station} left match: robot changed from team ${state.teamNumber ?? 'none'} to ${now ?? 'none'}`,
+      );
+      state.joined = false;
+      state.ready = false;
+      state.alliance = null;
+      state.matchSlot = null;
+      state.aStop = false;
+      state.teamNumber = this.teamResolver(station);
+      changed = true;
+    }
+    if (!changed) return;
+    this.closeReadyCheck();
     this.broadcast();
   }
 
@@ -1059,9 +1098,10 @@ export class MatchEngine {
     this.remainingTime = COUNTDOWN_SECONDS;
 
     for (const station of StationNameList) {
-      const teamNumber = this.teamResolver(station);
       const state = this.stationStates.get(station)!;
-      state.teamNumber = teamNumber;
+      // Joined stations keep the robot recorded at join; the rest snapshot
+      // whatever is on the radio.
+      if (!state.joined) state.teamNumber = this.teamResolver(station);
       state.enabled = false;
       state.eStop = false;
       state.disabledBy = null;
@@ -1517,8 +1557,12 @@ export class MatchEngine {
         // Kept after the disable so clients can show "last drove at"
         lastEnabledAt: this.lastFmsEnable.get(station),
       };
-      // When not in active match or postMatch, resolve live team numbers; during a match, use the snapshot
-      if (!this.isMatchActive() && this.phase !== 'postMatch') state.teamNumber = this.teamResolver(station);
+      // Outside a match (and postMatch), unjoined stations show whoever is on
+      // the radio right now. A joined station keeps the robot recorded when it
+      // joined, and during a match everyone keeps the start snapshot.
+      if (!this.isMatchActive() && this.phase !== 'postMatch' && !state.joined) {
+        state.teamNumber = this.teamResolver(station);
+      }
       stationStates[station] = state;
     }
 

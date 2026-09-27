@@ -34,7 +34,11 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
    field: it is disabled until the match starts — leave the match to drive
    freely. If the DS isn't talking to the FMS yet, the station page shows
    an advisory warning, but teams can still ready up once the ready check
-   opens.
+   opens. The roster names the robot that joined — a team whose Wi-Fi
+   request is still held (see below) joins under its own number, not the
+   number of the team the radio still holds for that slot. If that robot
+   changes during setup (its team releases the Wi-Fi, staff release the
+   slot, or the held request is withdrawn), the station leaves the match.
 3. **Ready check** — so teams can't sit "ready" indefinitely, nobody can
    ready up until the controller **opens the ready check**. Then teams —
    and every required field-staff role — mark themselves ready. Any roster
