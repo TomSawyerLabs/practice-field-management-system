@@ -34,6 +34,9 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
+import Checkbox from '@mui/material/Checkbox';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import { PendingRadioChangesPanel } from './PendingRadioChanges';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
 import type { MatchRecordingStreamStatus, RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
@@ -47,10 +50,9 @@ import {
   useSlackTestResult,
   sendAdminStopMatch,
   sendAdminGlobalEStop,
-  sendAdminStationEStop,
-  sendAdminStationDisable,
-  sendAdminStationEnable,
-  sendAdminClearEStop,
+  sendMatchKickStation,
+  sendNewConfig,
+  sendRemoveSavedTeam,
   sendStopCast,
   useCastReceivers,
   sendCastReceiverSwap,
@@ -150,6 +152,8 @@ function formatElapsed(ms: number): string {
 type TeamRow = {
   station: StationName;
   teamNumber: number;
+  /** The robot's SSID as the radio reports it (the saved-team key). */
+  ssid: string | null;
   state: StationControlState;
   isRobotLinked: boolean;
 };
@@ -163,12 +167,14 @@ function useConnectedTeamRows(): TeamRow[] {
   return StationNameList.flatMap(station => {
     const state = matchState?.stationStates[station];
     if (!state || state.teamNumber === null) return [];
+    const radio = latest?.radioUpdate?.stationStatuses[station];
     return [
       {
         station,
         teamNumber: state.teamNumber,
+        ssid: radio?.ssid || null,
         state,
-        isRobotLinked: latest?.radioUpdate?.stationStatuses[station]?.isLinked ?? false,
+        isRobotLinked: radio?.isLinked ?? false,
       },
     ];
   });
@@ -216,45 +222,54 @@ function TeamStateChips({ state, isRobotLinked }: { state: StationControlState; 
   );
 }
 
-function TeamControlButtons({ station, state }: { station: StationName; state: StationControlState }) {
+/** Slot management, not robot control: the field's E-Stop is the big button
+ *  at the top, and a robot's enable/disable belongs to the match page.
+ *  - Release: take the robot off the field (its Wi-Fi is turned off). Goes
+ *    through the same path as a team's own release, so it waits for enabled
+ *    robots or a match like any other change.
+ *  - Kick: drop the team from the match being set up.
+ *  - Forget: release AND delete the team's saved passphrase, so the robot has
+ *    to be added again from scratch. Two taps, since it is not undoable. */
+function TeamControlButtons({ row }: { row: TeamRow }) {
+  const { station, state, ssid } = row;
   const matchState = useMatchState();
-  const robotsRunning =
-    matchState?.phase === 'auto' || matchState?.phase === 'teleop' || matchState?.phase === 'endgame';
+  const [confirmForget, setConfirmForget] = useState(false);
+  const canKick = state.joined && matchState?.phase === 'created';
+
+  useEffect(() => {
+    if (!confirmForget) return;
+    const timer = setTimeout(() => setConfirmForget(false), 5000);
+    return () => clearTimeout(timer);
+  }, [confirmForget]);
 
   return (
-    <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-      {state.eStop ? (
-        <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
-          Clear E-Stop
-        </Button>
-      ) : state.enabled ? (
-        <Button size="small" variant="contained" color="warning" onClick={() => sendAdminStationDisable(station)}>
-          Disable
-        </Button>
-      ) : (
-        // Recovery: put a stopped robot back in the match (works for team
-        // disables and after a cleared e-stop; robots-running phases only)
-        <Button
-          size="small"
-          variant="outlined"
-          color="success"
-          onClick={() => sendAdminStationEnable(station)}
-          disabled={!state.joined || state.aStop || !robotsRunning}
-        >
-          Enable
+    <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+      {canKick && (
+        <Button size="small" variant="outlined" color="warning" onClick={() => sendMatchKickStation(station)}>
+          Kick
         </Button>
       )}
-      {!state.eStop && (
-        <Button
-          size="small"
-          variant="outlined"
-          color="error"
-          onClick={() => sendAdminStationEStop(station)}
-          sx={{ minWidth: 0, px: 1, fontSize: '0.7rem' }}
-        >
-          E-Stop
-        </Button>
-      )}
+      <Button size="small" variant="outlined" color="warning" onClick={() => sendNewConfig(station, '', '')}>
+        Release
+      </Button>
+      {ssid &&
+        (confirmForget ? (
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              sendRemoveSavedTeam(ssid);
+              setConfirmForget(false);
+            }}
+          >
+            Forget {ssid}?
+          </Button>
+        ) : (
+          <Button size="small" variant="outlined" color="error" onClick={() => setConfirmForget(true)}>
+            Forget
+          </Button>
+        ))}
     </Box>
   );
 }
@@ -300,7 +315,7 @@ function ConnectedTeamRow({ row }: { row: TeamRow }) {
         )}
       </TableCell>
       <TableCell align="right">
-        <TeamControlButtons station={station} state={state} />
+        <TeamControlButtons row={row} />
       </TableCell>
     </TableRow>
   );
@@ -346,7 +361,7 @@ function StationControlSection() {
         <Typography variant="h5">Teams &amp; Controls</Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
           Every team on the field, longest-connected first. Tap a column heading to reorder. Slots with no team are not
-          listed.
+          listed. Release takes a robot off the field; Forget also deletes its saved passphrase.
         </Typography>
 
         {sorted.length === 0 ? (
@@ -498,6 +513,38 @@ function OutOfMatchControlSection() {
   );
 }
 
+/** Admin hold on Wi-Fi changes: teams' requests are parked instead of
+ *  applied, exactly as while a match exists, until staff apply them. The
+ *  pending panel underneath is the same one the match page shows. */
+function WifiChangesSection() {
+  const setupConfig = useSetupConfig();
+  const hold = setupConfig?.config.settings.holdRadioChanges === true;
+  return (
+    <>
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="h6">Wi-Fi changes</Typography>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={hold}
+                onChange={e => sendUpdateSetupSettings({ holdRadioChanges: e.target.checked })}
+              />
+            }
+            label="Hold Wi-Fi changes until I apply them"
+          />
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            {hold
+              ? 'Teams can still press Enable Wi-Fi, but nothing reaches the radio until you press Apply now below (or untick this). Held changes then apply on their own.'
+              : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled. They are held automatically while a match exists; tick this to hold them at other times too, e.g. a busy scrimmage day.'}
+          </Typography>
+        </CardContent>
+      </Card>
+      <PendingRadioChangesPanel />
+    </>
+  );
+}
+
 /** Field policy on robot control systems. Advisory: it changes what a team
  *  sees in their robot check, it does not stop a robot connecting. */
 function ControllerPolicySection() {
@@ -566,6 +613,7 @@ export function AdminPage() {
 
       <GlobalEStopSection />
       <MatchStatusSection />
+      <WifiChangesSection />
       <OutOfMatchControlSection />
       <ControllerPolicySection />
       <ScoringSection />

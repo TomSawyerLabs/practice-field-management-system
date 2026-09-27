@@ -138,8 +138,10 @@ reported` has been logged from one — but nobody is known to have pressed
 ### Admin Overrides
 
 The `/admin` page provides safety overrides independent of the
-self-service system: global e-stop, per-station e-stop / disable / enable,
-clear e-stop, and force-stop match.
+self-service system: global e-stop and force-stop match. Per-team rows
+manage the slot, not the robot: **Release** takes the robot off the field
+(same path as the team's own Release), **Kick** drops a team from the match
+being set up, and **Forget** releases it and deletes its saved passphrase.
 
 **Teams & Controls** lists every team on the field as one flat table — a
 team appears as soon as a radio slot is configured for it, and slots with
