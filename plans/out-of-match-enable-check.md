@@ -151,10 +151,17 @@ to touch (ops repo / UniFi).
       `heldReason` in types, MatchPanel alert, AdminPage wording, docs).
 - [x] Implement the hairpin DROP rule in networkManager.
 - [x] Switch on = no reply (status 2 parks DSes).
-- [ ] **Current:** user says yes/no to deploying (firewall rule included).
-- [ ] Verify on the field after deploy: switch on → a freshly opened DS can
-      enable out of a match; switch off → DS shows "Admin disabled" and
-      cannot. DSes parked by status 2 earlier today need one close/reopen.
+- [x] User said "do it" (12:4x). Deployed `57ea647` at 12:50 and `2a4188b`
+      at 12:53 (the first deploy installed no hairpin rule: KEEP_NETWORK
+      skips the flush and configureNetwork only runs on a radio commit, so
+      the rule is now also installed at startup). Verified on steamboat:
+      service active, `-A FORWARD -i eno1 -o eno1 … pfms-no-hairpin -j DROP`
+      present, unjoined DSes logged as held ("out-of-match control off").
+- [ ] **Current:** the switch was still **off** at 12:53, so every unjoined
+      DS is held with "Admin disabled". User turns it **on** for freeplay.
+      DSes parked by status 2 earlier today need one close/reopen.
+- [ ] Verify on the field: switch on → a freshly opened DS can enable out of
+      a match; switch off → DS shows "Admin disabled" and cannot.
 - [ ] Later: a way to un-park a post-match DS without a restart (the thing
       status 2 was supposed to do).
 
