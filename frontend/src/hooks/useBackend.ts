@@ -1126,6 +1126,11 @@ export function sendMatchKickStation(station: StationName) {
   ws?.send(JSON.stringify({ type: 'matchKickStation', station }));
 }
 
+/** Staff override: ready a station whose Driver Station the field can't hear. */
+export function sendMatchForceStationReady(station: StationName) {
+  ws?.send(JSON.stringify({ type: 'matchForceStationReady', station }));
+}
+
 export function sendMatchSetAutoWinner(winner: Alliance) {
   ws?.send(JSON.stringify({ type: 'matchSetAutoWinner', winner }));
 }

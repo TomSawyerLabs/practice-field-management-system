@@ -32,16 +32,24 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
    each) from their station page. Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
-   freely. If the DS isn't talking to the FMS yet, the station page shows
-   an advisory warning, but teams can still ready up once the ready check
-   opens. The roster names the robot that joined — a team whose Wi-Fi
+   freely. The roster names the robot that joined — a team whose Wi-Fi
    request is still held (see below) joins under its own number, not the
    number of the team the radio still holds for that slot. If that robot
    changes during setup (its team releases the Wi-Fi, staff release the
    slot, or the held request is withdrawn), the station leaves the match.
 3. **Ready check** — so teams can't sit "ready" indefinitely, nobody can
    ready up until the controller **opens the ready check**. Then teams —
-   and every required field-staff role — mark themselves ready. Any roster
+   and every required field-staff role — mark themselves ready. A team can
+   only ready up while the field is hearing its Driver Station (a status
+   heartbeat within the last 5 s): the station page greys the button as
+   "Waiting for Driver Station…" and explains, and a ready team whose DS
+   goes quiet during setup is un-readied (journal: `Station slotN
+un-readied: the field stopped hearing from its Driver Station`). A DS the
+   field can't hear would not enable at the start — in match 64 on
+   2026-09-27 a team readied with its DS holding a stale session for the
+   station it had just moved off, and sat out the match. The match control
+   page marks such a station "DS offline" and offers **Ready anyway** for
+   the case where staff can see the DS is fine and pFMS is wrong. Any roster
    change (a late join/leave/swap/kick, or a config change) re-closes the
    check, so it always reflects the current lineup. Calling **Get Ready**
    (the attention sound) or asking for ready again while the check is open

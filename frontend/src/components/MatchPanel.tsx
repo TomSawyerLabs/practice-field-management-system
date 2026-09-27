@@ -80,6 +80,23 @@ function stationChipLabel(
   return `${team}${suffix}`;
 }
 
+/** Shown under a greyed Ready button while the field can't hear the Driver
+ *  Station. The usual cure is on the laptop: the DS app closed, or holding a
+ *  stale field session from before the robot was moved to another station
+ *  (2026-09-27, match 64 \u2014 the robot never enabled). */
+const DS_OFFLINE_HELP =
+  "The field isn't hearing from your Driver Station, so you can't ready up yet. Make sure the Driver Station " +
+  'is open and shows FMS Connected; if it does and this stays, close and reopen the Driver Station.';
+
+/** Ready button text: the server refuses Ready until the host opens the check
+ *  and the DS is attached, so say which one is holding it. */
+function readyLabel(ready: boolean, readyRequested: boolean, dsOffline: boolean) {
+  if (ready) return 'Not Ready';
+  if (!readyRequested) return 'Waiting for host\u2026';
+  if (dsOffline) return 'Waiting for Driver Station\u2026';
+  return 'Ready';
+}
+
 /** Compute MatchTimeline progress (0-1) from match state. */
 function computeBarProgress(
   totalMatchTime: number,
@@ -232,6 +249,7 @@ export function MatchPanel({ station }: { station?: StationName }) {
   const myState = station ? stationStates[station] : undefined;
   const joined = myState?.joined ?? false;
   const ready = myState?.ready ?? false;
+  const dsOffline = myState?.dsAttached === false;
 
   // Master view: any station joined means we show controls
   const anyJoined = joinedStations.length > 0;
@@ -355,10 +373,10 @@ export function MatchPanel({ station }: { station?: StationName }) {
                   <Button
                     variant={ready ? 'outlined' : 'contained'}
                     color={ready ? 'warning' : 'success'}
-                    disabled={!ready && !readyRequested}
+                    disabled={!ready && (!readyRequested || dsOffline)}
                     onClick={() => sendStationReady(station, !ready)}
                   >
-                    {ready ? 'Not Ready' : readyRequested ? 'Ready' : 'Waiting for host…'}
+                    {readyLabel(ready, readyRequested, dsOffline)}
                   </Button>
                   <Button variant="outlined" color="error" onClick={() => sendStationLeave(station)} disabled={ready}>
                     Leave
@@ -385,10 +403,9 @@ export function MatchPanel({ station }: { station?: StationName }) {
                       A-Stop
                     </Button>
                   )}
-                  {!ready && myState?.dsAttached === false && (
+                  {!ready && dsOffline && (
                     <Typography variant="caption" color="warning.main" sx={{ width: '100%' }}>
-                      The Driver Station isn't talking to the field yet — you can still ready up, but the robot won't
-                      enable until it connects.
+                      {DS_OFFLINE_HELP}
                     </Typography>
                   )}
                   <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
@@ -460,6 +477,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
   const myState = stationStates[station];
   const joined = myState?.joined ?? false;
   const ready = myState?.ready ?? false;
+  const dsOffline = myState?.dsAttached === false;
   const myAlliance = myState?.alliance ?? null;
 
   const progress = useMemo(() => computeBarProgress(totalMatchTime, config), [totalMatchTime, config]);
@@ -635,10 +653,10 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
               <Button
                 variant={ready ? 'outlined' : 'contained'}
                 color={ready ? 'warning' : 'success'}
-                disabled={!ready && !readyRequested}
+                disabled={!ready && (!readyRequested || dsOffline)}
                 onClick={() => sendStationReady(station, !ready)}
               >
-                {ready ? 'Not Ready' : readyRequested ? 'Ready' : 'Waiting for host…'}
+                {readyLabel(ready, readyRequested, dsOffline)}
               </Button>
               {!ready && myAlliance && (
                 <Button
@@ -676,10 +694,9 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
                   A-Stop
                 </Button>
               )}
-              {!ready && myState?.dsAttached === false && (
+              {!ready && dsOffline && (
                 <Typography variant="caption" color="warning.main" sx={{ width: '100%' }}>
-                  The Driver Station isn't talking to the field yet — you can still ready up, but the robot won't enable
-                  until it connects.
+                  {DS_OFFLINE_HELP}
                 </Typography>
               )}
               <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>

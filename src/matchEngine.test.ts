@@ -27,6 +27,24 @@ function created(): MatchEngine {
   return engine;
 }
 
+type Station = Parameters<MatchEngine['setReady']>[0];
+
+/** The station's Driver Station sends a status heartbeat (legacy 0x38: robot
+ *  linked, disabled): the field can hear it, so the team may ready up. */
+function dsAttached(engine: MatchEngine, station: Station) {
+  engine.dsReportedStatus(station, false, false, false, 0x38, true);
+}
+
+/** The DS went quiet long enough for the FMS to consider it detached. */
+function dsGoesQuiet(engine: MatchEngine, station: Station) {
+  (engine as unknown as { lastDsHeartbeat: Map<string, number> }).lastDsHeartbeat.set(station, Date.now() - 6_000);
+}
+
+/** Run the 2 s readiness sweep now instead of waiting for its timer. */
+function sweepReadiness(engine: MatchEngine) {
+  (engine as unknown as { unreadyStationsWithoutDs(): boolean }).unreadyStationsWithoutDs();
+}
+
 describe('official match timing stays locked', () => {
   test('durations sent by a client are ignored', () => {
     const engine = created();
@@ -203,6 +221,7 @@ describe('a challenge run end to end', () => {
     engine.joinStationAlliance('slot1', 'red');
     for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
     engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
     engine.setReady('slot1', true);
     engine.startMatch();
     return engine;
@@ -269,6 +288,7 @@ describe('a challenge run lands in match history', () => {
     engine.joinStationAlliance('slot1', 'red');
     for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
     engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
     engine.setReady('slot1', true);
     engine.startMatch();
 
@@ -305,7 +325,10 @@ async function startRace(config: Partial<MatchConfig>, stations: Record<string, 
   }
   for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
   engine.setReadyRequested(true);
-  for (const station of Object.keys(stations)) engine.setReady(station as 'slot1', true);
+  for (const station of Object.keys(stations)) {
+    dsAttached(engine, station as 'slot1');
+    engine.setReady(station as 'slot1', true);
+  }
   engine.startMatch();
   await Bun.sleep(3400);
   expect(engine.getState().phase).toBe('teleop');
@@ -435,11 +458,6 @@ describe('a relay with driver-station hand-offs', () => {
 });
 
 describe('a driver station that drops off the field mid-match', () => {
-  /** The DS went quiet long enough for the FMS to consider it detached. */
-  function dsGoesQuiet(engine: MatchEngine, station: 'slot1') {
-    (engine as unknown as { lastDsHeartbeat: Map<string, number> }).lastDsHeartbeat.set(station, Date.now() - 6_000);
-  }
-
   test('comes back enabled when its last word was a disable', async () => {
     const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
     await Bun.sleep(2100);
@@ -555,6 +573,7 @@ describe('the roster names the robot that joined, not the slot radio', () => {
     engine.joinStationAlliance('slot3', 'red');
     for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
     engine.setReadyRequested(true);
+    dsAttached(engine, 'slot3');
     engine.setReady('slot3', true);
     engine.startMatch();
     expect(engine.getState().phase).toBe('countdown');
@@ -589,6 +608,7 @@ describe('the roster names the robot that joined, not the slot radio', () => {
     engine.joinStationAlliance('slot3', 'red');
     for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
     engine.setReadyRequested(true);
+    dsAttached(engine, 'slot3');
     engine.setReady('slot3', true);
     engine.startMatch();
     projected.slot3 = 333;
@@ -597,5 +617,81 @@ describe('the roster names the robot that joined, not the slot radio', () => {
     expect(s.joined).toBe(true);
     expect(s.teamNumber).toBe(111);
     engine.stopMatch();
+  });
+});
+
+describe('ready needs a Driver Station the field can hear', () => {
+  /** One team joined, staff not required, ready check open, DS silent so far. */
+  function setup() {
+    const engine = new MatchEngine(() => 4159);
+    engine.createMatch();
+    engine.joinStationAlliance('slot4', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    return engine;
+  }
+
+  test('refused while the DS has never heartbeated, accepted once it does', () => {
+    const engine = setup();
+    expect(engine.getState().stationStates.slot4?.dsAttached).toBe(false);
+    engine.setReady('slot4', true);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(false);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('created');
+
+    dsAttached(engine, 'slot4');
+    expect(engine.getState().stationStates.slot4?.dsAttached).toBe(true);
+    engine.setReady('slot4', true);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(true);
+  });
+
+  test('a ready team whose DS goes quiet during setup is un-readied', () => {
+    const engine = setup();
+    dsAttached(engine, 'slot4');
+    engine.setReady('slot4', true);
+    sweepReadiness(engine);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(true); // still heartbeating
+
+    dsGoesQuiet(engine, 'slot4');
+    sweepReadiness(engine);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(false);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('created');
+  });
+
+  test('un-ready is always allowed, DS or not', () => {
+    const engine = setup();
+    dsAttached(engine, 'slot4');
+    engine.setReady('slot4', true);
+    dsGoesQuiet(engine, 'slot4');
+    engine.setReady('slot4', false);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(false);
+  });
+
+  test('staff "Ready anyway" readies a silent station and the sweep leaves it alone', () => {
+    const engine = setup();
+    engine.setReady('slot4', true, { force: true });
+    expect(engine.getState().stationStates.slot4?.ready).toBe(true);
+    sweepReadiness(engine);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(true);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('countdown');
+    engine.stopMatch();
+  });
+
+  test('the override is forgotten once the station is no longer ready', () => {
+    const engine = setup();
+    engine.setReady('slot4', true, { force: true });
+    engine.setReady('slot4', false);
+    sweepReadiness(engine); // drops the stale override
+    // An ordinary ready now needs the DS again…
+    engine.setReady('slot4', true);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(false);
+    // …and a forced-then-attached station behaves like any other once its DS drops
+    dsAttached(engine, 'slot4');
+    engine.setReady('slot4', true, { force: true });
+    dsGoesQuiet(engine, 'slot4');
+    sweepReadiness(engine);
+    expect(engine.getState().stationStates.slot4?.ready).toBe(false);
   });
 });

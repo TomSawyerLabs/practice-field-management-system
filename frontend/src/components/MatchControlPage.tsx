@@ -41,6 +41,7 @@ import {
   sendMatchClear,
   sendMatchSwapStation,
   sendMatchKickStation,
+  sendMatchForceStationReady,
   sendMatchSetAutoWinner,
   sendMatchRequestReady,
   sendMatchStaffIgnore,
@@ -354,7 +355,11 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
   const allReady = readyRequested && stationsAllReady && staffAllReady;
 
   const notReadyStaff = requiredStaff.filter(r => !staffStates[r].ready).map(r => StaffRoleLabels[r]);
-  const notReadyTeams = joinedStations.filter(s => !stationStates[s]?.ready).map(s => teamLabel(stationStates[s]));
+  // Name the stations the field can't hear: their Ready button is greyed on
+  // the team page, so "press Ready" alone would send staff to the wrong place.
+  const notReadyTeams = joinedStations
+    .filter(s => !stationStates[s]?.ready)
+    .map(s => `${teamLabel(stationStates[s])}${stationStates[s]?.dsAttached === false ? ' (DS offline)' : ''}`);
   // Spell out exactly who or what is holding the start, right under the button.
   const holdDisabledReason = !readyRequested
     ? 'Ask for Ready first — nobody can ready up until the check is open.'
@@ -414,8 +419,10 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
                         key={s}
                         station={s}
                         state={stationStates[s]}
+                        readyRequested={readyRequested}
                         onSwap={() => sendMatchSwapStation(s)}
                         onKick={() => sendMatchKickStation(s)}
+                        onForceReady={() => sendMatchForceStationReady(s)}
                       />
                     ))}
                   </Box>
@@ -438,8 +445,10 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
                         key={s}
                         station={s}
                         state={stationStates[s]}
+                        readyRequested={readyRequested}
                         onSwap={() => sendMatchSwapStation(s)}
                         onKick={() => sendMatchKickStation(s)}
+                        onForceReady={() => sendMatchForceStationReady(s)}
                       />
                     ))}
                   </Box>
@@ -593,14 +602,22 @@ function StaffPanel({
 /** A single participant row in the pre-match setup */
 function ParticipantRow({
   state,
+  readyRequested,
   onSwap,
   onKick,
+  onForceReady,
 }: {
   station: StationName;
   state: StationControlState | undefined;
+  readyRequested: boolean;
   onSwap: () => void;
   onKick: () => void;
+  /** Ready this station although the field can't hear its Driver Station.
+   *  For when staff can see the DS is fine and pFMS's attachment signal is
+   *  wrong (it was, for every DS, in July 2026). */
+  onForceReady: () => void;
 }) {
+  const dsOffline = state?.dsAttached === false;
   return (
     <Box
       sx={{
@@ -620,8 +637,28 @@ function ParticipantRow({
           {teamLabel(state)}
         </Typography>
         {state?.ready && <Chip label="Ready" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
+        {/* The team's Ready button is greyed while this shows: the field has
+            not heard a status heartbeat from the DS for 5 s+ */}
+        {dsOffline && (
+          <Tooltip title="The field is not hearing from this Driver Station, so the team cannot ready up. Usually the DS app is closed or holding a stale field session — have them close and reopen it.">
+            <Chip
+              label="DS offline"
+              color="error"
+              variant="outlined"
+              size="small"
+              sx={{ height: 20, fontSize: '0.7rem' }}
+            />
+          </Tooltip>
+        )}
       </Box>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
+        {dsOffline && readyRequested && !state?.ready && (
+          <Tooltip title="Mark this team ready even though the field can't hear its Driver Station. Only if you can see the DS is really connected — the robot will not enable otherwise.">
+            <Button size="small" variant="outlined" color="warning" onClick={onForceReady}>
+              Ready anyway
+            </Button>
+          </Tooltip>
+        )}
         <Button size="small" variant="outlined" onClick={onSwap}>
           Swap
         </Button>

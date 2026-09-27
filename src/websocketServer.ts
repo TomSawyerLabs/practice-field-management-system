@@ -49,6 +49,7 @@ import {
   isMatchClear,
   isMatchSwapStation,
   isMatchKickStation,
+  isMatchForceStationReady,
   isMatchSetAutoWinner,
   isMatchChallengeAdjust,
   isMatchChallengeFinish,
@@ -874,6 +875,8 @@ export function setupWebSocket(
         matchEngine.swapStationAlliance(data.station);
       } else if (isMatchKickStation(data)) {
         matchEngine.kickStation(data.station);
+      } else if (isMatchForceStationReady(data)) {
+        matchEngine.setReady(data.station, true, { force: true });
       } else if (isMatchSetAutoWinner(data)) {
         matchEngine.setAutoWinner(data.winner);
       } else if (isMatchChallengeAdjust(data)) {

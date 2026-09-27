@@ -1196,9 +1196,11 @@ export type StationControlState = {
   alliance: Alliance | null;
   /** Assigned match slot during an active match (null when idle) */
   matchSlot: MatchSlot | null;
-  /** True when the DS is attached to the FMS (UDP status heartbeats flowing).
-   *  Ready is gated on this — a DS that isn't heartbeating won't obey match
-   *  control, so letting it ready up would start a match against a dead link. */
+  /** True when the DS is attached to the FMS (UDP status heartbeats flowing
+   *  within the last 5 s). Ready is gated on this — a DS that isn't
+   *  heartbeating won't obey match control, so letting it ready up would
+   *  start a match against a dead link — and a ready station that loses it
+   *  during setup is un-readied. Staff can override per station. */
   dsAttached?: boolean;
   /** Who latched the current disable, when it wasn't ordinary phase control:
    *  the team's DS (Enter key), the team's own station console, field
@@ -1531,6 +1533,15 @@ export function isMatchKickStation(msg: unknown): msg is MatchKickStation {
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as MatchKickStation;
   return m.type === 'matchKickStation' && StationNameRegex.test(m.station);
+}
+
+/** Match control page: mark a station ready even though the field is not
+ *  hearing from its Driver Station. Escape hatch for a wrong dsAttached. */
+export type MatchForceStationReady = { type: 'matchForceStationReady'; station: StationName };
+export function isMatchForceStationReady(msg: unknown): msg is MatchForceStationReady {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as MatchForceStationReady;
+  return m.type === 'matchForceStationReady' && StationNameRegex.test(m.station);
 }
 
 export type MatchSetAutoWinner = { type: 'matchSetAutoWinner'; winner: Alliance };

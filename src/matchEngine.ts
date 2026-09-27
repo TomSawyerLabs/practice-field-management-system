@@ -136,6 +136,10 @@ export class MatchEngine {
   private readyRequested = false;
   /** Per-role staff readiness (ready + host "ignore" flag) for the current match. */
   private staffReady = new Map<StaffRole, { ready: boolean; ignored: boolean }>();
+  /** Stations field staff readied with "Ready anyway" while the DS was not
+   *  attached. Exempt from the DS-offline un-ready sweep so the override
+   *  sticks; forgotten as soon as the station is no longer ready. */
+  private forcedReady = new Set<StationName>();
   /** Last presence heartbeat per staff role — drives the connected flag. */
   private lastStaffHeartbeat = new Map<StaffRole, number>();
   /** Match starts are rejected until this time (see holdStart) */
@@ -254,6 +258,9 @@ export class MatchEngine {
           changed = true;
         }
       }
+      // A ready team whose DS has stopped talking to the field is in the
+      // same position: the robot would not enable at the start.
+      if (this.unreadyStationsWithoutDs()) changed = true;
       if (changed) this.broadcast();
     }, 2_000);
 
@@ -825,7 +832,11 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  setReady(station: StationName, ready: boolean) {
+  /** A team readies (or un-readies) from its station page. `force` is the
+   *  match control page's "Ready anyway": it skips the Driver-Station-link
+   *  requirement for one station, for when field staff can see the DS is
+   *  fine and pFMS cannot (the July 2026 failure, see below). */
+  setReady(station: StationName, ready: boolean, { force = false }: { force?: boolean } = {}) {
     // A joined team backing out during the pre-start countdown cancels the
     // start: abort back to setup and mark them un-ready, so the match can't
     // restart until they ready up again.
@@ -855,15 +866,49 @@ export class MatchEngine {
       appWarn(`Station ${station} cannot ready: the host has not opened the ready check`);
       return;
     }
-    // NOTE: Ready is intentionally NOT gated on isDsAttached(). The
-    // dsAttached signal proved unreliable in the field (2026-07-18: it stayed
-    // false for DSes that were heartbeating fine, because it only stamps when
-    // getStationForTeam resolves) and blocked every team from readying. It is
-    // now advisory only (shown in the UI); revisit gating once the attachment
-    // signal is trustworthy.
+    // A DS the field cannot hear will not obey match control, so readying it
+    // would start a match against a robot that never enables (2026-09-27,
+    // match 64: 4159 readied with its DS still holding a handshake for the
+    // station it had just been moved off, and sat out the whole match).
+    // History: this gate existed 2026-07-17..19 and was reverted because
+    // dsAttached read false for every DS — the radio config that maps a
+    // heartbeat's team number to its station was being wiped by deploys.
+    // That was fixed 2026-07-24 (radio config self-heals), and a team the
+    // roster can't resolve can't join a match anyway. Staff keep an escape
+    // hatch: "Ready anyway" on the match control page (force).
+    const attached = this.isDsAttached(station);
+    if (ready && !attached && !force) {
+      appWarn(`Cannot ready ${station}: the field is not hearing from its Driver Station`);
+      return;
+    }
+    if (ready && force && !attached) {
+      this.forcedReady.add(station);
+      console.log(`Station ${station} ready: true (staff override — Driver Station not attached)`);
+    } else {
+      this.forcedReady.delete(station);
+      console.log(`Station ${station} ready: ${ready}`);
+    }
     state.ready = ready;
-    console.log(`Station ${station} ready: ${ready}`);
     this.broadcast();
+  }
+
+  /** Un-ready any station, during setup, whose Driver Station has stopped
+   *  talking to the field — unless staff readied it with "Ready anyway".
+   *  Returns true when something changed (the caller broadcasts). */
+  private unreadyStationsWithoutDs(): boolean {
+    let changed = false;
+    for (const [station, state] of this.stationStates) {
+      if (!state.ready) {
+        this.forcedReady.delete(station);
+        continue;
+      }
+      if (this.phase !== 'created' || this.forcedReady.has(station)) continue;
+      if (this.isDsAttached(station)) continue;
+      state.ready = false;
+      changed = true;
+      console.log(`Station ${station} un-readied: the field stopped hearing from its Driver Station`);
+    }
+    return changed;
   }
 
   /** Update match config — only skipAuto and autoWinner are user-settable. Durations are fixed. */
