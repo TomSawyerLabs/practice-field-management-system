@@ -577,7 +577,15 @@ export class MdnsReflector {
       this.flushSendQueue();
     };
     if (entry.kind === 'multicast') {
-      this.socket.setMulticastInterface(entry.iface);
+      // Throws EADDRNOTAVAIL when the VLAN address isn't on this host yet —
+      // seen on a cold start (2026-09-27) racing the bridges coming up. Drop
+      // the packet like any other send failure; the next query will retry.
+      try {
+        this.socket.setMulticastInterface(entry.iface);
+      } catch (err) {
+        done(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
       this.socket.send(entry.packet, 0, entry.packet.length, MDNS_PORT, MDNS_ADDR, done);
     } else {
       this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, done);
