@@ -11,7 +11,9 @@ Matches follow the 2026 REBUILT official timing. Durations are **fixed**
 (not user-adjustable) — the only per-match options are _skip autonomous_
 and the _auto winner_ selection. (The one exception is the
 [speed challenge](#speed-challenge), a non-match format for field events
-whose window the host does set.)
+whose window the host does set.) Those options are set only on `/match`;
+a team's station page shows the timeline of what's about to run but has
+no way to change it.
 
 | Phase       | Duration | Notes                                                                       |
 | ----------- | -------- | --------------------------------------------------------------------------- |

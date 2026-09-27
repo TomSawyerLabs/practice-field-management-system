@@ -432,8 +432,8 @@ export function MatchPanel({ station }: { station?: StationName }) {
           )}
         </Box>
 
-        {/* Match timing config — visual timeline (only during created phase when joined) */}
-        {isCreated && (station ? joined : anyJoined) && <MatchTimeline config={config} />}
+        {/* What's about to run — read-only; the setup is only editable on /match */}
+        {isCreated && (station ? joined : anyJoined) && <MatchTimeline config={config} readOnly />}
       </CardContent>
     </Card>
   );
@@ -720,8 +720,8 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
           <AStopPopout station={station} />
         </Box>
 
-        {/* Match timing config — visual timeline (created phase only, when joined) */}
-        {isCreated && joined && <MatchTimeline config={config} />}
+        {/* What's about to run — read-only; the setup is only editable on /match */}
+        {isCreated && joined && <MatchTimeline config={config} readOnly />}
       </CardContent>
     </Card>
   );

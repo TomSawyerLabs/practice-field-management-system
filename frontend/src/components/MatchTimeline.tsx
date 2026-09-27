@@ -173,6 +173,12 @@ function getActivePeriod(
 interface MatchTimelineProps {
   config: MatchConfig;
   disabled?: boolean;
+  /**
+   * Show the setup without any way to change it. The station page uses this
+   * so teams can see what's about to run; the inputs (format, skip auto,
+   * auto winner, challenge window/timing/penalties) exist only on /match.
+   */
+  readOnly?: boolean;
   autoWinnerAlliance?: Alliance | null;
   /** 0-1 progress; when set, the bar acts as a live progress indicator. */
   progress?: number;
@@ -270,7 +276,7 @@ function FormatSwitch({ config, disabled }: { config: MatchConfig; disabled?: bo
  * so it gets one bar instead of eight segments. In progress mode the same bar
  * carries the run's progress cursor.
  */
-function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchTimelineProps) {
+function ChallengeTimeline({ config, disabled, readOnly, progress, remainingTime }: MatchTimelineProps) {
   const isProgressMode = progress !== undefined;
   const timing: ChallengeTiming = config.challengeTiming ?? 'window';
 
@@ -355,7 +361,23 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
         )}
       </Box>
 
-      {!isProgressMode && (
+      {!isProgressMode && readOnly && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {timing === 'window'
+            ? 'Laps in the window — staff tally laps as they happen.'
+            : timing === 'stopwatch'
+              ? 'Stopwatch — staff press Finish when the last robot is home.'
+              : handoff === 'staff'
+                ? 'Relay — robots run one at a time; the line ref sends the next.'
+                : handoff === 'ds'
+                  ? 'Relay — robots run one at a time; disabling on the DS sends the next.'
+                  : 'Relay — every robot enabled, drivers take turns.'}
+          {' · '}
+          {penaltyCost === 0 ? 'Penalties cost nothing.' : `One penalty costs ${penaltyLabel}.`}
+        </Typography>
+      )}
+
+      {!isProgressMode && !readOnly && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mt: 1 }}>
           <FormatSwitch config={config} disabled={disabled} />
 
@@ -504,6 +526,7 @@ function ChallengeTimeline({ config, disabled, progress, remainingTime }: MatchT
 function OfficialTimeline({
   config,
   disabled,
+  readOnly,
   autoWinnerAlliance,
   progress,
   phase,
@@ -739,12 +762,24 @@ function OfficialTimeline({
       )}
 
       {/* ── Controls (config mode only) ──────────────────────────── */}
-      {!isProgressMode && (
+      {!isProgressMode && readOnly && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {skipAuto ? 'Autonomous skipped · ' : ''}
+          {autoWinner === 'red'
+            ? 'Auto winner: Red.'
+            : autoWinner === 'blue'
+              ? 'Auto winner: Blue.'
+              : autoWinner === 'pause'
+                ? 'Auto winner: chosen during the pause after auto.'
+                : 'Auto winner: decided by auto scores.'}
+        </Typography>
+      )}
+      {!isProgressMode && !readOnly && (
         <Box sx={{ mt: 1.5 }}>
           <FormatSwitch config={config} disabled={disabled} />
         </Box>
       )}
-      {!isProgressMode && (
+      {!isProgressMode && !readOnly && (
         <Box sx={{ display: 'flex', gap: 3, mt: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <FormControlLabel
             control={
