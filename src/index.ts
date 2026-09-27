@@ -84,7 +84,7 @@ import { SetupConfigStore } from './setupConfigStore.js';
 import { scoringRequiresKey } from './httpApiUtils.js';
 import { setVideoProxyTargetResolver } from './videoProxy.js';
 import { runSetupProbe } from './setupProbe.js';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -578,6 +578,19 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       configStore: setupConfigStore,
       matchRecorder,
       timelapse: fieldTimelapse,
+      // "Restart pFMS" on the admin page: the same graceful path as
+      // `systemctl reload` (flag file, then SIGHUP), so network rules and
+      // routing survive and systemd's Restart=always brings the service
+      // back. A full stop/start is the path that raced the VLAN bridges and
+      // crashed on 2026-09-27.
+      restart: () => {
+        try {
+          writeFileSync(KEEP_NETWORK_FLAG, '');
+        } catch (err) {
+          console.error('Could not write the keep-network flag before restarting:', err);
+        }
+        process.kill(process.pid, 'SIGHUP');
+      },
       // Where this field is reachable from the internet, for the post-match
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,

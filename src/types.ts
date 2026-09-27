@@ -1446,6 +1446,26 @@ export function isAdminStopMatch(msg: unknown): msg is AdminStopMatch {
   return (msg as AdminStopMatch).type === 'adminStopMatch';
 }
 
+/** Field reset: empty every station on the radio and drop any waiting
+ *  Wi-Fi requests. Admin-gated; refused during an active match. */
+export type AdminClearAllStations = { type: 'adminClearAllStations' };
+
+export function isAdminClearAllStations(msg: unknown): msg is AdminClearAllStations {
+  if (typeof msg !== 'object') return false;
+  if (!msg) return false;
+  return (msg as AdminClearAllStations).type === 'adminClearAllStations';
+}
+
+/** Field reset: restart the backend the way `systemctl reload` does
+ *  (network rules kept). Admin-gated; refused during an active match. */
+export type AdminRestart = { type: 'adminRestart' };
+
+export function isAdminRestart(msg: unknown): msg is AdminRestart {
+  if (typeof msg !== 'object') return false;
+  if (!msg) return false;
+  return (msg as AdminRestart).type === 'adminRestart';
+}
+
 export type AdminGlobalEStop = { type: 'adminGlobalEStop' };
 
 export function isAdminGlobalEStop(msg: unknown): msg is AdminGlobalEStop {

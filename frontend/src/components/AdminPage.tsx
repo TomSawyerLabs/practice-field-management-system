@@ -50,6 +50,8 @@ import {
   useSlackTestResult,
   sendAdminStopMatch,
   sendAdminGlobalEStop,
+  sendAdminClearAllStations,
+  sendAdminRestart,
   sendMatchKickStation,
   sendNewConfig,
   sendRemoveSavedTeam,
@@ -545,6 +547,58 @@ function WifiChangesSection() {
   );
 }
 
+/** Staff escape hatches for a field that has got into a state: empty the
+ *  radio, or restart the backend. Both confirm first and refuse mid-match
+ *  (the server refuses too). */
+function FieldResetSection() {
+  const matchState = useMatchState();
+  const [confirm, setConfirm] = useState<'clear' | 'restart' | null>(null);
+  const phase = matchState?.phase ?? 'idle';
+  const matchActive = phase !== 'idle' && phase !== 'created' && phase !== 'postMatch';
+
+  const run = () => {
+    if (confirm === 'clear') sendAdminClearAllStations();
+    if (confirm === 'restart') sendAdminRestart();
+    setConfirm(null);
+  };
+
+  return (
+    <Card sx={{ mb: 2 }}>
+      <CardContent>
+        <Typography variant="h6">Field reset</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          For when the radio and pFMS disagree and keep reconfiguring, or a slot will not clear. Neither is available
+          while a match is running.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Button variant="outlined" color="warning" disabled={matchActive} onClick={() => setConfirm('clear')}>
+            Clear all robots from the radio
+          </Button>
+          <Button variant="outlined" color="warning" disabled={matchActive} onClick={() => setConfirm('restart')}>
+            Restart pFMS
+          </Button>
+        </Box>
+      </CardContent>
+      <Dialog open={confirm !== null} onClose={() => setConfirm(null)}>
+        <DialogTitle>{confirm === 'clear' ? 'Clear all robots from the radio?' : 'Restart pFMS?'}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            {confirm === 'clear'
+              ? 'Every robot loses its Wi-Fi and any waiting Wi-Fi requests are dropped, so teams will need to press Enable Wi-Fi again. Robots joined to a match being set up leave it.'
+              : 'Every page reconnects in a few seconds. Network rules and routing are kept, so robots stay on Wi-Fi and Driver Stations re-attach on their own.'}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirm(null)}>Cancel</Button>
+          <Button onClick={run} variant="contained" color="warning">
+            {confirm === 'clear' ? 'Clear the radio' : 'Restart'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Card>
+  );
+}
+
 /** Field policy on robot control systems. Advisory: it changes what a team
  *  sees in their robot check, it does not stop a robot connecting. */
 function ControllerPolicySection() {
@@ -614,6 +668,7 @@ export function AdminPage() {
       <GlobalEStopSection />
       <MatchStatusSection />
       <WifiChangesSection />
+      <FieldResetSection />
       <OutOfMatchControlSection />
       <ControllerPolicySection />
       <ScoringSection />

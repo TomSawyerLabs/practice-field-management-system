@@ -211,6 +211,17 @@ scrimmage day works: teams queue up their robots while a match is on, and
 the match manager applies the whole batch between matches, when nobody is
 driving.
 
+If the radio and pFMS disagree about what is configured, pFMS pushes its
+config again after 15 seconds, then backs off (1, 2, 4, 8 minutes, capped
+at 10) until the radio agrees, logging both sides' SSIDs each time. Every
+push shows "Reconfiguration in progress" on every page and drops each
+robot's Wi-Fi, which is why it does not retry faster. For a field that is
+stuck anyway, the admin page has a **Field reset** card: **Clear all robots
+from the radio** empties every station and drops waiting requests (teams
+press Enable Wi-Fi again), and **Restart pFMS** restarts the backend the
+same graceful way a deploy does, keeping network rules so robots stay
+connected. Both ask first and refuse while a match is running.
+
 Teams are never shown slot numbers — a robot is named by its SSID, and
 "the field is full" is what they see when all six slots are taken (a
 disconnected robot can be taken over from there).

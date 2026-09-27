@@ -8,6 +8,8 @@ import {
   isCancelStationChange,
   isInternetToggle,
   isAdminStopMatch,
+  isAdminClearAllStations,
+  isAdminRestart,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -235,6 +237,9 @@ export function setupWebSocket(
       /** Recordings a team's day link lists right now (matches + runs). */
       countItems: (teamNumber: number, day: string) => number;
     };
+    /** "Restart pFMS" on the admin page: exit gracefully (network rules
+     *  kept) and let systemd bring the service back. */
+    restart?: () => void;
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -863,6 +868,37 @@ export function setupWebSocket(
         matchEngine.undisable(data.station, true);
       } else if (isAdminClearEStop(data)) {
         matchEngine.clearEStop(data.station);
+
+        // ── Field reset ──────────────────────────────────────────────
+        // Staff escape hatches for a field that has got stuck (2026-09-27:
+        // the radio and pFMS disagreed for ten minutes and every screen kept
+        // showing "Reconfiguration in progress"). Gated like clearMatchHistory;
+        // refused mid-match because both take every robot off the field.
+      } else if (isAdminClearAllStations(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin login required to clear the radio' }));
+        } else if (matchEngine.isMatchActive()) {
+          ws.send(JSON.stringify({ error: 'Cannot clear the radio during an active match' }));
+        } else {
+          console.log(`Admin cleared all robots from the radio (${clientIp})`);
+          for (const station of StationNameList) radioManager.cancelStagedChange(station);
+          radioManager.clearAllConfigurations().catch(err => {
+            const details = err instanceof Error ? err.message : String(err);
+            appError('Error clearing all radio configurations: ' + details);
+            ws.send(JSON.stringify({ error: 'Failed to clear the radio', details }));
+          });
+        }
+      } else if (isAdminRestart(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin login required to restart pFMS' }));
+        } else if (matchEngine.isMatchActive()) {
+          ws.send(JSON.stringify({ error: 'Cannot restart pFMS during an active match' }));
+        } else if (!setup?.restart) {
+          ws.send(JSON.stringify({ error: 'Restart is not available in this environment' }));
+        } else {
+          console.log(`Admin requested a pFMS restart (${clientIp})`);
+          setup.restart();
+        }
       } else if (isMatchCreate(data)) {
         matchEngine.createMatch();
       } else if (isMatchCancel(data)) {

@@ -1224,6 +1224,16 @@ export function sendAdminClearEStop(station?: StationName) {
   ws?.send(JSON.stringify({ type: 'adminClearEStop', station }));
 }
 
+/** Field reset: empty the radio and drop waiting Wi-Fi requests (admin). */
+export function sendAdminClearAllStations() {
+  ws?.send(JSON.stringify({ type: 'adminClearAllStations' }));
+}
+
+/** Field reset: restart the backend gracefully (admin). */
+export function sendAdminRestart() {
+  ws?.send(JSON.stringify({ type: 'adminRestart' }));
+}
+
 // ── Route Preferences ───────────────────────────────────────────────
 
 export function useRoutePreferenceState(): RoutePreferenceState | null {
