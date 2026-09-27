@@ -127,7 +127,7 @@ to disable it, which matches what the admins say. The DS-dropout re-enable
 fix (`594e4b8`) would not have helped here: an admin disable is meant to
 survive a DS return.
 
-**Fix to make (not yet built, awaiting a yes):** stop the button flipping
+**Fixed (`e4e2768`, deployed to steamboat 13:24):** stopped the button flipping
 under the cursor. Render Enable and Disable as two fixed buttons with the
 inapplicable one greyed, and/or ignore a Disable within ~1.5 s of an Enable
 on the same station, and show "DS offline" on the row (the state already
@@ -173,4 +173,5 @@ sends as it loses the field, not a human keypress.
 - [x] Decide on finding 4: re-enable on DS return (user said yes)
 - [x] Implement + test + document the re-enable (`src/matchEngine.ts`, `src/matchEngine.test.ts`, `docs/match-system.md`)
 - [x] Committed as `594e4b8` (fix) and `6517e72` (this note), both on `origin/master`
-- [ ] Deploy to steamboat (still on `2a4188b`, one commit before the fix; needs the user's yes) and watch for `Re-enabled: … (DS back after dropping off the field)` on the next dropout
+- [x] Deployed `e4e2768` (both fixes) to steamboat 13:24:40; service active, no errors in the first minute
+- [ ] Watch the journal for `Re-enabled: … (DS back after dropping off the field)` and `Ignoring Disable for …` on the next dropout
