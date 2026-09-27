@@ -110,6 +110,40 @@ checkout-index -z --stdin`), the other thread's uncommitted frontend
 - [x] Step 6 — checks + commit (only this task's hunks staged; another
       thread's ready-check work in the same files was left unstaged).
 
+## Follow-up found: the old team's laptop keeps the slot's drive session
+
+Not fixed by this task (which is display-only). Evidence from steamboat's
+journal, 2026-09-27, running `e4e2768`:
+
+- **slot4.** 840's laptop `10.55.48.12` drove slot4 from 14:20:40 (five
+  identical `DNAT rule added` lines in one second — concurrent
+  `startDrive` calls, so five iptables rules for one map entry). 14:25:04
+  Apply now → slot4 = 751; `DNAT rule removed: slot4` (one of the five).
+  14:28:22 751's laptop `10.55.165.238`: `Blocked duplicate DS … slot4`.
+  14:28:33 slot4 joined: `handing DS 10.55.48.12 to FMS control` — 840's
+  laptop, for a slot that was 751's/4159's. 14:29:39 and 14:32:07 4159's
+  laptop `10.55.59.170` blocked the same way. 840's DS was still
+  connecting every ~6 s (`team 840 (no reply: not joined)`).
+- **slot1.** 972's laptop `10.55.153.222` drove slot1. 14:30:58 Apply now
+  → slot1 = 751; `DNAT rule removed: slot1` and, the same second,
+  `Blocked duplicate DS 10.55.165.238 … slot1` (751's only laptop).
+  14:31:36 slot1 joined: `handing DS 10.55.153.222 to FMS control` — 972's.
+
+Mechanism (from `src/index.ts`): the radio config-change listener clears
+`acceptedDsForStation` synchronously but removes the DNAT rule and the
+`activeDnatRules` entry only after an awaited iptables call. Any packet
+from the old laptop in that window hits the "address has a DNAT rule →
+`trySetDSAddress`" paths, which never check the team, and re-accepts the
+old DS for the station. From then on every packet the old laptop sends
+(`touchDsActivity` runs for any message with a team number) keeps it
+non-stale, so the new team's single laptop is blocked as a duplicate and a
+join hands match control to the wrong laptop. Fix directions: gate
+re-acceptance on `getTeamForStation(station)` matching the DS's team;
+delete the `activeDnatRules` entry before awaiting the removal; serialise
+`addDnatRule` per station (or check `existing` after the await) so a burst
+cannot create duplicate rules; and stop touching activity for a DS whose
+team owns no station.
+
 ## Open questions for the user
 
 None blocking.
