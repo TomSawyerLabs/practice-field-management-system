@@ -1190,6 +1190,12 @@ export type StationControlState = {
   /** Set when the field's control-system policy forbids this robot: why it
    *  cannot be enabled. The field holds it disabled in and out of matches. */
   blockedReason?: string;
+  /** Set while this station is NOT joined and the field is holding its robot
+   *  disabled out of a match for a reason other than a policy block — today
+   *  that is field staff turning off out-of-match robot control. The DS shows
+   *  "Admin disabled" in its game data. Joining a match clears it: in a match
+   *  the robot enables normally. */
+  heldReason?: string;
   /** Epoch ms when this team took this station — when its SSID became the
    *  station's active radio config. Unlike the DS/radio heartbeats this is a
    *  connect *time*, so it survives a robot dropping and coming back, which

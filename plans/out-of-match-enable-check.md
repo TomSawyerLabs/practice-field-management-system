@@ -114,17 +114,46 @@ to touch (ops repo / UniFi).
 4. Report which DS version each result came from; the TCP behaviour above
    suggests versions differ in how they take status 2.
 
+## User feedback (2026-09-27 ~12:15)
+
+- User turned the admin switch **off** at 12:14:21 (`updateSetupSettings
+{ outOfMatchControl: false }`) and reports a robot on the field that cannot
+  be enabled. At that moment five stations were joined (held disabled until
+  match start by design) — which robot they mean is not yet known.
+- User wants the DS itself to show a message like "admin disabled" when the
+  field is holding a robot because of the switch.
+- User wants the routing loop fixed sooner rather than later.
+
+## Decisions already made (don't re-ask)
+
+- Switch **off** now really holds: unjoined DSes are assigned a slot and the
+  hold loop streams disabled packets with game data `Admin disabled`
+  (`AdminOff` on a 2027 DS), the same path as a policy block. Station page
+  shows `heldReason`; joining a match lifts it. Switch **on** keeps the
+  status-2 release reply (still unverified on hardware).
+- Routing loop fix lives in pFMS (`networkManager.dropHairpinForwarding`):
+  `iptables -I FORWARD -i eno1 -o eno1 -j DROP` with the `pfms-` comment so
+  the normal flush/cleanup covers it. Installed at `configureNetwork`. It is
+  a firewall change on steamboat, so the **deploy needs the user's explicit
+  yes** even though the code is committed.
+
 ## Plan / steps
 
 - [x] Rule out code changes after 09-16 on the enable path (only matchEngine
       changed; all new gates are behind `joined`).
 - [x] Confirm live settings on steamboat (switch on, no controller policy).
 - [x] Look for any out-of-match enable in traffic and recorder logs (none).
-- [ ] **Current:** user checks a real DS per the field test above.
-- [ ] If confirmed: decide between (a) default the switch off / remove the
-      status-2 reply, (b) find a reply the DS actually treats as release, and
-      fix the admin page's "off" wording either way.
-- [ ] Separately: decide what to do about the routing loop.
+- [x] Implement "switch off = held + DS message" (index.ts hold loop and
+      resolver, matchEngine `setOutOfMatchHold` / `dsProtocolFor`,
+      `heldReason` in types, MatchPanel alert, AdminPage wording, docs).
+- [x] Implement the hairpin DROP rule in networkManager.
+- [ ] **Current:** user says yes/no to deploying (firewall rule included), and
+      which robot could not be enabled (joined? DS version?).
+- [ ] Verify on the field after deploy: switch off → DS shows "Admin
+      disabled" and cannot enable; switch on → freeplay enable works (or
+      not — that answers the status-2 question at last).
+- [ ] If status 2 turns out to park DSes: replace it (no reply, or a
+      different release) and drop the "release" path.
 
 ## Things not to do
 

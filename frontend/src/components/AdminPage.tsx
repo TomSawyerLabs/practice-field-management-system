@@ -483,7 +483,7 @@ function OutOfMatchControlSection() {
           <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5 }}>
             {enabled
               ? 'Robots that are not in a match can be enabled from their own Driver Station for freeplay.'
-              : 'Robots that are not in a match are held disabled until they join a match.'}
+              : 'Robots that are not in a match are held disabled until they join a match. Their Driver Station shows "Admin disabled" and their station page says why.'}
           </Typography>
         </Box>
         <Button

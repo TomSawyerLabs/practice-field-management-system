@@ -341,8 +341,34 @@ export async function setInternetAccess(
 
 type Stations = Record<StationName, number | undefined>;
 
+/**
+ * Never forward a packet back out the interface it came in on.
+ *
+ * The site gateway routes all team subnets (10.TE.AM.0/24) to this host. A
+ * Driver Station whose team has no station here still sends 50 Hz control
+ * packets to 10.TE.AM.2; we have no bridge for that subnet, so the default
+ * route sends them straight back to the gateway, which sends them here again
+ * — a ping-pong until the TTL runs out (seen 2026-09-27: ~6 000 packets/s per
+ * such DS, the same IP id with TTL 19, 18, 17 …). Everything legitimate we
+ * forward crosses interfaces (gateway ↔ station bridge), so a same-interface
+ * hairpin on the uplink is always this loop. FORWARD policy is ACCEPT, so the
+ * rule is needed; DROP rather than REJECT keeps the gateway from seeing
+ * ICMP for every packet.
+ */
+async function dropHairpinForwarding(physicalInterface: string): Promise<void> {
+  await net.iptables({
+    chain: 'FORWARD',
+    inInterface: physicalInterface,
+    outInterface: physicalInterface,
+    jump: 'DROP',
+    comment: `${commentPrefix}no-hairpin`,
+    action: '-I',
+  });
+}
+
 export async function configureNetwork(stations: Stations, interfaceName: string, practiceMode = false) {
   console.log('configureNetwork');
+  await dropHairpinForwarding(interfaceName);
   await updateNetworkConfig(stations, interfaceName, practiceMode);
 
   if (practiceMode) return;

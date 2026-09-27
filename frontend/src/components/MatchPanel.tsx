@@ -254,6 +254,12 @@ export function MatchPanel({ station }: { station?: StationName }) {
           {myState.blockedReason} The field will not enable this robot — see field staff.
         </Alert>
       )}
+      {myState?.heldReason && (
+        <Alert severity="warning" sx={{ borderRadius: 0 }}>
+          {myState.heldReason} Your robot stays disabled (the Driver Station shows "Admin disabled") until it joins a
+          match — or ask field staff.
+        </Alert>
+      )}
       <CardContent>
         {/* Phase display when active or post-match */}
         {(isActive || isPostMatch) && (

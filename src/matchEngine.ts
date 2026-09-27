@@ -181,6 +181,11 @@ export class MatchEngine {
   /** Why a station's robot may not be enabled (field control-system policy),
    *  supplied by index.ts. Null/undefined = allowed. */
   private enableBlocked?: (station: StationName) => string | null;
+  /** Why a station's robot is held disabled OUTSIDE a match (policy block or
+   *  the admin out-of-match switch), supplied by index.ts. Reported to the
+   *  team's station page for unjoined stations only; never gates an enable
+   *  here — the FMS hold loop in index.ts does the holding. */
+  private outOfMatchHold?: (station: StationName) => string | null;
   /** Maps physical station → alliance match slot during an active match */
   private portToSlot = new Map<StationName, MatchSlot>();
   /** Which alliance won auto (computed after auto ends) */
@@ -312,6 +317,12 @@ export class MatchEngine {
     return this.dsEndpoints.get(ip) ?? { protocol: 'legacy', udpPort: UdpSendPort };
   }
 
+  /** Which DS generation talks from this address ('legacy' until it has
+   *  handshaked as a 2027 DS). */
+  dsProtocolFor(ip: string): DsProtocol {
+    return this.endpointFor(ip).protocol;
+  }
+
   clearDSAddress(station: StationName) {
     if (!this.dsConnections.has(station)) return;
     this.dsConnections.delete(station);
@@ -352,6 +363,12 @@ export class MatchEngine {
    *  is never enabled, in a match or out of one. */
   setEnableBlocked(resolver: (station: StationName) => string | null) {
     this.enableBlocked = resolver;
+  }
+
+  /** Why an unjoined station's robot is held disabled out of a match (shown
+   *  on its station page as `heldReason`). Display only — see outOfMatchHold. */
+  setOutOfMatchHold(resolver: (station: StationName) => string | null) {
+    this.outOfMatchHold = resolver;
   }
 
   /** Set callback used to determine auto winner from scoring data. */
@@ -1455,11 +1472,17 @@ export class MatchEngine {
     const stationStates: Partial<Record<StationName, StationControlState>> = {};
     for (const station of StationNameList) {
       const blockedReason = this.enableBlocked?.(station) ?? undefined;
+      // Only meaningful while not joined: joining a match hands the robot to
+      // match control, where the admin out-of-match switch has no say.
+      const heldReason = this.stationStates.get(station)!.joined
+        ? undefined
+        : (this.outOfMatchHold?.(station) ?? undefined);
       const connectedAt = this.connectedAtResolver?.(station) ?? undefined;
       const state = {
         ...this.stationStates.get(station)!,
         dsAttached: this.isDsAttached(station),
         ...(blockedReason ? { blockedReason } : {}),
+        ...(heldReason && heldReason !== blockedReason ? { heldReason } : {}),
         ...(connectedAt !== undefined ? { connectedAt } : {}),
         // Kept after the disable so clients can show "last drove at"
         lastEnabledAt: this.lastFmsEnable.get(station),

@@ -320,6 +320,23 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Every enable in the match engine goes through this gate.
   matchEngine.setEnableBlocked(policyBlockReason);
 
+  /** The admin "Out-of-match robot control" switch is off. Read live so a
+   *  flip takes effect without a restart. Default on. */
+  function outOfMatchControlOff(): boolean {
+    return setupConfigStore.get().settings.outOfMatchControl === false;
+  }
+
+  /** Why the field holds this station's robot disabled OUTSIDE a match, or
+   *  null. A policy block (which also applies in a match) wins; otherwise
+   *  the admin switch. Callers only ask about stations that aren't joined. */
+  function outOfMatchHoldReason(station: StationName): string | null {
+    return (
+      policyBlockReason(station) ??
+      (outOfMatchControlOff() ? 'Field staff have turned off out-of-match robot control.' : null)
+    );
+  }
+  matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
+
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
 
@@ -1273,27 +1290,28 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     runFMS({
       // Station-assignment reply (0x19/0x1f). Joined stations get their slot.
       // A station that isn't in the match gets a status-2 "not in match" reply
-      // by default (see makeNotInMatchReply), which is meant to hand the DS back
-      // to local control; FMS_TCP_REPLY_STATIONS instead assigns it a real slot.
-      // The old design sent nothing at all to freeplay DSes, on the theory that
-      // any reply locks out local enable — which is why a team had to restart
-      // the DS to drive out of a match.
+      // (see makeNotInMatchReply), which is meant to hand the DS back to local
+      // control, unless the field holds it (policy block, or the admin
+      // out-of-match switch is off) — then it is assigned a slot like a joined
+      // station so the DS stays under field control, and the hold loop below
+      // keeps it disabled. FMS_TCP_REPLY_STATIONS assigns a real slot for
+      // testing. The old design sent nothing at all to freeplay DSes, on the
+      // theory that any reply locks out local enable — which is why a team had
+      // to restart the DS to drive out of a match.
       resolveTeamSlot: teamNumber => {
         const station = radioManager.getStationForTeam(teamNumber);
         if (!station) return undefined;
         const state = matchEngine.getState();
         const joined = state.stationStates[station]?.joined ?? false;
         if (!joined && !tcpReplyAll && !tcpReplyOptIn.has(station)) {
-          // Blocked control system: do NOT hand local control back. Assign the
-          // station so the DS stays under field control, and the hold loop
-          // below keeps sending disabled packets — that is what stops a team
-          // enabling a blocked robot while messing around out of a match.
-          if (policyBlockReason(station)) return matchEngine.slotForStation(station);
-          // Not in a match: unless an admin has turned it off, actively release
-          // the DS to local control (a "not in match" reply) so a driver can
-          // enable for freeplay without closing/reopening the DS. Read live so
-          // the admin switch takes effect without a restart. Default on.
-          return setupConfigStore.get().settings.outOfMatchControl !== false ? 'release' : undefined;
+          // Held: do NOT hand local control back. Assign the station so the DS
+          // stays under field control; the hold loop's disabled packets are
+          // what actually refuse the enable while the team is out of a match.
+          if (outOfMatchHoldReason(station)) return matchEngine.slotForStation(station);
+          // Not in a match and not held: actively release the DS to local
+          // control (a "not in match" reply) so a driver can enable for
+          // freeplay without closing/reopening the DS.
+          return 'release';
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
         // (which side of the field it shows), not the physical-port default,
@@ -1304,29 +1322,43 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       if (!fms) return;
       matchEngine.setUdpSocket(fms.udpSocket);
 
-      // Robots whose control system the field blocks are held under field
-      // control: resolveTeamSlot above assigns them (so the DS cannot enable
-      // locally) and this keeps a steady stream of disabled packets going,
-      // which is what actually refuses the enable while they are out of a
-      // match. In a match, matchEngine's enable gate does the same job.
-      // A flip in blocked state re-handshakes the DS so it picks up the new
-      // answer (held vs released) straight away.
-      const wasBlocked = new Map<StationName, boolean>();
+      // Robots the field holds out of a match — a blocked control system, or
+      // the admin out-of-match switch turned off — stay under field control:
+      // resolveTeamSlot above assigns them (so the DS cannot enable locally)
+      // and this keeps a steady stream of disabled packets going, which is
+      // what actually refuses the enable while they are out of a match. The
+      // packet's game data tells the driver why on the DS itself. In a match,
+      // matchEngine's enable gate handles policy blocks; the admin switch
+      // never applies to a joined station.
+      // A flip in held state (policy change, admin switch) re-handshakes the
+      // DS so it picks up the new answer (held vs released) straight away.
+      const wasHeld = new Map<StationName, boolean>();
       setInterval(() => {
         const state = matchEngine.getState();
         for (const station of StationNameList) {
-          const blocked = policyBlockReason(station) !== null;
           const joined = state.stationStates[station]?.joined ?? false;
+          const blocked = policyBlockReason(station) !== null;
+          const held = blocked || outOfMatchControlOff();
           const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
-          if (blocked !== (wasBlocked.get(station) ?? false)) {
-            wasBlocked.set(station, blocked);
-            if (dsIp) {
-              appInfo(`${station}: control system ${blocked ? 'blocked' : 'allowed'} — re-handshaking DS ${dsIp}`);
+          if (held !== (wasHeld.get(station) ?? false)) {
+            wasHeld.set(station, held);
+            // A joined station's answer is its slot either way — don't bounce
+            // its TCP session (possibly mid-match) for nothing.
+            if (dsIp && !joined) {
+              const why = blocked ? 'control system blocked' : held ? 'out-of-match control off' : 'released';
+              appInfo(`${station}: ${why} — re-handshaking DS ${dsIp}`);
               fms.emit('disconnectDS', { address: dsIp });
             }
           }
-          if (blocked && !joined && dsIp) {
-            matchEngine.sendRawControlPacket(dsIp, station, [{ type: 'gameData', data: 'Blocked' }]);
+          if (held && !joined && dsIp) {
+            // What the DS shows in its game data field. The 2027 DS reads at
+            // most 8 characters, so it gets a shorter spelling.
+            const gameData = blocked
+              ? 'Blocked'
+              : matchEngine.dsProtocolFor(dsIp) === 'ds2027'
+                ? 'AdminOff'
+                : 'Admin disabled';
+            matchEngine.sendRawControlPacket(dsIp, station, [{ type: 'gameData', data: gameData }]);
           }
         }
       }, 500).unref();
