@@ -178,10 +178,11 @@ check. Run `node dist/cli.js --help` for the full list.
 
 ## Misc / Debug
 
-| Variable                      | Default | Description                                                                        |
-| ----------------------------- | ------- | ---------------------------------------------------------------------------------- |
-| `RADIO_HISTORY_DURATION_MS`   | `60000` | Radio status history retention window (ms)                                         |
-| `RADIO_RECONCILE_DEBOUNCE_MS` | `15000` | How long the radio's config must stay out of sync before pFMS pushes it again (ms) |
+| Variable                      | Default  | Description                                                                                        |
+| ----------------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `RADIO_HISTORY_DURATION_MS`   | `60000`  | Radio status history retention window (ms)                                                         |
+| `RADIO_RECONCILE_DEBOUNCE_MS` | `15000`  | How long the radio's config must stay out of sync before pFMS pushes it again (ms)                 |
+| `RADIO_RECONCILE_MAX_WAIT_MS` | `600000` | Cap on the wait between repeated pushes; they back off 1, 2, 4, 8… min until the radio agrees (ms) |
 
 ## Trusted Proxies
 

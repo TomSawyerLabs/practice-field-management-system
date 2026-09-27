@@ -27,7 +27,11 @@ import {
 
 type StatusListener = (entry: StatusEntry) => void;
 
-const ReconfigurationTimeout = 45; // seconds
+// How long to wait for the radio to leave CONFIGURING after a POST. The
+// practice firmware (VH-109_AP_PRACTICE_1.2.9) has been seen to take more
+// than 45 s under a six-station change (2026-09-27); giving up early does not
+// stop the radio, it just lets the sync check push again on top of it.
+const ReconfigurationTimeout = 90; // seconds
 
 class RadioManager {
   private updateInterval: NodeJS.Timeout | null = null;
@@ -224,6 +228,24 @@ class RadioManager {
   /** When the radio's station config first disagreed with activeConfig (null = in sync). */
   private mismatchSince: number | null = null;
   private readonly reconcileDebounceMs = Number(process.env.RADIO_RECONCILE_DEBOUNCE_MS) || 15000;
+  /** Self-repairs pushed since the radio last agreed with activeConfig.
+   *  Each one lengthens the wait before the next (see reconcileWaitMs). */
+  private reconcileAttempts = 0;
+  /** Longest wait between repeated self-repairs. */
+  private readonly reconcileMaxWaitMs = Number(process.env.RADIO_RECONCILE_MAX_WAIT_MS) || 10 * 60 * 1000;
+
+  /**
+   * How long a mismatch must persist before the next self-repair: the
+   * debounce for the first one, then 1, 2, 4, 8… minutes, capped. Re-sending
+   * a config the radio has already ignored costs every robot ~40 s of Wi-Fi
+   * each time; on 2026-09-27 the radio kept reporting all six stations wrong
+   * for ten minutes and pFMS pushed the same config six times, so every
+   * screen showed "Reconfiguration in progress" every three minutes.
+   */
+  private reconcileWaitMs(): number {
+    if (this.reconcileAttempts === 0) return this.reconcileDebounceMs;
+    return Math.min(this.reconcileMaxWaitMs, 60_000 * 2 ** (this.reconcileAttempts - 1));
+  }
 
   /**
    * Verify the radio's reported station config matches activeConfig, and
@@ -234,7 +256,8 @@ class RadioManager {
    * syslog-only configuration POST used to wipe every station (2026-07-24
    * incident: kernel network configured for team 8048 but the radio empty).
    * The debounce rides out normal lag around reconfigures; the guards reset
-   * it whenever a commit is queued or in flight.
+   * it whenever a commit is queued or in flight. Repeats back off (see
+   * reconcileWaitMs) until the radio agrees again.
    */
   private checkRadioConfigSync(update: RadioUpdate): void {
     if (update.status !== 'ACTIVE' || this.configuring || this.queuedCommits > 0) {
@@ -245,16 +268,34 @@ class RadioManager {
       station => (this.activeConfig[station]?.ssid ?? null) !== (update.stationStatuses[station]?.ssid ?? null),
     );
     if (mismatched.length === 0) {
+      if (this.reconcileAttempts > 0) {
+        console.log(`Radio station config back in sync with active config after ${this.reconcileAttempts} re-apply(s)`);
+      }
       this.mismatchSince = null;
+      this.reconcileAttempts = 0;
       return;
     }
     if (this.mismatchSince === null) {
       this.mismatchSince = Date.now();
       return;
     }
-    if (Date.now() - this.mismatchSince < this.reconcileDebounceMs) return;
+    if (Date.now() - this.mismatchSince < this.reconcileWaitMs()) return;
     this.mismatchSince = null;
-    console.log(`Radio station config out of sync with active config (${mismatched.join(', ')}) — re-applying`);
+    this.reconcileAttempts++;
+    // Name both sides so the log shows whether the radio is empty, stale, or
+    // holding something pFMS never sent — the 2026-09-27 storm only logged
+    // slot names, which left the radio's side a guess.
+    const detail = mismatched
+      .map(station => {
+        const active = this.activeConfig[station]?.ssid ?? '(none)';
+        const radio = update.stationStatuses[station]?.ssid ?? '(none)';
+        return `${station}: pFMS ${active}, radio ${radio}`;
+      })
+      .join('; ');
+    console.log(
+      `Radio station config out of sync with active config (${mismatched.join(', ')}) — re-applying` +
+        ` (attempt ${this.reconcileAttempts}; next no sooner than ${Math.round(this.reconcileWaitMs() / 1000)}s): ${detail}`,
+    );
     this.commitConfiguration().catch(err => {
       appError(
         'Error re-applying configuration after radio config mismatch: ' +

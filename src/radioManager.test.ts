@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -213,5 +213,160 @@ describe('who a station is for', () => {
 
     rm.cancelStagedChange('slot1');
     expect(rm.getProjectedTeamForStation('slot1')).toBe(1234);
+  });
+});
+
+// ── Radio self-repair ───────────────────────────────────────────────
+//
+// The status poll compares what the radio reports with activeConfig and
+// re-pushes when they stay apart. Drive the check directly with fake status
+// updates and a stubbed commit, stepping the clock, so the policy is tested
+// without a radio: first repair after the debounce, then backing off until
+// the radio agrees.
+
+type Sync = {
+  checkRadioConfigSync(update: unknown): void;
+  commitConfiguration(): Promise<void>;
+};
+
+/** A radio status report naming these SSIDs (slot order), rest empty. */
+function radioReports(...ssids: (string | null)[]) {
+  const stationStatuses: Record<string, { ssid: string } | null> = {};
+  ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6'].forEach((slot, i) => {
+    stationStatuses[slot] = ssids[i] ? { ssid: ssids[i]! } : null;
+  });
+  return { status: 'ACTIVE', stationStatuses };
+}
+
+describe('radio self-repair', () => {
+  let now: number;
+  let commits: number;
+  let rm: RadioManager;
+  let sync: Sync;
+
+  const tick = (ms: number) => {
+    now += ms;
+    setSystemTime(new Date(now));
+  };
+
+  beforeEach(async () => {
+    now = Date.parse('2026-09-27T22:28:00Z');
+    setSystemTime(new Date(now));
+    commits = 0;
+    rm = manager();
+    sync = rm as unknown as Sync;
+    sync.commitConfiguration = async () => {
+      commits++;
+    };
+    await rm.configure('slot1', robot);
+    commits = 0; // configure() committed once itself
+  });
+  afterEach(() => {
+    setSystemTime();
+  });
+
+  test('a radio that agrees is left alone', () => {
+    for (let i = 0; i < 10; i++) {
+      sync.checkRadioConfigSync(radioReports('1234-Comp'));
+      tick(5_000);
+    }
+    expect(commits).toBe(0);
+  });
+
+  test('the first repair comes after the debounce', () => {
+    sync.checkRadioConfigSync(radioReports(null)); // radio empty
+    tick(10_000);
+    sync.checkRadioConfigSync(radioReports(null));
+    expect(commits).toBe(0);
+    tick(6_000); // 16 s in: past the 15 s debounce
+    sync.checkRadioConfigSync(radioReports(null));
+    expect(commits).toBe(1);
+  });
+
+  test('repeats back off while the radio keeps disagreeing', () => {
+    const disagree = () => sync.checkRadioConfigSync(radioReports('9999-stale'));
+    // First repair at the debounce.
+    disagree();
+    tick(16_000);
+    disagree();
+    expect(commits).toBe(1);
+    // Still wrong straight after: nothing for a minute…
+    disagree();
+    tick(30_000);
+    disagree();
+    expect(commits).toBe(1);
+    tick(31_000);
+    disagree();
+    expect(commits).toBe(2);
+    // …then two minutes…
+    disagree();
+    tick(61_000);
+    disagree();
+    expect(commits).toBe(2);
+    tick(60_000);
+    disagree();
+    expect(commits).toBe(3);
+    // …then four.
+    disagree();
+    tick(3 * 60_000 + 59_000);
+    disagree();
+    expect(commits).toBe(3);
+    tick(2_000);
+    disagree();
+    expect(commits).toBe(4);
+  });
+
+  test('the wait is capped', () => {
+    const disagree = () => sync.checkRadioConfigSync(radioReports(null));
+    // Burn through 15 s, 1, 2, 4, 8 min of waits.
+    for (const wait of [15_000, 60_000, 120_000, 240_000, 480_000]) {
+      disagree();
+      tick(wait + 1_000);
+      disagree();
+    }
+    expect(commits).toBe(5);
+    // Next would be 16 min uncapped; the cap is 10.
+    disagree();
+    tick(10 * 60_000 + 1_000);
+    disagree();
+    expect(commits).toBe(6);
+  });
+
+  test('agreement resets the backoff', () => {
+    const disagree = () => sync.checkRadioConfigSync(radioReports(null));
+    disagree();
+    tick(16_000);
+    disagree();
+    expect(commits).toBe(1);
+    disagree();
+    tick(61_000);
+    disagree();
+    expect(commits).toBe(2);
+    // The radio catches up.
+    sync.checkRadioConfigSync(radioReports('1234-Comp'));
+    // A fresh wipe is repaired after the plain debounce again.
+    disagree();
+    tick(16_000);
+    disagree();
+    expect(commits).toBe(3);
+  });
+
+  test('an unsettled radio restarts the clock but keeps the backoff', () => {
+    const disagree = () => sync.checkRadioConfigSync(radioReports(null));
+    disagree();
+    tick(16_000);
+    disagree();
+    expect(commits).toBe(1);
+    // Our push puts the radio into CONFIGURING for a while.
+    sync.checkRadioConfigSync({ status: 'CONFIGURING', stationStatuses: {} });
+    tick(40_000);
+    // Back, still wrong: the minute starts now, not from before the push.
+    disagree();
+    tick(59_000);
+    disagree();
+    expect(commits).toBe(1);
+    tick(2_000);
+    disagree();
+    expect(commits).toBe(2);
   });
 });
