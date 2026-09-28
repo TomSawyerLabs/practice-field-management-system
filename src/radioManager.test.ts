@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type RadioManager from './radioManager.js';
@@ -81,47 +81,63 @@ describe('while robots are enabled', () => {
 });
 
 describe('while a match exists (or an admin is holding changes)', () => {
-  test('the request is held, not applied, and says why', async () => {
+  test('the request waits, is not applied, and says why', async () => {
     const rm = manager();
     rm.setShouldHold(() => 'match');
 
-    await rm.configure('slot1', robot);
+    const result = await rm.configure('slot1', robot);
+    expect(result).toEqual({ result: 'waiting', reason: 'match' });
     expect(rm.getStationConfig('slot1')).toBeNull();
     const state = rm.getPendingState();
     expect(state.pending).toBe(true);
     expect(state.hold).toBe('match');
+    expect(state.changes).toEqual([
+      {
+        id: expect.any(String),
+        kind: 'enable',
+        ssid: '1234-Comp',
+        station: 'slot1',
+        internetAccess: undefined,
+        secured: true,
+      },
+    ]);
     expect(state.stagedChanges).toEqual({ slot1: { ssid: '1234-Comp', internetAccess: undefined, secured: true } });
     expect(state.deferred).toBeUndefined();
   });
 
-  test('a release is held too', async () => {
+  test('a release waits too', async () => {
     const rm = manager();
     await rm.configure('slot1', robot);
     rm.setShouldHold(() => 'admin');
 
     await rm.configure('slot1', { ssid: '', wpaKey: '' });
     expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp'); // still on the field
-    expect(rm.getPendingState().stagedChanges).toEqual({ slot1: null });
-    expect(rm.getPendingState().hold).toBe('admin');
+    const state = rm.getPendingState();
+    expect(state.changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'team' },
+    ]);
+    expect(state.stagedChanges).toEqual({ slot1: null });
+    expect(state.hold).toBe('admin');
   });
 
-  test('held changes apply on their own once the hold lifts', async () => {
+  test('the hold lifting applies nothing by itself — staff do', async () => {
     const rm = manager();
     let hold: RadioHoldReason | null = 'match';
     rm.setShouldHold(() => hold);
     await rm.configure('slot1', robot);
 
-    rm.retryHeldChanges(); // still held: nothing happens
-    expect(rm.getStationConfig('slot1')).toBeNull();
-
     hold = null;
     rm.retryHeldChanges();
     await new Promise(r => setTimeout(r, 0));
+    expect(rm.getStationConfig('slot1')).toBeNull();
+    expect(rm.getPendingState().hold).toBe('pending');
+
+    await rm.applyPendingChanges();
     expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
     expect(rm.getPendingState()).toEqual({ pending: false });
   });
 
-  test('staff "Apply now" applies held changes despite the hold', async () => {
+  test('staff "Apply now" applies the whole list despite the hold', async () => {
     const rm = manager();
     rm.setShouldHold(() => 'match');
     await rm.configure('slot1', robot);
@@ -143,11 +159,12 @@ describe('while a match exists (or an admin is holding changes)', () => {
     expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
     const state = rm.getPendingState();
     expect(state.deferred).toBe(true);
+    expect(state.changes).toBeUndefined();
     expect(state.stagedChanges).toBeUndefined();
     expect(state.hold).toBeUndefined();
   });
 
-  test('a team can withdraw a held request', async () => {
+  test('a team can withdraw a waiting request', async () => {
     const rm = manager();
     rm.setShouldHold(() => 'match');
     await rm.configure('slot1', robot);
@@ -156,62 +173,271 @@ describe('while a match exists (or an admin is holding changes)', () => {
     expect(rm.getPendingState()).toEqual({ pending: false });
   });
 
-  test('releasing an empty station withdraws what was waiting for it', async () => {
+  test('releasing a robot that is not on the field only withdraws its request', async () => {
     const rm = manager();
     rm.setShouldHold(() => 'match');
     await rm.configure('slot1', robot);
 
-    await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    const result = await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    expect(result).toEqual({ result: 'noop' });
     expect(rm.getPendingState()).toEqual({ pending: false });
   });
 
-  test('a robot moving to another station releases the old one with the same hold', async () => {
+  test('a robot already on the field never changes station', async () => {
     const rm = manager();
     await rm.configure('slot1', robot);
     rm.setShouldHold(() => 'match');
 
-    await rm.configure('slot2', robot);
-    // Nothing applied yet: the old station is untouched until the hold lifts…
+    const result = await rm.configure('slot2', robot);
+    expect(result).toEqual({ result: 'noop' });
+    expect(rm.getPendingState()).toEqual({ pending: false });
     expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
     expect(rm.getStationConfig('slot2')).toBeNull();
-    expect(rm.getPendingState().stagedChanges).toEqual({
-      slot1: null,
-      slot2: { ssid: '1234-Comp', internetAccess: undefined, secured: true },
-    });
-
-    // …and then both happen together.
-    await rm.applyPendingChanges();
-    expect(rm.getStationConfig('slot1')).toBeNull();
-    expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
   });
 
-  test('held changes survive a restart', async () => {
+  test('a new key for a robot on the field is a change in place', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.setShouldHold(() => 'match');
+
+    await rm.configure('slot3', { ssid: '1234-Comp', wpaKey: 'newkey123' });
+    expect(rm.getPendingState().stagedChanges).toEqual({
+      slot1: { ssid: '1234-Comp', internetAccess: undefined, secured: true },
+    });
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')?.wpaKey).toBe('newkey123');
+    expect(rm.getStationConfig('slot3')).toBeNull();
+  });
+
+  test('waiting changes survive a restart', async () => {
     const rm = manager();
     rm.setShouldHold(() => 'match');
     await rm.configure('slot1', robot);
 
     const restarted = manager();
-    expect(restarted.getPendingState().stagedChanges).toEqual({
-      slot1: { ssid: '1234-Comp', internetAccess: undefined, secured: true },
+    expect(restarted.getPendingState().changes).toEqual([
+      {
+        id: expect.any(String),
+        kind: 'enable',
+        ssid: '1234-Comp',
+        station: 'slot1',
+        internetAccess: undefined,
+        secured: true,
+      },
+    ]);
+  });
+
+  test('the old per-station file is migrated', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    writeFileSync(
+      process.env.STAGED_CONFIG_FILE!,
+      JSON.stringify({ slot1: null, slot2: { ssid: '5678', wpaKey: 'passphrase2' } }),
+    );
+
+    const restarted = manager();
+    expect(restarted.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'team' },
+      {
+        id: expect.any(String),
+        kind: 'enable',
+        ssid: '5678',
+        station: 'slot2',
+        internetAccess: undefined,
+        secured: true,
+      },
+    ]);
+  });
+});
+
+describe('the pending list simplifies itself', () => {
+  test('asking again replaces the earlier request', async () => {
+    const rm = manager();
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', { ...robot, wpaKey: 'otherkey12' });
+
+    const changes = rm.getPendingState().changes!;
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ kind: 'enable', ssid: '1234-Comp', station: 'slot2' });
+  });
+
+  test('released then re-enabled while waiting is a no-op: the robot is kept', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    expect(rm.getPendingState().changes).toHaveLength(1);
+
+    const result = await rm.configure('slot1', robot);
+    expect(result).toEqual({ result: 'kept' });
+    expect(rm.getPendingState()).toEqual({ pending: false });
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+  });
+
+  test('enabled then released while waiting is a no-op', async () => {
+    const rm = manager();
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', robot);
+
+    const result = await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    expect(result).toEqual({ result: 'noop' });
+    expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+
+  test('a request joins a batch that is already waiting, even with no hold', async () => {
+    const rm = manager();
+    let hold: RadioHoldReason | null = 'match';
+    rm.setShouldHold(() => hold);
+    await rm.configure('slot1', robot);
+
+    hold = null;
+    const result = await rm.configure('slot2', other);
+    expect(result).toEqual({ result: 'waiting', reason: 'pending' });
+    expect(rm.getStationConfig('slot2')).toBeNull();
+
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+  });
+});
+
+describe('applying reconciles the list with the field', () => {
+  test('an enable whose station is spoken for lands on the next free one', async () => {
+    const rm = manager();
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', robot);
+    await rm.configure('slot1', other); // both asked for slot1
+
+    expect(rm.getPendingState().changes!.map(c => c.station)).toEqual(['slot1', 'slot2']);
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+  });
+
+  test('a station being released is reused in the same apply', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    await rm.configure('slot1', other);
+
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('5678');
+    expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+
+  test('with the field full an enable keeps waiting', async () => {
+    const rm = manager();
+    const slots = ['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6'] as const;
+    for (const [i, slot] of slots.entries()) await rm.configure(slot, { ssid: `${1000 + i}-x`, wpaKey: 'passphrase' });
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', robot);
+    expect(rm.getPendingState().changes![0].station).toBeNull();
+
+    await rm.applyPendingChanges();
+    expect(rm.getPendingState().changes).toHaveLength(1);
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1000-x');
+  });
+});
+
+describe('after a match', () => {
+  test('every robot on the field is queued to leave, and nothing leaves until staff apply', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+
+    expect(rm.stageReleaseAll('postMatch')).toBe(2);
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    const state = rm.getPendingState();
+    expect(state.hold).toBe('pending');
+    expect(state.changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'postMatch' },
+      { id: expect.any(String), kind: 'release', ssid: '5678', station: 'slot2', reason: 'postMatch' },
+    ]);
+
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')).toBeNull();
+    expect(rm.getStationConfig('slot2')).toBeNull();
+    expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+
+  test('a robot that plays on stays: joining, or asking again, withdraws its release', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+    rm.stageReleaseAll('postMatch');
+
+    expect(rm.keepRobot('1234-Comp')).toBe(true); // joined the next match
+    expect(await rm.configure('slot2', other)).toEqual({ result: 'kept' }); // pressed Keep / Enable Wi-Fi
+    expect(rm.getPendingState()).toEqual({ pending: false });
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+  });
+
+  test("a team's own release is left alone by the match-end one", async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', { ssid: '', wpaKey: '' });
+
+    expect(rm.stageReleaseAll('postMatch')).toBe(0);
+    expect(rm.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'team' },
+    ]);
+  });
+
+  test("a new robot takes a leaving robot's station in the same apply", async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.stageReleaseAll('postMatch');
+    await rm.configure('slot1', other); // waits: the release is already waiting
+
+    expect(rm.getPendingState().stagedChanges).toEqual({
+      slot1: { ssid: '5678', internetAccess: undefined, secured: true },
     });
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('5678');
+  });
+
+  test('staff can withdraw one change from the list', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+    rm.stageReleaseAll('postMatch');
+
+    const [first] = rm.getPendingState().changes!;
+    expect(rm.cancelPendingChange(first.id)).toBe(true);
+    expect(rm.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '5678', station: 'slot2', reason: 'postMatch' },
+    ]);
+  });
+
+  test('a field reset drops the list too', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.stageReleaseAll('postMatch');
+
+    await rm.clearAllConfigurations();
+    expect(rm.getStationConfig('slot1')).toBeNull();
+    expect(rm.getPendingState()).toEqual({ pending: false });
   });
 });
 
 describe('who a station is for', () => {
-  test('the projected team follows a held request; the active team does not', async () => {
+  test('the projected team follows the list; the active team does not', async () => {
     const rm = manager();
     await rm.configure('slot1', robot); // 1234 on the radio
     rm.setShouldHold(() => 'match');
 
-    await rm.configure('slot1', other); // 5678 held for the same slot
-    expect(rm.getTeamForStation('slot1')).toBe(1234);
-    expect(rm.getProjectedTeamForStation('slot1')).toBe(5678);
-
-    await rm.configure('slot1', { ssid: '', wpaKey: '' }); // now a held release
+    await rm.configure('slot1', { ssid: '', wpaKey: '' }); // release waiting
     expect(rm.getTeamForStation('slot1')).toBe(1234);
     expect(rm.getProjectedTeamForStation('slot1')).toBeNull();
 
-    rm.cancelStagedChange('slot1');
+    await rm.configure('slot1', other); // 5678 wants slot1: free once 1234 leaves
+    expect(rm.getProjectedTeamForStation('slot1')).toBe(5678);
+
+    rm.cancelStagedChange('slot1'); // withdraws the enable landing there and the release of the robot there
     expect(rm.getProjectedTeamForStation('slot1')).toBe(1234);
   });
 });

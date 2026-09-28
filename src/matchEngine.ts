@@ -751,6 +751,10 @@ export class MatchEngine {
       }
       return;
     }
+    // Joining says "this robot is playing on": a release waiting for it
+    // (the end of the last match queues every robot to leave) is withdrawn
+    // before the roster works out who joined.
+    this.stationJoinHook?.(station);
     // The roster names the robot that joined, not whatever the slot's radio
     // holds right now: while a match exists Wi-Fi changes are held, so the
     // radio may still carry the previous team. Kept until the station leaves.
@@ -1573,6 +1577,14 @@ export class MatchEngine {
 
   isMatchActive(): boolean {
     return this.phase !== 'idle' && this.phase !== 'created' && this.phase !== 'postMatch';
+  }
+
+  /** Runs just before a station joins a match, so the radio manager can keep
+   *  its robot (withdraw a release waiting for it) before the roster resolves
+   *  who joined. */
+  private stationJoinHook?: (station: StationName) => void;
+  setStationJoinHook(fn: (station: StationName) => void) {
+    this.stationJoinHook = fn;
   }
 
   addStateListener(fn: (state: MatchState) => void): () => void {

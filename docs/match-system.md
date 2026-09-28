@@ -198,25 +198,45 @@ takes it off with **Release**. Reconfiguring the radio takes about 30
 seconds and drops every robot's Wi-Fi while it does, so the server — not
 the team — decides when that happens:
 
-- **Nothing in the way** (no match, no robot enabled): straight away.
+- **Nothing in the way** (no match, no robot enabled, nothing else
+  waiting): straight away.
 - **Robots enabled**: the change is applied but the radio waits, and
   reconfigures the moment the last robot is disabled. The team's page says
   "Connecting…" with the reason.
 - **A match exists** — created, counting down, running, or post-match —
-  or the admin page's **Hold Wi-Fi changes** box is ticked: the request is
-  _held_. The team's page says "Waiting" and why, and they can cancel it.
-  Held changes apply on their own the moment the hold lifts (the match is
-  cleared, or the box is unticked).
+  the admin page's **Hold Wi-Fi changes** box is ticked, or other changes
+  are already waiting: the request goes on the _pending list_. The team's
+  page opens a dialog saying the match admin has to apply it, and they can
+  cancel it. Waiting changes reach the radio only when staff press **Apply
+  now**; the hold lifting does not send them by itself.
+
+The pending list is a list of changes, not a slot table. A new change
+overrides anything earlier about the same robot: a release followed by an
+enable of the same robot cancels out and the robot simply stays; two
+enables keep the later one. A robot already on the field never changes
+station — asking for it again on another station is a no-op, and a new
+key is a change in place. When staff apply, the list is reconciled with
+the field: releases free their stations, enables take their preferred
+station if it is free or the first free one otherwise, and the radio gets
+one update with the result. An enable that finds no free station stays on
+the list ("the field is full").
+
+**After a match**, every robot on the field is queued to leave (a release
+per robot, marked "the match is over"), so the next match starts clean
+without anyone pressing Release. A robot that joins the next match, or
+whose team presses **Keep** or **Enable Wi-Fi** again, comes off the list
+and stays. Nothing leaves until staff apply. The admin page's "Queue every
+robot to leave when a match ends" box turns this off.
 
 The match page and the admin page show a **Wi-Fi changes waiting** panel
-whenever something is held or deferred: each change named by robot, the
-robots currently on the field with their link and enable state, and an
-**Apply now** button. Apply now applies every held change regardless of
-the hold; it is disabled while a match is running, and if robots are
-enabled the radio still waits for them to be disabled first. This is how a
-scrimmage day works: teams queue up their robots while a match is on, and
-the match manager applies the whole batch between matches, when nobody is
-driving.
+whenever something is on the list or deferred: each change named by robot
+with a ✕ to withdraw it, the robots currently on the field with their link
+and enable state, and an **Apply now** button. Apply now applies the whole
+list regardless of the hold; it is disabled while a match is running, and
+if robots are enabled the radio still waits for them to be disabled first.
+This is how a scrimmage day works: teams queue up their robots while a
+match is on, and the match manager applies the whole batch between
+matches, when nobody is driving.
 
 If the radio and pFMS disagree about what is configured, pFMS pushes its
 config again after 15 seconds, then backs off (1, 2, 4, 8 minutes, capped

@@ -521,6 +521,7 @@ function OutOfMatchControlSection() {
 function WifiChangesSection() {
   const setupConfig = useSetupConfig();
   const hold = setupConfig?.config.settings.holdRadioChanges === true;
+  const releaseAfterMatch = setupConfig?.config.settings.releaseAfterMatch !== false;
   return (
     <>
       <Card sx={{ mb: 2 }}>
@@ -535,10 +536,24 @@ function WifiChangesSection() {
             }
             label="Hold Wi-Fi changes until I apply them"
           />
-          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
             {hold
-              ? 'Teams can still press Enable Wi-Fi, but nothing reaches the radio until you press Apply now below (or untick this). Held changes then apply on their own.'
-              : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled. They are held automatically while a match exists; tick this to hold them at other times too, e.g. a busy scrimmage day.'}
+              ? 'Teams can still press Enable Wi-Fi, but nothing reaches the radio until you press Apply now below.'
+              : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled — unless something is already waiting, in which case they join that batch. They are held automatically while a match exists; tick this to hold them at other times too, e.g. a busy scrimmage day. Waiting changes only go out when you press Apply now.'}
+          </Typography>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={releaseAfterMatch}
+                onChange={e => sendUpdateSetupSettings({ releaseAfterMatch: e.target.checked })}
+              />
+            }
+            label="Queue every robot to leave when a match ends"
+          />
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            {releaseAfterMatch
+              ? 'When a match ends, every robot on the field is queued to leave so the next match starts clean. A robot that joins the next match, or whose team presses Keep, stays. Nothing leaves until you press Apply now.'
+              : 'Robots stay on the field after a match until their team releases them or you clear the radio.'}
           </Typography>
         </CardContent>
       </Card>

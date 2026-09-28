@@ -36,6 +36,10 @@ import {
   usePortBridgeState,
   sendPortBridge,
 } from '../hooks/useBackend';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
 import { MatchPanelForControl } from './MatchPanel';
 import { MatchVideoCard } from './MatchVideoCard';
@@ -71,7 +75,14 @@ function formatNumberWithThinSpace(num: number | undefined): string {
  *  held request (applied when the match is over or staff apply it) or a
  *  change waiting for robots to be disabled beats what the radio reports
  *  right now. `ssid` null = the station is, or is about to be, empty. */
-type ProjectedStation = { ssid: string | null; pending: 'held' | 'deferred' | null };
+type ProjectedStation = {
+  ssid: string | null;
+  pending: 'held' | 'deferred' | null;
+  /** A robot queued to leave because the match ended. The station counts
+   *  as free for newcomers, but it is still this robot's team's until staff
+   *  apply — joining the next match keeps it. */
+  leaving?: string;
+};
 
 function useProjectedStations(): Record<StationName, ProjectedStation> {
   const latest = useLatest();
@@ -83,8 +94,16 @@ function useProjectedStations(): Record<StationName, ProjectedStation> {
     for (const station of StationNameList) {
       const held = pending.stagedChanges?.[station];
       const deferred = pending.deferredChanges?.[station];
-      if (held !== undefined) result[station] = { ssid: held?.ssid ?? null, pending: 'held' };
-      else if (deferred !== undefined) result[station] = { ssid: deferred?.ssid ?? null, pending: 'deferred' };
+      if (held !== undefined) {
+        const onRadio = radio?.[station]?.ssid || undefined;
+        const leaving =
+          held === null &&
+          onRadio &&
+          pending.changes?.some(c => c.kind === 'release' && c.reason === 'postMatch' && c.ssid === onRadio)
+            ? onRadio
+            : undefined;
+        result[station] = { ssid: held?.ssid ?? null, pending: 'held', leaving };
+      } else if (deferred !== undefined) result[station] = { ssid: deferred?.ssid ?? null, pending: 'deferred' };
       else result[station] = { ssid: radio?.[station]?.ssid || null, pending: null };
     }
     return result;
@@ -119,8 +138,9 @@ function useStationsForTeam(teamNumber: number): Map<string, StationName> {
   return useMemo(() => {
     const result = new Map<string, StationName>();
     for (const station of StationNameList) {
-      const { ssid } = projected[station];
-      if (ssid && teamOfSsid(ssid) === teamNumber) result.set(ssid, station);
+      const { ssid, leaving } = projected[station];
+      const own = ssid ?? leaving; // a robot the match end queued to leave is still the team's to keep
+      if (own && teamOfSsid(own) === teamNumber) result.set(own, station);
     }
     return result;
   }, [projected, teamNumber]);
@@ -720,8 +740,56 @@ function RobotRow({
       ? holdReasonText(pendingState.hold, 'team')
       : DEFERRED_TEXT_TEAM;
 
+  // This robot's entry on the pending list, if any. A new entry opens a
+  // dialog once — the match admin has to apply it, which is not obvious from
+  // a "Waiting" chip — and stays dismissed until the entry changes.
+  const myChange = pendingState.changes?.find(c => c.ssid === config.ssid);
+  const [dismissedChangeId, setDismissedChangeId] = useState<string | null>(null);
+  const waitingDialogOpen =
+    !!myChange && !!robotPending && robotPending.kind.startsWith('held') && myChange.id !== dismissedChangeId;
+  const dismissWaiting = () => setDismissedChangeId(myChange?.id ?? null);
+  const leavingAfterMatch = myChange?.kind === 'release' && myChange.reason === 'postMatch';
+
   return (
     <>
+      <Dialog open={waitingDialogOpen} onClose={dismissWaiting} maxWidth="xs" fullWidth>
+        <DialogTitle>
+          {leavingAfterMatch
+            ? 'The match is over — your robot is queued to leave'
+            : myChange?.kind === 'release'
+              ? 'Your robot is queued to leave the field'
+              : 'Waiting for the match admin'}
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            {leavingAfterMatch
+              ? 'When a match ends, every robot on the field is queued to leave so the next match starts clean. Nothing changes until the match admin presses Apply now. Playing again? Press Keep — joining the next match keeps it too.'
+              : myChange?.kind === 'release'
+                ? 'Your release is on the list for the match admin to apply. Until then the robot stays on Wi-Fi. Changed your mind? Press Keep.'
+                : 'Your Wi-Fi request is on the list. Nothing reaches the radio until the match admin presses Apply now on the match page — every change goes out together, between matches, so no robot is cut off mid-drive.'}
+          </Typography>
+          {pendingReason && (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              {pendingReason}
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={e => {
+              handleWithdraw(e);
+              dismissWaiting();
+            }}
+            variant={myChange?.kind === 'release' ? 'contained' : 'text'}
+            disabled={configCooldown}
+          >
+            {myChange?.kind === 'release' ? 'Keep my robot on the field' : 'Cancel request'}
+          </Button>
+          <Button onClick={dismissWaiting} variant={myChange?.kind === 'release' ? 'text' : 'contained'}>
+            OK
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Box
         onClick={isActive ? onSelect : () => setShowEnableHint(true)}
         sx={{

@@ -356,10 +356,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
 
-  // Teams' Wi-Fi requests are held — parked, not applied — while a match
-  // exists in any phase (created through post-match), or while an admin holds
-  // them from the admin page. Held changes apply on their own the moment the
-  // hold lifts; staff can apply them sooner with "Apply now". Read live.
+  // Teams' Wi-Fi requests wait — parked on the pending list, not applied —
+  // while a match exists in any phase (created through post-match), while an
+  // admin holds them from the admin page, or while other changes are already
+  // waiting. Waiting changes only reach the radio when staff press "Apply
+  // now" on the match or admin page. Read live.
   radioManager.setShouldHold(() => {
     if (matchEngine.getState().phase !== 'idle') return 'match';
     if (setupConfigStore.get().settings.holdRadioChanges) return 'admin';
@@ -367,6 +368,22 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   matchEngine.addStateListener(() => radioManager.retryHeldChanges());
   setupConfigStore.addListener(() => radioManager.retryHeldChanges());
+
+  // When a match ends, every robot on the field is queued to leave unless it
+  // plays on: joining the next match, or pressing Keep / Enable Wi-Fi,
+  // withdraws its release. Nothing leaves until staff apply.
+  let phaseBeforeRelease = matchEngine.getState().phase;
+  matchEngine.addStateListener(state => {
+    const previous = phaseBeforeRelease;
+    phaseBeforeRelease = state.phase;
+    if (state.phase !== 'postMatch' || previous === 'postMatch') return;
+    if (setupConfigStore.get().settings.releaseAfterMatch === false) return;
+    radioManager.stageReleaseAll('postMatch');
+  });
+  matchEngine.setStationJoinHook(station => {
+    const ssid = radioManager.getStationConfig(station)?.ssid;
+    if (ssid) radioManager.keepRobot(ssid);
+  });
 
   // Initialize match audio (plays FRC field sounds on phase transitions)
   const matchAudio = new MatchAudio();

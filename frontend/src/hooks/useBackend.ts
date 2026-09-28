@@ -249,6 +249,11 @@ export function sendCancelStationChange(station: StationName) {
   ws?.send(JSON.stringify({ type: 'cancelStationChange', station }));
 }
 
+/** Staff withdraw one waiting Wi-Fi change by id (the ✕ on the pending panel). */
+export function sendCancelPendingChange(id: string) {
+  ws?.send(JSON.stringify({ type: 'cancelPendingChange', id }));
+}
+
 export function sendInternetToggle(station: StationName, enabled: boolean) {
   const msg: InternetToggle = {
     type: 'internetToggle',

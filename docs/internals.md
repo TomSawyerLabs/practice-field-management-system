@@ -52,20 +52,27 @@ A frontend client sends a WebSocket message with
 1. **WebSocket receives message** — `websocketServer.ts` validates the
    message and calls `radioManager.configure(station, { ssid, wpaKey })`.
 
-2. **Hold, defer, or commit** — the server decides when the radio changes:
-   - **Held** while a match exists in any phase (created through
-     post-match) or the admin "Hold Wi-Fi changes" box is ticked: the
-     request is parked in `staged-config.json` and applied on its own the
-     moment the hold lifts, or sooner when staff press **Apply now** on the
-     match or admin page (`applyConfig`).
+2. **Wait, defer, or commit** — the server decides when the radio changes:
+   - **Waits** on the pending list (`staged-config.json`, an ordered list
+     of enable/release changes named by robot) while a match exists in any
+     phase (created through post-match), the admin "Hold Wi-Fi changes"
+     box is ticked, or other changes are already waiting. Adding a change
+     simplifies the list: a later change about the same robot overrides an
+     earlier one, and release-then-enable cancels out. The list reaches
+     the radio only when staff press **Apply now** on the match or admin
+     page (`applyConfig`): it is reconciled against the active config,
+     enables are placed on free stations, and one commit follows. When a
+     match ends a release is queued for every robot on the field; joining
+     the next match or asking again withdraws it (`releaseAfterMatch`
+     setting).
    - **Deferred** while any robot is enabled: the change is applied to the
      active config straight away, but `commitConfiguration()` waits and
      re-runs as soon as the last robot is disabled.
    - Otherwise `commitConfiguration()` fires immediately.
 
-   Clients are told what is waiting and why (`pendingCommitState`: held
-   changes, the hold reason, deferred changes), so a team sees "waiting for
-   the match to end" rather than nothing.
+   Clients are told what is waiting and why (`pendingCommitState`: the
+   list, a per-station summary of it, the hold reason, deferred changes),
+   so a team sees "waiting for the match admin" rather than nothing.
 
 3. **Parse team number** — extracted from the SSID (format: `1234-...`),
    used to compute the team subnet `10.TE.AM.0/24`.

@@ -296,7 +296,9 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
       const why =
         pending.hold === 'admin'
           ? '"Hold Wi-Fi changes" is on in admin.'
-          : 'A match is set up; they apply when it is cleared.';
+          : pending.hold === 'pending'
+            ? 'Waiting for staff to apply them.'
+            : 'A match is set up; apply them between matches.';
       push({
         id: 'wifi-held',
         severity: 'warning',

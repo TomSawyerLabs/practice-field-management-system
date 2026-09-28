@@ -12,7 +12,12 @@ import { useConnectivity, ConnectivityState } from '../hooks/useConnectivity';
 import { usePendingCommitState, useLatest, useServerStartTime, serverToBrowserTime } from '../hooks/useBackend';
 import { StationNameList, type StagedStationChange } from '../../../src/types';
 import { useSupportWidget } from './SupportChatWidget';
-import { describeStationChange, holdReasonText, DEFERRED_TEXT_TEAM } from './PendingRadioChanges';
+import {
+  describeStationChange,
+  describePendingChange,
+  holdReasonText,
+  DEFERRED_TEXT_TEAM,
+} from './PendingRadioChanges';
 
 type DotColor = 'success.main' | 'error.main' | 'warning.main' | 'text.disabled';
 
@@ -198,7 +203,7 @@ function PendingChangeList() {
     StationNameList.filter(s => changes && s in changes).map(s =>
       describeStationChange(changes![s] ?? null, radio?.[s]?.ssid || undefined),
     );
-  const held = lines(pending.stagedChanges);
+  const held = pending.changes ? pending.changes.map(describePendingChange) : lines(pending.stagedChanges);
   const deferred = lines(pending.deferredChanges);
   const group = (title: string, items: string[]) =>
     items.length > 0 && (

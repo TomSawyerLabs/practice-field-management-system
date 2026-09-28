@@ -105,7 +105,7 @@ Open question for the user: which option, and what N.
        `sendAdmin…` helpers, Field reset card on `/admin`, docs.
 4. [x] mDNS `EADDRNOTAVAIL` guard.
 5. [x] Typecheck, tests, commit per step.
-6. [ ] Auto-release: await user's pick.
+6. [x] Auto-release: built as the pending-list redesign — see plans/pending-wifi-changes-list.md.
 
 ## Things not to do
 

@@ -243,6 +243,10 @@ export interface SetupSettings {
    *  match existing. Staff apply them from the match or admin page. Absent /
    *  false = requests apply as they come (once robots are disabled). */
   holdRadioChanges?: boolean;
+  /** When a match ends, queue every robot on the field to leave unless it
+   *  plays on (joins the next match, or its team presses Keep). Nothing
+   *  leaves until staff apply. Absent / true = on. */
+  releaseAfterMatch?: boolean;
   /** Field policy on robot control systems. 'none' (default) says nothing to
    *  teams; 'preferSystemCore' warns roboRIO teams; the block modes fail the
    *  robot check for the disallowed control system. */
@@ -753,6 +757,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   outOfMatchControl: v => typeof v === 'boolean',
   holdRadioChanges: v => typeof v === 'boolean',
+  releaseAfterMatch: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
   timelapse: isTimelapseConfig,
@@ -1881,19 +1886,66 @@ export function isRoutePreferenceState(msg: unknown): msg is RoutePreferenceStat
 
 // ── Pending Commit Types ────────────────────────────────────────────
 
-/** Why Wi-Fi requests are being held rather than applied: a match exists
- *  (created, running, or post-match), or an admin switched the hold on. */
-export type RadioHoldReason = 'match' | 'admin';
+/** Why Wi-Fi changes are waiting rather than applied: a match exists
+ *  (created, running, or post-match), an admin switched the hold on, or
+ *  other changes are already waiting for staff to apply and a new one
+ *  joins that batch instead of reconfiguring the radio on its own. */
+export type RadioHoldReason = 'match' | 'admin' | 'pending';
+
+/** Who asked for a robot to leave: its team, or the end of a match (every
+ *  robot on the field is queued to leave unless it plays on). */
+export type PendingReleaseReason = 'team' | 'postMatch';
+
+/** A change waiting to reach the radio, server side (carries the key). Not
+ *  keyed by station: a robot is named by its SSID, and an enable's station
+ *  is only a preference until the list is applied. */
+export type PendingChange =
+  | { id: string; kind: 'enable'; ssid: string; wpaKey: string; internetAccess?: boolean; station: StationName }
+  | { id: string; kind: 'release'; ssid: string; reason: PendingReleaseReason };
+
+export function isPendingChange(v: unknown): v is PendingChange {
+  if (typeof v !== 'object' || !v) return false;
+  const c = v as PendingChange;
+  if (typeof c.id !== 'string' || typeof c.ssid !== 'string' || !c.ssid) return false;
+  if (c.kind === 'enable') {
+    return typeof c.wpaKey === 'string' && (StationNameList as readonly string[]).includes(c.station);
+  }
+  if (c.kind === 'release') return c.reason === 'team' || c.reason === 'postMatch';
+  return false;
+}
+
+/** A waiting change as clients see it — never the key. `station` is where
+ *  an enable will land (null: the field is full, it keeps waiting) or where
+ *  the robot a release names is right now. */
+export type PendingChangeView =
+  | {
+      id: string;
+      kind: 'enable';
+      ssid: string;
+      station: StationName | null;
+      internetAccess?: boolean;
+      secured: boolean;
+    }
+  | { id: string; kind: 'release'; ssid: string; station: StationName | null; reason: PendingReleaseReason };
+
+/** What a Wi-Fi request came to. `waiting` and `applied` show through the
+ *  broadcast state; `kept` (a release waiting for the robot was withdrawn)
+ *  and `noop` are the quiet outcomes the asking client is told about. */
+export type ConfigureResult = { result: 'applied' | 'waiting' | 'kept' | 'noop'; reason?: RadioHoldReason };
 
 /** Sent from server to client when pending commit state changes */
 export type PendingCommitState = {
   type: 'pendingCommitState';
   /** Anything at all is waiting to reach the radio (held or deferred). */
   pending: boolean;
-  /** Held changes per station. null = release, absent = nothing held.
-   *  Deliberately carries no WPA key — clients only need to describe the change. */
+  /** The waiting changes, in the order they were asked for. Absent when
+   *  nothing waits. */
+  changes?: PendingChangeView[];
+  /** `changes` summarised per station against the active config: what each
+   *  affected station will hold once staff apply. null = it empties. Absent
+   *  when nothing waits. Carries no WPA key. */
   stagedChanges?: Record<string, StagedStationChange | null>;
-  /** Why the held changes are waiting. Absent when nothing is held. */
+  /** Why the waiting changes are waiting. Absent when nothing waits. */
   hold?: RadioHoldReason;
   /** True when applied changes are waiting for every robot to be disabled
    *  (or a running match to end) before the radio is reconfigured. */
@@ -1913,6 +1965,15 @@ export type StagedStationChange = {
 export function isPendingCommitState(msg: unknown): msg is PendingCommitState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as PendingCommitState).type === 'pendingCommitState';
+}
+
+/** Staff withdraw one waiting Wi-Fi change from the pending panel. */
+export type CancelPendingChange = { type: 'cancelPendingChange'; id: string };
+
+export function isCancelPendingChange(msg: unknown): msg is CancelPendingChange {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as CancelPendingChange;
+  return m.type === 'cancelPendingChange' && typeof m.id === 'string';
 }
 
 // ── Last Linked Types ───────────────────────────────────────────────

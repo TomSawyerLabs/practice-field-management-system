@@ -3,13 +3,40 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
+import CloseIcon from '@mui/icons-material/Close';
 import { TeamAvatar } from './TeamAvatar';
-import { StationNameList, type RadioHoldReason, type StagedStationChange, type StationName } from '../../../src/types';
+import {
+  StationNameList,
+  type PendingChangeView,
+  type RadioHoldReason,
+  type StagedStationChange,
+  type StationName,
+} from '../../../src/types';
 import { prettyStationName, teamOfSsid } from '../../../src/utils';
-import { useLatest, useMatchState, usePendingCommitState, sendApplyConfig } from '../hooks/useBackend';
+import {
+  useLatest,
+  useMatchState,
+  usePendingCommitState,
+  sendApplyConfig,
+  sendCancelPendingChange,
+} from '../hooks/useBackend';
 
 export { teamOfSsid };
+
+/** One line for a waiting change, named by robot — never by slot. */
+export function describePendingChange(change: PendingChangeView): string {
+  if (change.kind === 'enable') {
+    return change.station
+      ? `${change.ssid} joins the field`
+      : `${change.ssid} is waiting for a free station — the field is full`;
+  }
+  if (change.reason === 'postMatch')
+    return `${change.ssid} leaves the field — the match is over and it hasn't asked to stay`;
+  return `${change.ssid} leaves the field`;
+}
 
 /** One line for a station change, named by robot — never by slot — so the
  *  same words work for teams and staff. `current` is what the radio has now. */
@@ -25,11 +52,16 @@ export function holdReasonText(hold: RadioHoldReason | undefined, audience: 'tea
   if (hold === 'admin') {
     return audience === 'team'
       ? 'Field staff are holding Wi-Fi changes right now. Yours goes through when they apply it.'
-      : 'Held because "Hold Wi-Fi changes" is on. They apply when you press Apply now or turn the hold off.';
+      : 'Held because "Hold Wi-Fi changes" is on. Nothing reaches the radio until you press Apply now.';
+  }
+  if (hold === 'pending') {
+    return audience === 'team'
+      ? 'Other Wi-Fi changes are waiting for field staff. Yours goes through with them when staff apply.'
+      : 'Waiting for you. Nothing reaches the radio until you press Apply now.';
   }
   return audience === 'team'
-    ? 'A match is set up on the field. Your Wi-Fi is enabled when it is over, or sooner if field staff apply it.'
-    : 'Held while a match exists. They apply on their own when the match is cleared, or now if you press Apply now.';
+    ? 'A match is set up on the field. Field staff apply Wi-Fi changes between matches.'
+    : 'Held while a match exists. Press Apply now between matches to send them to the radio — they do not go on their own.';
 }
 
 export const DEFERRED_TEXT_TEAM =
@@ -62,6 +94,32 @@ function ChangeLines({ lines, showSlot }: { lines: ChangeLine[]; showSlot: boole
           </Box>
         );
       })}
+    </Box>
+  );
+}
+
+/** The pending list itself, one line per change in the order asked, each
+ *  with a ✕ so staff can withdraw it (keep a robot the match end queued to
+ *  leave, or drop a request). */
+function PendingChangeLines({ changes }: { changes: PendingChangeView[] }) {
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, my: 1 }}>
+      {changes.map(change => (
+        <Box key={change.id} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TeamAvatar teamNumber={teamOfSsid(change.ssid)} size={24} />
+          <Typography variant="body2" sx={{ flex: 1 }}>
+            {describePendingChange(change)}
+          </Typography>
+          {change.station && (
+            <Chip label={prettyStationName(change.station)} size="small" variant="outlined" sx={{ height: 20 }} />
+          )}
+          <Tooltip title={change.kind === 'release' ? 'Keep this robot on the field' : 'Withdraw this request'}>
+            <IconButton size="small" aria-label="withdraw" onClick={() => sendCancelPendingChange(change.id)}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -105,14 +163,15 @@ function RobotsOnField() {
 }
 
 /**
- * Staff view of everything waiting to reach the radio: held requests (with an
- * "Apply now" button), changes waiting for robots to be disabled, and the
- * robots a reconfigure would interrupt. Renders nothing when nothing waits.
+ * Staff view of everything waiting to reach the radio: the pending list
+ * (with an "Apply now" button), changes waiting for robots to be disabled,
+ * and the robots a reconfigure would interrupt. Renders nothing when nothing
+ * waits.
  */
 export function PendingRadioChangesPanel() {
   const pending = usePendingCommitState();
   const matchState = useMatchState();
-  const held = entries(pending.stagedChanges);
+  const held = pending.changes ?? [];
   const deferred = entries(pending.deferredChanges);
   if (!pending.pending || (held.length === 0 && deferred.length === 0)) return null;
 
@@ -137,7 +196,7 @@ export function PendingRadioChangesPanel() {
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
               {holdReasonText(pending.hold, 'staff')}
             </Typography>
-            <ChangeLines lines={held} showSlot />
+            <PendingChangeLines changes={held} />
           </>
         )}
 

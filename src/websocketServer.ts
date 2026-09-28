@@ -10,6 +10,8 @@ import {
   isAdminStopMatch,
   isAdminClearAllStations,
   isAdminRestart,
+  isCancelPendingChange,
+  ConfigureResult,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -468,6 +470,18 @@ export function setupWebSocket(
     return adminConnections.has(ws);
   }
 
+  /** Tell the asking client what its Wi-Fi request came to. Waits and
+   *  applies show through the broadcast pending state; the two quiet
+   *  outcomes need a word. Releases stay quiet either way. */
+  function reportConfigureResult(ws: WebSocket, result: ConfigureResult, ssid: string) {
+    if (!ssid) return;
+    if (result.result === 'noop') {
+      ws.send(JSON.stringify({ info: 'No changes detected — configuration already active' }));
+    } else if (result.result === 'kept') {
+      ws.send(JSON.stringify({ info: `${ssid} stays on the field — the release waiting for it was withdrawn` }));
+    }
+  }
+
   function setupConfigMessage(): SetupConfigState {
     const store = setup!.configStore;
     const config = store.get();
@@ -743,39 +757,33 @@ export function setupWebSocket(
           ws.send(JSON.stringify({ error: 'Cannot reconfigure stations during an active match' }));
         } else {
           const current = radioManager.getStationConfig(data.station);
-          const held = radioManager.getStagedConfig(data.station);
-          const hasHeldChange = held !== undefined; // null = held release, object = held config
-          const activeMatchesRequest = current && current.ssid === data.ssid && current.wpaKey === data.wpaKey;
+          const sameRobot = current && current.ssid === data.ssid && current.wpaKey === data.wpaKey;
           const internetChanged = current && !!current.internetAccess !== !!data.internetAccess;
 
-          if (activeMatchesRequest && !internetChanged && !hasHeldChange) {
-            // Nothing changed at all
-            ws.send(JSON.stringify({ info: 'No changes detected — configuration already active' }));
-          } else if (activeMatchesRequest && hasHeldChange) {
-            // Active config already matches — just withdraw the held change (e.g. undo a pending release)
-            radioManager.cancelStagedChange(data.station);
-            if (internetChanged) {
-              radioManager.toggleInternetAccess(data.station, !!data.internetAccess).catch(err => {
-                appError('Error toggling internet access: ' + err.message);
-                ws.send(JSON.stringify({ error: 'Failed to toggle internet access', details: err.message }));
-              });
-            }
-          } else if (activeMatchesRequest && internetChanged) {
-            // Only internet access changed — toggle it without reconfiguring the radio
+          if (sameRobot && internetChanged) {
+            // Only internet access changed — toggle it without reconfiguring
+            // the radio. Asking again also means "keep it on the field".
+            radioManager.keepRobot(data.ssid);
             radioManager.toggleInternetAccess(data.station, !!data.internetAccess).catch(err => {
               appError('Error toggling internet access: ' + err.message);
               ws.send(JSON.stringify({ error: 'Failed to toggle internet access', details: err.message }));
             });
           } else {
-            // SSID or WPA changed — full radio reconfiguration
-            radioManager.configure(data.station, data).catch(err => {
-              appError('Error configuring station: ' + err.message);
-              ws.send(JSON.stringify({ error: 'Failed to configure station', details: err.message }));
-            });
+            // Everything else goes through the pending list, which decides
+            // whether it is a no-op, a kept robot, a wait, or an apply.
+            radioManager
+              .configure(data.station, data)
+              .then(result => reportConfigureResult(ws, result, data.ssid))
+              .catch(err => {
+                appError('Error configuring station: ' + err.message);
+                ws.send(JSON.stringify({ error: 'Failed to configure station', details: err.message }));
+              });
           }
         }
       } else if (isCancelStationChange(data)) {
         radioManager.cancelStagedChange(data.station);
+      } else if (isCancelPendingChange(data)) {
+        radioManager.cancelPendingChange(data.id);
       } else if (isInternetToggle(data)) {
         if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot toggle internet access during an active match' }));
@@ -1012,6 +1020,7 @@ export function setupWebSocket(
                 wpaKey: saved.wpaKey,
                 internetAccess: saved.internetAccess,
               })
+              .then(result => reportConfigureResult(ws, result, saved.ssid))
               .catch(err => {
                 appError(`Error enabling saved robot ${data.ssid} on ${data.station}: ${err.message}`);
                 ws.send(JSON.stringify({ error: 'Failed to configure station', details: err.message }));
