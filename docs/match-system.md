@@ -287,8 +287,9 @@ same graceful way a deploy does, keeping network rules so robots stay
 connected. Both ask first and refuse while a match is running.
 
 Teams are never shown slot numbers — a robot is named by its SSID, and
-"the field is full" is what they see when all six slots are taken (a
-disconnected robot can be taken over from there).
+"the field is full" is what they see when all six slots are taken, with a
+pointer to ask field staff to make room. Teams cannot bump another team's
+robot themselves; that is a Release on the admin page.
 
 ## Match queue
 

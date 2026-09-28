@@ -73,7 +73,12 @@ Also asked for in the same request:
   Kick (only while joined in a created match), Forget (remove saved
   passphrase + release).
 - Button text: **"Enable Wi-Fi"**; inverse stays **"Release"** (already
-  understood on the field). Takeover: **"Take over"**.
+  understood on the field).
+- **No team-facing takeover** (2026-09-28): asking a team to pick whose
+  robot to bump was fraught, and with the match queue it is vestigial. When
+  the field is full, Enable Wi-Fi is disabled and the team is told to ask
+  field staff to make room (Release on the admin page) or wait. The
+  disconnected-stations hook and takeover picker are gone.
 - No hover-only information for teams (touch devices): reasons are rendered
   as text, not tooltips.
 
