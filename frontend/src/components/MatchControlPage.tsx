@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import Box from '@mui/material/Box';
 import { QRCodeSVG } from 'qrcode.react';
 import Button from '@mui/material/Button';
@@ -151,6 +151,14 @@ function computeBarProgress(
 // module-scoped handler that outlives the button — and we defeat the implicit
 // pointer capture on press so the pointerup still reaches the window on touch
 // (iOS) after the button is gone.
+//
+// On phones, that swap left the held finger over whatever the Active view put
+// there — often text. The long press then started a text selection or the
+// long-press menu, the browser cancelled the pointer, and that read as a
+// release: the start aborted with the finger still down. So while the start
+// is held a full-screen overlay sits under the finger (nothing selectable,
+// nothing reflowing), and the long-press menu and text selection are
+// cancelled window-wide.
 let holdArmed = false;
 /** Set when the pointer is released before robots enabled — cancels the start
  *  even if it's still in flight (a quick tap releases while the phase is still
@@ -163,14 +171,50 @@ function robotsEnabled(phase: MatchPhase): boolean {
   return phase !== 'idle' && phase !== 'created' && phase !== 'countdown';
 }
 
+/** What the hold overlay shows: nothing, the held countdown, or — after an
+ *  early release — that the start was cancelled. */
+type HoldOverlay = 'none' | 'holding' | 'released';
+let holdOverlay: HoldOverlay = 'none';
+let holdOverlayTimer: ReturnType<typeof setTimeout> | undefined;
+const holdOverlayListeners = new Set<() => void>();
+
+function setHoldOverlay(next: HoldOverlay) {
+  clearTimeout(holdOverlayTimer);
+  // After an early release the overlay stays up until the abort lands and the
+  // page is back to setup, so the countdown view doesn't flash up and vanish
+  // underneath. Bounded, for a start that never reached the countdown at all.
+  if (next === 'released') holdOverlayTimer = setTimeout(() => setHoldOverlay('none'), 2500);
+  if (holdOverlay === next) return;
+  holdOverlay = next;
+  holdOverlayListeners.forEach(listener => listener());
+}
+
+function useHoldOverlay(): HoldOverlay {
+  return useSyncExternalStore(
+    listener => {
+      holdOverlayListeners.add(listener);
+      return () => holdOverlayListeners.delete(listener);
+    },
+    () => holdOverlay,
+  );
+}
+
+const cancelEvent = (e: Event) => e.preventDefault();
+
 function setHoldLatestPhase(phase: MatchPhase) {
   holdLatestPhase = phase;
+  // Robots are live: clear the overlay off E-Stop and the match controls, even
+  // with the finger still down (letting go now does nothing).
+  if (robotsEnabled(phase)) setHoldOverlay('none');
   if (!holdAbortWanted) return;
   // A start we let go of early has now reached the countdown — abort it.
   if (phase === 'countdown') sendMatchAbortCountdown();
   // Abort took effect (back to setup) or the start slipped through to enabled —
   // either way stop chasing it.
-  if (phase === 'created' || robotsEnabled(phase)) holdAbortWanted = false;
+  if (phase === 'created' || robotsEnabled(phase)) {
+    holdAbortWanted = false;
+    setHoldOverlay('none');
+  }
 }
 
 function endHold() {
@@ -178,12 +222,17 @@ function endHold() {
   holdArmed = false;
   window.removeEventListener('pointerup', endHold);
   window.removeEventListener('pointercancel', endHold);
+  window.removeEventListener('contextmenu', cancelEvent, true);
+  window.removeEventListener('selectstart', cancelEvent, true);
   // Released before robots enabled → abandon the start. Abort now if we're
   // already counting down; if the start is still in flight (phase 'created'),
   // arm the abort so setHoldLatestPhase fires it the instant countdown begins.
   if (!robotsEnabled(holdLatestPhase)) {
     holdAbortWanted = true;
+    setHoldOverlay('released');
     if (holdLatestPhase === 'countdown') sendMatchAbortCountdown();
+  } else {
+    setHoldOverlay('none');
   }
 }
 
@@ -193,14 +242,76 @@ function beginHold() {
   holdAbortWanted = false;
   window.addEventListener('pointerup', endHold);
   window.addEventListener('pointercancel', endHold);
+  // A long press must not open the context menu or select text: either makes
+  // the browser cancel the pointer, which would abort the start.
+  window.addEventListener('contextmenu', cancelEvent, true);
+  window.addEventListener('selectstart', cancelEvent, true);
+  setHoldOverlay('holding');
   sendStationStartMatch();
 }
 
-/** Press-and-hold start control. Fires the countdown on press; a release before
- *  the robots enable aborts it. */
-function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean; holdDisabledReason?: string }) {
-  const [pressed, setPressed] = useState(false);
+/** Full-screen cover while the start is held: the 3-2-1, big, under the
+ *  finger, and nothing underneath can move or be selected. Gone the moment
+ *  robots enable. */
+function HoldToStartOverlay({ phase, remainingTime }: { phase: MatchPhase; remainingTime: number }) {
+  const overlay = useHoldOverlay();
+  if (overlay === 'none') return null;
 
+  return (
+    <Box
+      onContextMenu={e => e.preventDefault()}
+      sx={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: theme => theme.zIndex.modal + 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 1,
+        p: 3,
+        textAlign: 'center',
+        color: '#fff',
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        touchAction: 'none',
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
+      }}
+    >
+      {overlay === 'released' ? (
+        <>
+          <Typography variant="h3" sx={{ fontWeight: 800 }}>
+            Start cancelled
+          </Typography>
+          <Typography variant="h6">You let go before the horn — back to setup.</Typography>
+        </>
+      ) : (
+        <>
+          <Typography variant="h5" sx={{ fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase' }}>
+            Keep holding
+          </Typography>
+          <Typography
+            sx={{
+              fontSize: '9rem',
+              fontWeight: 800,
+              lineHeight: 1,
+              color: '#ffa726',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {phase === 'countdown' ? Math.max(1, Math.ceil(remainingTime)) : '…'}
+          </Typography>
+          <Typography variant="h6">Let go before the horn to abort.</Typography>
+        </>
+      )}
+    </Box>
+  );
+}
+
+/** Press-and-hold start control. Fires the countdown on press; a release before
+ *  the robots enable aborts it. While held, HoldToStartOverlay covers the page. */
+function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean; holdDisabledReason?: string }) {
   const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (!canStart) return;
     // Defeat implicit pointer capture so the window pointerup still fires after
@@ -210,28 +321,31 @@ function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean
     } catch {
       // No capture to release — fine.
     }
-    setPressed(true);
     beginHold();
   };
 
-  // Local visual reset only — the authoritative release/abort is the module
-  // window handler (this button may already be unmounted by then).
-  const onRelease = () => setPressed(false);
-
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
+      {/* The label never changes: a wider one re-wrapped this row and moved
+          the button out from under the finger. */}
       <Button
         variant="contained"
-        color={pressed ? 'warning' : 'success'}
+        color="success"
         size="large"
         disabled={!canStart}
         onPointerDown={onPointerDown}
-        onPointerUp={onRelease}
-        onPointerCancel={onRelease}
-        onPointerLeave={onRelease}
-        sx={{ px: 6, py: 1.5, fontWeight: 'bold', touchAction: 'none', userSelect: 'none' }}
+        onContextMenu={e => e.preventDefault()}
+        sx={{
+          px: 6,
+          py: 1.5,
+          fontWeight: 'bold',
+          touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none',
+        }}
       >
-        {pressed ? 'Hold… release aborts' : 'Hold to Start'}
+        Hold to Start
       </Button>
       {canStart ? (
         <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
@@ -277,6 +391,7 @@ export function MatchControlPage() {
 
   return (
     <Box sx={{ minHeight: '100dvh', backgroundColor: pageBg, transition: 'background-color 1s ease' }}>
+      <HoldToStartOverlay phase={phase} remainingTime={matchState.remainingTime} />
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Typography variant="h4" sx={{ fontWeight: 700 }}>
