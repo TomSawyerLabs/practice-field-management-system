@@ -1220,7 +1220,7 @@ export type StationControlState = {
   blockedReason?: string;
   /** Set while this station is NOT joined and the field is holding its robot
    *  disabled out of a match for a reason other than a policy block — today
-   *  that is field staff turning off out-of-match robot control. The DS shows
+   *  that is staff setting "Freeplay outside matches" to Held. The DS shows
    *  "Admin disabled" in its game data. Joining a match clears it: in a match
    *  the robot enables normally. */
   heldReason?: string;

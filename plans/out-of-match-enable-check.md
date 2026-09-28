@@ -114,6 +114,32 @@ to touch (ops repo / UniFi).
 4. Report which DS version each result came from; the TCP behaviour above
    suggests versions differ in how they take status 2.
 
+## Resolution (2026-09-28): it was never broken
+
+User, next day: "It was just a language issue. It was working the whole
+time. Your wording in the admin made me think the inverse was correct."
+
+- The status-2 "not in match" reply **works**: it releases a DS to local
+  control, including a DS that was just in a match. Nothing broke on
+  2026-09-15 or later.
+- The confusion was the admin card: title "Out-of-match robot control", a
+  chip reading **Enabled** / **Disabled**, and a button "Turn off". On a
+  field where "enabled/disabled" means robot state, "Disabled" read as
+  "robots are disabled" and "Turn off" as the way to free them. The user
+  pressed it at 12:14 thinking it would free robots; with the switch off
+  the old code sent no reply at all, which also leaves local control alone,
+  so nothing visibly changed either way. Everything below about "status 2
+  parks the DS" and the "is the button inverted?" reading is **wrong** and
+  kept only as history.
+- The server-side evidence (no out-of-match enable captured) was simply
+  teams not freeplaying at that moment, and one team joining over and over.
+- Fixed 2026-09-28: status-2 release restored for unjoined, unheld DSes;
+  admin card reworded to "Freeplay outside matches", chip **Allowed** /
+  **Held**, buttons "Hold robots" / "Allow freeplay"; station page and docs
+  reworded to match. The "Held" mode (assign + stream disabled packets with
+  `Admin disabled` game data) and the uplink hairpin DROP rule stay — both
+  were asked for and are correct.
+
 ## User feedback (2026-09-27 ~12:15)
 
 - User turned the admin switch **off** at 12:14:21 (`updateSetupSettings
@@ -157,15 +183,21 @@ to touch (ops repo / UniFi).
       the rule is now also installed at startup). Verified on steamboat:
       service active, `-A FORWARD -i eno1 -o eno1 … pfms-no-hairpin -j DROP`
       present, unjoined DSes logged as held ("out-of-match control off").
-- [ ] **Current:** the switch was still **off** at 12:53, so every unjoined
-      DS is held with "Admin disabled". User turns it **on** for freeplay.
-      DSes parked by status 2 earlier today need one close/reopen.
-- [ ] Verify on the field: switch on → a freshly opened DS can enable out of
-      a match; switch off → DS shows "Admin disabled" and cannot.
-- [ ] Later: a way to un-park a post-match DS without a restart (the thing
-      status 2 was supposed to do).
+- [x] ~~Switch on = no reply~~ — wrong, reverted 2026-09-28 (see Resolution).
+- [x] 2026-09-28: restore status-2 release; reword admin card, station page
+      alert, docs, code comments.
+- [ ] **Current:** deploy the 2026-09-28 fix (master also carries other
+      threads' undeployed commits — user's call when).
+- [ ] Verify on the field after deploy: Allowed → DS enables out of a match
+      and after leaving one without a restart; Held → DS shows "Admin
+      disabled" and cannot.
 
 ## Things not to do
+
+- Do not "fix" the status-2 release reply again. It works; the 2026-09-27
+  scare was the admin card's wording.
+- Do not label robot-related switches "Enabled"/"Disabled"; on this field
+  those words mean robot state.
 
 - Do not flip the admin switch or touch steamboat/UniFi from a session
   without the user's explicit per-change yes.

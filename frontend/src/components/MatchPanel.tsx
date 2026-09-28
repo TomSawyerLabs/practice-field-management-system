@@ -274,8 +274,8 @@ export function MatchPanel({ station }: { station?: StationName }) {
       )}
       {myState?.heldReason && (
         <Alert severity="warning" sx={{ borderRadius: 0 }}>
-          {myState.heldReason} Your robot stays disabled (the Driver Station shows "Admin disabled") until it joins a
-          match — or ask field staff.
+          {myState.heldReason} Your robot can only be enabled in a match right now. Your Driver Station shows "Admin
+          disabled" — join a match, or ask field staff.
         </Alert>
       )}
       <CardContent>

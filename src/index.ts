@@ -343,8 +343,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Every enable in the match engine goes through this gate.
   matchEngine.setEnableBlocked(policyBlockReason);
 
-  /** The admin "Out-of-match robot control" switch is off. Read live so a
-   *  flip takes effect without a restart. Default on. */
+  /** Staff set the admin "Freeplay outside matches" switch to Held
+   *  (setting `outOfMatchControl: false`). Read live so a flip takes effect
+   *  without a restart. Default Allowed. */
   function outOfMatchControlOff(): boolean {
     return setupConfigStore.get().settings.outOfMatchControl === false;
   }
@@ -355,7 +356,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   function outOfMatchHoldReason(station: StationName): string | null {
     return (
       policyBlockReason(station) ??
-      (outOfMatchControlOff() ? 'Field staff have turned off out-of-match robot control.' : null)
+      (outOfMatchControlOff() ? 'Field staff have turned off freeplay outside matches.' : null)
     );
   }
   matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
@@ -1454,18 +1455,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
     runFMS({
       // Station-assignment reply (0x19/0x1f). Joined stations get their slot.
-      // A station that isn't in the match gets NO reply: any reply puts the DS
-      // in FMS-controlled mode and locks out local enable, so silence is what
-      // keeps freeplay working. (The status-2 "not in match" reply that was
-      // the default 2026-09-15..27 — makeNotInMatchReply — was meant to hand a
-      // post-match DS back to local control; on the field it parked freeplay
-      // DSes instead, see plans/out-of-match-enable-check.md. The cost of
-      // silence is the old one: a DS that was in a match stays locked until
-      // the team closes and reopens it.) A station the field holds — policy
-      // block, or the admin out-of-match switch off — is assigned a slot like
-      // a joined station so the DS stays under field control, and the hold
-      // loop below keeps it disabled. FMS_TCP_REPLY_STATIONS assigns a real
-      // slot for testing.
+      // A station that isn't in the match gets a status-2 "not in match" reply
+      // (makeNotInMatchReply), which hands the DS back to local control so a
+      // driver can enable for freeplay without closing and reopening the DS —
+      // in use since 2026-09-15 and confirmed working on the field (a day of
+      // misreading the admin switch's wording on 2026-09-27 briefly replaced
+      // it with silence; see plans/out-of-match-enable-check.md). A station
+      // the field holds — policy block, or freeplay switched off by staff —
+      // is assigned a slot like a joined station so the DS stays under field
+      // control, and the hold loop below keeps it disabled.
+      // FMS_TCP_REPLY_STATIONS assigns a real slot for testing.
       resolveTeamSlot: teamNumber => {
         const station = radioManager.getStationForTeam(teamNumber);
         if (!station) return undefined;
@@ -1476,8 +1475,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           // stays under field control; the hold loop's disabled packets are
           // what actually refuse the enable while the team is out of a match.
           if (outOfMatchHoldReason(station)) return matchEngine.slotForStation(station);
-          // Not in a match and not held: say nothing, the DS keeps local control.
-          return undefined;
+          // Not in a match and not held: release the DS to local control.
+          return 'release';
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
         // (which side of the field it shows), not the physical-port default,
@@ -1511,7 +1510,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             // A joined station's answer is its slot either way — don't bounce
             // its TCP session (possibly mid-match) for nothing.
             if (dsIp && !joined) {
-              const why = blocked ? 'control system blocked' : held ? 'out-of-match control off' : 'released';
+              const why = blocked ? 'control system blocked' : held ? 'freeplay held by staff' : 'freeplay allowed';
               appInfo(`${station}: ${why} — re-handshaking DS ${dsIp}`);
               fms.emit('disconnectDS', { address: dsIp });
             }

@@ -483,11 +483,14 @@ function MatchStatusSection() {
   );
 }
 
-/** Admin switch: may robots that aren't in a match be enabled from their own
- *  Driver Station? On by default. The button is the action; the chip is state. */
+/** Admin switch: may teams drive (enable from their own Driver Station)
+ *  while they are not in a match? Allowed by default. Words chosen so
+ *  "enabled"/"disabled" — which mean something else for a robot — never
+ *  appear: the state is Allowed or Held, and the button names the action.
+ *  Setting key stays `outOfMatchControl`. */
 function OutOfMatchControlSection() {
   const setupConfig = useSetupConfig();
-  const enabled = setupConfig?.config.settings.outOfMatchControl !== false;
+  const allowed = setupConfig?.config.settings.outOfMatchControl !== false;
   return (
     <Card sx={{ mb: 3 }}>
       <CardContent
@@ -495,21 +498,21 @@ function OutOfMatchControlSection() {
       >
         <Box sx={{ minWidth: 260, flex: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography variant="h6">Out-of-match robot control</Typography>
-            <Chip size="small" color={enabled ? 'success' : 'default'} label={enabled ? 'Enabled' : 'Disabled'} />
+            <Typography variant="h6">Freeplay outside matches</Typography>
+            <Chip size="small" color={allowed ? 'success' : 'warning'} label={allowed ? 'Allowed' : 'Held'} />
           </Box>
           <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5 }}>
-            {enabled
-              ? 'Robots that are not in a match can be enabled from their own Driver Station for freeplay.'
-              : 'Robots that are not in a match are held disabled until they join a match. Their Driver Station shows "Admin disabled" and their station page says why.'}
+            {allowed
+              ? 'Teams can enable their robot from their own Driver Station whenever it is not in a match.'
+              : 'Robots stay disabled unless they are in a match. The Driver Station shows "Admin disabled" and the team\'s station page says why.'}
           </Typography>
         </Box>
         <Button
           variant="outlined"
-          color={enabled ? 'warning' : 'success'}
-          onClick={() => sendUpdateSetupSettings({ outOfMatchControl: !enabled })}
+          color={allowed ? 'warning' : 'success'}
+          onClick={() => sendUpdateSetupSettings({ outOfMatchControl: !allowed })}
         >
-          {enabled ? 'Turn off' : 'Turn on'}
+          {allowed ? 'Hold robots' : 'Allow freeplay'}
         </Button>
       </CardContent>
     </Card>
