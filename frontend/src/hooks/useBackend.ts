@@ -36,6 +36,7 @@ import {
   isCastReceiverList,
   isCastReceiverSwap,
   isCastReceiverMute,
+  isCastReceiverChecks,
   isPlayGetReady,
   isSupportState,
   isSupportChatIncoming,
@@ -79,6 +80,7 @@ import {
   CastReceiverRegister,
   CastReceiverSwap,
   CastReceiverMute,
+  CastReceiverChecks,
   PlayGetReady,
   StopCast,
   RoutePreferenceState,
@@ -767,6 +769,11 @@ function receiveMessage(detail: Message) {
 
   if (isCastReceiverMute(detail)) {
     handleCastReceiverMute(detail);
+    return;
+  }
+
+  if (isCastReceiverChecks(detail)) {
+    handleCastReceiverChecks(detail);
     return;
   }
 
@@ -1720,6 +1727,14 @@ function handleCastReceiverMute(msg: CastReceiverMute) {
   }
 }
 
+function handleCastReceiverChecks(msg: CastReceiverChecks) {
+  // On receiver: show or hide the setup checks
+  if (window.__isCastReceiver) {
+    localStorage.setItem('scoreboard-checks', msg.checks ? '1' : '0');
+    window.location.reload();
+  }
+}
+
 export function useCastReceivers(): CastReceiverList['receivers'] {
   const [receivers, setReceivers] = useState(currentCastReceivers);
 
@@ -1741,6 +1756,10 @@ export function sendCastReceiverMute(receiverId: string, muted: boolean) {
   ws?.send(JSON.stringify({ type: 'castReceiverMute', receiverId, muted } satisfies CastReceiverMute));
 }
 
+export function sendCastReceiverChecks(receiverId: string, checks: boolean) {
+  ws?.send(JSON.stringify({ type: 'castReceiverChecks', receiverId, checks } satisfies CastReceiverChecks));
+}
+
 /** Ask the server to play the "get ready" attention sound everywhere. */
 export function sendPlayGetReady() {
   ws?.send(JSON.stringify({ type: 'playGetReady' } satisfies PlayGetReady));
@@ -1753,8 +1772,10 @@ export function onPlayGetReady(fn: () => void): () => void {
   return () => events.removeEventListener('playGetReady', handler);
 }
 
-export function sendCastReceiverRegister(name: string, swapped: boolean, muted: boolean) {
-  ws?.send(JSON.stringify({ type: 'castReceiverRegister', name, swapped, muted } satisfies CastReceiverRegister));
+export function sendCastReceiverRegister(name: string, swapped: boolean, muted: boolean, checks: boolean) {
+  ws?.send(
+    JSON.stringify({ type: 'castReceiverRegister', name, swapped, muted, checks } satisfies CastReceiverRegister),
+  );
 }
 
 // ── Server Responses ─────────────────────────────────────────────────

@@ -59,6 +59,7 @@ import {
   useCastReceivers,
   sendCastReceiverSwap,
   sendCastReceiverMute,
+  sendCastReceiverChecks,
   useFirmwareStore,
   sendCreateApiKey,
   sendRevokeApiKey,
@@ -1401,6 +1402,13 @@ function ScoringSection() {
                     variant={r.muted ? 'filled' : 'outlined'}
                     color={r.muted ? 'warning' : 'success'}
                     onClick={() => sendCastReceiverMute(r.id, !r.muted)}
+                  />
+                  <Chip
+                    label={r.checks ? '✅ checks on' : 'checks off'}
+                    size="small"
+                    variant={r.checks ? 'filled' : 'outlined'}
+                    color={r.checks ? 'info' : 'default'}
+                    onClick={() => sendCastReceiverChecks(r.id, !r.checks)}
                   />
                 </Box>
               ))}

@@ -330,12 +330,14 @@ export function ScoreboardPage() {
   swappedRef.current = swapped;
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
+  const checksRef = useRef(checksMode);
+  checksRef.current = checksMode;
   useEffect(() => {
     if (!window.__isCastReceiver || !wsUp) return;
     // Small delay so the register lands after the state replay settles
     const timer = setTimeout(() => {
       const name = localStorage.getItem('scoreboard-device-name') || document.title || 'Cast Display';
-      sendCastReceiverRegister(name, swappedRef.current, mutedRef.current);
+      sendCastReceiverRegister(name, swappedRef.current, mutedRef.current, checksRef.current);
     }, 1000);
     return () => clearTimeout(timer);
   }, [wsUp]);

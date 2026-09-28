@@ -109,9 +109,10 @@ reload, and a blocked staff page also stops sending presence heartbeats.
 ## Setup checks on the scoreboard
 
 Turn on **✅ checks** on the scoreboard (`/scores?checks=1`, remembered per
-browser) and, between matches, every robot on the field gets a column of
-the checks it has to turn green, roughly in the order a team gets through
-them:
+browser; for a Cast TV, use its **checks** chip under **Admin → Scoring →
+Displays**, or turn checks on before casting) and, between matches, every
+robot on the field gets a column of the checks it has to turn green,
+roughly in the order a team gets through them:
 
 | Check      | Green when                                                                                                                                                                                        |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

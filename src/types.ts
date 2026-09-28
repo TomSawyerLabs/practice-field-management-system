@@ -2738,6 +2738,8 @@ export interface CastReceiverRegister {
   swapped: boolean;
   /** True if this display's match audio is muted (optional for old clients). */
   muted?: boolean;
+  /** True if this display shows the robot setup checks (optional for old clients). */
+  checks?: boolean;
 }
 
 export function isCastReceiverRegister(msg: unknown): msg is CastReceiverRegister {
@@ -2780,10 +2782,22 @@ export function isCastReceiverMute(msg: unknown): msg is CastReceiverMute {
   return (msg as CastReceiverMute).type === 'castReceiverMute';
 }
 
+/** Sent by admin to show/hide the robot setup checks on a specific receiver. */
+export interface CastReceiverChecks {
+  type: 'castReceiverChecks';
+  receiverId: string;
+  checks: boolean;
+}
+
+export function isCastReceiverChecks(msg: unknown): msg is CastReceiverChecks {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as CastReceiverChecks).type === 'castReceiverChecks';
+}
+
 /** Broadcast to all clients: current state of all cast receivers. */
 export interface CastReceiverList {
   type: 'castReceiverList';
-  receivers: { id: string; name: string; swapped: boolean; muted: boolean }[];
+  receivers: { id: string; name: string; swapped: boolean; muted: boolean; checks: boolean }[];
 }
 
 export function isCastReceiverList(msg: unknown): msg is CastReceiverList {
