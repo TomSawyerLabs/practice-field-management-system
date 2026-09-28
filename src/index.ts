@@ -90,6 +90,7 @@ import { SetupConfigStore } from './setupConfigStore.js';
 import { scoringRequiresKey } from './httpApiUtils.js';
 import { setVideoProxyTargetResolver } from './videoProxy.js';
 import { runSetupProbe } from './setupProbe.js';
+import { StationChecksTracker } from './stationChecks.js';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
@@ -897,14 +898,28 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     fieldTimelapse.onTelemetry();
   });
 
+  // Per-robot setup checks for the scoreboard (DS link, radio, comms,
+  // joysticks, battery, Ready), fed by the packet capture, DS status and radio
+  // status below.
+  let robotPacketCapture: RobotPacketCapture | undefined;
+  const stationChecks = new StationChecksTracker({
+    getMatchState: () => matchEngine.getState(),
+    captureActive: () => robotPacketCapture?.isRunning() ?? false,
+  });
+  radioManager.addStatusListener(entry => {
+    if (entry.radioUpdate) stationChecks.noteRadioUpdate(entry.radioUpdate);
+  });
+
   // Passive robot packet capture — sniff robot→DS UDP to extract battery voltage
   // and robot status without taking FMS control of the Driver Station.
-  let robotPacketCapture: RobotPacketCapture | undefined;
   if (VlanInterface && !process.env.DRY_RUN) {
     robotPacketCapture = new RobotPacketCapture(
       VlanInterface,
       () => radioManager.getTeamMappings(),
-      update => broadcastTelemetry(update),
+      update => {
+        stationChecks.noteRobotPacket(update.station, update.batteryVoltage);
+        broadcastTelemetry(update);
+      },
       false, // dryRun
       // Resolve station from VLAN ID for disambiguating duplicate teams
       (vlanId: number) => {
@@ -913,14 +928,28 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         }
         return undefined;
       },
+      (station, count) => stationChecks.noteJoysticks(station, count),
     );
     robotPacketCapture.start();
   }
 
+  // Broadcast the setup checks when they change (at most twice a second —
+  // they're for people watching a TV, not for control).
+  let latestStationChecks = JSON.stringify(stationChecks.snapshot());
+  setInterval(() => {
+    const snapshot = stationChecks.snapshot();
+    const json = JSON.stringify(snapshot);
+    if (json === latestStationChecks) return;
+    latestStationChecks = json;
+    broadcast(snapshot);
+  }, 500);
+
   wss.on('connection', ws => {
-    // Public connections (/ws/scores) only receive score state — all other
-    // initial data is private (subnet scans, robot test state, firmware, etc.)
+    // Public connections (/ws/scores) only receive score state and the
+    // scoreboard's setup checks — all other initial data is private (subnet
+    // scans, robot test state, firmware, etc.)
     ws.send(JSON.stringify(scoringEngine.getState()));
+    ws.send(latestStationChecks);
     if (publicConnections.has(ws)) return;
 
     if (latestSubnetScan) ws.send(JSON.stringify(latestSubnetScan));
@@ -1669,6 +1698,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
               udp.rawStatus,
               udp.status.robotComms,
             );
+            stationChecks.noteDsStatus(station, udp.status.robotComms, udp.BatteryVoltage);
           }
         }
 

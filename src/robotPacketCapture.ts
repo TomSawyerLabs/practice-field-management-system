@@ -2,12 +2,17 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { StationName, TelemetryUpdate } from './types.js';
 
 /**
- * Passively capture robot→DS UDP packets via tcpdump to extract battery
- * voltage and robot status without taking FMS control of the Driver Station.
+ * Passively capture robot↔DS UDP packets via tcpdump to extract battery
+ * voltage, robot status and joysticks without taking FMS control of the
+ * Driver Station.
  *
  * The robot sends UDP with sport 1150 to the gateway IP on each team's VLAN.
  * We capture these packets, parse the pcap stream, and feed telemetry into
  * the existing broadcast pipeline.
+ *
+ * The DS's control packets to the robot (dst port 1110) carry its joysticks.
+ * They cross pFMS only when the DS routes through it (drive sessions), so the
+ * joystick report is best-effort: no packets means "can't tell".
  */
 export class RobotPacketCapture {
   private proc: ChildProcess | null = null;
@@ -22,7 +27,14 @@ export class RobotPacketCapture {
     private readonly dryRun = false,
     /** Resolve station from a VLAN ID (for disambiguating duplicate teams). */
     private readonly vlanToStation?: (vlanId: number) => StationName | undefined,
+    /** A DS→robot control packet was seen, carrying this many joysticks. */
+    private readonly onJoysticks?: (station: StationName, count: number) => void,
   ) {}
+
+  /** True while tcpdump is running, so a silent robot is really silent. */
+  isRunning(): boolean {
+    return this.proc !== null;
+  }
 
   start(): void {
     if (this.dryRun || this.proc) return;
@@ -30,7 +42,7 @@ export class RobotPacketCapture {
     // Capture on all VLAN sub-interfaces by listening on the parent
     const proc = spawn(
       'tcpdump',
-      ['-i', this.interfaceName, '-U', '-w', '-', '--immediate-mode', '-p', 'udp', 'dst', 'port', '1150'],
+      ['-i', this.interfaceName, '-U', '-w', '-', '--immediate-mode', '-p', 'udp and (dst port 1150 or dst port 1110)'],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
 
@@ -130,6 +142,13 @@ export class RobotPacketCapture {
 
     // UDP payload starts after IP header + 8 bytes UDP header
     const payloadOffset = ipOffset + ipHeaderLen + 8;
+    const dstPort = data.readUInt16BE(ipOffset + ipHeaderLen + 2);
+
+    if (dstPort === DS_TO_ROBOT_PORT) {
+      const dstIp = `${data[ipOffset + 16]}.${data[ipOffset + 17]}.${data[ipOffset + 18]}.${data[ipOffset + 19]}`;
+      this.parseDsToRobot(data.subarray(payloadOffset), dstIp, vlanId);
+      return;
+    }
     if (data.length < payloadOffset + 6) return; // Need at least 6 bytes of robot payload
 
     // Robot→DS payload format (from frcture.readthedocs.io):
@@ -161,15 +180,7 @@ export class RobotPacketCapture {
 
     const now = Date.now();
 
-    // Resolve team to station. When a team is duplicated across stations,
-    // prefer the VLAN-based resolution (the VLAN ID in the 802.1Q tag maps
-    // directly to a station via the radio VLAN map).
-    const mappings = this.getTeamMappings();
-    let station = mappings[team];
-    if (vlanId !== undefined && this.vlanToStation) {
-      const vlanStation = this.vlanToStation(vlanId);
-      if (vlanStation) station = vlanStation;
-    }
+    const station = this.resolveStation(team, vlanId);
     if (!station) return;
 
     // Status byte: bit7=eStop, bit4=brownout, bit3=codeStart, bit2=enabled, bits1-0=mode (0=teleop,1=test,2=auto)
@@ -209,6 +220,61 @@ export class RobotPacketCapture {
 
     this.onTelemetry(update);
   }
+
+  /** DS→robot control packet: report how many joysticks it carries. */
+  private parseDsToRobot(payload: Buffer, dstIp: string, vlanId: number | undefined): void {
+    if (!this.onJoysticks) return;
+    const team = teamFromIp(dstIp);
+    if (!team) return;
+    const count = countDsJoysticks(payload);
+    if (count === null) return;
+    const station = this.resolveStation(team, vlanId);
+    if (station) this.onJoysticks(station, count);
+  }
+
+  /** Resolve team to station. When a team is duplicated across stations,
+   *  prefer the VLAN-based resolution (the VLAN ID in the 802.1Q tag maps
+   *  directly to a station via the radio VLAN map). */
+  private resolveStation(team: number, vlanId: number | undefined): StationName | undefined {
+    if (vlanId !== undefined && this.vlanToStation) {
+      const vlanStation = this.vlanToStation(vlanId);
+      if (vlanStation) return vlanStation;
+    }
+    return this.getTeamMappings()[team];
+  }
+}
+
+const DS_TO_ROBOT_PORT = 1110;
+const JOYSTICK_TAG = 0x0c;
+
+/**
+ * Count the joysticks in a legacy DS→robot control packet (UDP 1110), or
+ * null if it isn't one.
+ *
+ * Layout (frcture.readthedocs.io): sequence (2), comm version 0x01 (1),
+ * control (1), request (1), alliance station (1), then tags. Each tag is a
+ * size byte — counting the id and data — then the id. A joystick tag (0x0c)
+ * holds an axis count and axes, a button count and packed button bits, and a
+ * POV count and 16-bit POVs. The DS may send a tag for an empty slot, so a
+ * joystick only counts when it has any axes, buttons or POVs.
+ */
+export function countDsJoysticks(payload: Buffer): number | null {
+  if (payload.length < 6 || payload[2] !== 0x01) return null;
+  let count = 0;
+  let i = 6;
+  while (i + 1 < payload.length) {
+    const size = payload[i];
+    if (size === 0 || i + 1 + size > payload.length) return null;
+    if (payload[i + 1] === JOYSTICK_TAG) {
+      const tag = payload.subarray(i + 2, i + 1 + size);
+      const axes = tag[0] ?? 0;
+      const buttons = tag[1 + axes] ?? 0;
+      const povs = tag[2 + axes + Math.ceil(buttons / 8)] ?? 0;
+      if (axes + buttons + povs > 0) count++;
+    }
+    i += 1 + size;
+  }
+  return count;
 }
 
 /** Parse team number from 10.TE.AM.x IP. */
