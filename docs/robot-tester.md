@@ -131,6 +131,43 @@ Once a team number is known, the page lists the addresses a mentor reaches for, 
 
 The links only answer from the robot's own subnet. A laptop on the guest Wi-Fi gets there while driving that station from its station page (route preference), on a physical field port, or wired straight to the radio; from anywhere else they are a reference to copy, not a click.
 
+## Robot Wi-Fi scan
+
+Separate from `/test`, pFMS can listen for the network every robot radio
+broadcasts on 2.4 GHz — `FRC-1234` or `FRC-1234-Suffix` — and compare it
+with the robots each team has saved. The field joins the robot on 6 GHz as
+`1234-Suffix`, the same name without `FRC-`, so this is the quickest way to
+catch a name typed with the wrong capitals, which otherwise just never
+connects.
+
+**Setup:** on `/admin` → _Robot Wi-Fi scan_, pick a spare wireless card
+(or set `ROBOT_WIFI_INTERFACE`). pFMS runs its own `wpa_supplicant` on that
+card, controlled from `/run/pfms-wifi` with `wpa_cli`, and scans 2.4 GHz
+every 20 seconds. Nothing else on the host is touched, and the card must
+not be used for anything else. Linux only.
+
+**What teams see** on their page, per robot network heard for their team:
+
+- **Matches a saved robot** — a green note, plus the passphrase result.
+- **Differs only in capitals** — an error saying the field will never
+  connect, with **Add as 1234-Suffix** to save it under the right name.
+- **Not saved** — a note with the same **Add as …** button.
+
+**Passphrase check:** the first time a heard network matches a saved robot
+(exactly, or ignoring capitals), pFMS joins it with the saved passphrase
+and leaves straight away — no DHCP, no address, no retries. It happens
+once per saved passphrase; changing the passphrase checks again, and the
+team can press **Check again** after a failure (at most every 30 s). The
+check uses the robot's **2.4 GHz** network, which can be given its own
+passphrase when the radio is configured. A team that did that sees "did not
+open" even though the field's 6 GHz passphrase may be fine; the wording
+says so.
+
+**What CSAs see:** `/csa` lists a capitals mismatch as critical, a failed
+passphrase check as a warning, and a robot on the air that its team has
+not saved as a note. `/admin` shows every robot network heard, with its
+signal, what it is saved as, and the passphrase result.
+
 ## Factory Default Radio Detection
 
 A background probe runs every 2 seconds, fetching `http://192.168.69.1/status`. This works because the tester adds `192.168.69.8/24` as a secondary IP on the test interface at link-up, giving it a route to the `192.168.69.0/24` subnet.

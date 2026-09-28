@@ -663,3 +663,31 @@ describe('order by time on the field', () => {
     expect(out.find(i => i.id === 'wifi-held')!.detail).toContain('Waiting: 111 leaves; 222 joins.');
   });
 });
+
+describe('robots heard on 2.4 GHz', () => {
+  test('a robot whose name differs only in capitals is a critical issue for its team', () => {
+    const out = detectFieldIssues(
+      inputs({
+        robotWifi: {
+          type: 'robotWifiScan',
+          status: 'running',
+          interfaces: [],
+          broadcasts: [
+            {
+              ssid: 'FRC-1234-Comp',
+              team: 1234,
+              robotSsid: '1234-Comp',
+              signal: -60,
+              frequency: 2437,
+              lastSeen: NOW,
+              match: { kind: 'caseOnly', savedSsid: '1234-comp' },
+            },
+          ],
+        },
+      }),
+    );
+    const issue = out.find(i => i.id === 'robotWifi-case-FRC-1234-Comp');
+    expect(issue).toMatchObject({ severity: 'critical', team: 1234 });
+    expect(issue?.station).toBeUndefined();
+  });
+});

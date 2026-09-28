@@ -22,6 +22,8 @@ import {
   isPushUnsubscribe,
   isPushTest,
   TeamPrefsState,
+  isRobotWifiRecheck,
+  RobotWifiScanState,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -267,6 +269,11 @@ export function setupWebSocket(
       vapidPublicKey: () => string | null;
       slackAvailable: () => boolean;
       testPush: (team: number) => Promise<{ sent: number; gone: number; devices: number }>;
+    };
+    /** Robots' 2.4 GHz networks as heard by pFMS (src/robotWifiScan.ts). */
+    robotWifi?: {
+      getState: () => RobotWifiScanState;
+      recheck: (ssid: string) => void;
     };
   },
 ): WebSocketContext {
@@ -866,6 +873,11 @@ export function setupWebSocket(
       ws.send(JSON.stringify(usageTracker.getState()));
     }
 
+    // Robots' 2.4 GHz networks heard nearby
+    if (setup?.robotWifi) {
+      ws.send(JSON.stringify(setup.robotWifi.getState()));
+    }
+
     ws.on('close', () => {
       wsToIp.delete(ws);
       adminConnections.delete(ws);
@@ -960,6 +972,9 @@ export function setupWebSocket(
       } else if (isPushUnsubscribe(data)) {
         setup?.teamPrefs?.store.removePushDevice(data.team, data.endpoint);
         sendTeamPrefs(ws, data.team);
+      } else if (isRobotWifiRecheck(data)) {
+        // Rate-limited per network inside the scanner.
+        setup?.robotWifi?.recheck(data.ssid);
       } else if (isPushTest(data)) {
         const tp = setup?.teamPrefs;
         if (!tp) ws.send(JSON.stringify({ error: 'Push is not set up on this field' }));

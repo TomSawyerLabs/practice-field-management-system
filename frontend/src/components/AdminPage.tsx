@@ -39,6 +39,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import { PendingRadioChangesPanel } from './PendingRadioChanges';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
+import type { RobotWifiBroadcast, RobotWifiScanState } from '../../../src/types';
 import type { MatchRecordingStreamStatus, RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
 import {
   useMatchState,
@@ -79,6 +80,7 @@ import {
   sendTestAudioDevice,
   sendRefreshAudioDevices,
   useSetupConfig,
+  useRobotWifiScan,
   useMatchRecordingState,
   sendUpdateSetupSettings,
   testRecordingStream,
@@ -519,6 +521,138 @@ function OutOfMatchControlSection() {
   );
 }
 
+const KEY_CHECK_LABELS: Record<NonNullable<RobotWifiBroadcast['keyCheck']>['result'], string> = {
+  checking: 'Checking…',
+  ok: 'Works',
+  wrongKey: 'Wrong passphrase',
+  unreachable: 'Could not check',
+  open: 'No passphrase',
+};
+
+/** Robot Wi-Fi scan: which wireless card pFMS may use to listen for robots'
+ *  2.4 GHz networks and check saved passphrases, and what it hears. The card
+ *  is dedicated to this — pFMS runs its own wpa_supplicant on it. */
+function RobotWifiScanSection() {
+  const setupConfig = useSetupConfig();
+  const scan = useRobotWifiScan();
+  const chosen = setupConfig?.config.settings.robotWifiInterface ?? '';
+  const interfaces = scan?.interfaces ?? [];
+  const statusChip: Record<
+    RobotWifiScanState['status'],
+    { label: string; color: 'default' | 'success' | 'info' | 'error' }
+  > = {
+    off: { label: 'Off', color: 'default' },
+    starting: { label: 'Starting', color: 'info' },
+    running: { label: 'Listening', color: 'success' },
+    error: { label: 'Stopped', color: 'error' },
+  };
+  const status = statusChip[scan?.status ?? 'off'];
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
+          <Typography variant="h6">Robot Wi-Fi scan</Typography>
+          <Chip size="small" color={status.color} label={status.label} />
+        </Box>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          Listens for the 2.4 GHz network every robot radio broadcasts (FRC-1234 or FRC-1234-Suffix) and tells the team,
+          and the CSA page, when it doesn&apos;t match what they saved — capitals included. The first time a saved
+          passphrase can be tried, pFMS joins that network briefly to check it. Needs a spare wireless card that nothing
+          else uses.
+        </Typography>
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel id="robot-wifi-iface">Wireless card</InputLabel>
+          <Select
+            labelId="robot-wifi-iface"
+            label="Wireless card"
+            value={chosen}
+            onChange={e => sendUpdateSetupSettings({ robotWifiInterface: String(e.target.value) })}
+          >
+            <MenuItem value="">Off</MenuItem>
+            {[...new Set([...interfaces, ...(chosen ? [chosen] : [])])].map(i => (
+              <MenuItem key={i} value={i}>
+                {i}
+                {interfaces.includes(i) ? '' : ' (not found on this host)'}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {interfaces.length === 0 && (
+          <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
+            No wireless card found on the pFMS host.
+          </Typography>
+        )}
+        {scan?.status === 'error' && scan.error && (
+          <Alert severity="error" sx={{ mt: 1.5 }}>
+            {scan.error}
+          </Alert>
+        )}
+
+        {scan?.status === 'running' && (
+          <Box sx={{ mt: 2 }}>
+            {scan.broadcasts.length === 0 ? (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                No robot networks heard{scan.lastScanAt ? '' : ' yet'}.
+              </Typography>
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Heard</TableCell>
+                    <TableCell>Signal</TableCell>
+                    <TableCell>Saved as</TableCell>
+                    <TableCell>Passphrase</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {scan.broadcasts.map(b => (
+                    <TableRow key={b.ssid}>
+                      <TableCell sx={{ fontFamily: 'monospace' }}>{b.ssid}</TableCell>
+                      <TableCell>{b.signal} dBm</TableCell>
+                      <TableCell>
+                        {b.match.kind === 'exact' ? (
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                            {b.match.savedSsid}
+                          </Typography>
+                        ) : b.match.kind === 'caseOnly' ? (
+                          <Chip size="small" color="error" label={`${b.match.savedSsid} — capitals differ`} />
+                        ) : (
+                          <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                            not saved
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {b.keyCheck ? (
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            color={
+                              b.keyCheck.result === 'ok'
+                                ? 'success'
+                                : b.keyCheck.result === 'wrongKey'
+                                  ? 'error'
+                                  : 'default'
+                            }
+                            label={KEY_CHECK_LABELS[b.keyCheck.result]}
+                          />
+                        ) : (
+                          '—'
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </Box>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Admin hold on Wi-Fi changes: teams' requests are parked instead of
  *  applied, exactly as while a match exists, until staff apply them. The
  *  pending panel underneath is the same one the match page shows. */
@@ -688,6 +822,7 @@ export function AdminPage() {
       <MatchStatusSection />
       <WifiChangesSection />
       <FieldResetSection />
+      <RobotWifiScanSection />
       <OutOfMatchControlSection />
       <ControllerPolicySection />
       <ScoringSection />

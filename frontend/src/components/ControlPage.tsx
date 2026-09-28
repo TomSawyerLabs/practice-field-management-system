@@ -34,12 +34,15 @@ import {
   useRoutePreferenceState,
   usePortBridgeState,
   sendPortBridge,
+  useRobotWifiScan,
+  sendRobotWifiRecheck,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
+import { broadcastsForTeam, describeKeyForTeam, describeNameForTeam, suffixOf } from '../utils/robotWifi';
 import { MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
@@ -484,6 +487,7 @@ function RobotList({
   isMultiRobot: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [addSuffix, setAddSuffix] = useState('');
 
   // Passphrase verification state
   const [showVerifyField, setShowVerifyField] = useState(false);
@@ -551,7 +555,14 @@ function RobotList({
                   Verify Passphrase
                 </Button>
               ))}
-            <Button size="small" startIcon={<AddIcon />} onClick={() => setShowAddForm(!showAddForm)}>
+            <Button
+              size="small"
+              startIcon={<AddIcon />}
+              onClick={() => {
+                setAddSuffix('');
+                setShowAddForm(!showAddForm);
+              }}
+            >
               Add Robot
             </Button>
           </Box>
@@ -559,8 +570,19 @@ function RobotList({
 
         {!availableStation && <FieldFullAlert />}
 
+        <RobotWifiHeard
+          teamNumber={teamNumber}
+          hasRobotOnField={activeStations.size > 0}
+          onAdd={suffix => {
+            setAddSuffix(suffix);
+            setShowAddForm(true);
+          }}
+        />
+
         {showAddForm && (
           <AddRobotForm
+            key={addSuffix}
+            initialSuffix={addSuffix}
             teamNumber={teamNumber}
             availableStation={availableStation}
             onDone={() => setShowAddForm(false)}
@@ -866,20 +888,86 @@ function RobotRow({
 }
 
 /**
+ * What pFMS hears of this team's robots on 2.4 GHz (`FRC-<team>[-suffix]`),
+ * matched against their saved robots: the fastest way to spot a name typed
+ * with the wrong capitals, or a passphrase that does not work. Renders
+ * nothing unless the field has the robot Wi-Fi scan turned on.
+ */
+function RobotWifiHeard({
+  teamNumber,
+  hasRobotOnField,
+  onAdd,
+}: {
+  teamNumber: number;
+  hasRobotOnField: boolean;
+  onAdd: (suffix: string) => void;
+}) {
+  const scan = useRobotWifiScan();
+  if (scan?.status !== 'running') return null;
+  const heard = broadcastsForTeam(scan, teamNumber);
+
+  if (heard.length === 0) {
+    // Only worth saying while they are still trying to get a robot on.
+    if (hasRobotOnField) return null;
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        The field listens for your robot&apos;s own Wi-Fi (FRC-{teamNumber}…) to help spot typos. None heard right now —
+        is the robot powered on?
+      </Typography>
+    );
+  }
+
+  const rank = { error: 0, warning: 1, info: 2, success: 3 } as const;
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
+      {heard.map(b => {
+        const name = describeNameForTeam(b);
+        const key = describeKeyForTeam(b);
+        const severity = key && rank[key.severity] < rank[name.severity] ? key.severity : name.severity;
+        const canRecheck = b.keyCheck?.result === 'wrongKey' || b.keyCheck?.result === 'unreachable';
+        return (
+          <Alert key={b.ssid} severity={severity}>
+            <Typography variant="body2">{name.text}</Typography>
+            {key && <Typography variant="body2">{key.text}</Typography>}
+            {(b.match.kind !== 'exact' || canRecheck) && (
+              <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                {b.match.kind !== 'exact' && (
+                  <Button size="small" variant="contained" onClick={() => onAdd(suffixOf(b.robotSsid))}>
+                    Add as {b.robotSsid}
+                  </Button>
+                )}
+                {canRecheck && (
+                  <Button size="small" variant="outlined" onClick={() => sendRobotWifiRecheck(b.ssid)}>
+                    Check again
+                  </Button>
+                )}
+              </Box>
+            )}
+          </Alert>
+        );
+      })}
+    </Box>
+  );
+}
+
+/**
  * Form for adding a new robot (suffix + passphrase).
  */
 function AddRobotForm({
   teamNumber,
   availableStation,
+  initialSuffix = '',
   onDone,
   onSelectRobot,
 }: {
   teamNumber: number;
   availableStation: StationName | null;
+  /** Prefilled from the robot's own broadcast name ("Add as 1234-Comp"). */
+  initialSuffix?: string;
   onDone: () => void;
   onSelectRobot: (ssid: string) => void;
 }) {
-  const [suffix, setSuffix] = useState('');
+  const [suffix, setSuffix] = useState(initialSuffix);
   const [passphrase, setPassphrase] = useState('');
   const allActiveSSIDs = useAllActiveSSIDs();
 

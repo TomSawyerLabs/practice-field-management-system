@@ -32,6 +32,7 @@ service restart — no `systemctl daemon-reload` needed.
 | `IPTABLES_COMMENT_PREFIX` | `pfms-`  | Prefix for iptables rule comments (used to identify and flush rules)                                                                  |
 | `KEEP_NETWORK`            | `false`  | Set to `true` to skip the startup network flush (same effect as the `/run/pfms-keep-network` flag file written by `systemctl reload`) |
 | `MDNS_REFLECTOR`          | `false`  | Set to `true` to enable the mDNS reflector (bridges `.local` queries between main network and team VLANs). Requires `VLAN_INTERFACE`. |
+| `ROBOT_WIFI_INTERFACE`    | _(none)_ | Spare wireless card for the robot Wi-Fi scan (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)). The admin page setting wins.  |
 | `MDNS_EXCLUDE_REQUESTERS` | _(none)_ | Requester IPs excluded from mDNS reflection                                                                                           |
 | `MDNS_LISTEN_INTERFACES`  | _(none)_ | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                |
 | `TRUSTED_PROXIES`         | _(none)_ | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                      |

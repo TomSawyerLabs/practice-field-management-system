@@ -70,6 +70,8 @@ import {
   DriveSessionState,
   isHostnamesState,
   HostnamesState,
+  isRobotWifiScanState,
+  RobotWifiScanState,
   isExternalAccessState,
   isExternalAccessTokenCreated,
   isStationTestState,
@@ -804,6 +806,12 @@ function receiveMessage(detail: Message) {
 
   if (isHostnamesState(detail)) {
     handleHostnamesState(detail);
+    return;
+  }
+
+  if (isRobotWifiScanState(detail)) {
+    currentRobotWifiScan = detail;
+    events.dispatchEvent(new CustomEvent('robotWifiScan', { detail }));
     return;
   }
 
@@ -1948,6 +1956,30 @@ export function useHostnames(): HostnamesState['hostnames'] {
   }, []);
 
   return hostnames;
+}
+
+// ── Robot Wi-Fi Scan ─────────────────────────────────────────────────
+
+let currentRobotWifiScan: RobotWifiScanState | null = null;
+
+/** Robots' 2.4 GHz networks pFMS hears nearby, matched against saved
+ *  robots. Null until the server says (older servers never do). */
+export function useRobotWifiScan(): RobotWifiScanState | null {
+  const [state, setState] = useState(currentRobotWifiScan);
+
+  useEffect(() => {
+    setState(currentRobotWifiScan);
+    const handler = (e: Event) => setState((e as CustomEvent<RobotWifiScanState>).detail);
+    events.addEventListener('robotWifiScan', handler);
+    return () => events.removeEventListener('robotWifiScan', handler);
+  }, []);
+
+  return state;
+}
+
+/** "Check again": re-try the saved passphrase on a robot network. */
+export function sendRobotWifiRecheck(ssid: string) {
+  ws?.send(JSON.stringify({ type: 'robotWifiRecheck', ssid }));
 }
 
 export function sendScoreReset() {

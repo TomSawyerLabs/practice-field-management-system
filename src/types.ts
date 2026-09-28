@@ -243,6 +243,11 @@ export interface SetupSettings {
    *  match existing. Staff apply them from the match or admin page. Absent /
    *  false = requests apply as they come (once robots are disabled). */
   holdRadioChanges?: boolean;
+  /** Wireless interface pFMS may use to listen for robots' 2.4 GHz networks
+   *  and check their passphrases (see robotWifiScan.ts). Absent / empty = the
+   *  robot Wi-Fi scan is off. The interface is dedicated to this: pFMS runs
+   *  its own wpa_supplicant on it. */
+  robotWifiInterface?: string;
   /** When a match ends, queue every robot on the field to leave unless it
    *  plays on (joins the next match, or its team presses Keep). Nothing
    *  leaves until staff apply. Absent / true = on. */
@@ -757,6 +762,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   outOfMatchControl: v => typeof v === 'boolean',
   holdRadioChanges: v => typeof v === 'boolean',
+  robotWifiInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
   releaseAfterMatch: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
@@ -2142,6 +2148,66 @@ export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
     typeof m.station === 'string' &&
     StationNameRegex.test(m.station)
   );
+}
+
+// ── Robot Wi-Fi Scan ────────────────────────────────────────────────
+
+/** Whether a team's saved passphrase opened the robot's 2.4 GHz network.
+ *  `wrongKey` is only about the 2.4 GHz network: a team that gave it a
+ *  different passphrase from the field's 6 GHz one sees this even though the
+ *  field would connect. */
+export interface RobotWifiKeyCheck {
+  result: 'checking' | 'ok' | 'wrongKey' | 'unreachable' | 'open';
+  at: number;
+  /** The saved robot whose passphrase was tried. */
+  savedSsid: string;
+}
+
+/** A robot radio's 2.4 GHz network, heard by pFMS. */
+export interface RobotWifiBroadcast {
+  /** As broadcast, e.g. `FRC-1234-Comp`. */
+  ssid: string;
+  team: number;
+  /** The name without `FRC-` — what the team saves and the field joins on
+   *  6 GHz, e.g. `1234-Comp`. */
+  robotSsid: string;
+  /** dBm, strongest access point carrying the name. */
+  signal: number;
+  frequency: number;
+  lastSeen: number;
+  /** Against the team's saved robots. `caseOnly` means it differs from a
+   *  saved robot only in capitalization — the field will never connect. */
+  match: { kind: 'exact' | 'caseOnly'; savedSsid: string } | { kind: 'unknown' };
+  keyCheck?: RobotWifiKeyCheck;
+}
+
+/** Server → clients: what the robot Wi-Fi scan hears. */
+export interface RobotWifiScanState {
+  type: 'robotWifiScan';
+  status: 'off' | 'starting' | 'running' | 'error';
+  iface?: string;
+  error?: string;
+  lastScanAt?: number;
+  /** Wireless interfaces on the host, for the admin picker. */
+  interfaces: string[];
+  broadcasts: RobotWifiBroadcast[];
+}
+
+export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RobotWifiScanState).type === 'robotWifiScan';
+}
+
+/** Client → server: "Check again" — re-try the passphrase on a network. */
+export interface RobotWifiRecheck {
+  type: 'robotWifiRecheck';
+  ssid: string;
+}
+
+export function isRobotWifiRecheck(msg: unknown): msg is RobotWifiRecheck {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as RobotWifiRecheck;
+  return m.type === 'robotWifiRecheck' && typeof m.ssid === 'string' && m.ssid.length <= 32;
 }
 
 // ── mDNS Reflector Activity ─────────────────────────────────────────

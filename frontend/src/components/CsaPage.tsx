@@ -40,6 +40,7 @@ import {
   sendRunTeamChecks,
   useDriveSessionState,
   useHostnames,
+  useRobotWifiScan,
   useLastLinked,
   useLatest,
   useMatchState,
@@ -869,6 +870,7 @@ export function CsaPage() {
   const lastLinked = useLastLinked();
   const teamChecks = useTeamChecksByStation();
   const hostnames = useHostnames();
+  const robotWifi = useRobotWifiScan();
   const [selected, setSelected] = useState<StationName | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -887,6 +889,7 @@ export function CsaPage() {
       lastLinked,
       teamChecks,
       hostnames,
+      robotWifi,
     }),
     [
       now,
@@ -902,6 +905,7 @@ export function CsaPage() {
       lastLinked,
       teamChecks,
       hostnames,
+      robotWifi,
     ],
   );
   const issues = useMemo(() => detectFieldIssues(input), [input]);

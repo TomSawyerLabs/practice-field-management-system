@@ -17,6 +17,7 @@ import type {
   MatchState,
   NetworkStats,
   PendingCommitState,
+  RobotWifiScanState,
   RoutePreferenceState,
   StationName,
   StatusEntry,
@@ -26,6 +27,7 @@ import type {
 } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
 import { prettyStationName, teamOfSsid } from '../../../src/utils';
+import { robotWifiStaffIssues } from './robotWifi';
 
 export type IssueSeverity = 'critical' | 'warning' | 'info';
 
@@ -152,6 +154,8 @@ export interface FieldIssueInputs {
   teamChecks: Partial<Record<StationName, TeamCheckResults>>;
   /** Resolved names for guest-network hosts (DS laptops), keyed by IP. */
   hostnames: Record<string, string>;
+  /** Robots' 2.4 GHz networks heard nearby, when the scan is set up. */
+  robotWifi?: RobotWifiScanState | null;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -664,6 +668,19 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
         detail: control.blockedReason,
       });
     }
+  }
+
+  // ── Robots heard on 2.4 GHz (robot Wi-Fi scan) ──────────────────────
+  // Per team, not per station: a robot that never connects has no station.
+  for (const w of robotWifiStaffIssues(input.robotWifi)) {
+    push({
+      id: w.id,
+      severity: w.severity,
+      team: w.team || undefined,
+      title: w.title,
+      detail: w.detail,
+      fix: w.fix,
+    });
   }
 
   const rank = new Map(stationOrder(matchState).map((s, i) => [s, i]));

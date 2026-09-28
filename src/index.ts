@@ -46,6 +46,7 @@ import { ScoringEngine } from './scoringEngine.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
+import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces } from './robotWifiScan.js';
 import { ApiKeyStore } from './apiKeyStore.js';
 import { PortBridgeManager, parseFieldPorts } from './portBridgeManager.js';
 import { StationTestManager } from './stationTestManager.js';
@@ -87,6 +88,7 @@ import {
   RecordingStreamConfig,
   isRecordingStreamConfig,
   RobotController,
+  RobotWifiScanState,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -405,6 +407,42 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Initialize saved team store (server-side WiFi credential persistence)
   const savedTeamStore = new SavedTeamStore();
 
+  // Robot Wi-Fi scan: listen on a spare wireless card for robots' 2.4 GHz
+  // networks (FRC-<team>[-suffix]) and check saved passphrases against them.
+  // Off unless an admin picks the interface; switching it restarts the scan.
+  let robotWifi: RobotWifiScanner | null = null;
+  let broadcastRobotWifi: (state: RobotWifiScanState) => void = () => {};
+  const robotWifiState = (): RobotWifiScanState => ({
+    ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [] }),
+    interfaces: listWirelessInterfaces(),
+  });
+  const applyRobotWifiSetting = () => {
+    const iface = setupConfigStore.resolveSetting('robotWifiInterface', 'ROBOT_WIFI_INTERFACE').value || undefined;
+    if ((robotWifi?.iface ?? undefined) === iface) return;
+    robotWifi?.stop();
+    robotWifi = null;
+    if (iface) {
+      appInfo(`Robot Wi-Fi scan starting on ${iface}`);
+      robotWifi = new RobotWifiScanner({
+        iface,
+        runner: new WpaSupplicantRunner(iface),
+        savedRobots: () =>
+          savedTeamStore.getTeams().map(({ ssid, wpaKey, wpaKeyHash }) => ({ ssid, wpaKey, wpaKeyHash })),
+        onChange: () => broadcastRobotWifi(robotWifiState()),
+      });
+      void robotWifi.start();
+    }
+    broadcastRobotWifi(robotWifiState());
+  };
+  applyRobotWifiSetting();
+  setupConfigStore.addListener(applyRobotWifiSetting);
+  // A robot saved or changed: re-match what is on the air, and check the new passphrase.
+  savedTeamStore.addListener(() => {
+    broadcastRobotWifi(robotWifiState());
+    void robotWifi?.checkNextKey();
+  });
+  process.on('exit', () => robotWifi?.stop());
+
   // A stream server saved in the setup UI wins over the environment, and is
   // read per-request so it applies without a restart.
   setVideoProxyTargetResolver(() => setupConfigStore.get().settings.videoProxyTarget ?? process.env.VIDEO_PROXY_TARGET);
@@ -704,6 +742,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
+      robotWifi: { getState: robotWifiState, recheck: ssid => robotWifi?.recheck(ssid) },
       teamPrefs: {
         store: teamPrefsStore,
         vapidPublicKey: () => pushService.publicKey,
@@ -735,6 +774,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     },
   );
   setBroadcast(broadcast);
+  broadcastRobotWifi = broadcast;
 
   // Starts listening to match phases; verifies ffmpeg first and says so in
   // the log if recording can't work on this host.
