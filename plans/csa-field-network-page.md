@@ -57,6 +57,28 @@ Requested 2026-09-27. Build and commit, **do not deploy** (user's call).
 7. [x] Committed as `5942156` (`Changelog: feature`). **Not deployed** — the
        user asked for commit only.
 
+## Follow-up 2026-09-27: reconfigure is a readout, not a blocker
+
+User: "csa interface should not be blocked when radio is reconfiguring.
+Just show a clear readout." The root already passed
+`showReconfigOverlay={false}`, so the backdrop never covered /csa; what was
+missing was a clear readout. Done:
+
+- `frontend/src/hooks/useReconfigProgress.ts` — the countdown logic lifted
+  out of `roots/wrap.tsx` (anchor on last ACTIVE / first CONFIGURING entry,
+  pinned to browser time once per cycle). `WrapAll` now uses it too.
+- `RadioReconfigBanner` in `CsaPage.tsx`: info-coloured card with elapsed
+  seconds, a progress bar and the seconds remaining (~40 s estimate); turns
+  warning-coloured and says so when overdue. BOOTING gets the same banner
+  without a countdown. Header chip reads "Radio busy" instead of "All clear"
+  while it shows.
+- Detector: CONFIGURING/BOOTING are no longer issues, and the Wi-Fi link
+  family (not linked, weak signal, stale stats, bandwidth, roboRIO missing,
+  radio out of sync) stays quiet until the AP is ACTIVE — every robot is
+  expected to be off Wi-Fi then. Driver Station issues still show. Tested.
+- Verified in dry-run: triggered a reconfigure and screenshotted the banner
+  mid-way with the page fully interactive.
+
 ## Findings / gotchas
 
 - **Radio-unreachable entries never reached the frontend.** When the AP poll

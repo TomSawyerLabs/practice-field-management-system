@@ -63,6 +63,8 @@ import {
   type IssueRow,
   type IssueSeverity,
 } from '../utils/fieldIssues';
+import LinearProgress from '@mui/material/LinearProgress';
+import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks/useReconfigProgress';
 import { HostDisplay } from './HostDisplay';
 import { TeamAvatar } from './TeamAvatar';
 import { StatusIcon } from './TeamChecksPanel';
@@ -771,6 +773,66 @@ function phaseLabel(phase: MatchPhase | undefined): string {
 /** One-screen field-network triage for CSAs and field staff. Renders only
  *  what is wrong (with what to try), a six-tile station strip for a glance,
  *  and a per-station detail sheet behind a tap. */
+/** The radio is reconfiguring or booting: a readout, not a blocker. Every
+ *  page but this one covers itself with a backdrop for this; a CSA wants to
+ *  keep watching the field through it, with a countdown of the ~40 s wait. */
+function RadioReconfigBanner() {
+  const { status, isConfiguring, elapsedSec } = useReconfigProgress();
+  if (status !== 'CONFIGURING' && status !== 'BOOTING') return null;
+
+  const remaining = elapsedSec === null ? null : Math.max(0, Math.ceil(ESTIMATED_RECONFIGURATION_SECONDS - elapsedSec));
+  const overdue = elapsedSec !== null && elapsedSec >= ESTIMATED_RECONFIGURATION_SECONDS;
+
+  return (
+    <Paper
+      variant="outlined"
+      sx={{
+        p: 1.25,
+        borderLeft: '5px solid',
+        borderLeftColor: overdue ? 'warning.main' : 'info.main',
+        display: 'flex',
+        gap: 1.5,
+        alignItems: 'center',
+      }}
+    >
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.3 }}>
+          {isConfiguring ? 'Radio is reconfiguring' : 'Radio is booting'}
+          {isConfiguring && elapsedSec !== null && ` · ${Math.floor(elapsedSec)} s so far`}
+        </Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          {isConfiguring
+            ? 'Every robot is off Wi-Fi while the AP applies the new team list. Wi-Fi link problems are hidden until it is back; Driver Station problems still show.'
+            : 'No robot can connect until the AP reports ACTIVE, about two minutes after power-on.'}
+          {overdue && ' This is taking longer than usual — if it passes two minutes, check the AP.'}
+        </Typography>
+        {isConfiguring && elapsedSec !== null && (
+          <LinearProgress
+            variant="determinate"
+            color={overdue ? 'warning' : 'info'}
+            value={Math.min(100, (elapsedSec / ESTIMATED_RECONFIGURATION_SECONDS) * 100)}
+            sx={{ mt: 0.75, height: 6, borderRadius: 3 }}
+          />
+        )}
+      </Box>
+      {isConfiguring && remaining !== null && (
+        <Typography
+          variant="h4"
+          sx={{
+            fontVariantNumeric: 'tabular-nums',
+            lineHeight: 1,
+            fontWeight: 700,
+            minWidth: '2.2em',
+            textAlign: 'right',
+          }}
+        >
+          {overdue ? '…' : remaining}
+        </Typography>
+      )}
+    </Paper>
+  );
+}
+
 export function CsaPage() {
   const now = useServerNow();
   const wsConnected = useWsConnected();
@@ -824,6 +886,8 @@ export function CsaPage() {
   const problems = issues.filter(i => i.severity !== 'info');
   const notes = issues.filter(i => i.severity === 'info');
   const worst = worstSeverity(problems);
+  const radioStatus = latest?.radioUpdate?.status;
+  const radioBusy = radioStatus === 'CONFIGURING' || radioStatus === 'BOOTING';
 
   const facts = StationNameList.map(s => stationFacts(input, issues, s));
   const robotsLinked = facts.filter(f => f.linked).length;
@@ -843,6 +907,8 @@ export function CsaPage() {
           icon={
             worst ? (
               <SeverityIcon severity={worst} size={16} />
+            ) : radioBusy ? (
+              <InfoOutlinedIcon sx={{ fontSize: 16, color: 'info.main' }} />
             ) : (
               <CheckCircleOutlineIcon sx={{ fontSize: 16, color: 'success.main' }} />
             )
@@ -850,11 +916,13 @@ export function CsaPage() {
           label={
             worst
               ? `${problems.length} problem${problems.length === 1 ? '' : 's'}`
-              : wsConnected
-                ? 'All clear'
-                : 'Offline'
+              : !wsConnected
+                ? 'Offline'
+                : radioBusy
+                  ? 'Radio busy'
+                  : 'All clear'
           }
-          color={worst === 'critical' ? 'error' : worst === 'warning' ? 'warning' : 'success'}
+          color={worst === 'critical' ? 'error' : worst === 'warning' ? 'warning' : radioBusy ? 'info' : 'success'}
           variant={worst ? 'filled' : 'outlined'}
           sx={{ fontWeight: 700 }}
         />
@@ -875,6 +943,8 @@ export function CsaPage() {
           </Link>
         </Box>
       </Box>
+
+      <RadioReconfigBanner />
 
       {/* Problems, or the all-clear */}
       {problems.length > 0 ? (

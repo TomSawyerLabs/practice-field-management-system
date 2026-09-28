@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState } from 'react';
+import { StrictMode } from 'react';
 import ErrorBoundary from '../components/ErrorBoundary.js';
 import { createTheme, CssBaseline, ThemeProvider, Grid, Box } from '@mui/material';
 import Backdrop from '@mui/material/Backdrop';
@@ -6,17 +6,10 @@ import LinearProgress from '@mui/material/LinearProgress';
 import Typography from '@mui/material/Typography';
 import Alert from '@mui/material/Alert';
 import Snackbar from '@mui/material/Snackbar';
-import {
-  useHistory,
-  useLatest,
-  serverToBrowserTime,
-  useServerResponse,
-  useVersionMismatch,
-} from '../hooks/useBackend.js';
+import { useServerResponse, useVersionMismatch } from '../hooks/useBackend.js';
+import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks/useReconfigProgress';
 import { StatusBar } from '../components/StatusBar';
 import { SupportWidgetProvider } from '../components/SupportChatWidget';
-
-const EstimatedReconfigurationTime = 40; // seconds
 
 export function WrapAll({
   children,
@@ -24,64 +17,12 @@ export function WrapAll({
 }: {
   children: React.ReactNode;
   /** Whether to show the full-screen reconfiguration backdrop. Default true.
-   *  Set to false on pages (e.g. team selection) that should remain interactive
-   *  while the radio is reconfiguring. */
+   *  Set to false on pages (e.g. team selection, /csa) that should remain
+   *  interactive while the radio is reconfiguring. */
   showReconfigOverlay?: boolean;
 }) {
-  const latest = useLatest();
   const versionMismatch = useVersionMismatch();
-  // .slice() to avoid mutating the state array — .reverse() is in-place and
-  // would cause lastActive to oscillate between the first and last ACTIVE
-  // entries on alternating renders.
-  const hist = useHistory();
-  const lastActive =
-    hist
-      .slice()
-      .reverse()
-      .find(h => h.radioUpdate?.status === 'ACTIVE')?.timestamp || null;
-
-  // When the page is refreshed mid-reconfiguration, the server's history window
-  // (default 60 s) may have already pruned all ACTIVE entries.  Fall back to the
-  // first CONFIGURING entry so the countdown still has an anchor point.
-  const firstConfiguring = hist.find(h => h.radioUpdate?.status === 'CONFIGURING')?.timestamp || null;
-  const reconfigStart = lastActive ?? firstConfiguring;
-
-  const { status } = latest?.radioUpdate || {};
-  const isConfiguring = status === 'CONFIGURING';
-  const isRadioConnected = latest?.radioUpdate !== undefined;
-
-  // Track elapsed seconds since configuration started, using a stable browser-local
-  // anchor so the countdown doesn't jitter as the server time offset shifts.
-  // The ref ensures we compute startBrowserTime exactly once per reconfiguration
-  // cycle — surviving brief status flickers (radio momentarily reporting ACTIVE
-  // mid-reconfig) and timeOffset drift between effect re-runs.
-  const [elapsedSec, setElapsedSec] = useState(0);
-  const startTimeRef = useRef<number | null>(null);
-
-  // Only clear the anchor when the radio is definitively done configuring
-  // (connected with a non-CONFIGURING status), not on transient flickers.
-  const isDefinitelyDone = isRadioConnected && !isConfiguring;
-  useEffect(() => {
-    if (isDefinitelyDone) {
-      startTimeRef.current = null;
-      setElapsedSec(0);
-    }
-  }, [isDefinitelyDone]);
-
-  useEffect(() => {
-    if (!isConfiguring || !reconfigStart) return;
-
-    // Compute the browser-local anchor only once per reconfiguration cycle
-    if (startTimeRef.current === null) {
-      startTimeRef.current = serverToBrowserTime(reconfigStart);
-    }
-
-    const startBrowserTime = startTimeRef.current;
-    const update = () => setElapsedSec((Date.now() - startBrowserTime) / 1000);
-    update();
-    const interval = setInterval(update, 100);
-    return () => clearInterval(interval);
-  }, [isConfiguring, reconfigStart]);
+  const { isConfiguring, elapsedSec } = useReconfigProgress();
 
   const serverResponse = useServerResponse();
 
@@ -112,22 +53,22 @@ export function WrapAll({
                   Reconfiguration in progress...
                 </Typography>
 
-                {reconfigStart && (
+                {elapsedSec !== null && (
                   <>
                     <Typography
                       variant="h1"
                       sx={{ fontSize: '8rem', fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}
                     >
-                      {Math.max(0, Math.ceil(EstimatedReconfigurationTime - elapsedSec))}
+                      {Math.max(0, Math.ceil(ESTIMATED_RECONFIGURATION_SECONDS - elapsedSec))}
                     </Typography>
                     <Typography variant="h6" sx={{ mb: 3, minHeight: '2em' }}>
-                      {elapsedSec < EstimatedReconfigurationTime
+                      {elapsedSec < ESTIMATED_RECONFIGURATION_SECONDS
                         ? 'seconds remaining'
                         : 'If this takes longer than 30 seconds, please report an issue'}
                     </Typography>
                     <LinearProgress
                       variant="determinate"
-                      value={Math.min(100, (elapsedSec / EstimatedReconfigurationTime) * 100)}
+                      value={Math.min(100, (elapsedSec / ESTIMATED_RECONFIGURATION_SECONDS) * 100)}
                       sx={{ width: '100%', maxWidth: 500, height: 10, borderRadius: 5 }}
                     />
                   </>

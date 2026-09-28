@@ -554,7 +554,31 @@ describe('radio out of sync', () => {
     const quiet = detectFieldIssues(
       inputs({ driveSession: null, latest: cfg, matchState: match({ stationStates: states }) }),
     );
-    expect(quiet.map(i => i.id)).toEqual(['radio-configuring']);
+    expect(quiet.map(i => i.id)).toEqual([]);
+  });
+
+  test('Wi-Fi link problems are hidden while the AP reconfigures or boots; DS problems are not', () => {
+    const cfg = radio({
+      slot1: station({ ssid: '1234', isLinked: false }),
+      slot2: station({ ssid: '972', isLinked: false }),
+    });
+    const states = {
+      slot1: control({ teamNumber: 1234 }),
+      slot2: control({ teamNumber: 972, joined: true, dsAttached: false }),
+    };
+    const active = detectFieldIssues(
+      inputs({ driveSession: null, latest: cfg, matchState: match({ phase: 'created', stationStates: states }) }),
+    );
+    // slot2 is joined during setup, so its link loss is critical and sorts first.
+    expect(active.map(i => i.id)).toEqual(['robot-not-linked-slot2', 'ds-missing-slot2', 'robot-not-linked-slot1']);
+
+    for (const status of ['CONFIGURING', 'BOOTING'] as const) {
+      cfg.radioUpdate!.status = status;
+      const during = detectFieldIssues(
+        inputs({ driveSession: null, latest: cfg, matchState: match({ phase: 'created', stationStates: states }) }),
+      );
+      expect(during.map(i => i.id)).toEqual(['ds-missing-slot2']);
+    }
   });
 
   test('a joined station with a held change is only a note', () => {

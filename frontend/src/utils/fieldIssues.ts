@@ -256,21 +256,10 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     });
   } else if (latest?.radioUpdate) {
     const status = latest.radioUpdate.status;
-    if (status === 'CONFIGURING') {
-      push({
-        id: 'radio-configuring',
-        severity: 'info',
-        title: 'Radio is reconfiguring',
-        detail: 'Every robot drops off Wi-Fi for about 30 seconds while the AP applies the new team list.',
-      });
-    } else if (status === 'BOOTING') {
-      push({
-        id: 'radio-booting',
-        severity: 'warning',
-        title: 'Radio is booting',
-        detail: 'No robot can connect until it is ACTIVE.',
-      });
-    } else if (status === 'ERROR') {
+    // CONFIGURING and BOOTING are not issues: the page shows them as a live
+    // readout with a countdown (RadioReconfigBanner), and the per-station
+    // Wi-Fi link checks below stay quiet until the AP is ACTIVE again.
+    if (status === 'ERROR') {
       push({
         id: 'radio-error',
         severity: 'critical',
@@ -400,7 +389,10 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     }
 
     // ── Robot ↔ AP link ──
-    if (!radio?.isLinked) {
+    if (!radioSettled) {
+      // Every robot is off Wi-Fi while the AP reconfigures or boots; that is
+      // expected and the banner says so. Nothing here would be actionable.
+    } else if (!radio?.isLinked) {
       const last = input.lastLinked[station];
       const everLinked = last !== undefined;
       const inMatch = joined && (running || inSetup);
