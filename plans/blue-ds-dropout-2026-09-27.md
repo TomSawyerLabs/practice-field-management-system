@@ -146,8 +146,69 @@ kept a stale field session after being moved from slot3 to slot4, never
 attached to slot4, and the team readied anyway. Fixed in `789280c` by
 gating Ready on the DS heartbeat.
 
+## UniFi client history (checked 2026-09-28): not one AP
+
+Source: UniFi Network system log, `POST
+/proxy/network/v2/api/site/default/system-log/all` with
+`{timestampFrom, timestampTo, pageNumber, pageSize}` (read-only, API key in
+the ops repo's `unifi/.env.local`). DS laptops found by last IP in
+`/proxy/network/api/s/default/rest/user`. All nine DS laptops are on the
+`Tom Sawyer Labs` SSID (VLAN "Public", `10.55.0.0/16`). No disconnect
+reason codes are recorded, only AP, band, signal, and channel
+utilization/interference.
+
+**It was not one AP.** The same drop events hit laptops on different APs:
+
+| Drop (UniFi stamp) | Laptops and the AP each was on                                   |
+| ------------------ | ---------------------------------------------------------------- |
+| 12:04:50           | 2813, 840, 6238, 972: all on U7-Pro West                         |
+| 12:18:37           | 2813, 840 on U7-Pro East; 6238, 972 on U7-Pro West (same second) |
+| 12:20:03–05        | 6238 on U7-Pro West; 840 on U7-Pro East                          |
+| 13:00:31–13:01:20  | 840 on Outside; 751 on U7-Pro East; 1868 on U7-Pro East          |
+| 13:01:44–51        | 8048 on U7-Pro West; 581 on U7-Pro East; 1868 on U7-Pro East     |
+
+**It was not RF.** Every DS drop was at a usable signal (−42 to −73 dBm)
+with channel utilization 6–20 % and interference 1–3 % on the indoor APs.
+
+**It was not the Wi-Fi as a whole.** Of 86 wireless disconnects site-wide
+from 11:55 to 13:05, 29 were the nine DS laptops. Every multi-client burst
+was DS laptops only; the ~50 phones and other laptops on the same APs and
+SSID dropped one at a time, never in step with the DS laptops.
+
+**It lines up with pFMS releasing stations.** At 12:04:44 pFMS released
+match 60's four DSes and closed their FMS TCP sessions; UniFi logged exactly
+those four laptops leaving at 12:04:50, and all four reconnected to pFMS at
+12:04:54. At 13:01:39 pFMS released match 62; 8048, 581 and 1868 left the
+Wi-Fi at 13:01:44–51. The mid-match drops (12:18:3x, 12:19:32, 13:00:44,
+13:01:11) follow each DS's last "0x78" packet by ~5–10 s, which is about
+the AP's detection lag.
+
+**Correction to the earlier "blue side" story:** red laptops dropped too
+(972 and 2813 at 12:18:37, 581 at 13:01:44). The mid-match drops were blue,
+but blue laptops were spread over three APs, so "blue side" was never a
+single AP either.
+
+**UniFi's own timestamps lag.** `CONNECTED` events are stamped up to a
+minute after pFMS saw the laptop back (e.g. 6238 back on pFMS 12:04:54,
+UniFi "connected" 12:06:03), so UniFi disconnect→connect gaps overstate
+the outage. Use pFMS's journal for outage length and UniFi only for which
+AP and when the drop began.
+
+**Where that leaves the cause:** something on the DS laptops themselves
+makes them drop Wi-Fi, and it tends to fire when the Driver Station's FMS
+connection changes state. Whether that is the NI Driver Station, a Windows
+power/driver setting, or a reaction to pFMS closing the TCP session is not
+determined; a web search found no documented DS behaviour that toggles
+Wi-Fi. The oracle is the laptop's own log: Event Viewer → Applications and
+Services Logs → Microsoft → Windows → WLAN-AutoConfig → Operational, event
+8003 ("disconnected") around one of the times above, whose reason text says
+whether the laptop chose to leave or the AP dropped it.
+
 ## Things not to do
 
+- Don't read UniFi's disconnect→reconnect gap as the outage length; its
+  `CONNECTED` stamps lag pFMS by up to a minute.
+- Don't blame a single AP or the RF: see "UniFi client history".
 - Don't read the 33 s silence as "the DS app crashed": the browser
   websocket on the same laptop dropped and returned in lockstep, so it was
   the laptop's network path.
@@ -156,10 +217,11 @@ gating Ready on the DS heartbeat.
 
 ## Open questions for the user
 
-1. Which AP were the four DS laptops on? UniFi client history for
-   10.55.64.219 / 10.55.48.12 (blue) vs 10.55.153.222 / 10.55.69.79 (red)
-   around 12:18:15 and 12:19:32 is the oracle (I did not open UniFi).
-   Answered so far: the blue station switch is not in use.
+1. ~~Which AP were the DS laptops on?~~ Answered from UniFi 2026-09-28:
+   three different APs, see "UniFi client history". Open instead: can
+   someone pull the WLAN-AutoConfig event 8003 from one affected laptop
+   (6238, 840, 751 or 1868) at a drop time? That decides laptop-side vs
+   network-side.
 2. ~~Did anyone touch the blue laptops at 12:19:30?~~ Match 62 showed the
    same 0x78-then-silence signature three more times with no one at the
    laptops; it is the DS losing the field, not a keypress.
@@ -176,7 +238,8 @@ gating Ready on the DS heartbeat.
 - [x] Decode status bytes against `src/fmsServer.ts`
 - [x] Rule out steamboat-side causes (kernel log, dmesg, NIC counters, staff clients)
 - [x] Rule out pFMS-side causes (pause path only disables + sends packets; relay hand-off is inert outside relay mode)
-- [ ] Confirm the Wi-Fi story from UniFi client history (user)
+- [x] UniFi client history: not one AP, not RF, DS laptops only, drops follow pFMS releases (2026-09-28)
+- [ ] Windows WLAN-AutoConfig 8003 reason from one affected laptop (needs someone at a team laptop)
 - [x] Decide on finding 4: re-enable on DS return (user said yes)
 - [x] Implement + test + document the re-enable (`src/matchEngine.ts`, `src/matchEngine.test.ts`, `docs/match-system.md`)
 - [x] Committed as `594e4b8` (fix) and `6517e72` (this note), both on `origin/master`
