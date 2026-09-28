@@ -53,7 +53,13 @@ host:
 `~/practice-field-management-system/diag-reports/`. Each file wraps the
 laptop's report with `receivedAt`, `sourceIp`, `teamFromIp` (the team on
 the station whose Driver Station spoke from that address) and
-`teamFromDriverStation`. The journal gets one line per upload:
+`teamFromDriverStation`. `teamFromIp` only works when the laptop reached
+pFMS over IPv4: pFMS knows Driver Stations by their IPv4 address, and a
+laptop that reaches `pfms.tsl` over IPv6 arrives from its IPv6 address. The
+team number set in the Driver Station covers that case, and
+`report.addresses` lists the laptop's IPv4 addresses for matching by hand.
+The files are owned by root, like everything else the service writes, and
+readable by everyone on the host. The journal gets one line per upload:
 
 ```
 Wi-Fi report <id>: team 840 (10.55.48.12, AHS-ROBOTIC-07), 3 Wi-Fi disconnects in the last 24 h

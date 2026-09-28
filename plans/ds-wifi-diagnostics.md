@@ -54,17 +54,29 @@ own WLAN-AutoConfig log does.
 8. [x] Committed as `048368f` and pushed. Built and verified in a clean
        worktree at HEAD with only these changes (typecheck, tests, prettier,
        frontend build), then fast-forwarded `master` with a compare-and-swap.
-9. [ ] **Current step: deploy, waiting on the user.** Steamboat runs
-       `d936144` (2026-09-27 17:33). A deploy now also ships 20 other commits
-       from other sessions (match queue, Slack/push nudges, scoreboard setup
-       checks, robot-keyed drive sessions). Steamboat's checkout also has a
-       modified `bun.lock`, which blocks `git pull` (see memory
-       deploy-gotchas-steamboat-sentinel). After deploying:
-       `curl -s http://pfms.tsl/api/diag/wifi.ps1 | head` should show
-       `$Server = 'http://pfms.tsl'`.
-10. [ ] Ask a team with drops to run it; review the first real reports.
+9. [x] Deployed `7234307` to steamboat 2026-09-28 13:54:55 on the user's
+       go-ahead, with the 20 other sessions' commits it carried. Discarded
+       steamboat's one-line `"configVersion": 0` bun.lock change first
+       (backup in `/tmp/bun.lock.steamboat-*`). Verified: `/health` and the
+       frontend bundle both `7234307`; the script from `pfms.tsl` carries
+       `$Server = 'http://pfms.tsl'`; a real download from this desktop, run
+       with Explorer's command under Restricted, uploaded through Caddy and
+       was stored and journaled. That test report was then deleted. Zero
+       Defender detections.
+10. [ ] **Current step:** ask a team with drops to run it; review the first
+        real reports under `~/practice-field-management-system/diag-reports/wifi/`.
 
 ## Findings / gotchas
+
+- **IPv6 arrivals get no `teamFromIp`.** The live test came from
+  `2600:1700:459:8a1f:…` because the laptop reached `pfms.tsl` over IPv6;
+  pFMS's station → DS map holds IPv4 addresses, so `teamFromIp` was null.
+  The DS's own team number (from its settings file) covers it; teams'
+  laptops without the DS installed show as `teamunknown`. A possible fix is
+  to match the report's `addresses[]` (the laptop's IPv4s) instead of the
+  source address. Not built.
+- Report files are root-owned (the service runs as root): reading is fine,
+  deleting needs `sudo`.
 
 - **Concurrent sessions clobber `src/index.ts`.** While this was being
   built, another session's commit routine (sync worktree to staged, restore)
@@ -101,15 +113,14 @@ Set-ExecutionPolicy -Scope Process Bypass }; & '<file>'`) under the same
 
 - [x] Built, tested, end-to-end verified locally
 - [x] Committed and pushed (`048368f`)
-- [ ] Deployed (waiting on the user: see step 9)
+- [x] Deployed `7234307` (2026-09-28 13:54) and verified end to end through Caddy
 - [ ] First real report reviewed
 
 ## Open questions for the user
 
-1. Deploy now? It ships this plus 20 other undeployed commits from other
-   sessions (listed in `git log d936144..048368f`). My recommendation: yes
-   once whoever owns the match-queue and drive-session work says it's ready
-   for the field, since the check is only useful once teams can download it.
+1. Worth making `teamFromIp` work for laptops that arrive over IPv6, by
+   matching the report's IPv4 addresses? My recommendation: only if real
+   reports come in untagged; the DS's own team number covers most laptops.
 
 ## Things not to do
 
