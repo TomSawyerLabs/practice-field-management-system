@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, useMemo, useRef, useSyncExternalStore, memo } from 'react';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, useMemo, useRef, useSyncExternalStore, memo } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import Box from '@mui/material/Box';
 import { QRCodeSVG } from 'qrcode.react';
 import Typography from '@mui/material/Typography';
@@ -154,6 +154,9 @@ function getInitialChecks(): boolean {
  *  back out after a match). */
 const SETUP_TRANSITION = '0.9s cubic-bezier(0.4, 0, 0.2, 1)';
 
+/** Size of the big 3-2-1 — and of the "0" that splits into the scores. */
+const BIG_COUNTDOWN_FONT = 'clamp(6rem, 36vh, 24rem)';
+
 // ── Video mode (browser-local) ──────────────────────────────────────
 // The video view is configured per browser: mode and stream source live in
 // localStorage, with URL params (?video=1&videoSrc=...) as overrides.
@@ -248,6 +251,21 @@ export function ScoreboardPage() {
       if (controlsTimer.current) clearTimeout(controlsTimer.current);
     };
   }, []);
+
+  // When the 3-2-1 ends and the match goes live, its "0" splits in two and
+  // flies into both score boxes (normal layout). The key restarts it; 0 = idle.
+  const [zeroSplit, setZeroSplit] = useState(0);
+  const endZeroSplit = useCallback(() => setZeroSplit(0), []);
+  const scoreAreaRef = useRef<HTMLDivElement>(null);
+  const prevPhaseRef = useRef(matchState?.phase);
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    const now = matchState?.phase;
+    prevPhaseRef.current = now;
+    if (prev === 'countdown' && (now === 'auto' || now === 'teleop') && !videoMode && !LITE) {
+      setZeroSplit(k => k + 1);
+    }
+  }, [matchState?.phase, videoMode]);
 
   // Track when we last received a match state for client-side time interpolation
   const matchReceivedAt = useRef(0);
@@ -557,7 +575,7 @@ export function ScoreboardPage() {
   // video layouts keep the video.
   const phase = matchState?.phase;
   const showSetup = checksMode && !videoMode && (phase === undefined || phase === 'idle' || phase === 'created');
-  const showCountdown = checksMode && !videoMode && phase === 'countdown';
+  const showCountdown = !videoMode && phase === 'countdown';
   const cardChecks = showSetup || showCountdown ? stationChecks : null;
   const pinnedKey = pinnedStationsKey(matchState, stationChecks, showSetup || showCountdown);
   const alertsKey = robotAlertsKey(matchState, stationChecks);
@@ -926,7 +944,9 @@ export function ScoreboardPage() {
           {/* Score area — gives its space to the setup checks between matches
               (flex-grow animates), and holds the big 3-2-1 at the start */}
           <Box
+            ref={scoreAreaRef}
             sx={{
+              position: 'relative',
               flex: `${showSetup ? 0 : 1} 1 0px`,
               minHeight: 0,
               overflow: 'hidden',
@@ -936,6 +956,15 @@ export function ScoreboardPage() {
               transition: LITE ? 'none' : `flex-grow ${SETUP_TRANSITION}, opacity ${SETUP_TRANSITION}`,
             }}
           >
+            {zeroSplit > 0 && !showCountdown && (
+              <ZeroSplit
+                key={zeroSplit}
+                area={scoreAreaRef}
+                leftColor={ALLIANCE_COLOR[left]}
+                rightColor={ALLIANCE_COLOR[right]}
+                onDone={endZeroSplit}
+              />
+            )}
             {showCountdown ? (
               <BigCountdown remaining={displayRemaining} />
             ) : (
@@ -943,15 +972,15 @@ export function ScoreboardPage() {
               <Box
                 sx={{
                   flex: 1,
-                  // Coming out of the countdown, the 0–0 eases in
-                  ...(checksMode &&
-                    !LITE && {
-                      '@keyframes scoresIn': {
-                        from: { opacity: 0, transform: 'scale(0.92)' },
-                        to: { opacity: 1, transform: 'scale(1)' },
-                      },
-                      animation: 'scoresIn 1s ease-out',
-                    }),
+                  // Coming out of the countdown the score boxes fade in around
+                  // the flying zeros. Opacity only: the zeros measure where the
+                  // numbers sit, so the layout must not be scaling.
+                  ...(!LITE && {
+                    '@keyframes scoresIn': { from: { opacity: 0 }, to: { opacity: 1 } },
+                    animation: 'scoresIn 1s ease-out',
+                  }),
+                  // The real numbers wait for the zeros to land on them
+                  ...(zeroSplit > 0 && { '& [data-score-number]': { visibility: 'hidden' } }),
                   display: 'grid',
                   gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
                   alignItems: 'center',
@@ -997,8 +1026,19 @@ export function ScoreboardPage() {
                   />
                 </Box>
 
-                {/* Center panel */}
-                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, minWidth: 120 }}>
+                {/* Center panel — the timer steps back while the countdown's
+                    "0" pops up on top of it, and fades in once it has split */}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 1,
+                    minWidth: 120,
+                    opacity: zeroSplit > 0 ? 0 : 1,
+                    transition: zeroSplit > 0 ? 'none' : 'opacity 0.5s ease-out',
+                  }}
+                >
                   {/* Match countdown timer */}
                   {isMatchMode && matchState && matchProgress !== null && (
                     <CenterMatchDisplay
@@ -1915,8 +1955,7 @@ const BatteryPanel = memo(function BatteryPanel({
   );
 });
 
-/** The big 3-2-1 before a match when the setup checks were showing — the
- *  scores ease in once it ends. */
+/** The big 3-2-1 before a match. Its "0" is ZeroSplit. */
 function BigCountdown({ remaining }: { remaining: number }) {
   const n = Math.max(1, Math.ceil(remaining));
   return (
@@ -1924,7 +1963,7 @@ function BigCountdown({ remaining }: { remaining: number }) {
       <Typography
         key={n}
         sx={{
-          fontSize: 'clamp(6rem, 36vh, 24rem)',
+          fontSize: BIG_COUNTDOWN_FONT,
           fontWeight: 800,
           fontFamily: 'monospace',
           lineHeight: 1,
@@ -1939,6 +1978,95 @@ function BigCountdown({ remaining }: { remaining: number }) {
       >
         {n}
       </Typography>
+    </Box>
+  );
+}
+
+/** The "0" that ends the countdown: it pops up where the 3-2-1 was, splits
+ *  in two, and each copy flies into a score box — landing on that box's own
+ *  0 (hidden until then) at its size and colour. Measures the real numbers
+ *  on mount, so it follows swapped sides and any screen size. */
+function ZeroSplit({
+  area,
+  leftColor,
+  rightColor,
+  onDone,
+}: {
+  area: RefObject<HTMLDivElement | null>;
+  leftColor: string;
+  rightColor: string;
+  onDone: () => void;
+}) {
+  const leftRef = useRef<HTMLSpanElement>(null);
+  const rightRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const flights = [
+      { el: leftRef.current, side: 'left', color: leftColor },
+      { el: rightRef.current, side: 'right', color: rightColor },
+    ];
+    const animations: Animation[] = [];
+    for (const { el, side, color } of flights) {
+      const target = area.current?.querySelector<HTMLElement>(`[data-score-number="${side}"]`);
+      if (!el || !target) continue;
+      const from = el.getBoundingClientRect();
+      const to = target.getBoundingClientRect();
+      const dx = to.left + to.width / 2 - (from.left + from.width / 2);
+      const dy = to.top + to.height / 2 - (from.top + from.height / 2);
+      const scale = parseFloat(getComputedStyle(target).fontSize) / parseFloat(getComputedStyle(el).fontSize);
+      animations.push(
+        el.animate(
+          [
+            // Pop in like the 3-2-1 before it, hold a beat, then split
+            { offset: 0, opacity: 0, transform: 'translate(0, 0) scale(1.5)', color: '#fff', easing: 'ease-out' },
+            { offset: 0.3, opacity: 1, transform: 'translate(0, 0) scale(1)', color: '#fff', easing: 'linear' },
+            {
+              offset: 0.45,
+              opacity: 1,
+              transform: 'translate(0, 0) scale(1)',
+              color: '#fff',
+              easing: 'cubic-bezier(0.5, 0, 0.2, 1)',
+            },
+            { offset: 1, opacity: 1, transform: `translate(${dx}px, ${dy}px) scale(${scale})`, color },
+          ],
+          { duration: 1500, fill: 'forwards' },
+        ),
+      );
+    }
+    if (animations.length === 0) {
+      onDone();
+      return;
+    }
+    let cancelled = false;
+    Promise.all(animations.map(a => a.finished)).then(
+      () => !cancelled && onDone(),
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+      for (const a of animations) a.cancel();
+    };
+  }, [area, leftColor, rightColor, onDone]);
+
+  const glyph = {
+    gridArea: '1 / 1',
+    fontSize: BIG_COUNTDOWN_FONT,
+    fontWeight: 800,
+    fontFamily: 'monospace',
+    lineHeight: 1,
+    color: '#fff',
+    opacity: 0,
+  } as const;
+  return (
+    <Box
+      sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', pointerEvents: 'none', zIndex: 3 }}
+    >
+      <Box component="span" ref={leftRef} sx={glyph}>
+        0
+      </Box>
+      <Box component="span" ref={rightRef} sx={glyph}>
+        0
+      </Box>
     </Box>
   );
 }
@@ -2718,8 +2846,10 @@ function AllianceScoreBoxImpl({
           />
         </svg>
       )}
-      {/* Main score — fades in as "0" when batch times out, desaturates when goal is off */}
+      {/* Main score — fades in as "0" when batch times out, desaturates when goal is off.
+          data-score-number is where the countdown's "0" lands (ZeroSplit). */}
       <Typography
+        data-score-number={side}
         sx={{
           fontSize: mainFontSize,
           fontWeight: 800,

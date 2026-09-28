@@ -84,8 +84,11 @@ The ladder, as asked for (usually turns green in this order):
      → unknown.
   4. Joysticks: fresh DS→robot 1110 capture → ok if any joystick tag has
      axes/buttons/POVs, else bad; no DS→robot traffic seen → unknown.
-  5. Battery: fresh voltage from either source → ok ≥ 12.0 V else bad;
-     none → unknown.
+  5. Battery: fresh voltage from either source → ok ≥ 12.2 V, partial
+     (yellow) 11.8–12.2 V, bad below 11.8 V, with 0.1 V of hysteresis (each
+     line moves 0.05 V away from the current level) so a reading sitting on
+     a line doesn't flap; none → unknown. (User, 2026-09-28: "add some
+     hysteresis too so we don't get flapping".)
   6. Ready: not joined or Ready not requested → waiting; ready → ok; else
      bad.
 - **Toggle:** a "checks" chip on the scoreboard, `?checks=1` URL override,
@@ -97,10 +100,15 @@ The ladder, as asked for (usually turns green in this order):
   aside until the match starts. Post-match keeps the scores + QR; the ladder
   comes back when the match clears to idle. Video mode keeps its layout (no
   ladder) but gets the in-match indicators.
-- **The start transition** (checks mode only — without checks the scores
-  are already on screen): at `countdown` the ladder rows collapse and the
-  columns settle into the bottom battery row, a big 3-2-1 fills the centre,
-  and at `auto` the 0–0 scores ease in. Lite mode skips the animation.
+- **The start transition:** at `countdown` the ladder rows collapse and the
+  columns settle into the bottom battery row (checks mode), and a big 3-2-1
+  fills the centre (**both views** — user, 2026-09-28: "Normal view makes
+  sense too"). When the match goes live the "0" appears in the centre,
+  duplicates, and the two copies fly left and right into the score boxes,
+  which start at 0 (user's request); the score frames fade in around them.
+  Lite mode skips the animation. Video layouts keep their own timer.
+- **Free play is hidden while checks show** between matches — user,
+  2026-09-28: "Freeplay counting during a scrimmage doesn't matter."
 - **In-match indicator** (all modes): for robots in the match, replace the
   battery chart with, in priority order, E-STOP, A-STOP, NO DS, NO ROBOT
   COMMS, DISABLED (enabled phases only), LEG DONE (relay handoff, neutral).
@@ -175,6 +183,12 @@ The ladder, as asked for (usually turns green in this order):
 - [x] Step 6 — docs (`docs/match-system.md` "Setup checks on the
       scoreboard", README `/scores` row) and commits: `29bb320` (backend),
       `5b6a9f8` (scoreboard), `2f66d9a` (Cast/admin). Not pushed or deployed.
+- [x] Round 2 (user feedback 2026-09-28): battery yellow band + hysteresis
+      (`a573840`); big countdown in the normal view, and the "0" split flying
+      into both score boxes. The split was checked frame by frame by pausing
+      and seeking its animations (`document.getAnimations()`), since
+      screenshot latency skips the ~1 s flight; normal view, swapped
+      sides, and checks mode all land on the right box.
 - [ ] On the field: confirm against real robots (see "Not yet proven on
       hardware").
 
@@ -193,14 +207,7 @@ The ladder, as asked for (usually turns green in this order):
 
 ## Open questions for the user
 
-1. Between matches with checks on, the ladder replaces the big free-play
-   scores. If free-play scoring on the TV matters while checks are on, we
-   could keep compact score boxes above the ladder. (Default: ladder only.)
-2. Battery threshold is a hard 12.0 V. A yellow band (e.g. 11.8–12.2) is
-   easy to add if wanted.
-3. The big 3-2-1 and score ease-in happen only with checks on (otherwise
-   the scores are already on screen). Want the big countdown in the normal
-   view too?
+None right now.
 
 ## Things not to do
 

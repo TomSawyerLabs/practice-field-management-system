@@ -129,9 +129,11 @@ they usually fail because of it; the column's border shows the robot's
 overall state. The checks are worked out by the backend (`src/stationChecks.ts`)
 and sent to the scoreboard as `stationChecks`.
 
-When the match starts, the columns fold down into the usual battery row,
-a big 3-2-1 plays, and the 0–0 scores ease in. After the match clears, the
-columns open back up.
+When the match starts, the columns fold down into the usual battery row
+and a big 3-2-1 plays. As the match goes live its "0" pops up, splits in
+two, and the halves fly into the two score boxes — which start at 0. After
+the match clears, the columns open back up. The countdown and the split
+play with checks off too; lite mode and the video layouts skip them.
 
 **During any match** (with or without checks on), a robot in the match that
 has a problem shows it in place of its battery chart: **E-STOPPED**,
