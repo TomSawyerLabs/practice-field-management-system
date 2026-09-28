@@ -43,9 +43,14 @@ Two defects, one fixed here:
    `isDsAttached`, and a ready station whose DS goes quiet during setup is
    un-readied.
 2. **A team moved between stations kept a stale handshake.** pFMS only
-   forces a DS re-handshake (`disconnectDS`) when it knows the station's DS
-   IP. After a slot move the new station has no IP yet, so the DS is never
-   told. Not fixed here (see open questions).
+   forced a DS re-handshake (`disconnectDS`) when it knew the station's DS
+   IP. After a slot move the new station has no IP yet, so the DS was never
+   told. **Fixed (second commit):** `fmsServer` remembers the team each
+   live TCP socket handshaked as and takes a `disconnectTeam` command;
+   `index.ts` sends it on every join/leave/alliance edge (alongside the
+   address-keyed close, which it skips over) and whenever the radio config
+   moves a team to another station or releases it. Tests in
+   `src/fmsServer.test.ts` (loopback server, fake 0x18 handshakes).
 
 ## Why the July 2026 ready gate was reverted, and why it is safe now
 
@@ -121,11 +126,8 @@ stale sweep.
 
 ## Open questions for the user
 
-1. Fix defect 2 as well? Recommendation: yes. When a station joins with no
-   known DS IP, or a team's SSID moves to another station, close any FMS TCP
-   session whose 0x18 handshake reported that team number so the DS
-   re-handshakes and picks up the new slot. `fmsServer` would need to keep
-   address → team from the handshake and accept a `disconnectTeam` event.
+1. ~~Fix defect 2 as well?~~ User said yes (2026-09-27 ~14:45); done, see
+   finding 2.
 2. Deploy timing: the field was in use until at least 14:02 on 2026-09-27.
 
 ## Things not to do
@@ -147,6 +149,9 @@ stale sweep.
       "(DS offline)" in the waiting-for hint)
 - [x] Docs (`docs/match-system.md` Match Flow steps 2–3)
 - [x] Tests green (48 in `matchEngine.test.ts`), typecheck green
+- [x] Root cause (defect 2) fixed: `disconnectTeam` in `src/fmsServer.ts`,
+      wired in `src/index.ts`; 3 loopback tests in `src/fmsServer.test.ts`.
+      Committed as `285be70`. Not deployed.
 - [x] Committed as `789280c` (on top of the peer thread's `7f02aa3`,
       roster identity — waited for it to land rather than split a shared
       test file). Not deployed: the field was live into the afternoon.
