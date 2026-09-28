@@ -77,6 +77,10 @@ function stationRoutes(): Plugin {
         if (url === '/csa') {
           req.url = '/csa.html';
         }
+        // Match queue manager → queue.html
+        if (url === '/queue') {
+          req.url = '/queue.html';
+        }
         if (url === '/route') {
           req.url = '/route.html';
         }
@@ -183,6 +187,7 @@ export default defineConfig({
         logs: 'logs.html',
         network: 'network.html',
         csa: 'csa.html',
+        queue: 'queue.html',
         route: 'route.html',
         test: 'test.html',
         scores: 'scores.html',

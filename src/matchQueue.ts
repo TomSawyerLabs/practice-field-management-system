@@ -13,8 +13,10 @@ import { isQueueShape } from './types.js';
  * matchSetup.ts for "Set up next match".
  */
 
+// The line starts closed: a team page only shows "Play next" once whoever
+// runs /queue opens it, so a day with no queue manager gathers no line.
 const DEFAULT_SETTINGS: QueueSettings = {
-  lineOpen: true,
+  lineOpen: false,
   shape: { red: 3, blue: 3 },
   noShowMinutes: null,
   allowShort: true,

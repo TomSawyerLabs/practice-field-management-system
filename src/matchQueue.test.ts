@@ -8,7 +8,14 @@ import type { Alliance, MatchState, StationName } from './types.js';
 
 let dir: string;
 let now: number;
-const queue = () => new MatchQueue(join(dir, 'queue.json'), { now: () => now });
+/** A fresh queue with the line open (it starts closed by default). */
+const queue = () => {
+  const q = new MatchQueue(join(dir, 'queue.json'), { now: () => now });
+  q.updateSettings({ lineOpen: true });
+  return q;
+};
+/** The same file reopened, as after a restart. */
+const reopen = () => new MatchQueue(join(dir, 'queue.json'), { now: () => now });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'pfms-queue-'));
@@ -179,7 +186,7 @@ describe('the queue', () => {
     q.attach(engine);
     engine.set('auto');
 
-    const again = queue();
+    const again = reopen();
     const state = again.getState();
     expect(state.entries.map(e => e.status)).toEqual(['played', 'queued']);
     expect(state.line.map(l => l.team)).toEqual([9]);

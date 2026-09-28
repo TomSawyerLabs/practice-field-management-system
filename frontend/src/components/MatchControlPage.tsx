@@ -63,6 +63,7 @@ import {
   serverToBrowserTime,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
+import { QueueNextUp } from './QueueNextUp';
 import { PendingRadioChangesPanel } from './PendingRadioChanges';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 import { ChallengeLeaderboard } from './ChallengeLeaderboard';
@@ -499,6 +500,10 @@ export function MatchControlPage() {
         {/* Teams' Wi-Fi requests wait while a match exists; this is where the
             match manager sees them and applies them between matches. */}
         <PendingRadioChangesPanel />
+
+        {/* The queue's next match, with "Set up next match" (Wi-Fi batch +
+            create + join). Nothing when the queue is not in use. */}
+        <QueueNextUp linkToQueue />
 
         {phase === 'idle' && <IdleView />}
         {phase === 'created' && <CreatedView matchState={matchState} cooldownLeftMs={cooldownLeftMs} />}

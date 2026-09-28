@@ -253,6 +253,45 @@ Teams are never shown slot numbers — a robot is named by its SSID, and
 "the field is full" is what they see when all six slots are taken (a
 disconnected robot can be taken over from there).
 
+## Match queue
+
+`/queue` (admin-gated) keeps one ordered list of upcoming matches so the
+field always has a known **next match**. Two things feed it:
+
+- **A schedule** — matches added ahead of time (typed in, with an optional
+  time), the backbone of an event day.
+- **The fill line** — teams press **Play next** on their own page (with an
+  optional Red/Blue wish) and wait in order. The queue manager forms the
+  next match from the front of the line with whatever shape suits the
+  moment — 1v1 for a demo, 2v2 early in the day, 3v3 once everything
+  works — and it goes ahead of the schedule. Short lines form short
+  matches when allowed. The line is closed until the queue manager opens
+  it, so a day with no queue manager gathers no line.
+
+The **Next up** card, on `/queue` and at the top of `/match`, shows the
+match to set up next with three buttons:
+
+- **Set up next match** does everything: every robot in the match goes on
+  the pending Wi-Fi list from its saved credentials (a robot already on
+  the field is kept; everyone else's post-match release stands), the list
+  is applied as one radio update, the match is created, and each robot is
+  joined to its alliance. Teams still press Ready.
+- **Stage Wi-Fi only** and **Create match only** do one half each.
+
+A team with no saved Wi-Fi, or no robot on the field yet, is reported and
+the rest of the match is still set up; it can join from its page when its
+robot arrives. The match is **on deck** from then on, **playing** once it
+starts, and **played** when it ends.
+
+**No-shows**: with a no-show time set, a team on deck with no robot on the
+field and no join by the deadline is flagged on the Next up card and on
+its own page; tap **swap** to bring in the next team from the line (a
+no-show that came from the line goes to the back of it).
+
+Teams see where they stand at the top of their page: "You're in Match 12
+on the Red alliance — next up", "3rd in line", or the Play next button.
+The queue is broadcast to the scoreboard socket too, so a TV can show it.
+
 ## The Match Window
 
 Tapping **Join** also opens a small match window for that station:

@@ -42,6 +42,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
 import { MatchPanelForControl } from './MatchPanel';
+import { QueueBanner } from './QueueBanner';
 import { MatchVideoCard } from './MatchVideoCard';
 import { TeamChecksModal } from './TeamChecksModal';
 import { StationNetworkCard } from './NetworkPage';
@@ -362,6 +363,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           Team {teamNumber}
         </Typography>
       </Box>
+
+      {/* Where this team stands in the match queue, or "Play next" when the line is open */}
+      <QueueBanner teamNumber={teamNumber} />
 
       {/* Network routing banner — shows once connected, with option to switch or disconnect */}
       {routePreference && activeStations.size > 0 && (

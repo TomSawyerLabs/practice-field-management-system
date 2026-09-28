@@ -92,6 +92,7 @@ State files are JSON, written to the working directory by default:
 | ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                                           |
 | `STAGED_CONFIG_FILE`   | `staged-config.json`    | The pending list — Wi-Fi changes (enable/release, named by robot) waiting for staff to apply them; a release per robot is queued when a match ends           |
+| `MATCH_QUEUE_FILE`     | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
 | `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
 | `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
 | `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                                                       |

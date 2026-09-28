@@ -246,6 +246,9 @@ Optional, when you need them:
 - **Field network triage** — `/csa` on a CSA's tablet: shows only what is
   wrong (radio, Driver Station and robot links, host tables) and what to
   try; all clear shows almost nothing.
+- **Match queue** — `/queue` for a scrimmage or event day: a schedule plus
+  a fill line teams join from their page, and "Set up next match" on
+  `/match`. See [match-system.md](match-system.md#match-queue).
 - **Support widget → Slack** — `/admin` → Slack Integration. See
   [support.md](support.md).
 - **Access from outside the field** — `/admin` → External Access. See
