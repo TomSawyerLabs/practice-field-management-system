@@ -120,7 +120,7 @@ roughly in the order a team gets through them:
 | Radio link | The robot radio is linked to the field radio.                                                                                                                                                     |
 | Comms      | The DS reports robot comms — or, when the DS isn't sending status, the robot is answering its DS (those replies always cross pFMS).                                                               |
 | Joysticks  | The DS's control packets to the robot carry at least one joystick. **?** when that traffic doesn't cross pFMS (it only does for DSes routed through the field), and for 2027 (SystemCore) DSes.   |
-| Battery    | The latest reading is at least 12.0 V (shown live).                                                                                                                                               |
+| Battery    | At least 12.2 V; **yellow** from 11.8 V, red below (shown live). A reading has to cross a line by 0.05 V to change colour, so a battery resting on one doesn't flicker.                           |
 | Ready      | The team pressed Ready. Grey until the ready check opens, or while the robot isn't in the match.                                                                                                  |
 
 A robot needs a column at all only once its Wi-Fi is on a field station.

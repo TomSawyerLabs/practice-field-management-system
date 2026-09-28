@@ -1,5 +1,5 @@
 import {
-  SETUP_CHECK_MIN_BATTERY_VOLTS,
+  SETUP_CHECK_BATTERY_VOLTS,
   StationNameList,
   type Alliance,
   type MatchState,
@@ -54,6 +54,23 @@ export interface StationCheckInputs {
   /** Latest DS→robot packet seen (UDP 1110) and the joysticks it carried */
   joysticks?: { at: number; count: number };
   battery?: { at: number; volts: number };
+  /** The battery verdict last time, for hysteresis */
+  previousBattery?: SetupCheckLevel;
+}
+
+/** Battery verdict for a reading, with hysteresis: each line sits half the
+ *  dead band away from the current level, so a battery resting on 12.2 V
+ *  stays whichever colour it was instead of flickering. With no previous
+ *  verdict the lines are exact. */
+export function batteryCheckLevel(volts: number, previous: SetupCheckLevel | undefined): SetupCheckLevel {
+  const { ok, low, hysteresis } = SETUP_CHECK_BATTERY_VOLTS;
+  const known = previous === 'ok' || previous === 'partial' || previous === 'bad';
+  const h = known ? hysteresis / 2 : 0;
+  const okAt = previous === 'ok' ? ok - h : ok + h;
+  const badBelow = previous === 'bad' ? low + h : low - h;
+  if (volts >= okAt) return 'ok';
+  if (volts < badBelow) return 'bad';
+  return 'partial';
 }
 
 const fresh = (at: number | undefined, windowMs: number, now: number) => at !== undefined && now - at <= windowMs;
@@ -90,7 +107,7 @@ export function evaluateStationChecks(
   const joysticks: SetupCheckLevel = sticks ? (sticks.count > 0 ? 'ok' : 'bad') : 'unknown';
 
   const volts = input.battery && fresh(input.battery.at, CHECK_FRESH_MS.battery, now) ? input.battery.volts : null;
-  const battery: SetupCheckLevel = volts === null ? 'unknown' : volts >= SETUP_CHECK_MIN_BATTERY_VOLTS ? 'ok' : 'bad';
+  const battery: SetupCheckLevel = volts === null ? 'unknown' : batteryCheckLevel(volts, input.previousBattery);
 
   const ready: SetupCheckLevel = !input.joined || !input.readyRequested ? 'waiting' : input.ready ? 'ok' : 'bad';
 
@@ -116,6 +133,8 @@ interface Observations {
   robotPacketAt?: number;
   joysticks?: { at: number; count: number };
   battery?: { at: number; volts: number };
+  /** Last battery verdict, carried into the next for hysteresis */
+  previousBattery?: SetupCheckLevel;
 }
 
 /** Collects the per-station observations the checks need and turns them,
@@ -172,7 +191,7 @@ export class StationChecksTracker {
     const stations: StationChecksState['stations'] = {};
     for (const station of StationNameList) {
       const control = match.stationStates[station];
-      const o = this.observations.get(station) ?? {};
+      const o = this.obs(station);
       const checks = evaluateStationChecks(
         station,
         {
@@ -190,6 +209,7 @@ export class StationChecksTracker {
         now,
       );
       if (checks) stations[station] = checks;
+      o.previousBattery = checks?.battery;
     }
     return { type: 'stationChecks', stations };
   }

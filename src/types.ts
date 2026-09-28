@@ -1764,15 +1764,19 @@ export interface StationSetupChecks {
   joysticks: SetupCheckLevel;
   /** Joysticks the DS is sending, when seen. */
   joystickCount?: number;
-  /** Battery at or above SETUP_CHECK_MIN_BATTERY_VOLTS. */
+  /** Battery charge: ok, partial (getting low) or bad — see
+   *  SETUP_CHECK_BATTERY_VOLTS. */
   battery: SetupCheckLevel;
   batteryVoltage?: number;
   /** The team has pressed Ready. */
   ready: SetupCheckLevel;
 }
 
-/** Battery voltage a robot should have before a match. */
-export const SETUP_CHECK_MIN_BATTERY_VOLTS = 12;
+/** Battery bands for the setup check: green at or above `ok`, yellow down to
+ *  `low`, red below it. `hysteresis` is the dead band around each line: to
+ *  change level a reading has to cross the line by half of it, so a battery
+ *  resting right on a line doesn't flap between colours. */
+export const SETUP_CHECK_BATTERY_VOLTS = { ok: 12.2, low: 11.8, hysteresis: 0.1 } as const;
 
 /** Setup checks for every station with a robot configured. Derived verdicts
  *  only — safe for the public scoreboard socket. */

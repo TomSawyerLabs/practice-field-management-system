@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  batteryCheckLevel,
   CHECK_FRESH_MS,
   evaluateStationChecks,
   StationChecksTracker,
@@ -92,11 +93,12 @@ describe('evaluateStationChecks', () => {
     expect(stale.joysticks).toBe('unknown');
   });
 
-  test('battery: 12 V is the line, and a stale reading is unknown', () => {
-    expect(evaluate({ battery: { at: NOW, volts: 12 } }).battery).toBe('ok');
-    const low = evaluate({ battery: { at: NOW, volts: 11.94 } });
+  test('battery: green from 12.2 V, yellow down to 11.8 V, red below; a stale reading is unknown', () => {
+    expect(evaluate({ battery: { at: NOW, volts: 12.2 } }).battery).toBe('ok');
+    expect(evaluate({ battery: { at: NOW, volts: 12.0 } }).battery).toBe('partial');
+    const low = evaluate({ battery: { at: NOW, volts: 11.74 } });
     expect(low.battery).toBe('bad');
-    expect(low.batteryVoltage).toBe(11.9);
+    expect(low.batteryVoltage).toBe(11.7);
     const stale = evaluate({ battery: { at: NOW - CHECK_FRESH_MS.battery - 1, volts: 12.5 } });
     expect(stale.battery).toBe('unknown');
     expect(stale.batteryVoltage).toBeUndefined();
@@ -106,6 +108,38 @@ describe('evaluateStationChecks', () => {
     expect(evaluate({ readyRequested: false, ready: false }).ready).toBe('waiting');
     expect(evaluate({ joined: false, ready: false }).ready).toBe('waiting');
     expect(evaluate({ ready: false }).ready).toBe('bad');
+  });
+});
+
+describe('batteryCheckLevel', () => {
+  test('without a previous verdict the lines are exact', () => {
+    expect(batteryCheckLevel(12.2, undefined)).toBe('ok');
+    expect(batteryCheckLevel(12.19, 'unknown')).toBe('partial');
+    expect(batteryCheckLevel(11.8, undefined)).toBe('partial');
+    expect(batteryCheckLevel(11.79, undefined)).toBe('bad');
+  });
+
+  test('a reading hovering on a line keeps its colour', () => {
+    // Resting just either side of 12.2 V
+    for (const volts of [12.18, 12.22, 12.16, 12.24]) {
+      expect(batteryCheckLevel(volts, 'ok')).toBe('ok');
+      expect(batteryCheckLevel(volts, 'partial')).toBe('partial');
+    }
+    // ...and of 11.8 V
+    for (const volts of [11.78, 11.82, 11.76, 11.84]) {
+      expect(batteryCheckLevel(volts, 'partial')).toBe('partial');
+      expect(batteryCheckLevel(volts, 'bad')).toBe('bad');
+    }
+  });
+
+  test('a real move across a line changes colour', () => {
+    expect(batteryCheckLevel(12.14, 'ok')).toBe('partial');
+    expect(batteryCheckLevel(12.26, 'partial')).toBe('ok');
+    expect(batteryCheckLevel(11.74, 'partial')).toBe('bad');
+    expect(batteryCheckLevel(11.86, 'bad')).toBe('partial');
+    // A big jump skips the middle band
+    expect(batteryCheckLevel(12.6, 'bad')).toBe('ok');
+    expect(batteryCheckLevel(11.2, 'ok')).toBe('bad');
   });
 });
 
@@ -174,6 +208,19 @@ describe('StationChecksTracker', () => {
     });
     t.noteRadioUpdate(radioUpdate(true), NOW - CHECK_FRESH_MS.radio - 1);
     expect(t.snapshot(NOW).stations.slot2?.radio).toBe('unknown');
+  });
+
+  test('carries the battery verdict between snapshots so it does not flap', () => {
+    const t = tracker({
+      stationStates: { slot2: control({ teamNumber: 254 }) },
+      connectedStations: {},
+      readyRequested: false,
+    });
+    const levels = [12.25, 12.18, 12.22, 12.16, 12.14, 12.18, 12.22].map((volts, i) => {
+      t.noteRobotPacket('slot2', volts, NOW + i * 500);
+      return t.snapshot(NOW + i * 500).stations.slot2?.battery;
+    });
+    expect(levels).toEqual(['ok', 'ok', 'ok', 'ok', 'partial', 'partial', 'partial']);
   });
 
   test("ignores the DS's battery voltage while it has no robot comms", () => {
