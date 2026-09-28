@@ -20,6 +20,7 @@ import { TeamAvatar } from './TeamAvatar';
 import type { Alliance, QueueEntry, QueueShape } from '../../../src/types';
 import { useQueueState, sendQueueAdmin } from '../hooks/useBackend';
 import { AllianceTeams, QueueNextUp, entryStatusLabel, formatQueueTime } from './QueueNextUp';
+import { generateSchedule, parseSchedule, type ScheduleMatch } from '../../../src/scheduleGenerator';
 
 /** "1234 5678, 9012" → [1234, 5678, 9012], at most three. */
 function parseTeams(text: string): number[] {
@@ -417,6 +418,150 @@ function EntryRow({
   );
 }
 
+/** Build the day's schedule: generate one from the team list, or paste one
+ *  in; preview it; add it to the queue as scheduled matches. */
+function ScheduleCard() {
+  const queue = useQueueState();
+  const [teamsText, setTeamsText] = useState('');
+  const [perTeam, setPerTeam] = useState('3');
+  const [shape, setShape] = useState<QueueShape | null>(null);
+  const [start, setStart] = useState('');
+  const [interval, setInterval] = useState('8');
+  const [pasted, setPasted] = useState('');
+  const [preview, setPreview] = useState<ScheduleMatch[] | null>(null);
+  const [bad, setBad] = useState<string[]>([]);
+  if (!queue) return null;
+  const effectiveShape = shape ?? queue.settings.shape;
+
+  const generate = () => {
+    const teams = teamsText
+      .split(/[^0-9]+/)
+      .filter(Boolean)
+      .map(Number);
+    const startAt = parseTimeToday(start);
+    setPreview(
+      generateSchedule({
+        teams,
+        matchesPerTeam: Math.max(1, Number(perTeam) || 1),
+        shape: effectiveShape,
+        startAt,
+        intervalMinutes: startAt !== undefined ? Number(interval) || undefined : undefined,
+      }),
+    );
+    setBad([]);
+  };
+  const read = () => {
+    const r = parseSchedule(pasted, effectiveShape);
+    setPreview(r.matches);
+    setBad(r.bad);
+  };
+  const send = (replace: boolean) => {
+    if (!preview?.length) return;
+    sendQueueAdmin({ type: 'queueImport', entries: preview, replace });
+    setPreview(null);
+    setBad([]);
+  };
+
+  return (
+    <Card sx={{ mb: 2 }}>
+      <CardContent>
+        <Typography variant="h6">Schedule</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          Generate one from the teams here today, or paste one in. It lands in the queue as scheduled matches; the line
+          can still cut in ahead of it.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'flex-start', mb: 1.5 }}>
+          <TextField
+            size="small"
+            label="Teams"
+            placeholder="1234 5678 9012 …"
+            value={teamsText}
+            onChange={e => setTeamsText(e.target.value)}
+            multiline
+            minRows={2}
+            sx={{ width: 260 }}
+          />
+          <TextField
+            size="small"
+            label="Matches per team"
+            value={perTeam}
+            onChange={e => setPerTeam(e.target.value)}
+            sx={{ width: 130 }}
+          />
+          <ShapePicker value={effectiveShape} onChange={setShape} />
+          <TextField
+            size="small"
+            label="First match (HH:MM)"
+            value={start}
+            onChange={e => setStart(e.target.value)}
+            sx={{ width: 150 }}
+          />
+          <TextField
+            size="small"
+            label="Minutes apart"
+            value={interval}
+            onChange={e => setInterval(e.target.value)}
+            sx={{ width: 120 }}
+          />
+          <Button variant="outlined" size="small" onClick={generate} disabled={!teamsText.trim()}>
+            Generate
+          </Button>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'flex-start', mb: 1.5 }}>
+          <TextField
+            size="small"
+            label="Or paste a schedule"
+            placeholder={
+              '14:05 1234 5678 9012 v 2468 1357 8642\n14:15 red: 1 2 | blue: 3 4\n# one match per line, time optional'
+            }
+            value={pasted}
+            onChange={e => setPasted(e.target.value)}
+            multiline
+            minRows={3}
+            sx={{ width: 420, maxWidth: '100%' }}
+          />
+          <Button variant="outlined" size="small" onClick={read} disabled={!pasted.trim()}>
+            Read it
+          </Button>
+        </Box>
+        {bad.length > 0 && (
+          <Typography variant="body2" sx={{ color: 'warning.main', mb: 1 }}>
+            Could not read: {bad.join(' · ')}
+          </Typography>
+        )}
+        {preview && (
+          <Box sx={{ mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+              {preview.length === 0 ? 'Nothing to add.' : `${preview.length} match${preview.length === 1 ? '' : 'es'}:`}
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, mb: 1, maxHeight: 240, overflow: 'auto' }}>
+              {preview.map((m, i) => (
+                <Typography key={i} variant="body2" sx={{ fontFamily: 'monospace' }}>
+                  {String(i + 1).padStart(2, ' ')}. {formatQueueTime(m.scheduledAt) ?? '     '} {m.red.join(' ')} v{' '}
+                  {m.blue.join(' ')}
+                </Typography>
+              ))}
+            </Box>
+            {preview.length > 0 && (
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button variant="contained" size="small" onClick={() => send(false)}>
+                  Add to the queue
+                </Button>
+                <Button variant="outlined" size="small" color="warning" onClick={() => send(true)}>
+                  Replace the queue
+                </Button>
+                <Button size="small" onClick={() => setPreview(null)}>
+                  Discard
+                </Button>
+              </Box>
+            )}
+          </Box>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AddMatchCard() {
   const [red, setRed] = useState('');
   const [blue, setBlue] = useState('');
@@ -570,6 +715,7 @@ export function QueuePage() {
           <LineCard />
           <QueueListCard />
           <AddMatchCard />
+          <ScheduleCard />
           <SettingsCard />
         </>
       )}
