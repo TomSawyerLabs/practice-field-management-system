@@ -258,8 +258,14 @@ disconnected robot can be taken over from there).
 `/queue` (admin-gated) keeps one ordered list of upcoming matches so the
 field always has a known **next match**. Two things feed it:
 
-- **A schedule** — matches added ahead of time (typed in, with an optional
-  time), the backbone of an event day.
+- **A schedule** — the backbone of an event day. The **Schedule** card
+  generates one from the teams here today (matches per team, shape, first
+  match time and minutes between matches: every team plays the same
+  number of matches, never against itself, never back to back when the
+  numbers allow), or reads one pasted in, one match per line
+  (`14:05 1234 5678 v 2468 1357`, `red: 1 2 | blue: 3 4`, or a plain list
+  split by the shape). Both preview first, then add to the queue or
+  replace the queued matches. Single matches can also be typed in.
 - **The fill line** — teams press **Play next** on their own page (with an
   optional Red/Blue wish) and wait in order. The queue manager forms the
   next match from the front of the line with whatever shape suits the

@@ -93,7 +93,7 @@ only team numbers and positions.
 3. [x] Team page: join/leave the line, position banner.
 4. [x] /queue page (list, line, form match, settings).
 5. [x] Set up next match on /match (main + sub-buttons).
-6. [ ] Schedule import + generation.
+6. [x] Schedule import + generation.
 7. [x] Nudge preferences + Slack nudge.
 8. [x] PWA + web push.
 9. [x] Docs, README page table (queue, nudges, push).
