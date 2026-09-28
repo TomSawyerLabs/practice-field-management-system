@@ -34,19 +34,32 @@ and at 15:44 the radio reported `ACTIVE` with the same six SSIDs as
 
 ## What actually happened (best reading of the logs)
 
-1. 15:28:43 — post-match auto-clear (`Match cleared`). Held Wi-Fi changes
-   from the between-match roster shuffle were released. Immediately after,
-   the sync check fired for all six slots and re-applied the config.
-2. 15:37:29 — a staff `applyConfig`. 15:38:14 —
+1. 15:18:52 — config A (581, 4159, 1967, 2813, 751, 1868) applied and in
+   sync; a match ran on it 15:18–15:27. No held changes were released at
+   the 15:27:38 `Match cleared` (no "Hold lifted" line) and pFMS pushed
+   nothing. Yet by 15:28:28 the radio's report disagreed with A on **all
+   six** stations, including blue1 2813 which had not changed since 14:34.
+   The radio's report changed on its own; an empty station list fits, a
+   report of any earlier config does not. 15:28:43, 15:30:59, 15:32:37:
+   the sync check re-sent A three times, radio still disagreeing.
+2. 15:37:29 — a staff `applyConfig` whose single update **swapped two
+   robots** (751 blue2→red3, 1967 red3→blue1). 15:38:14 —
    `Error applying config: Timeout waiting for status to not be CONFIGURING.
 Is CONFIGURING`: the VH-109 (`VH-109_AP_PRACTICE_1.2.9-02102025`) sat in
-   `CONFIGURING` for more than the 45 s wait.
-3. Each re-apply put the radio back into `CONFIGURING` (the overlay), then
-   the radio came back `ACTIVE`, the check still saw a mismatch for longer
-   than the 15 s debounce (`RADIO_RECONCILE_DEBOUNCE_MS`), and re-applied
-   again. The log does not record what the radio's `stationStatuses`
-   contained at those moments, so whether the radio was reporting stale
-   SSIDs or an empty station list during that window is not proven.
+   `CONFIGURING` past the 45 s wait. 15:39:01: all six mismatched again,
+   re-sent.
+3. 15:40:37 — the restart lifted the hold and applied a **rotation** in one
+   update: 581 red1→red2 (into 1854's slot), 1854 red2→blue3, 840 into red1.
+   This is the "A into B's slot, B into C's, C into A's" change the user
+   watched. It was sent twice (once by the process that crashed, once by
+   its replacement), then 972 was added at 15:41:53; by 15:44 the radio
+   agreed with pFMS. So moves inside one POST do apply, at least
+   eventually, but the one at 15:37 took over 45 s.
+4. Each re-send put the radio back into `CONFIGURING` (the overlay), it
+   came back `ACTIVE` still disagreeing, and 15 s later
+   (`RADIO_RECONCILE_DEBOUNCE_MS`) pFMS sent again. The log never recorded
+   what the radio reported, so "empty during a long internal reconfigure"
+   versus "stale" is the open question; both code paths now log it.
 
 The 15:35:46 re-apply landed while a match was being set up ("Holding radio
 change ... (match)" lines precede it). The sync check has no match guard, so

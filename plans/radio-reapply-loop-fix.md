@@ -22,17 +22,26 @@ Applied configs 15:28–15:42 (from `Configuring stations:` blocks):
 | 15:40:36 | cold restart, hold lifted       | C, then D = 840, 581, 751, 1967, –, 1854      |
 | 15:41:53 | staff Apply now                 | D + blue2 972                                 |
 
-No config ever returned to an earlier one. The same config was re-sent up
-to three times because the radio kept reporting a mismatch on **all six**
-stations, including ones whose SSID never changed. The forward changes
-between re-sends were teams shuffling slots (1854 slot2→slot6, 581
-slot1→slot2, 840→slot1) and staff pressing Apply. So the cycle the user saw
-was most likely the radio's _reported_ state versus pFMS's _active_ state
-disagreeing and the overlay coming back every ~3 min, not pFMS rotating
-between configs.
+The user's "A → B → C → A" was not pFMS cycling between configs; it was
+**one update that rotated robots between stations**: at 15:40:37, 581 moved
+into 1854's slot (red1→red2), 1854 moved to blue3, and 840 took 581's old
+slot. The 15:37:29 update was likewise a two-robot swap (751 and 1967
+exchanging red3/blue1), and that is the one that overran the 45 s wait.
+Moves inside a single POST did apply in the end (the radio agreed with
+pFMS by 15:44), but slowly.
 
-What the radio reported during the window is not in the logs (the
-mismatch line only names the slots). That is the first thing to fix.
+Separately, the same config A was re-sent three times from 15:28 because
+the radio reported all six stations wrong although A had been on it,
+in sync, since 15:18:52 and nothing was pushed in between. What the radio
+reported is not in the logs (the mismatch line only named slots). Both are
+now logged: the moves in each update, and the radio's report the moment it
+returns to ACTIVE.
+
+If the new log shows the radio mishandling moves (e.g. reporting a moved
+SSID at neither station), the fix is a two-phase commit: first POST the
+target with the moving robots' stations left out, wait for ACTIVE, then
+POST the full target. Costs one extra reconfigure (~40 s) per swap, so
+not worth doing blind.
 
 ## Mechanics of the loop
 

@@ -768,6 +768,24 @@ class RadioManager {
     for (const station in sanitizedConfig) if (sanitizedConfig[station]) sanitizedConfig[station].wpaKey &&= '***';
     console.log('Configuring stations:', sanitizedConfig);
 
+    // Robots changing station in this one update — teams swapping or
+    // rotating physical driver stations between matches. Named here so a
+    // slow or failed reconfigure can be tied to it: on 2026-09-27 the one
+    // update that overran the wait was a two-robot swap, and whether the
+    // radio copes with an SSID moving station inside a single POST is not
+    // proven either way.
+    const onRadio = this.lastBroadcastEntry?.radioUpdate?.stationStatuses;
+    if (onRadio) {
+      const moves: string[] = [];
+      for (const slot of StationNameList) {
+        const ssid = this.activeConfig[slot]?.ssid;
+        if (!ssid) continue;
+        const from = StationNameList.find(s => s !== slot && onRadio[s]?.ssid === ssid);
+        if (from) moves.push(`${ssid} ${defaultSlotToRadio[from]}→${defaultSlotToRadio[slot]}`);
+      }
+      if (moves.length) console.log(`This update moves ${moves.length} robot(s) between stations: ${moves.join(', ')}`);
+    }
+
     const teamsConfig = {} as Record<StationName, number | undefined>;
 
     for (const station in this.activeConfig) {
@@ -863,6 +881,21 @@ class RadioManager {
 
       if (!this.isStatus('ACTIVE')) {
         throw new Error(`Radio status is not ACTIVE after configuration. Status: ${this.getStatus()}`);
+      }
+
+      // What the radio says it has the moment it is ACTIVE again, against
+      // what was sent. On 2026-09-27 every station read as mismatched right
+      // after ACTIVE, which looked like an empty or stale report; this
+      // records it next time instead of leaving it a guess.
+      const reported = this.entries[this.entries.length - 1]?.radioUpdate?.stationStatuses;
+      const sent = config.stationConfigurations as Partial<Record<RadioStationName, { ssid: string }>> | undefined;
+      if (reported && sent) {
+        const summary = RadioStationNameList.map(radio => {
+          const want = sent[radio]?.ssid ?? '(none)';
+          const got = reported[defaultRadioToSlot[radio]]?.ssid ?? '(none)';
+          return `${radio}: ${got}${got === want ? '' : ` (sent ${want})`}`;
+        }).join(', ');
+        console.log(`Radio ACTIVE after configure — reports ${summary}`);
       }
     } catch (err) {
       // Suppress the isConfiguring rejection if we're bailing out before awaiting it
