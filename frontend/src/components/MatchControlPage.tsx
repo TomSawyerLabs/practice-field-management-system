@@ -60,6 +60,7 @@ import {
   useMatchRecordingState,
   usePublicUrl,
   matchSummaryUrl,
+  serverToBrowserTime,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { PendingRadioChangesPanel } from './PendingRadioChanges';
@@ -159,12 +160,23 @@ function computeBarProgress(
 // is held a full-screen overlay sits under the finger (nothing selectable,
 // nothing reflowing), and the long-press menu and text selection are
 // cancelled window-wide.
+//
+// Once a countdown is cancelled the server refuses a restart for a few
+// seconds (MatchState.restartCooldown); the overlay says so and counts it
+// down, and the button stays disabled until it runs out.
 let holdArmed = false;
 /** Set when the pointer is released before robots enabled — cancels the start
  *  even if it's still in flight (a quick tap releases while the phase is still
- *  locally `created`, so we also abort the moment `countdown` shows up). */
-let holdAbortWanted = false;
+ *  locally `created`, so we also abort the moment `countdown` shows up).
+ *  Expires: a start still in flight lands within a round trip, and a stale
+ *  wish must never abort a later start, ours or another operator's. */
+let holdAbortWantedUntil = 0;
+const HOLD_ABORT_WINDOW_MS = 3000;
 let holdLatestPhase: MatchPhase = 'idle';
+
+function holdAbortWanted(): boolean {
+  return Date.now() < holdAbortWantedUntil;
+}
 
 /** Robots are enabled from auto onward — once there, releasing is a no-op. */
 function robotsEnabled(phase: MatchPhase): boolean {
@@ -206,13 +218,14 @@ function setHoldLatestPhase(phase: MatchPhase) {
   // Robots are live: clear the overlay off E-Stop and the match controls, even
   // with the finger still down (letting go now does nothing).
   if (robotsEnabled(phase)) setHoldOverlay('none');
-  if (!holdAbortWanted) return;
+  if (!holdAbortWanted()) return;
   // A start we let go of early has now reached the countdown — abort it.
   if (phase === 'countdown') sendMatchAbortCountdown();
-  // Abort took effect (back to setup) or the start slipped through to enabled —
-  // either way stop chasing it.
+  // Abort took effect (back to setup, where the restart cooldown takes over
+  // the overlay) or the start slipped through to enabled — either way stop
+  // chasing it.
   if (phase === 'created' || robotsEnabled(phase)) {
-    holdAbortWanted = false;
+    holdAbortWantedUntil = 0;
     setHoldOverlay('none');
   }
 }
@@ -228,7 +241,7 @@ function endHold() {
   // already counting down; if the start is still in flight (phase 'created'),
   // arm the abort so setHoldLatestPhase fires it the instant countdown begins.
   if (!robotsEnabled(holdLatestPhase)) {
-    holdAbortWanted = true;
+    holdAbortWantedUntil = Date.now() + HOLD_ABORT_WINDOW_MS;
     setHoldOverlay('released');
     if (holdLatestPhase === 'countdown') sendMatchAbortCountdown();
   } else {
@@ -239,7 +252,7 @@ function endHold() {
 function beginHold() {
   if (holdArmed) return;
   holdArmed = true;
-  holdAbortWanted = false;
+  holdAbortWantedUntil = 0;
   window.addEventListener('pointerup', endHold);
   window.addEventListener('pointercancel', endHold);
   // A long press must not open the context menu or select text: either makes
@@ -250,12 +263,50 @@ function beginHold() {
   sendStationStartMatch();
 }
 
+/** Milliseconds left of the restart cooldown after a cancelled countdown
+ *  (0 when there is none), ticking down on the browser clock. */
+function useRestartCooldownLeft(matchState: MatchState | null): number {
+  const until = matchState?.phase === 'created' ? matchState.restartCooldown?.until : undefined;
+  // Fixed per cooldown, so the clock-offset smoothing can't restart the ticker
+  const deadline = useMemo(() => (until === undefined ? 0 : serverToBrowserTime(until)), [until]);
+  const [now, setNow] = useState(Date.now);
+
+  useEffect(() => {
+    setNow(Date.now());
+    if (deadline <= Date.now()) return;
+    const id = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= deadline) clearInterval(id);
+    }, 200);
+    return () => clearInterval(id);
+  }, [deadline]);
+
+  return Math.max(0, deadline - now);
+}
+
 /** Full-screen cover while the start is held: the 3-2-1, big, under the
  *  finger, and nothing underneath can move or be selected. Gone the moment
- *  robots enable. */
-function HoldToStartOverlay({ phase, remainingTime }: { phase: MatchPhase; remainingTime: number }) {
+ *  robots enable. After a cancelled countdown it says so and counts down the
+ *  restart cooldown — on every /match screen, whoever cancelled. */
+function HoldToStartOverlay({
+  phase,
+  remainingTime,
+  cooldownLeftMs,
+  cancelledByLabel,
+}: {
+  phase: MatchPhase;
+  remainingTime: number;
+  cooldownLeftMs: number;
+  /** The team that backed out of the countdown, or null when this page cancelled it. */
+  cancelledByLabel: string | null;
+}) {
   const overlay = useHoldOverlay();
-  if (overlay === 'none') return null;
+  const coolingDown = cooldownLeftMs > 0;
+  if (overlay === 'none' && !coolingDown) return null;
+  // The cooldown wins over a hold: if a team backs out while the start is
+  // still held, the countdown is gone and there is nothing left to hold for.
+  const cancelled = overlay === 'released' || coolingDown;
 
   return (
     <Box
@@ -279,12 +330,38 @@ function HoldToStartOverlay({ phase, remainingTime }: { phase: MatchPhase; remai
         WebkitTouchCallout: 'none',
       }}
     >
-      {overlay === 'released' ? (
+      {cancelled ? (
         <>
-          <Typography variant="h3" sx={{ fontWeight: 800 }}>
+          <Typography variant="h4" sx={{ fontWeight: 800, color: '#ef5350' }}>
             Start cancelled
           </Typography>
-          <Typography variant="h6">You let go before the horn — back to setup.</Typography>
+          <Typography variant="h6">
+            {cancelledByLabel
+              ? `${cancelledByLabel} backed out of the countdown.`
+              : 'The start was let go before the horn.'}
+          </Typography>
+          {coolingDown ? (
+            <>
+              <Typography variant="h6" sx={{ mt: 3 }}>
+                You can start again in
+              </Typography>
+              <Typography
+                sx={{
+                  fontSize: '7rem',
+                  fontWeight: 800,
+                  lineHeight: 1,
+                  color: '#ffa726',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {Math.ceil(cooldownLeftMs / 1000)}
+              </Typography>
+            </>
+          ) : (
+            <Typography variant="h6" sx={{ mt: 3, opacity: 0.8 }}>
+              Back to setup…
+            </Typography>
+          )}
         </>
       ) : (
         <>
@@ -370,6 +447,7 @@ export function MatchControlPage() {
   useEffect(() => {
     if (matchState) setHoldLatestPhase(matchState.phase);
   }, [matchState?.phase]);
+  const cooldownLeftMs = useRestartCooldownLeft(matchState);
 
   if (dsStation) return <DsClientBlock station={dsStation} roleNoun="the match operator" />;
 
@@ -391,7 +469,16 @@ export function MatchControlPage() {
 
   return (
     <Box sx={{ minHeight: '100dvh', backgroundColor: pageBg, transition: 'background-color 1s ease' }}>
-      <HoldToStartOverlay phase={phase} remainingTime={matchState.remainingTime} />
+      <HoldToStartOverlay
+        phase={phase}
+        remainingTime={matchState.remainingTime}
+        cooldownLeftMs={cooldownLeftMs}
+        cancelledByLabel={
+          matchState.restartCooldown?.cancelledBy
+            ? teamLabel(matchState.stationStates[matchState.restartCooldown.cancelledBy])
+            : null
+        }
+      />
       <Container maxWidth="md" sx={{ py: 4 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Typography variant="h4" sx={{ fontWeight: 700 }}>
@@ -414,7 +501,7 @@ export function MatchControlPage() {
         <PendingRadioChangesPanel />
 
         {phase === 'idle' && <IdleView />}
-        {phase === 'created' && <CreatedView matchState={matchState} />}
+        {phase === 'created' && <CreatedView matchState={matchState} cooldownLeftMs={cooldownLeftMs} />}
         {phase === 'postMatch' && <PostMatchView matchState={matchState} />}
         {phase !== 'idle' && phase !== 'created' && phase !== 'postMatch' && (
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
@@ -452,7 +539,14 @@ function IdleView() {
 
 // ── Created view — pre-match setup ──────────────────────────────────
 
-function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof useMatchState>> }) {
+function CreatedView({
+  matchState,
+  cooldownLeftMs,
+}: {
+  matchState: NonNullable<ReturnType<typeof useMatchState>>;
+  /** Restart cooldown left after a cancelled countdown; starting is refused until 0. */
+  cooldownLeftMs: number;
+}) {
   const { config, stationStates, readyRequested, staffStates } = matchState;
 
   const joinedStations = (Object.entries(stationStates) as [StationName, StationControlState | undefined][])
@@ -610,9 +704,12 @@ function CreatedView({ matchState }: { matchState: NonNullable<ReturnType<typeof
                   Retract Ready Check
                 </Button>
                 <HoldToStartButton
-                  canStart={allReady && !getReadyHold}
+                  canStart={allReady && !getReadyHold && cooldownLeftMs === 0}
                   holdDisabledReason={
-                    holdDisabledReason ?? (getReadyHold ? 'Get-ready announcement playing — a moment…' : undefined)
+                    cooldownLeftMs > 0
+                      ? `Countdown cancelled — you can start again in ${Math.ceil(cooldownLeftMs / 1000)} s`
+                      : (holdDisabledReason ??
+                        (getReadyHold ? 'Get-ready announcement playing — a moment…' : undefined))
                   }
                 />
               </>

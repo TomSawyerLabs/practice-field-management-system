@@ -54,6 +54,11 @@ const RESUME_COUNTDOWN_SECONDS = 3;
 /** The 3-2-1 before robots go live. `totalMatchTime` starts ticking here, so
  *  anything measuring the run itself subtracts it. */
 const COUNTDOWN_SECONDS = 3;
+/** After a start countdown is cancelled, starting again is refused for this
+ *  long. The abort buzzer (3.9 s) holds the field speaker's exclusive audio
+ *  device, so a countdown started any sooner silently loses its 3-2-1; and a
+ *  fixed, visible pause beats a quick re-tap racing the abort. */
+export const RESTART_COOLDOWN_MS = 5000;
 
 /** Phases in which robots are actually driving. */
 function robotsEnabledPhase(phase: MatchPhase): boolean {
@@ -144,6 +149,8 @@ export class MatchEngine {
   private lastStaffHeartbeat = new Map<StaffRole, number>();
   /** Match starts are rejected until this time (see holdStart) */
   private startHoldUntil = 0;
+  /** Set when a countdown is cancelled — see RESTART_COOLDOWN_MS. */
+  private restartCooldown: { until: number; cancelledBy: StationName | null } | null = null;
   private sequenceNumbers = new Map<StationName, number>();
   private stationStates = new Map<StationName, StationControlState>();
   private dsConnections = new Map<StationName, { ip: string; lastSeen: number }>();
@@ -850,7 +857,7 @@ export class MatchEngine {
         appWarn(`Station ${station} is not joined, cannot set ready`);
         return;
       }
-      this.abortCountdown();
+      this.abortCountdown(station);
       state.ready = false;
       console.log(`Station ${station} un-readied during countdown — countdown aborted`);
       this.broadcast();
@@ -1062,6 +1069,10 @@ export class MatchEngine {
       appWarn(`Cannot start match in phase ${this.phase}`);
       return;
     }
+    if (this.restartCooldown && Date.now() < this.restartCooldown.until) {
+      appWarn('The countdown was just cancelled — wait a few seconds before starting again');
+      return;
+    }
     if (Date.now() < this.startHoldUntil) {
       appWarn('Match start is held for a moment while the get-ready announcement finishes');
       return;
@@ -1170,12 +1181,15 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  /** Abort the countdown and return to the created (pre-match) phase. */
-  abortCountdown() {
+  /** Abort the countdown and return to the created (pre-match) phase.
+   *  `cancelledBy` is the station whose team backed out; null when the match
+   *  page cancelled it. Starts a restart cooldown either way. */
+  abortCountdown(cancelledBy: StationName | null = null) {
     if (this.phase !== 'countdown') {
       appWarn(`Cannot abort countdown in phase ${this.phase}`);
       return;
     }
+    this.restartCooldown = { until: Date.now() + RESTART_COOLDOWN_MS, cancelledBy };
     this.phase = 'created';
     this.remainingTime = 0;
     // This match never happened — a re-start gets a fresh id
@@ -1675,6 +1689,8 @@ export class MatchEngine {
       awaitingAutoWinner: awaitingAutoWinner || undefined,
       pausedFrom: this.phase === 'paused' ? (this.prePausePhase ?? undefined) : undefined,
       resumeAt: this.resumeAt ?? undefined,
+      restartCooldown:
+        this.restartCooldown && Date.now() < this.restartCooldown.until ? this.restartCooldown : undefined,
       readyRequested: this.readyRequested,
       staffStates,
       challenge: isChallengeConfig(this.config ?? this.pendingConfig)

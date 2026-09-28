@@ -45,6 +45,10 @@
   During the hold, `contextmenu` and `selectstart` are cancelled window-wide.
 - The overlay disappears the moment robots enable (auto onward) so E-Stop and
   the rest of the controls are reachable; releasing then is a no-op anyway.
+- (2026-09-28, user) After a cancelled countdown there is a clear warning and
+  a cooldown of a few seconds before Start can be used again. Enforced by
+  the server (`MatchEngine.startMatch` refuses), shown by /match. 5 s: the
+  abort buzzer is 3.9 s and holds the field speaker's exclusive device.
 
 ## Plan / steps
 
@@ -55,8 +59,24 @@
 5. [x] Commit (two commits, user-facing subjects, `Changelog:` trailers).
 6. [ ] Real-phone check on the field after deploy: long-press hold on an
        Android phone and an iPhone through the full 3-2-1.
+7. [x] Restart cooldown after a cancelled countdown (user report: a quick
+       re-tap after letting go doesn't reliably restart).
+   - [x] Server: `restartCooldown { until, cancelledBy }` in `MatchState`;
+         `startMatch` refuses until it runs out; set by every abort.
+   - [x] /match: full-screen "Start cancelled — start again in N"; button
+         disabled with the same reason; early-release abort intent expires
+         so it can't abort someone else's later start.
+   - [x] Engine tests; headless check; commit.
 
 ## Findings / gotchas
+
+- Why a quick re-tap after letting go didn't reliably restart: (1) until
+  the abort landed, taps hit the "released" overlay or the countdown view
+  (no button); (2) the abort buzzer `sounds/abort.wav` is 3.91 s and
+  `aplay -D <hw>` is exclusive, so a countdown started during it plays no
+  3-2-1 (same failure the Get Ready 3 s hold exists for); (3) an early
+  release armed `holdAbortWanted` with no expiry, so a stale one could
+  abort a later countdown.
 
 - `handleStatusUpdate` dedupes by timestamp, so registering it once at the
   page root and again inside `StationChart` is harmless.
@@ -80,7 +100,12 @@
 - [x] Read ControlPage, MatchPanel, MatchVideoCard, MatchControlPage hold code.
 - [x] Tabs implemented; tab in URL hash survives reload; Radio tab dot shows link state.
 - [x] Overlay implemented; typecheck clean; headless mobile check passed.
-- [ ] Real-phone long-press test.
+- [x] Restart cooldown (2026-09-28): engine tests (refused 1 ms before, allowed
+      at the cooldown; a team backing out is named). Headless: let go
+      mid-countdown → overlay "Start cancelled … start again in 5"; four quick
+      re-taps during it sent nothing to the server; at 5 s the button re-enabled
+      and a hold started the match into Autonomous.
+- [ ] Real-phone long-press test (also covers the cooldown on a phone).
 
 ## Open questions for the user
 

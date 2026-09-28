@@ -1337,6 +1337,11 @@ export type MatchState = {
    *  counting down. Undefined when paused and holding. Robots stay disabled
    *  for the whole countdown; pausing again cancels it. */
   resumeAt?: number;
+  /** Present for a few seconds after a start countdown is cancelled, while
+   *  starting again is refused. `until` is epoch ms on the server clock;
+   *  `cancelledBy` is the station whose team backed out, or null when the
+   *  match page cancelled it (start button let go, or Abort Countdown). */
+  restartCooldown?: { until: number; cancelledBy: StationName | null };
   /** True once the host has opened the ready check. Until then, no station or
    *  staff role may ready up. Reset whenever the roster changes. */
   readyRequested: boolean;

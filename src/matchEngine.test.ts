@@ -1,9 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MatchEngine } from './matchEngine.js';
+import { MatchEngine, RESTART_COOLDOWN_MS } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { ScoringEngine } from './scoringEngine.js';
 import {
@@ -693,5 +693,53 @@ describe('ready needs a Driver Station the field can hear', () => {
     dsGoesQuiet(engine, 'slot4');
     sweepReadiness(engine);
     expect(engine.getState().stationStates.slot4?.ready).toBe(false);
+  });
+});
+
+describe('a cancelled countdown cools down before the next start', () => {
+  /** One team joined and ready, staff not required, counting down. */
+  function countingDown() {
+    const engine = new MatchEngine(() => 1234);
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('countdown');
+    return engine;
+  }
+
+  afterEach(() => setSystemTime());
+
+  test('a start straight after the match page cancels is refused until the cooldown runs out', () => {
+    const now = Date.now();
+    setSystemTime(new Date(now));
+    const engine = countingDown();
+    engine.abortCountdown();
+
+    const state = engine.getState();
+    expect(state.phase).toBe('created');
+    expect(state.restartCooldown).toEqual({ until: now + RESTART_COOLDOWN_MS, cancelledBy: null });
+    expect(state.stationStates.slot1?.ready).toBe(true); // still ready: only the cooldown stands in the way
+
+    setSystemTime(new Date(now + RESTART_COOLDOWN_MS - 1));
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('created');
+
+    setSystemTime(new Date(now + RESTART_COOLDOWN_MS));
+    expect(engine.getState().restartCooldown).toBeUndefined();
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('countdown');
+    engine.stopMatch();
+  });
+
+  test('a team backing out of the countdown is named as the canceller', () => {
+    const engine = countingDown();
+    engine.setReady('slot1', false);
+    const state = engine.getState();
+    expect(state.phase).toBe('created');
+    expect(state.restartCooldown?.cancelledBy).toBe('slot1');
   });
 });
