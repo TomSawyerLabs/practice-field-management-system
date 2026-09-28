@@ -56,6 +56,8 @@ import { handleExternalAccessAuth } from './externalAccessAuth.js';
 import { OnLinkChecker } from './onLink.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
+import { MatchQueue } from './matchQueue.js';
+import { setupNextMatch, type SetupMode, type StageOutcome } from './matchSetup.js';
 import { MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
 import { handlePublicMatchRequest } from './publicMatchApi.js';
@@ -427,6 +429,57 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const matchHistoryStore = new MatchHistoryStore();
   matchHistoryStore.attach(matchEngine, scoringEngine);
 
+  // The match queue: upcoming matches from a schedule and the fill line,
+  // and "Set up next match" for the match page (src/matchSetup.ts).
+  const matchQueue = new MatchQueue();
+  matchQueue.attach(matchEngine);
+  matchQueue.setPresenceResolver(
+    team =>
+      radioManager.getProjectedStationForTeam(team) !== null ||
+      Object.values(matchEngine.getState().stationStates).some(s => s?.joined && s.teamNumber === team),
+  );
+  const setupNext = (id: string | undefined, mode: SetupMode) =>
+    setupNextMatch(
+      {
+        queue: matchQueue,
+        engine: {
+          getPhase: () => matchEngine.getState().phase,
+          hasJoined: () => Object.values(matchEngine.getState().stationStates).some(s => s?.joined),
+          createMatch: () => matchEngine.createMatch(),
+          joinStationAlliance: (station, alliance) => matchEngine.joinStationAlliance(station, alliance),
+          isJoined: station => !!matchEngine.getState().stationStates[station]?.joined,
+        },
+        radio: {
+          // Every robot goes on the pending list first, then one apply — not
+          // one radio reconfigure per robot.
+          stageRobots: teams =>
+            radioManager.batch(async () => {
+              const outcomes = new Map<number, StageOutcome>();
+              for (const team of teams) {
+                const saved = savedTeamStore.bestForTeam(team);
+                if (!saved) {
+                  outcomes.set(team, 'noCredentials');
+                  continue;
+                }
+                const station =
+                  radioManager.getProjectedStationForTeam(team) ?? radioManager.getFreeProjectedStation() ?? 'slot1';
+                const r = await radioManager.configure(station, {
+                  ssid: saved.ssid,
+                  wpaKey: saved.wpaKey,
+                  internetAccess: saved.internetAccess,
+                });
+                outcomes.set(team, r.result === 'kept' || r.result === 'noop' ? 'kept' : 'staged');
+              }
+              return outcomes;
+            }),
+          apply: () => radioManager.applyPendingChanges(),
+          stationForTeam: team => radioManager.getProjectedStationForTeam(team),
+        },
+      },
+      id,
+      mode,
+    );
+
   // Match video recorder. Streams saved in the admin panel win over the
   // environment seed (`MATCH_RECORDING_STREAMS="all-field=rtsp://…,…"`),
   // read per match so a change applies to the next match without a restart.
@@ -611,6 +664,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // Where this field is reachable from the internet, for the post-match
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
+      queue: { store: matchQueue, setupNext },
       practice: {
         recorder: practiceRecorder,
         store: practiceStore,

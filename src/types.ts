@@ -4049,3 +4049,171 @@ export function isTimelapseLightsProbe(msg: unknown): msg is TimelapseLightsProb
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as TimelapseLightsProbe).type === 'timelapseLightsProbe';
 }
+
+// ── Match queue ─────────────────────────────────────────────────────
+
+/** Robots per alliance a match is formed with. The match manager picks it
+ *  per match: 1v1 for demos, 2v2 early in the day, 3v3 once everything
+ *  works. Nothing in the engine cares; it only caps each alliance at 3. */
+export type QueueShape = { red: number; blue: number };
+
+export function isQueueShape(v: unknown): v is QueueShape {
+  if (typeof v !== 'object' || !v) return false;
+  const s = v as QueueShape;
+  const ok = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= 3;
+  return ok(s.red) && ok(s.blue) && s.red + s.blue > 0;
+}
+
+export type QueueEntryStatus = 'queued' | 'onDeck' | 'playing' | 'played' | 'skipped';
+
+/** One upcoming (or past) match in the queue. Teams are team numbers; the
+ *  robots and stations are worked out when the match is set up. */
+export type QueueEntry = {
+  id: string;
+  /** Display number, given once and kept through reorders. */
+  number: number;
+  /** Where it came from: the pre-made schedule, the fill line, or typed in. */
+  source: 'schedule' | 'line' | 'manual';
+  /** Epoch ms, schedule entries only. */
+  scheduledAt?: number;
+  red: number[];
+  blue: number[];
+  status: QueueEntryStatus;
+  /** When it went on deck, for the no-show clock. */
+  onDeckAt?: number;
+  /** The match it was played as (MatchState.matchId). */
+  matchId?: string;
+  notes?: string;
+};
+
+/** A team waiting in the fill line, in the order they asked. */
+export type LineEntry = { team: number; joinedAt: number; alliance?: Alliance };
+
+export type QueueSettings = {
+  /** Teams may join the line from their own page. */
+  lineOpen: boolean;
+  /** Default shape when forming a match from the line. */
+  shape: QueueShape;
+  /** Minutes a team on deck gets before it counts as a no-show; null = never. */
+  noShowMinutes: number | null;
+  /** Form a match from the line even with fewer robots than the shape asks for. */
+  allowShort: boolean;
+};
+
+/** Everything a client needs to show the queue. Public-safe: team numbers
+ *  and positions only. */
+export type QueueState = {
+  type: 'queueState';
+  entries: QueueEntry[];
+  line: LineEntry[];
+  settings: QueueSettings;
+  /** Teams of the on-deck match whose no-show clock has run out with no
+   *  robot on the field and no join. */
+  noShows?: number[];
+};
+
+export function isQueueState(msg: unknown): msg is QueueState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as QueueState).type === 'queueState';
+}
+
+const isTeamNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
+const isTeamList = (v: unknown): v is number[] => Array.isArray(v) && v.length <= 3 && v.every(isTeamNumber);
+
+/** A team joins the fill line from its page (unauthenticated, like the
+ *  rest of the team page). */
+export type QueueJoinLine = { type: 'queueJoinLine'; team: number; alliance?: Alliance };
+export type QueueLeaveLine = { type: 'queueLeaveLine'; team: number };
+
+export function isQueueJoinLine(msg: unknown): msg is QueueJoinLine {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as QueueJoinLine;
+  return (
+    m.type === 'queueJoinLine' &&
+    isTeamNumber(m.team) &&
+    (m.alliance === undefined || m.alliance === 'red' || m.alliance === 'blue')
+  );
+}
+
+export function isQueueLeaveLine(msg: unknown): msg is QueueLeaveLine {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as QueueLeaveLine;
+  return m.type === 'queueLeaveLine' && isTeamNumber(m.team);
+}
+
+/** What the queue manager does from /queue and /match. Admin-gated. */
+export type QueueAdmin =
+  | { type: 'queueAdd'; red: number[]; blue: number[]; scheduledAt?: number; notes?: string; atFront?: boolean }
+  | { type: 'queueUpdate'; id: string; red?: number[]; blue?: number[]; scheduledAt?: number | null; notes?: string }
+  | { type: 'queueRemove'; id: string }
+  | { type: 'queueReorder'; ids: string[] }
+  | { type: 'queueSkip'; id: string }
+  | { type: 'queueRequeue'; id: string }
+  | { type: 'queueForm'; shape?: QueueShape; allowShort?: boolean }
+  | { type: 'queueSettings'; settings: Partial<QueueSettings> }
+  | { type: 'queueLineRemove'; team: number }
+  | { type: 'queueLineMove'; team: number; index: number }
+  | { type: 'queueReplaceTeam'; id: string; team: number }
+  | { type: 'queueSetupNext'; id?: string; mode: 'all' | 'wifi' | 'match' }
+  | { type: 'queueClear'; played?: boolean };
+
+export function isQueueAdmin(msg: unknown): msg is QueueAdmin {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as QueueAdmin;
+  switch (m.type) {
+    case 'queueAdd':
+      return (
+        isTeamList(m.red) &&
+        isTeamList(m.blue) &&
+        (m.scheduledAt === undefined || typeof m.scheduledAt === 'number') &&
+        (m.notes === undefined || typeof m.notes === 'string') &&
+        (m.atFront === undefined || typeof m.atFront === 'boolean')
+      );
+    case 'queueUpdate':
+      return (
+        typeof m.id === 'string' &&
+        (m.red === undefined || isTeamList(m.red)) &&
+        (m.blue === undefined || isTeamList(m.blue)) &&
+        (m.scheduledAt === undefined || m.scheduledAt === null || typeof m.scheduledAt === 'number') &&
+        (m.notes === undefined || typeof m.notes === 'string')
+      );
+    case 'queueRemove':
+    case 'queueSkip':
+    case 'queueRequeue':
+      return typeof m.id === 'string';
+    case 'queueReorder':
+      return Array.isArray(m.ids) && m.ids.every(id => typeof id === 'string');
+    case 'queueForm':
+      return (
+        (m.shape === undefined || isQueueShape(m.shape)) &&
+        (m.allowShort === undefined || typeof m.allowShort === 'boolean')
+      );
+    case 'queueSettings': {
+      if (typeof m.settings !== 'object' || !m.settings) return false;
+      const s = m.settings;
+      return (
+        (s.lineOpen === undefined || typeof s.lineOpen === 'boolean') &&
+        (s.shape === undefined || isQueueShape(s.shape)) &&
+        (s.noShowMinutes === undefined ||
+          s.noShowMinutes === null ||
+          (typeof s.noShowMinutes === 'number' && s.noShowMinutes > 0)) &&
+        (s.allowShort === undefined || typeof s.allowShort === 'boolean')
+      );
+    }
+    case 'queueLineRemove':
+      return isTeamNumber(m.team);
+    case 'queueLineMove':
+      return isTeamNumber(m.team) && typeof m.index === 'number' && Number.isInteger(m.index) && m.index >= 0;
+    case 'queueReplaceTeam':
+      return typeof m.id === 'string' && isTeamNumber(m.team);
+    case 'queueSetupNext':
+      return (
+        (m.id === undefined || typeof m.id === 'string') &&
+        (m.mode === 'all' || m.mode === 'wifi' || m.mode === 'match')
+      );
+    case 'queueClear':
+      return m.played === undefined || typeof m.played === 'boolean';
+    default:
+      return false;
+  }
+}

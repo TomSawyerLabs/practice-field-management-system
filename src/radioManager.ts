@@ -533,8 +533,12 @@ class RadioManager {
   private waitReason(exceptId?: string): RadioHoldReason | null {
     const hold = this.shouldHold?.() ?? null;
     if (hold) return hold;
+    if (this.batching > 0) return 'pending';
     return this.changes.some(c => c.id !== exceptId) ? 'pending' : null;
   }
+
+  /** > 0 while batch() is collecting requests. */
+  private batching = 0;
 
   private async request(change: PendingChange): Promise<ConfigureResult> {
     const outcome = this.addChange(change);
@@ -1334,6 +1338,29 @@ class RadioManager {
    *  the match roster uses it to name the robot that joined. */
   getProjectedTeamForStation(station: StationName): number | null {
     return teamOfSsid(this.computeTarget().target[station]?.ssid);
+  }
+
+  /** Where a team's robot is, or will be once the pending list is applied. */
+  getProjectedStationForTeam(team: number): StationName | null {
+    const { target } = this.computeTarget();
+    return StationNameList.find(s => teamOfSsid(target[s]?.ssid) === team) ?? null;
+  }
+
+  /** The first station that is free once the pending list is applied. */
+  getFreeProjectedStation(): StationName | null {
+    const { target } = this.computeTarget();
+    return StationNameList.find(s => !target[s]) ?? null;
+  }
+
+  /** Run `fn` with every request parked on the pending list, so a set of
+   *  requests can be applied afterwards as one radio update. */
+  async batch<T>(fn: () => Promise<T>): Promise<T> {
+    this.batching++;
+    try {
+      return await fn();
+    } finally {
+      this.batching--;
+    }
   }
 
   /** Look up the WPA key for a team number from the active station configurations. */

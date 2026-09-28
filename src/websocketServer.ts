@@ -12,6 +12,10 @@ import {
   isAdminRestart,
   isCancelPendingChange,
   ConfigureResult,
+  isQueueJoinLine,
+  isQueueLeaveLine,
+  isQueueAdmin,
+  QueueAdmin,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -120,6 +124,8 @@ import CIDRMatcher from 'cidr-matcher';
 import { appError, appWarn } from './appLogger.js';
 import { MatchEngine } from './matchEngine.js';
 import type { SavedTeamStore } from './savedTeamStore.js';
+import type { MatchQueue } from './matchQueue.js';
+import type { SetupMode, SetupResult } from './matchSetup.js';
 import type { ApiKeyStore } from './apiKeyStore.js';
 import type { ScoringEngine } from './scoringEngine.js';
 import type { PortBridgeManager } from './portBridgeManager.js';
@@ -242,6 +248,11 @@ export function setupWebSocket(
     /** "Restart pFMS" on the admin page: exit gracefully (network rules
      *  kept) and let systemd bring the service back. */
     restart?: () => void;
+    /** The match queue and "Set up next match" (src/matchSetup.ts). */
+    queue?: {
+      store: MatchQueue;
+      setupNext: (id: string | undefined, mode: SetupMode) => Promise<SetupResult>;
+    };
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -347,7 +358,7 @@ export function setupWebSocket(
   const publicConnections = new Set<WebSocket>();
 
   /** Message types safe to send to public (unauthenticated) connections. */
-  const PUBLIC_SAFE_TYPES = new Set(['scoreState', 'matchState', 'telemetry', 'playGetReady']);
+  const PUBLIC_SAFE_TYPES = new Set(['scoreState', 'matchState', 'telemetry', 'playGetReady', 'queueState']);
 
   /** Track which WebSocket connections are in which chat sessions */
   const wsToChatSession = new Map<WebSocket, string>();
@@ -438,6 +449,10 @@ export function setupWebSocket(
   // Broadcast saved team config changes to all clients
   savedTeamStore?.addListener(broadcast);
 
+  // Broadcast the match queue (team numbers and positions only; also goes
+  // to public connections so a TV can show "next up")
+  setup?.queue?.store.addListener(broadcast);
+
   // Broadcast pending commit state changes to all clients
   radioManager.addPendingCommitListener(() => {
     broadcast({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState);
@@ -473,6 +488,77 @@ export function setupWebSocket(
   /** Tell the asking client what its Wi-Fi request came to. Waits and
    *  applies show through the broadcast pending state; the two quiet
    *  outcomes need a word. Releases stay quiet either way. */
+  /** The queue manager's actions from /queue and /match. */
+  function handleQueueAdmin(queue: NonNullable<NonNullable<typeof setup>['queue']>, msg: QueueAdmin, ws: WebSocket) {
+    const store = queue.store;
+    const info = (text: string) => ws.send(JSON.stringify({ info: text }));
+    switch (msg.type) {
+      case 'queueAdd':
+        store.add({
+          red: msg.red,
+          blue: msg.blue,
+          scheduledAt: msg.scheduledAt,
+          notes: msg.notes,
+          atFront: msg.atFront,
+        });
+        break;
+      case 'queueUpdate':
+        store.update(msg.id, { red: msg.red, blue: msg.blue, scheduledAt: msg.scheduledAt, notes: msg.notes });
+        break;
+      case 'queueRemove':
+        store.remove(msg.id);
+        break;
+      case 'queueReorder':
+        store.reorder(msg.ids);
+        break;
+      case 'queueSkip':
+        store.skip(msg.id);
+        break;
+      case 'queueRequeue':
+        store.requeue(msg.id);
+        break;
+      case 'queueForm':
+        if (!store.formFromLine(msg.shape, msg.allowShort)) info('Not enough teams in the line for that shape');
+        break;
+      case 'queueSettings':
+        store.updateSettings(msg.settings);
+        break;
+      case 'queueLineRemove':
+        store.leaveLine(msg.team);
+        break;
+      case 'queueLineMove':
+        store.moveInLine(msg.team, msg.index);
+        break;
+      case 'queueReplaceTeam': {
+        const r = store.replaceTeam(msg.id, msg.team);
+        info(
+          !r.replaced
+            ? 'Nothing to replace'
+            : r.withTeam
+              ? `Team ${msg.team} swapped out for team ${r.withTeam} from the line`
+              : `Team ${msg.team} dropped from the match — the line is empty`,
+        );
+        break;
+      }
+      case 'queueSetupNext':
+        console.log(`Queue: set up next match (${msg.mode})${msg.id ? ` for ${msg.id}` : ''}`);
+        queue
+          .setupNext(msg.id, msg.mode)
+          .then(result => {
+            if (result.problems.length > 0) ws.send(JSON.stringify({ error: result.problems.join(' · ') }));
+            else if (result.entry) info(`Match ${result.entry.number} is set up`);
+          })
+          .catch(err => {
+            appError('Error setting up the next match: ' + (err instanceof Error ? err.message : String(err)));
+            ws.send(JSON.stringify({ error: 'Failed to set up the next match', details: String(err) }));
+          });
+        break;
+      case 'queueClear':
+        store.clear(msg.played);
+        break;
+    }
+  }
+
   function reportConfigureResult(ws: WebSocket, result: ConfigureResult, ssid: string) {
     if (!ssid) return;
     if (result.result === 'noop') {
@@ -662,6 +748,11 @@ export function setupWebSocket(
       ws.send(JSON.stringify(savedTeamStore.getState()));
     }
 
+    // Send the match queue
+    if (setup?.queue) {
+      ws.send(JSON.stringify(setup.queue.store.getState()));
+    }
+
     // Send API key management state
     if (apiKeyStore) {
       ws.send(JSON.stringify(apiKeyStore.getState()));
@@ -784,6 +875,24 @@ export function setupWebSocket(
         radioManager.cancelStagedChange(data.station);
       } else if (isCancelPendingChange(data)) {
         radioManager.cancelPendingChange(data.id);
+
+        // ── Match queue ──────────────────────────────────────────────
+      } else if (isQueueJoinLine(data)) {
+        if (!setup?.queue) {
+          ws.send(JSON.stringify({ error: 'The match queue is not available' }));
+        } else {
+          const r = setup.queue.store.joinLine(data.team, data.alliance);
+          if (r === 'closed') ws.send(JSON.stringify({ error: 'The line is closed right now — ask field staff' }));
+          else if (r === 'queued')
+            ws.send(JSON.stringify({ info: `Team ${data.team} is already in an upcoming match` }));
+        }
+      } else if (isQueueLeaveLine(data)) {
+        setup?.queue?.store.leaveLine(data.team);
+      } else if (isQueueAdmin(data)) {
+        if (!setup?.queue) ws.send(JSON.stringify({ error: 'The match queue is not available' }));
+        else if (!setupWritesAllowed(ws))
+          ws.send(JSON.stringify({ error: 'Admin login required to manage the queue' }));
+        else handleQueueAdmin(setup.queue, data, ws);
       } else if (isInternetToggle(data)) {
         if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot toggle internet access during an active match' }));

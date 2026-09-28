@@ -110,6 +110,9 @@ import {
   SetupSettings,
   SetupStepId,
   StagedStationChange,
+  QueueState,
+  QueueAdmin,
+  isQueueState,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -339,6 +342,7 @@ let currentMatchState: MatchState | null = null;
 let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
+let currentQueueState: QueueState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
 let currentPendingCommit = false;
@@ -465,6 +469,11 @@ function handleTeamCheckResults(results: TeamCheckResults) {
 function handleSavedTeamsState(state: SavedTeamsState) {
   currentSavedTeams = state;
   events.dispatchEvent(new CustomEvent('savedTeamsState', { detail: state }));
+}
+
+function handleQueueState(state: QueueState) {
+  currentQueueState = state;
+  events.dispatchEvent(new CustomEvent('queueState', { detail: state }));
 }
 
 // ── Port Bridge State ────────────────────────────────────────────────
@@ -782,6 +791,11 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isQueueState(detail)) {
+    handleQueueState(detail);
+    return;
+  }
+
   if (isPortBridgeState(detail)) {
     handlePortBridgeState(detail);
     return;
@@ -996,6 +1010,36 @@ export function useSavedTeams(): SavedTeamsState | null {
   }, []);
 
   return state;
+}
+
+// ── Match queue ─────────────────────────────────────────────────────
+
+/** The match queue: upcoming matches, the fill line, and its settings. */
+export function useQueueState(): QueueState | null {
+  const [state, setState] = useState<QueueState | null>(currentQueueState);
+
+  useEffect(() => {
+    setState(currentQueueState);
+    const handler = (e: Event) => setState((e as CustomEvent<QueueState>).detail);
+    events.addEventListener('queueState', handler);
+    return () => events.removeEventListener('queueState', handler);
+  }, []);
+
+  return state;
+}
+
+/** A team joins the fill line from its page. */
+export function sendQueueJoinLine(team: number, alliance?: 'red' | 'blue') {
+  ws?.send(JSON.stringify({ type: 'queueJoinLine', team, alliance }));
+}
+
+export function sendQueueLeaveLine(team: number) {
+  ws?.send(JSON.stringify({ type: 'queueLeaveLine', team }));
+}
+
+/** The queue manager's actions (admin-gated on the server). */
+export function sendQueueAdmin(msg: QueueAdmin) {
+  ws?.send(JSON.stringify(msg));
 }
 
 // ── Match State ─────────────────────────────────────────────────────
