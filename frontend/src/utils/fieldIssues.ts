@@ -214,6 +214,24 @@ function teamLabel(team: number | null | undefined, ssid?: string): string {
 
 const SEVERITY_RANK: Record<IssueSeverity, number> = { critical: 0, warning: 1, info: 2 };
 
+/** Stations in "longest on the field first" order: by the time each team's
+ *  SSID became the station's active config. A missing timestamp sorts as
+ *  the oldest (a config restored from before pFMS tracked this has, in fact,
+ *  been here a while), ties by slot number. Slots themselves are not shown
+ *  to staff — a CSA thinks in robots, not slot numbers. */
+export function stationOrder(matchState: MatchState | null): StationName[] {
+  const at = (s: StationName) => matchState?.stationStates[s]?.connectedAt ?? 0;
+  return [...StationNameList].sort((a, b) => at(a) - at(b) || StationNameList.indexOf(a) - StationNameList.indexOf(b));
+}
+
+/** How a station is named to staff: its robot's SSID, else "team N", else
+ *  "this robot". The same words the issues use. */
+export function stationLabel(input: Pick<FieldIssueInputs, 'latest' | 'matchState'>, station: StationName): string {
+  const ssid = input.latest?.radioUpdate?.stationStatuses[station]?.ssid || undefined;
+  const team = input.matchState?.stationStates[station]?.teamNumber ?? teamOfSsid(ssid);
+  return teamLabel(team, ssid);
+}
+
 // ── Detector ─────────────────────────────────────────────────────────
 
 export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
@@ -290,6 +308,9 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
   }
 
   if (pending?.pending) {
+    const radioSsid = (s: string) => latest?.radioUpdate?.stationStatuses[s as StationName]?.ssid || undefined;
+    const describeChange = (change: { ssid: string } | null | undefined, current: string | undefined) =>
+      change ? `${change.ssid} joins` : current ? `${current} leaves` : 'a release';
     const held = Object.keys(pending.stagedChanges ?? {});
     const deferred = Object.keys(pending.deferredChanges ?? {});
     if (held.length > 0) {
@@ -303,7 +324,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
         id: 'wifi-held',
         severity: 'warning',
         title: `${held.length} Wi-Fi change${held.length === 1 ? '' : 's'} waiting on hold`,
-        detail: `${why} Affects ${held.map(s => prettyStationName(s as StationName)).join(', ')}.`,
+        detail: `${why} Waiting: ${held.map(s => describeChange(pending.stagedChanges![s], radioSsid(s))).join('; ')}.`,
         fix: running
           ? 'Apply now becomes available when the match ends.'
           : 'Apply now if the robots concerned are not about to play — the AP reconfigures for ~30 s.',
@@ -317,9 +338,9 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
         severity: 'info',
         title: 'Applied Wi-Fi changes are waiting for every robot to be disabled',
         detail:
-          `Affects ${deferred.map(s => prettyStationName(s as StationName)).join(', ')}.` +
+          `Waiting: ${deferred.map(s => describeChange(pending.deferredChanges![s], radioSsid(s))).join('; ')}.` +
           (enabled.length > 0
-            ? ` Still enabled: ${enabled.map(s => prettyStationName(s)).join(', ')}.`
+            ? ` Still enabled: ${enabled.map(s => stationLabel(input, s)).join(', ')}.`
             : ' No robot is enabled; the AP should reconfigure momentarily.'),
       });
     }
@@ -348,7 +369,6 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     const control = matchState?.stationStates[station];
     const team = control?.teamNumber ?? teamOfSsid(ssid);
     const label = teamLabel(team, ssid);
-    const slot = prettyStationName(station);
     const joined = control?.joined ?? false;
     const dsConn = matchState?.connectedStations[station];
     const session = driveSession?.sessions?.[station];
@@ -367,7 +387,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
           severity: 'info',
           station,
           team: control.teamNumber,
-          title: `${slot}: team ${control.teamNumber} joined, but the radio ${ssid ? `still has ${ssid}` : 'has nothing'}`,
+          title: `Team ${control.teamNumber} joined, but the radio ${ssid ? `still has ${ssid}` : 'has nothing for it'}`,
           detail: 'Their Wi-Fi change is held (see above). The robot cannot connect until it is applied.',
         });
       } else if (radioSettled) {
@@ -378,7 +398,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
           severity: 'warning',
           station,
           team: control.teamNumber,
-          title: `${slot}: pFMS expects team ${control.teamNumber}, but the radio ${ssid ? `has ${ssid}` : 'has nothing'}`,
+          title: `pFMS expects team ${control.teamNumber}, but the radio ${ssid ? `has ${ssid}` : 'has nothing for it'}`,
           detail: 'The AP is not carrying the configuration pFMS applied, so that robot cannot connect.',
           fix: 'pFMS re-applies its config on its own within about 15 s. If this stays, the AP may have been reset or power-cycled — check the logs page for "out of sync".',
         });
@@ -405,8 +425,8 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
         team,
         title: everLinked ? `${label} dropped off the field Wi-Fi` : `${label} has not joined the field Wi-Fi`,
         detail: everLinked
-          ? `Last linked ${shortAge(now - last)} ago on ${slot}.`
-          : `${slot} is configured for it, but its radio has never associated.`,
+          ? `Last linked ${shortAge(now - last)} ago.`
+          : 'Its Wi-Fi is on the field, but its radio has never associated.',
         evidence: everLinked ? `last linked ${shortAge(now - last)} ago` : 'never linked',
         fix: everLinked
           ? 'Robot power? A brownout reboots the radio (about a minute). If it stays off, check the radio’s power lead and Ethernet to the roboRIO.'
@@ -503,7 +523,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
           detail:
             (lastSeen !== undefined
               ? `Last heard ${shortAge(now - lastSeen)} ago${dsConn ? ` from ${hostLabel(dsConn.ip, hostnames)}` : ''}.`
-              : `${slot} is in the match, but no Driver Station has attached to the field for it.`) +
+              : 'It is in the match, but no Driver Station has attached to the field for it.') +
             (running
               ? ' The robot will not respond to match control.'
               : inSetup
@@ -560,7 +580,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
         severity: 'warning',
         station,
         team,
-        title: `${slot}: a second Driver Station is trying to drive ${label}`,
+        title: `A second Driver Station is trying to drive ${label}`,
         detail:
           `Blocked: ${blocked.map(ip => hostLabel(ip, hostnames)).join(', ')}.` +
           (accepted
@@ -646,12 +666,13 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     }
   }
 
+  const rank = new Map(stationOrder(matchState).map((s, i) => [s, i]));
   return issues.sort((a, b) => {
     const s = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     if (s !== 0) return s;
-    // Field-wide before per-station, then by slot order.
+    // Field-wide before per-station, then longest on the field first.
     if (!a.station !== !b.station) return a.station ? 1 : -1;
-    return (a.station ?? '').localeCompare(b.station ?? '');
+    return (rank.get(a.station!) ?? 0) - (rank.get(b.station!) ?? 0);
   });
 }
 

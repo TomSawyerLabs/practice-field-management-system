@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { MatchState, RadioUpdate, StationControlState, StationDetails, StatusEntry } from '../../../src/types';
-import { detectFieldIssues, groupIssues, worstSeverity, type FieldIssueInputs } from './fieldIssues';
+import {
+  detectFieldIssues,
+  groupIssues,
+  stationLabel,
+  stationOrder,
+  worstSeverity,
+  type FieldIssueInputs,
+} from './fieldIssues';
 
 const NOW = 1_800_000_000_000;
 
@@ -594,5 +601,65 @@ describe('radio out of sync', () => {
     );
     expect(out.find(i => i.id === 'team-mismatch-slot1')!.severity).toBe('info');
     expect(out.find(i => i.id === 'radio-out-of-sync-slot1')).toBeUndefined();
+  });
+});
+
+describe('order by time on the field', () => {
+  test('stationOrder puts the longest-connected robot first, unknown counts as oldest, ties by slot', () => {
+    const ms = match({
+      stationStates: {
+        slot1: control({ teamNumber: 111, connectedAt: NOW - 1000 }),
+        slot2: control({ teamNumber: 222, connectedAt: NOW - 60_000 }),
+        slot3: control({ teamNumber: 333 }),
+        slot5: control({ teamNumber: 555, connectedAt: NOW - 60_000 }),
+      },
+    });
+    expect(stationOrder(ms)).toEqual(['slot3', 'slot4', 'slot6', 'slot2', 'slot5', 'slot1']);
+    expect(stationOrder(null)).toEqual(['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6']);
+  });
+
+  test('issues of equal severity follow that order, and never name a slot', () => {
+    const out = detectFieldIssues(
+      inputs({
+        driveSession: null,
+        latest: radio({
+          slot1: station({ ssid: '111', isLinked: false }),
+          slot4: station({ ssid: '444', isLinked: false }),
+        }),
+        matchState: match({
+          stationStates: {
+            slot1: control({ teamNumber: 111, connectedAt: NOW - 1000 }),
+            slot4: control({ teamNumber: 444, connectedAt: NOW - 90_000 }),
+          },
+        }),
+      }),
+    );
+    expect(out.map(i => i.id)).toEqual(['robot-not-linked-slot4', 'robot-not-linked-slot1']);
+    for (const i of out) expect(`${i.title} ${i.detail} ${i.fix}`).not.toMatch(/\bSlot [1-6]\b/);
+  });
+
+  test('stationLabel names a station by its robot', () => {
+    const input = inputs({
+      latest: radio({ slot1: station({ ssid: '4159-Comp' }) }),
+      matchState: match({ stationStates: { slot2: control({ teamNumber: 972 }) } }),
+    });
+    expect(stationLabel(input, 'slot1')).toBe('4159-Comp');
+    expect(stationLabel(input, 'slot2')).toBe('team 972');
+    expect(stationLabel(input, 'slot3')).toBe('this robot');
+  });
+
+  test('held Wi-Fi changes are described by robot, not slot', () => {
+    const out = detectFieldIssues(
+      inputs({
+        latest: radio({ slot1: station({ ssid: '111' }) }),
+        pending: {
+          type: 'pendingCommitState',
+          pending: true,
+          hold: 'admin',
+          stagedChanges: { slot1: null, slot2: { ssid: '222', secured: true } },
+        },
+      }),
+    );
+    expect(out.find(i => i.id === 'wifi-held')!.detail).toContain('Waiting: 111 leaves; 222 joins.');
   });
 });

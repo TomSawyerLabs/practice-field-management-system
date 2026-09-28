@@ -29,7 +29,7 @@ import {
   type TeamCheckResults,
   type TelemetryUpdate,
 } from '../../../src/types';
-import { prettyStationName, teamOfSsid } from '../../../src/utils';
+import { teamOfSsid } from '../../../src/utils';
 import {
   getServerTime,
   sendAdminStationEnable,
@@ -56,6 +56,8 @@ import {
   groupIssues,
   isMatchRunning,
   shortAge,
+  stationLabel,
+  stationOrder,
   worstSeverity,
   type FieldIssue,
   type FieldIssueInputs,
@@ -150,7 +152,7 @@ function runAction(a: IssueAction) {
 
 /** Two-tap button for anything that changes the field: the first tap arms it
  *  for five seconds, the second fires. One tap for read-only actions. */
-function ActionButton({ action }: { action: IssueAction }) {
+function ActionButton({ action, names }: { action: IssueAction; names: Names }) {
   const meta = ACTION_META[action.kind];
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -160,9 +162,7 @@ function ActionButton({ action }: { action: IssueAction }) {
   }, [armed]);
 
   const label =
-    'station' in action && action.kind !== 'runChecks'
-      ? `${meta.label} ${prettyStationName(action.station).toLowerCase()}`
-      : meta.label;
+    'station' in action && action.kind !== 'runChecks' ? `${meta.label} ${names[action.station]}` : meta.label;
 
   return (
     <Button
@@ -186,6 +186,9 @@ function ActionButton({ action }: { action: IssueAction }) {
 
 // ── Issue cards ──────────────────────────────────────────────────────
 
+/** Station → how it is named to staff (its robot's SSID). */
+type Names = Record<StationName, string>;
+
 const SEVERITY_COLOR: Record<IssueSeverity, string> = {
   critical: 'error.main',
   warning: 'warning.main',
@@ -199,7 +202,15 @@ function SeverityIcon({ severity, size = 20 }: { severity: IssueSeverity; size?:
   return <InfoOutlinedIcon sx={sx} />;
 }
 
-function IssueCard({ issue, onStation }: { issue: FieldIssue; onStation: (s: StationName) => void }) {
+function IssueCard({
+  issue,
+  names,
+  onStation,
+}: {
+  issue: FieldIssue;
+  names: Names;
+  onStation: (s: StationName) => void;
+}) {
   return (
     <Paper
       variant="outlined"
@@ -214,16 +225,16 @@ function IssueCard({ issue, onStation }: { issue: FieldIssue; onStation: (s: Sta
     >
       <SeverityIcon severity={issue.severity} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-          {issue.station && (
-            <Chip
-              label={prettyStationName(issue.station)}
-              size="small"
-              variant="outlined"
-              onClick={() => onStation(issue.station!)}
-              sx={{ height: 20, fontSize: '0.7rem' }}
-            />
-          )}
+        <Box
+          onClick={issue.station ? () => onStation(issue.station!) : undefined}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+            cursor: issue.station ? 'pointer' : undefined,
+          }}
+        >
           {issue.team ? <TeamAvatar teamNumber={issue.team} size={20} /> : null}
           <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.3 }}>
             {issue.title}
@@ -245,7 +256,7 @@ function IssueCard({ issue, onStation }: { issue: FieldIssue; onStation: (s: Sta
         {issue.actions && issue.actions.length > 0 && (
           <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 0.75 }}>
             {issue.actions.map((a, i) => (
-              <ActionButton key={i} action={a} />
+              <ActionButton key={i} action={a} names={names} />
             ))}
           </Box>
         )}
@@ -258,9 +269,11 @@ function IssueCard({ issue, onStation }: { issue: FieldIssue; onStation: (s: Sta
  *  robot with its own evidence, one "Try", every member's actions. */
 function GroupCard({
   row,
+  names,
   onStation,
 }: {
   row: Extract<IssueRow, { type: 'group' }>;
+  names: Names;
   onStation: (s: StationName) => void;
 }) {
   return (
@@ -282,19 +295,14 @@ function GroupCard({
         </Typography>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, mt: 0.5 }}>
           {row.members.map(m => (
-            <Box key={m.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-              {m.station && (
-                <Chip
-                  label={prettyStationName(m.station)}
-                  size="small"
-                  variant="outlined"
-                  onClick={() => onStation(m.station!)}
-                  sx={{ height: 20, fontSize: '0.7rem' }}
-                />
-              )}
+            <Box
+              key={m.id}
+              onClick={m.station ? () => onStation(m.station!) : undefined}
+              sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', cursor: 'pointer' }}
+            >
               {m.team ? <TeamAvatar teamNumber={m.team} size={18} /> : null}
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {m.team ?? '—'}
+              <Typography variant="body2" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
+                {m.station ? names[m.station] : (m.team ?? '—')}
               </Typography>
               {(m.evidence ?? m.detail) && (
                 <Typography variant="body2" sx={{ color: 'text.secondary' }}>
@@ -315,7 +323,7 @@ function GroupCard({
         {row.actions.length > 0 && (
           <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mt: 0.75 }}>
             {row.actions.map((a, i) => (
-              <ActionButton key={i} action={a} />
+              <ActionButton key={i} action={a} names={names} />
             ))}
           </Box>
         )}
@@ -324,14 +332,22 @@ function GroupCard({
   );
 }
 
-function IssueRows({ rows, onStation }: { rows: IssueRow[]; onStation: (s: StationName) => void }) {
+function IssueRows({
+  rows,
+  names,
+  onStation,
+}: {
+  rows: IssueRow[];
+  names: Names;
+  onStation: (s: StationName) => void;
+}) {
   return (
     <>
       {rows.map(r =>
         r.type === 'one' ? (
-          <IssueCard key={r.issue.id} issue={r.issue} onStation={onStation} />
+          <IssueCard key={r.issue.id} issue={r.issue} names={names} onStation={onStation} />
         ) : (
-          <GroupCard key={r.key} row={r} onStation={onStation} />
+          <GroupCard key={r.key} row={r} names={names} onStation={onStation} />
         ),
       )}
     </>
@@ -367,6 +383,8 @@ interface StationFacts {
   enabled: boolean;
   joined: boolean;
   matchSlot: string | null;
+  /** Epoch ms this team took the station; undefined = unknown (old config). */
+  connectedAt?: number;
   worst?: IssueSeverity;
 }
 
@@ -399,12 +417,13 @@ function stationFacts(input: FieldIssueInputs, issues: FieldIssue[], station: St
     enabled: control?.enabled ?? false,
     joined,
     matchSlot: control?.matchSlot ?? null,
+    connectedAt: control?.connectedAt,
     worst: worstSeverity(issues.filter(i => i.station === station)),
   };
 }
 
-function StationTile({ facts, onClick }: { facts: StationFacts; onClick: () => void }) {
-  const border = facts.worst ? SEVERITY_COLOR[facts.worst] : facts.ssid ? 'success.main' : 'divider';
+function StationTile({ facts, now, onClick }: { facts: StationFacts; now: number; onClick: () => void }) {
+  const border = facts.worst ? SEVERITY_COLOR[facts.worst] : 'success.main';
   const alliance = facts.matchSlot?.startsWith('red')
     ? '#d32f2f'
     : facts.matchSlot?.startsWith('blue')
@@ -420,9 +439,11 @@ function StationTile({ facts, onClick }: { facts: StationFacts; onClick: () => v
         sx={{ p: 0.75, borderColor: border, borderWidth: facts.worst ? 2 : 1, height: '100%', minWidth: 0 }}
       >
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 0.5 }}>
-          <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
-            {prettyStationName(facts.station)}
-          </Typography>
+          <Tooltip title="Time since this robot's Wi-Fi was put on the field" arrow enterTouchDelay={0}>
+            <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
+              {facts.connectedAt !== undefined ? `on field ${shortAge(now - facts.connectedAt)}` : 'on field'}
+            </Typography>
+          </Tooltip>
           {facts.matchSlot && (
             <Typography
               variant="caption"
@@ -451,7 +472,7 @@ function StationTile({ facts, onClick }: { facts: StationFacts; onClick: () => v
               whiteSpace: 'nowrap',
             }}
           >
-            {facts.ssid ?? 'empty'}
+            {facts.ssid}
           </Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 0.9, flexWrap: 'wrap' }}>
@@ -498,11 +519,13 @@ function StationDialog({
   station,
   input,
   issues,
+  names,
   onClose,
 }: {
   station: StationName;
   input: FieldIssueInputs;
   issues: FieldIssue[];
+  names: Names;
   onClose: () => void;
 }) {
   const { now } = input;
@@ -526,8 +549,7 @@ function StationDialog({
         <TeamAvatar teamNumber={team} size={28} />
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography variant="h6" component="div" sx={{ lineHeight: 1.2 }}>
-            {prettyStationName(station)}
-            {ssid ? ` · ${ssid}` : ' · empty'}
+            {stationLabel(input, station)}
           </Typography>
           {control?.matchSlot && (
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>
@@ -545,7 +567,7 @@ function StationDialog({
         {mine.length > 0 && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, mb: 1 }}>
             {mine.map(i => (
-              <IssueCard key={i.id} issue={i} onStation={() => {}} />
+              <IssueCard key={i.id} issue={i} names={names} onStation={() => {}} />
             ))}
           </Box>
         )}
@@ -737,8 +759,8 @@ function StationDialog({
           </Button>
         )}
         <Box sx={{ flex: 1 }} />
-        {control?.joined && phase === 'created' && <ActionButton action={{ kind: 'kick', station }} />}
-        {ssid && <ActionButton action={{ kind: 'release', station }} />}
+        {control?.joined && phase === 'created' && <ActionButton action={{ kind: 'kick', station }} names={names} />}
+        {ssid && <ActionButton action={{ kind: 'release', station }} names={names} />}
       </DialogActions>
     </Dialog>
   );
@@ -889,9 +911,14 @@ export function CsaPage() {
   const radioStatus = latest?.radioUpdate?.status;
   const radioBusy = radioStatus === 'CONFIGURING' || radioStatus === 'BOOTING';
 
-  const facts = StationNameList.map(s => stationFacts(input, issues, s));
+  // Robots on the field, longest there first. Empty slots are not shown at
+  // all: staff think in robots, and slot numbers mean nothing to a CSA.
+  const facts = stationOrder(matchState)
+    .map(s => stationFacts(input, issues, s))
+    .filter(f => f.ssid);
+  const names = Object.fromEntries(StationNameList.map(s => [s, stationLabel(input, s)])) as Names;
   const robotsLinked = facts.filter(f => f.linked).length;
-  const robotsConfigured = facts.filter(f => f.ssid).length;
+  const robotsConfigured = facts.length;
   const dsTalking = facts.filter(f => f.ds === 'ok').length;
   const phase = matchState?.phase;
 
@@ -949,7 +976,7 @@ export function CsaPage() {
       {/* Problems, or the all-clear */}
       {problems.length > 0 ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-          <IssueRows rows={groupIssues(problems)} onStation={setSelected} />
+          <IssueRows rows={groupIssues(problems)} names={names} onStation={setSelected} />
         </Box>
       ) : (
         <Paper
@@ -962,7 +989,7 @@ export function CsaPage() {
               {wsConnected ? 'Nothing wrong that the field can see' : 'Waiting for pFMS…'}
             </Typography>
             <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              Radio, Driver Stations, robot links and host tables all look normal. Tap a station for its raw numbers.
+              Radio, Driver Stations, robot links and host tables all look normal. Tap a robot for its raw numbers.
             </Typography>
           </Box>
         </Paper>
@@ -981,7 +1008,7 @@ export function CsaPage() {
           </Button>
           <Collapse in={showNotes}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
-              <IssueRows rows={groupIssues(notes)} onStation={setSelected} />
+              <IssueRows rows={groupIssues(notes)} names={names} onStation={setSelected} />
             </Box>
           </Collapse>
         </Box>
@@ -989,23 +1016,42 @@ export function CsaPage() {
 
       <Divider sx={{ my: 0.25 }} />
 
-      {/* Station strip */}
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: 'repeat(3, minmax(0, 1fr))', sm: 'repeat(6, minmax(0, 1fr))' },
-          gap: 0.75,
-        }}
-      >
-        {facts.map(f => (
-          <StationTile key={f.station} facts={f} onClick={() => setSelected(f.station)} />
-        ))}
-      </Box>
-      <Typography variant="caption" sx={{ color: 'text.disabled', textAlign: 'center' }}>
-        Tap a station for its raw radio, Driver Station, telemetry and scan data.
-      </Typography>
+      {/* Robots on the field, longest there first */}
+      {facts.length > 0 ? (
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: 'repeat(2, minmax(0, 1fr))',
+              sm: `repeat(${Math.min(facts.length, 6)}, minmax(0, 1fr))`,
+            },
+            gap: 0.75,
+          }}
+        >
+          {facts.map(f => (
+            <StationTile key={f.station} facts={f} now={now} onClick={() => setSelected(f.station)} />
+          ))}
+        </Box>
+      ) : (
+        <Typography variant="body2" sx={{ color: 'text.disabled', textAlign: 'center' }}>
+          No robots on the field.
+        </Typography>
+      )}
+      {facts.length > 0 && (
+        <Typography variant="caption" sx={{ color: 'text.disabled', textAlign: 'center' }}>
+          Longest on the field first. Tap a robot for its raw radio, Driver Station, telemetry and scan data.
+        </Typography>
+      )}
 
-      {selected && <StationDialog station={selected} input={input} issues={issues} onClose={() => setSelected(null)} />}
+      {selected && (
+        <StationDialog
+          station={selected}
+          input={input}
+          issues={issues}
+          names={names}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </Container>
   );
 }

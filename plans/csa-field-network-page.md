@@ -79,6 +79,27 @@ missing was a clear readout. Done:
 - Verified in dry-run: triggered a reconfigure and screenshotted the banner
   mid-way with the page fully interactive.
 
+## Follow-up 2026-09-28: robots, not slots; longest on the field first
+
+User: "CSA page doesn't even need the slot numbers. just show sorted by
+length connected." Done:
+
+- Nothing on /csa names a slot any more. Tiles, issue cards, group member
+  lines, action buttons ("Release 4159-Comp") and the detail sheet are all
+  named by the robot's SSID (`stationLabel`), falling back to "team N".
+  Issue wording rewritten without "Slot N" (test asserts none slips back).
+  The only slot mention left is the duplicate-team issue's fix text, where
+  "release the slot they are not using" is the concept, not a number.
+- Order is `stationOrder(matchState)`: by `connectedAt` ascending (longest
+  on the field first; unknown counts as oldest, ties by slot), the same key
+  the admin page's "connected" column sorts on. Issues of equal severity
+  follow the same order. Tiles show "on field 2 h".
+- Empty slots are not shown at all; the strip sizes to the robots present
+  (2 columns on a phone), and reads "No robots on the field" when empty.
+- Held/deferred Wi-Fi changes are described as "1234 joins; 972 leaves".
+- Verified in dry-run at tablet and phone sizes, including the detail
+  sheet. 29 detector tests pass.
+
 ## Findings / gotchas
 
 - **Radio-unreachable entries never reached the frontend.** When the AP poll
