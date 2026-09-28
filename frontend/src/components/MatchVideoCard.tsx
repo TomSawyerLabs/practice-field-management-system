@@ -141,7 +141,14 @@ interface VideoRow {
  * videos to the new one (seen 2026-09-18: a team practicing alone the
  * night before had left 16 matches on slot 1).
  */
-export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
+export function MatchVideoCard({
+  teamNumber,
+  emptyText,
+}: {
+  teamNumber: number | null;
+  /** Shown in place of the card when there's nothing to show; omit to render nothing. */
+  emptyText?: string;
+}) {
   const history = useMatchHistory();
   const recording = useMatchRecordingState();
   const practice = usePracticeRecordingState();
@@ -174,7 +181,13 @@ export function MatchVideoCard({ teamNumber }: { teamNumber: number | null }) {
     recording?.activeMatchId && recording.streams.some(s => s.status === 'recording' || s.status === 'finalizing');
   const runInProgress = teamNumber !== null && !!practice?.activeRuns.some(r => r.teamNumber === teamNumber);
 
-  if (!canRecord && recent.length === 0 && !matchInProgress) return null;
+  if (!canRecord && recent.length === 0 && !matchInProgress) {
+    return emptyText ? (
+      <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
+        {emptyText}
+      </Typography>
+    ) : null;
+  }
 
   const status = !canRecord
     ? (practice?.unavailableReason ?? 'Recording is not set up on this field')

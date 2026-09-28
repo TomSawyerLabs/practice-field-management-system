@@ -8,6 +8,8 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import Tooltip from '@mui/material/Tooltip';
 import Chip from '@mui/material/Chip';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { TeamAvatar } from './TeamAvatar';
 import {
@@ -213,20 +215,47 @@ function useRobotPending(ssid: string): RobotPending {
   }, [latest, pending, ssid]);
 }
 
+/** The team page's tabs, in display order. The id is also the URL hash. */
+const CONTROL_TABS = [
+  { id: 'robots', label: 'Robots', needsRobot: false },
+  { id: 'radio', label: 'Radio', needsRobot: true },
+  { id: 'network', label: 'Network', needsRobot: true },
+  { id: 'video', label: 'Video', needsRobot: false },
+] as const;
+type ControlTab = (typeof CONTROL_TABS)[number]['id'];
+
+function tabFromHash(): ControlTab | null {
+  const hash = window.location.hash.slice(1);
+  return CONTROL_TABS.find(t => t.id === hash)?.id ?? null;
+}
+
 /**
  * The main control page component.
- * URL: /<ssid>
+ * URL: /<ssid>#<tab>
  *
- * Shows a robot management dashboard for a single team:
- * - List of saved robot configs for this team (always visible)
- * - Add new robot form
- * - Selected robot's status and match controls
+ * Shows a robot management dashboard for a single team. Alerts and the match
+ * panel (with its stop buttons) are always on screen; everything else is split
+ * into tabs:
+ * - Robots: saved robot configs, enable/release, add robot, verify passphrase
+ * - Radio: the selected robot's radio status, charts or tables
+ * - Network: port bridging and network diagnostics
+ * - Video: match and practice recordings
  *
  * Each DS laptop opens /<ssid> for the specific robot it drives.
- * Selecting a different robot updates the URL via replaceState.
+ * Selecting a different robot or tab updates the URL via replaceState.
  */
 export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; selectedSsid: string }) {
   const [currentSsid, setCurrentSsid] = useState(selectedSsid);
+  const latest = useLatest();
+
+  // Collect chart data from the page root, so the charts are already full
+  // when the Radio tab is opened.
+  useUpdateCallback(handleStatusUpdate);
+  useTelemetryCallback(handleTelemetryUpdate);
+
+  // Radio card toggles live here so they survive switching tabs.
+  const [chartMode, setChartMode] = useState(true);
+  const [internetAccess, setInternetAccess] = useState<Partial<Record<StationName, boolean>>>({});
 
   // All active stations for this team
   const activeStations = useStationsForTeam(teamNumber);
@@ -246,7 +275,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   // The team must explicitly click "Drive" to set up the DNAT/routing.
   const handleSelectRobot = useCallback((ssid: string) => {
     setCurrentSsid(ssid);
-    window.history.replaceState(null, '', `/${encodeURIComponent(ssid)}`);
+    window.history.replaceState(null, '', `/${encodeURIComponent(ssid)}${window.location.hash}`);
   }, []);
 
   // Auto-select: if the current SSID is not active but another robot for this team is,
@@ -286,6 +315,25 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
     sendRoutePreference(selectedStation);
   }, [routeState, routePreference, selectedStation]);
 
+  // Tab: the URL hash if it names one, else picked once the field state first
+  // arrives — Radio when a robot is already on the field, Robots otherwise.
+  // Picked once, not live, so enabling a robot doesn't yank the team off the
+  // Robots tab while its Wi-Fi is still coming up.
+  const [tabChoice, setTabChoice] = useState<ControlTab | null>(tabFromHash);
+  useEffect(() => {
+    if (tabChoice || !latest) return;
+    setTabChoice(activeStations.size > 0 ? 'radio' : 'robots');
+  }, [tabChoice, latest, activeStations]);
+  const selectTab = (tab: ControlTab) => {
+    setTabChoice(tab);
+    window.history.replaceState(null, '', `#${tab}`);
+  };
+  // Radio and Network describe the selected robot — without one on the field
+  // they're disabled, so fall back to Robots.
+  const tab: ControlTab =
+    tabChoice && !(CONTROL_TABS.find(t => t.id === tabChoice)!.needsRobot && !selectedStation) ? tabChoice : 'robots';
+  const selectedLinked = selectedStation ? !!latest?.radioUpdate?.stationStatuses[selectedStation]?.isLinked : false;
+
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
@@ -311,49 +359,105 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
         </Alert>
       )}
 
-      {/* Robot list and add-robot form */}
-      <RobotList
-        teamNumber={teamNumber}
-        teamConfigs={teamConfigs}
-        activeStations={activeStations}
-        availableStation={availableStation}
-        selectedSsid={currentSsid}
-        onSelectRobot={handleSelectRobot}
-        routePreference={routePreference}
-        isMultiRobot={isMultiRobot}
-      />
+      {/* Always on screen, whatever the tab: alerts, and the match panel with
+          its stop buttons (which also keeps the match pop-out window alive). */}
+      {selectedStation && (
+        <>
+          <StationAlerts station={selectedStation} />
+          <MatchPanelForControl station={selectedStation} ssid={currentSsid} />
+        </>
+      )}
 
-      {/* All active robots' station experiences — selected robot first, full details only for selected */}
-      {activeStations.size === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-          No robots on the field yet. Enable a robot&apos;s Wi-Fi above to see its status.
-        </Typography>
-      ) : (
+      <Tabs
+        value={tab}
+        onChange={(_, v: ControlTab) => selectTab(v)}
+        variant="fullWidth"
+        sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+      >
+        {CONTROL_TABS.map(t => (
+          <Tab
+            key={t.id}
+            value={t.id}
+            label={t.label}
+            disabled={t.needsRobot && !selectedStation}
+            // The Radio tab carries the link state, so a dropped link shows from any tab
+            icon={
+              t.id === 'radio' && selectedStation ? (
+                <Box
+                  component="span"
+                  sx={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    backgroundColor: selectedLinked ? 'success.main' : 'warning.main',
+                  }}
+                />
+              ) : undefined
+            }
+            iconPosition="end"
+            sx={{ minHeight: 48 }}
+          />
+        ))}
+      </Tabs>
+
+      {tab === 'robots' && (
+        <>
+          <RobotList
+            teamNumber={teamNumber}
+            teamConfigs={teamConfigs}
+            activeStations={activeStations}
+            availableStation={availableStation}
+            selectedSsid={currentSsid}
+            onSelectRobot={handleSelectRobot}
+            routePreference={routePreference}
+            isMultiRobot={isMultiRobot}
+          />
+          {activeStations.size === 0 && (
+            <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center' }}>
+              No robots on the field yet. Enable a robot&apos;s Wi-Fi to see its radio and network status.
+            </Typography>
+          )}
+        </>
+      )}
+
+      {tab === 'radio' && selectedStation && (
+        <>
+          <Typography variant="h6" sx={{ fontFamily: 'monospace', mb: 1 }}>
+            {currentSsid}
+          </Typography>
+          <RadioStatusCard
+            station={selectedStation}
+            chartMode={chartMode}
+            onChartModeChange={setChartMode}
+            internetAccess={internetAccess[selectedStation] ?? false}
+            onInternetAccessChange={on => {
+              setInternetAccess(prev => ({ ...prev, [selectedStation]: on }));
+              sendInternetToggle(selectedStation, on);
+            }}
+          />
+        </>
+      )}
+
+      {tab === 'network' &&
+        selectedStation &&
+        // Selected robot first, with its port selector; the team's other robots after
         Array.from(activeStations.entries())
-          .sort(([a], [b]) => {
-            // Selected robot first
-            if (a === currentSsid) return -1;
-            if (b === currentSsid) return 1;
-            return 0;
-          })
-          .map(([ssid, station]) => {
-            const isSelected = ssid === currentSsid;
-            return (
-              <Box key={ssid} sx={{ mt: 2 }}>
-                <Typography variant="h6" sx={{ fontFamily: 'monospace', mb: 1 }}>
-                  {ssid}
-                </Typography>
-                {isSelected && (
-                  <>
-                    <MatchPanelForControl station={station} ssid={ssid} />
-                    <MatchVideoCard teamNumber={teamNumber} />
-                    <PortSelector station={station} ssid={ssid} />
-                  </>
-                )}
-                <StationExperience station={station} showCharts={isSelected} networkOnly={!isSelected} />
-              </Box>
-            );
-          })
+          .sort(([a], [b]) => (a === currentSsid ? -1 : b === currentSsid ? 1 : 0))
+          .map(([ssid, station]) => (
+            <Box key={ssid} sx={{ mb: 2 }}>
+              <Typography variant="h6" sx={{ fontFamily: 'monospace', mb: 1 }}>
+                {ssid}
+              </Typography>
+              {ssid === currentSsid && <PortSelector station={station} ssid={ssid} />}
+              <StationNetwork station={station} />
+            </Box>
+          ))}
+
+      {tab === 'video' && (
+        <MatchVideoCard
+          teamNumber={teamNumber}
+          emptyText="Recording isn't set up on this field, and there are no videos of your team yet."
+        />
       )}
     </Container>
   );
@@ -1016,37 +1120,100 @@ function useDebouncedMultipleDsWarning(station: StationName, holdMs = 10_000): D
 }
 
 /**
- * Full station experience shown once a robot is configured on a physical station.
- * Shows radio status, telemetry, charts, network diagnostics, etc.
- *
- * When showCharts is false, the chart toggle and chart view are hidden entirely
- * (used for non-selected robots in multi-robot teams).
+ * Alerts for the selected robot that must show whatever tab is open: the
+ * team checks (a modal when something failed) and the multiple-Driver-Station
+ * warning.
  */
-function StationExperience({
+function StationAlerts({ station }: { station: StationName }) {
+  const multipleDsWarning = useDebouncedMultipleDsWarning(station);
+  const yourIp = useRoutePreferenceState()?.yourIp;
+
+  return (
+    <>
+      <TeamChecksModal station={station} />
+
+      {/* DS connection alerts — shows all DS IPs (accepted + blocked) with debounced hold */}
+      {multipleDsWarning && (
+        <Alert
+          severity="error"
+          sx={{ mb: 1, fontWeight: 700, fontSize: '1.1rem', '& .MuiAlert-icon': { fontSize: '1.5rem' } }}
+        >
+          MULTIPLE DRIVER STATIONS DETECTED
+          <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5, fontSize: '0.9rem', fontWeight: 400 }}>
+            <li>
+              <strong>
+                <HostDisplay ip={multipleDsWarning.acceptedIp} />
+              </strong>
+              {multipleDsWarning.acceptedIp === yourIp && (
+                <Chip label="YOU" size="small" color="info" sx={{ ml: 0.5, height: 18, fontSize: '0.65rem' }} />
+              )}
+              {' — active'}
+            </li>
+            {multipleDsWarning.blockedIps.map(ip => (
+              <li key={ip}>
+                <strong>
+                  <HostDisplay ip={ip} />
+                </strong>
+                {ip === yourIp && (
+                  <Chip label="YOU" size="small" color="error" sx={{ ml: 0.5, height: 18, fontSize: '0.65rem' }} />
+                )}
+                {' — blocked'}
+              </li>
+            ))}
+          </Box>
+          <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 400 }}>
+            Close the extra Driver Station{multipleDsWarning.blockedIps.length > 1 ? 's' : ''}.
+          </Typography>
+        </Alert>
+      )}
+    </>
+  );
+}
+
+/** A robot's network diagnostics card (DS, forwarding, subnet scan, mDNS). */
+function StationNetwork({ station }: { station: StationName }) {
+  const matchState = useMatchState();
+  const networkStats = useNetworkStats();
+  const subnetScan = useSubnetScan();
+  const mdnsActivity = useMdnsActivity();
+  const yourIp = useRoutePreferenceState()?.yourIp;
+
+  return (
+    <StationNetworkCard
+      station={station}
+      stats={networkStats?.stations[station]}
+      scan={subnetScan?.stations[station]}
+      mdns={mdnsActivity?.stations[station]}
+      dsInfo={matchState?.connectedStations[station]}
+      hideStationLabel
+      yourIp={yourIp}
+    />
+  );
+}
+
+/**
+ * The selected robot's radio status: live charts, or tables of radio,
+ * forwarding, telemetry, subnet scan and mDNS figures. The toggles are held
+ * by the page so they survive switching tabs.
+ */
+function RadioStatusCard({
   station,
-  showCharts = true,
-  networkOnly = false,
+  chartMode,
+  onChartModeChange,
+  internetAccess,
+  onInternetAccessChange,
 }: {
   station: StationName;
-  showCharts?: boolean;
-  /** When true, only render the network diagnostics card — skip radio status, telemetry, and charts. */
-  networkOnly?: boolean;
+  chartMode: boolean;
+  onChartModeChange: (chartMode: boolean) => void;
+  internetAccess: boolean;
+  onInternetAccessChange: (on: boolean) => void;
 }) {
-  const [chartMode, setChartMode] = useState(true);
-  const [internetAccess, setInternetAccess] = useState(false);
   const latest = useLatest();
-  const matchState = useMatchState();
   const telemetry = useLatestTelemetry(station);
   const networkStats = useNetworkStats();
   const subnetScan = useSubnetScan();
   const mdnsActivity = useMdnsActivity();
-  const multipleDsWarning = useDebouncedMultipleDsWarning(station);
-  const routeState = useRoutePreferenceState();
-  const yourIp = routeState?.yourIp;
-
-  // Always register the chart data collection handler
-  useUpdateCallback(handleStatusUpdate);
-  useTelemetryCallback(handleTelemetryUpdate);
 
   const stationStatus = latest?.radioUpdate?.stationStatuses[station];
   const {
@@ -1068,605 +1235,534 @@ function StationExperience({
   } = stationStatus || {};
 
   return (
-    <>
-      {!networkOnly && (
-        <>
-          <TeamChecksModal station={station} />
+    <Card sx={{ mb: 2 }}>
+      <CardContent sx={{ display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h6">Radio Status</Typography>
+            {isLinked ? (
+              <Chip label="Linked" color="success" size="small" />
+            ) : stationSsid ? (
+              <Chip label="Not Linked" color="warning" size="small" variant="outlined" />
+            ) : null}
+          </Box>
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {/* Internet access toggle */}
+            {stationSsid && (
+              <Tooltip title={internetAccess ? 'Disable internet access' : 'Enable internet access'}>
+                <IconButton
+                  onClick={() => onInternetAccessChange(!internetAccess)}
+                  size="small"
+                  sx={{
+                    color: internetAccess ? 'success.main' : 'text.secondary',
+                    '&:hover': {
+                      color: internetAccess ? 'success.dark' : 'success.main',
+                      backgroundColor: 'action.hover',
+                    },
+                  }}
+                >
+                  {internetAccess ? <PublicIcon /> : <PublicOffIcon />}
+                </IconButton>
+              </Tooltip>
+            )}
+            {/* Chart/table toggle */}
+            <Tooltip title={chartMode ? 'Show table view' : 'Show live charts'}>
+              <IconButton
+                onClick={() => onChartModeChange(!chartMode)}
+                size="small"
+                sx={{
+                  color: chartMode ? 'primary.main' : 'text.secondary',
+                  backgroundColor: chartMode ? 'primary.light' : 'transparent',
+                  '&:hover': {
+                    backgroundColor: chartMode ? 'primary.main' : 'action.hover',
+                    color: chartMode ? 'primary.contrastText' : 'text.primary',
+                  },
+                }}
+              >
+                <ShowChartIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </Box>
 
-          {/* DS connection alerts — shows all DS IPs (accepted + blocked) with debounced hold */}
-          {multipleDsWarning && (
-            <Alert
-              severity="error"
-              sx={{ mb: 1, fontWeight: 700, fontSize: '1.1rem', '& .MuiAlert-icon': { fontSize: '1.5rem' } }}
+        {isLinked && macAddress && (
+          <CopyToClipboard text={macAddress} tooltipText="Click to copy MAC address">
+            <Typography
+              variant="body2"
+              sx={{
+                fontFamily: 'monospace',
+                fontSize: '0.75rem',
+                color: 'text.secondary',
+                mb: 1,
+                cursor: 'pointer',
+                '&:hover': { color: 'text.primary', backgroundColor: 'action.hover' },
+                borderRadius: 0.5,
+                px: 0.5,
+                py: 0.25,
+                transition: 'all 0.2s',
+                width: 'fit-content',
+              }}
             >
-              MULTIPLE DRIVER STATIONS DETECTED
-              <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5, fontSize: '0.9rem', fontWeight: 400 }}>
-                <li>
-                  <strong>
-                    <HostDisplay ip={multipleDsWarning.acceptedIp} />
-                  </strong>
-                  {multipleDsWarning.acceptedIp === yourIp && (
-                    <Chip label="YOU" size="small" color="info" sx={{ ml: 0.5, height: 18, fontSize: '0.65rem' }} />
-                  )}
-                  {' — active'}
-                </li>
-                {multipleDsWarning.blockedIps.map(ip => (
-                  <li key={ip}>
-                    <strong>
-                      <HostDisplay ip={ip} />
-                    </strong>
-                    {ip === yourIp && (
-                      <Chip label="YOU" size="small" color="error" sx={{ ml: 0.5, height: 18, fontSize: '0.65rem' }} />
-                    )}
-                    {' — blocked'}
-                  </li>
-                ))}
-              </Box>
-              <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 400 }}>
-                Close the extra Driver Station{multipleDsWarning.blockedIps.length > 1 ? 's' : ''}.
-              </Typography>
-            </Alert>
-          )}
+              {macAddress}
+            </Typography>
+          </CopyToClipboard>
+        )}
 
-          <Card sx={{ mb: 2 }}>
-            <CardContent sx={{ display: 'flex', flexDirection: 'column' }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Typography variant="h6">Radio Status</Typography>
-                  {isLinked ? (
-                    <Chip label="Linked" color="success" size="small" />
-                  ) : stationSsid ? (
-                    <Chip label="Not Linked" color="warning" size="small" variant="outlined" />
-                  ) : null}
-                </Box>
-                <Box sx={{ display: 'flex', gap: 0.5 }}>
-                  {/* Internet access toggle */}
-                  {stationSsid && (
-                    <Tooltip title={internetAccess ? 'Disable internet access' : 'Enable internet access'}>
-                      <IconButton
-                        onClick={() => {
-                          const next = !internetAccess;
-                          setInternetAccess(next);
-                          sendInternetToggle(station, next);
-                        }}
-                        size="small"
-                        sx={{
-                          color: internetAccess ? 'success.main' : 'text.secondary',
-                          '&:hover': {
-                            color: internetAccess ? 'success.dark' : 'success.main',
-                            backgroundColor: 'action.hover',
-                          },
-                        }}
-                      >
-                        {internetAccess ? <PublicIcon /> : <PublicOffIcon />}
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  {/* Chart/table toggle — only shown when charts are enabled */}
-                  {showCharts && (
-                    <Tooltip title={chartMode ? 'Show table view' : 'Show live charts'}>
-                      <IconButton
-                        onClick={() => setChartMode(!chartMode)}
-                        size="small"
-                        sx={{
-                          color: chartMode ? 'primary.main' : 'text.secondary',
-                          backgroundColor: chartMode ? 'primary.light' : 'transparent',
-                          '&:hover': {
-                            backgroundColor: chartMode ? 'primary.main' : 'action.hover',
-                            color: chartMode ? 'primary.contrastText' : 'text.primary',
-                          },
-                        }}
-                      >
-                        <ShowChartIcon />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </Box>
-              </Box>
+        {chartMode && stationSsid ? (
+          <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+            <StationChart station={station} metric="signalLevels" height="60px" />
+            <StationChart station={station} metric="snr" height="60px" />
+            <StationChart station={station} metric="rates" height="60px" />
+            <StationChart station={station} metric="packets" height="60px" />
+            <StationChart station={station} metric="bytes" height="60px" />
+            <StationChart station={station} metric="bandwidth" height="60px" />
+            <StationChart station={station} metric="dataAge" height="60px" />
+            <StationChart station={station} metric="quality" height="60px" />
+            <StationChart station={station} metric="batteryVoltage" height="60px" />
+            <StationChart station={station} metric="dsCpuPercent" height="60px" />
+            <StationChart station={station} metric="robotStatus" height="60px" />
+          </Box>
+        ) : stationSsid && isLinked ? (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            {/* Signal Levels */}
+            <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ textAlign: 'right' }}>Signal</TableCell>
+                  <TableCell sx={{ textAlign: 'right' }}>Noise</TableCell>
+                  <TableCell sx={{ textAlign: 'right' }}>SNR</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.light', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(signalDbm)} dBm
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.light', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(noiseDbm)} dBm
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(signalNoiseRatio)} dB
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
 
-              {isLinked && macAddress && (
-                <CopyToClipboard text={macAddress} tooltipText="Click to copy MAC address">
-                  <Typography
-                    variant="body2"
+            {/* Connection Quality, Bandwidth, and Data Age */}
+            <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Quality</TableCell>
+                  <TableCell sx={{ textAlign: 'right' }}>Used</TableCell>
+                  <TableCell sx={{ textAlign: 'right' }}>of Available</TableCell>
+                  <TableCell sx={{ textAlign: 'right' }}>Data Age</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell
                     sx={{
-                      fontFamily: 'monospace',
-                      fontSize: '0.75rem',
-                      color: 'text.secondary',
-                      mb: 1,
-                      cursor: 'pointer',
-                      '&:hover': { color: 'text.primary', backgroundColor: 'action.hover' },
-                      borderRadius: 0.5,
-                      px: 0.5,
-                      py: 0.25,
-                      transition: 'all 0.2s',
-                      width: 'fit-content',
+                      color:
+                        connectionQuality === 'excellent'
+                          ? 'success.main'
+                          : connectionQuality === 'good'
+                            ? 'success.light'
+                            : connectionQuality === 'caution'
+                              ? 'warning.main'
+                              : connectionQuality === 'warning'
+                                ? 'error.main'
+                                : 'text.disabled',
                     }}
                   >
-                    {macAddress}
-                  </Typography>
-                </CopyToClipboard>
-              )}
+                    {connectionQuality}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(bandwidthUsedMbps)} Mbps
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
+                    {rxRateMbps && txRateMbps
+                      ? `${formatNumberWithThinSpace((bandwidthUsedMbps! / Math.min(rxRateMbps, txRateMbps)) * 100)}%`
+                      : '—'}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'warning.light', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(dataAgeMs)} ms
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
 
-              {showCharts && chartMode && stationSsid ? (
-                <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-                  <StationChart station={station} metric="signalLevels" height="60px" />
-                  <StationChart station={station} metric="snr" height="60px" />
-                  <StationChart station={station} metric="rates" height="60px" />
-                  <StationChart station={station} metric="packets" height="60px" />
-                  <StationChart station={station} metric="bytes" height="60px" />
-                  <StationChart station={station} metric="bandwidth" height="60px" />
-                  <StationChart station={station} metric="dataAge" height="60px" />
-                  <StationChart station={station} metric="quality" height="60px" />
-                  <StationChart station={station} metric="batteryVoltage" height="60px" />
-                  <StationChart station={station} metric="dsCpuPercent" height="60px" />
-                  <StationChart station={station} metric="robotStatus" height="60px" />
-                </Box>
-              ) : stationSsid && isLinked ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                  {/* Signal Levels */}
+            {/* TX/RX */}
+            <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell></TableCell>
+                  <Tooltip title="To robot">
+                    <TableCell sx={{ textAlign: 'right' }}>TX</TableCell>
+                  </Tooltip>
+                  <Tooltip title="From robot">
+                    <TableCell sx={{ textAlign: 'right' }}>RX</TableCell>
+                  </Tooltip>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <TableRow>
+                  <TableCell>Rate</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(txRateMbps)} Mbps
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(rxRateMbps)} Mbps
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Packets</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(txPackets)}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(rxPackets)}
+                  </TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>Bytes</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(txBytes)}
+                  </TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
+                    {formatNumberWithThinSpace(rxBytes)}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
+
+            {/* IP Forwarding Counters */}
+            {networkStats?.stations[station] &&
+              (() => {
+                const fwd = networkStats.stations[station]!;
+                return (
                   <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
                     <TableHead>
                       <TableRow>
-                        <TableCell sx={{ textAlign: 'right' }}>Signal</TableCell>
-                        <TableCell sx={{ textAlign: 'right' }}>Noise</TableCell>
-                        <TableCell sx={{ textAlign: 'right' }}>SNR</TableCell>
+                        <TableCell>IP Forwarding</TableCell>
+                        <Tooltip title="Packet count">
+                          <TableCell sx={{ textAlign: 'right' }}>Packets</TableCell>
+                        </Tooltip>
+                        <Tooltip title="Byte count">
+                          <TableCell sx={{ textAlign: 'right' }}>Bytes</TableCell>
+                        </Tooltip>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       <TableRow>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.light', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(signalDbm)} dBm
-                        </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.light', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(noiseDbm)} dBm
-                        </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(signalNoiseRatio)} dB
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-
-                  {/* Connection Quality, Bandwidth, and Data Age */}
-                  <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Quality</TableCell>
-                        <TableCell sx={{ textAlign: 'right' }}>Used</TableCell>
-                        <TableCell sx={{ textAlign: 'right' }}>of Available</TableCell>
-                        <TableCell sx={{ textAlign: 'right' }}>Data Age</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      <TableRow>
+                        <TableCell>From robot</TableCell>
                         <TableCell
                           sx={{
-                            color:
-                              connectionQuality === 'excellent'
-                                ? 'success.main'
-                                : connectionQuality === 'good'
-                                  ? 'success.light'
-                                  : connectionQuality === 'caution'
-                                    ? 'warning.main'
-                                    : connectionQuality === 'warning'
-                                      ? 'error.main'
-                                      : 'text.disabled',
+                            whiteSpace: 'nowrap',
+                            color: 'error.main',
+                            textAlign: 'right',
+                            fontFamily: 'monospace',
                           }}
                         >
-                          {connectionQuality}
+                          {fwd.rxPackets.toLocaleString()}
                         </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(bandwidthUsedMbps)} Mbps
+                        <TableCell
+                          sx={{
+                            whiteSpace: 'nowrap',
+                            color: 'error.main',
+                            textAlign: 'right',
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {formatBytes(fwd.rxBytes)}
                         </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
-                          {rxRateMbps && txRateMbps
-                            ? `${formatNumberWithThinSpace((bandwidthUsedMbps! / Math.min(rxRateMbps, txRateMbps)) * 100)}%`
-                            : '—'}
+                      </TableRow>
+                      <TableRow>
+                        <TableCell>To robot</TableCell>
+                        <TableCell
+                          sx={{
+                            whiteSpace: 'nowrap',
+                            color: 'success.main',
+                            textAlign: 'right',
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {fwd.txPackets.toLocaleString()}
                         </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'warning.light', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(dataAgeMs)} ms
+                        <TableCell
+                          sx={{
+                            whiteSpace: 'nowrap',
+                            color: 'success.main',
+                            textAlign: 'right',
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {formatBytes(fwd.txBytes)}
                         </TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>
+                );
+              })()}
 
-                  {/* TX/RX */}
+            {/* Robot Telemetry */}
+            {telemetry && (
+              <>
+                <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ textAlign: 'right' }}>Battery</TableCell>
+                      <TableCell sx={{ textAlign: 'right' }}>RTT</TableCell>
+                      <TableCell sx={{ textAlign: 'right' }}>Lost Pkts</TableCell>
+                      <TableCell sx={{ textAlign: 'right' }}>CAN</TableCell>
+                      <TableCell sx={{ textAlign: 'right' }}>DS CPU</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    <TableRow>
+                      <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
+                        {telemetry.batteryVoltage !== undefined ? `${telemetry.batteryVoltage.toFixed(1)} V` : '—'}
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {telemetry.rttMs !== undefined ? `${telemetry.rttMs} ms` : '—'}
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {telemetry.lostPackets !== undefined ? telemetry.lostPackets : '—'}
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {telemetry.canUtil !== undefined ? `${telemetry.canUtil}%` : '—'}
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
+                        {telemetry.dsCpuPercent !== undefined ? `${telemetry.dsCpuPercent}%` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+
+                {/* Status Chips */}
+                {telemetry.dsStatus && (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
+                    <Chip
+                      label={
+                        telemetry.dsStatus.mode === 'teleOp'
+                          ? 'TeleOp'
+                          : telemetry.dsStatus.mode === 'auto'
+                            ? 'Auto'
+                            : 'Test'
+                      }
+                      size="small"
+                      sx={{
+                        backgroundColor:
+                          telemetry.dsStatus.mode === 'teleOp'
+                            ? 'info.main'
+                            : telemetry.dsStatus.mode === 'auto'
+                              ? 'success.main'
+                              : 'warning.main',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        height: 20,
+                      }}
+                    />
+                    <Chip
+                      label={telemetry.dsStatus.robotComms ? 'Comms' : 'No Comms'}
+                      size="small"
+                      sx={{
+                        backgroundColor: telemetry.dsStatus.robotComms ? 'success.main' : 'error.main',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        height: 20,
+                      }}
+                    />
+                    <Chip
+                      label={telemetry.dsStatus.radioPing ? 'Radio' : 'No Radio'}
+                      size="small"
+                      sx={{
+                        backgroundColor: telemetry.dsStatus.radioPing ? 'info.main' : 'error.main',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        height: 20,
+                      }}
+                    />
+                    <Chip
+                      label={telemetry.dsStatus.rioPing ? 'RIO' : 'No RIO'}
+                      size="small"
+                      sx={{
+                        backgroundColor: telemetry.dsStatus.rioPing ? 'info.main' : 'error.main',
+                        color: '#fff',
+                        fontSize: '0.7rem',
+                        height: 20,
+                      }}
+                    />
+                    {telemetry.dsStatus.eStop && (
+                      <Chip
+                        label="E-STOP"
+                        size="small"
+                        sx={{
+                          backgroundColor: 'error.main',
+                          color: '#fff',
+                          fontSize: '0.7rem',
+                          height: 20,
+                          fontWeight: 'bold',
+                        }}
+                      />
+                    )}
+                    {telemetry.dsStatus.aStop && (
+                      <Chip
+                        label="A-STOP"
+                        size="small"
+                        sx={{
+                          backgroundColor: 'warning.main',
+                          color: '#fff',
+                          fontSize: '0.7rem',
+                          height: 20,
+                          fontWeight: 'bold',
+                        }}
+                      />
+                    )}
+                    {telemetry.brownout && (
+                      <Chip
+                        label="BROWNOUT"
+                        size="small"
+                        sx={{
+                          backgroundColor: 'warning.main',
+                          color: '#fff',
+                          fontSize: '0.7rem',
+                          height: 20,
+                          fontWeight: 'bold',
+                        }}
+                      />
+                    )}
+                  </Box>
+                )}
+              </>
+            )}
+
+            {/* Subnet Scan */}
+            {(() => {
+              const scan = subnetScan?.stations[station];
+              if (!scan || scan.hosts.length === 0) return null;
+              const aliveCount = scan.hosts.filter(h => h.alive).length;
+              return (
+                <Box sx={{ mt: 0.5 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      px: 1,
+                      mb: 0.25,
+                    }}
+                  >
+                    <Typography variant="caption" color="text.secondary">
+                      Subnet {scan.subnet}
+                    </Typography>
+                    <Chip
+                      label={`${aliveCount} / ${scan.hosts.length}`}
+                      size="small"
+                      color={aliveCount > 0 ? 'success' : 'default'}
+                      sx={{ height: 18, fontSize: '0.7rem' }}
+                    />
+                  </Box>
                   <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
                     <TableHead>
                       <TableRow>
-                        <TableCell></TableCell>
-                        <Tooltip title="To robot">
-                          <TableCell sx={{ textAlign: 'right' }}>TX</TableCell>
-                        </Tooltip>
-                        <Tooltip title="From robot">
-                          <TableCell sx={{ textAlign: 'right' }}>RX</TableCell>
-                        </Tooltip>
+                        <TableCell>Host</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell>Device</TableCell>
+                        <TableCell>Last Seen</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      <TableRow>
-                        <TableCell>Rate</TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(txRateMbps)} Mbps
-                        </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(rxRateMbps)} Mbps
-                        </TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Packets</TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(txPackets)}
-                        </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(rxPackets)}
-                        </TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell>Bytes</TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(txBytes)}
-                        </TableCell>
-                        <TableCell sx={{ whiteSpace: 'nowrap', color: 'error.main', textAlign: 'right' }}>
-                          {formatNumberWithThinSpace(rxBytes)}
-                        </TableCell>
-                      </TableRow>
+                      {scan.hosts.map(host => (
+                        <TableRow key={host.ip} sx={{ opacity: host.alive ? 1 : 0.5 }}>
+                          <TableCell sx={{ fontFamily: 'monospace' }}>
+                            <HostDisplay ip={host.ip} />
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={host.alive ? 'UP' : 'DOWN'}
+                              size="small"
+                              color={host.alive ? 'success' : 'error'}
+                              variant={host.alive ? 'filled' : 'outlined'}
+                              sx={{ height: 18, fontSize: '0.7rem' }}
+                            />
+                          </TableCell>
+                          <TableCell>{describeIp(host) ?? ''}</TableCell>
+                          <TableCell>{formatAge(host.lastSeen)}</TableCell>
+                        </TableRow>
+                      ))}
                     </TableBody>
                   </Table>
-
-                  {/* IP Forwarding Counters */}
-                  {networkStats?.stations[station] &&
-                    (() => {
-                      const fwd = networkStats.stations[station]!;
-                      return (
-                        <Table
-                          size="small"
-                          sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
-                        >
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>IP Forwarding</TableCell>
-                              <Tooltip title="Packet count">
-                                <TableCell sx={{ textAlign: 'right' }}>Packets</TableCell>
-                              </Tooltip>
-                              <Tooltip title="Byte count">
-                                <TableCell sx={{ textAlign: 'right' }}>Bytes</TableCell>
-                              </Tooltip>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            <TableRow>
-                              <TableCell>From robot</TableCell>
-                              <TableCell
-                                sx={{
-                                  whiteSpace: 'nowrap',
-                                  color: 'error.main',
-                                  textAlign: 'right',
-                                  fontFamily: 'monospace',
-                                }}
-                              >
-                                {fwd.rxPackets.toLocaleString()}
-                              </TableCell>
-                              <TableCell
-                                sx={{
-                                  whiteSpace: 'nowrap',
-                                  color: 'error.main',
-                                  textAlign: 'right',
-                                  fontFamily: 'monospace',
-                                }}
-                              >
-                                {formatBytes(fwd.rxBytes)}
-                              </TableCell>
-                            </TableRow>
-                            <TableRow>
-                              <TableCell>To robot</TableCell>
-                              <TableCell
-                                sx={{
-                                  whiteSpace: 'nowrap',
-                                  color: 'success.main',
-                                  textAlign: 'right',
-                                  fontFamily: 'monospace',
-                                }}
-                              >
-                                {fwd.txPackets.toLocaleString()}
-                              </TableCell>
-                              <TableCell
-                                sx={{
-                                  whiteSpace: 'nowrap',
-                                  color: 'success.main',
-                                  textAlign: 'right',
-                                  fontFamily: 'monospace',
-                                }}
-                              >
-                                {formatBytes(fwd.txBytes)}
-                              </TableCell>
-                            </TableRow>
-                          </TableBody>
-                        </Table>
-                      );
-                    })()}
-
-                  {/* Robot Telemetry */}
-                  {telemetry && (
-                    <>
-                      <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell sx={{ textAlign: 'right' }}>Battery</TableCell>
-                            <TableCell sx={{ textAlign: 'right' }}>RTT</TableCell>
-                            <TableCell sx={{ textAlign: 'right' }}>Lost Pkts</TableCell>
-                            <TableCell sx={{ textAlign: 'right' }}>CAN</TableCell>
-                            <TableCell sx={{ textAlign: 'right' }}>DS CPU</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          <TableRow>
-                            <TableCell sx={{ whiteSpace: 'nowrap', color: 'success.main', textAlign: 'right' }}>
-                              {telemetry.batteryVoltage !== undefined
-                                ? `${telemetry.batteryVoltage.toFixed(1)} V`
-                                : '—'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                              {telemetry.rttMs !== undefined ? `${telemetry.rttMs} ms` : '—'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                              {telemetry.lostPackets !== undefined ? telemetry.lostPackets : '—'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                              {telemetry.canUtil !== undefined ? `${telemetry.canUtil}%` : '—'}
-                            </TableCell>
-                            <TableCell sx={{ whiteSpace: 'nowrap', color: 'info.light', textAlign: 'right' }}>
-                              {telemetry.dsCpuPercent !== undefined ? `${telemetry.dsCpuPercent}%` : '—'}
-                            </TableCell>
-                          </TableRow>
-                        </TableBody>
-                      </Table>
-
-                      {/* Status Chips */}
-                      {telemetry.dsStatus && (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 0.5 }}>
-                          <Chip
-                            label={
-                              telemetry.dsStatus.mode === 'teleOp'
-                                ? 'TeleOp'
-                                : telemetry.dsStatus.mode === 'auto'
-                                  ? 'Auto'
-                                  : 'Test'
-                            }
-                            size="small"
-                            sx={{
-                              backgroundColor:
-                                telemetry.dsStatus.mode === 'teleOp'
-                                  ? 'info.main'
-                                  : telemetry.dsStatus.mode === 'auto'
-                                    ? 'success.main'
-                                    : 'warning.main',
-                              color: '#fff',
-                              fontSize: '0.7rem',
-                              height: 20,
-                            }}
-                          />
-                          <Chip
-                            label={telemetry.dsStatus.robotComms ? 'Comms' : 'No Comms'}
-                            size="small"
-                            sx={{
-                              backgroundColor: telemetry.dsStatus.robotComms ? 'success.main' : 'error.main',
-                              color: '#fff',
-                              fontSize: '0.7rem',
-                              height: 20,
-                            }}
-                          />
-                          <Chip
-                            label={telemetry.dsStatus.radioPing ? 'Radio' : 'No Radio'}
-                            size="small"
-                            sx={{
-                              backgroundColor: telemetry.dsStatus.radioPing ? 'info.main' : 'error.main',
-                              color: '#fff',
-                              fontSize: '0.7rem',
-                              height: 20,
-                            }}
-                          />
-                          <Chip
-                            label={telemetry.dsStatus.rioPing ? 'RIO' : 'No RIO'}
-                            size="small"
-                            sx={{
-                              backgroundColor: telemetry.dsStatus.rioPing ? 'info.main' : 'error.main',
-                              color: '#fff',
-                              fontSize: '0.7rem',
-                              height: 20,
-                            }}
-                          />
-                          {telemetry.dsStatus.eStop && (
-                            <Chip
-                              label="E-STOP"
-                              size="small"
-                              sx={{
-                                backgroundColor: 'error.main',
-                                color: '#fff',
-                                fontSize: '0.7rem',
-                                height: 20,
-                                fontWeight: 'bold',
-                              }}
-                            />
-                          )}
-                          {telemetry.dsStatus.aStop && (
-                            <Chip
-                              label="A-STOP"
-                              size="small"
-                              sx={{
-                                backgroundColor: 'warning.main',
-                                color: '#fff',
-                                fontSize: '0.7rem',
-                                height: 20,
-                                fontWeight: 'bold',
-                              }}
-                            />
-                          )}
-                          {telemetry.brownout && (
-                            <Chip
-                              label="BROWNOUT"
-                              size="small"
-                              sx={{
-                                backgroundColor: 'warning.main',
-                                color: '#fff',
-                                fontSize: '0.7rem',
-                                height: 20,
-                                fontWeight: 'bold',
-                              }}
-                            />
-                          )}
-                        </Box>
-                      )}
-                    </>
-                  )}
-
-                  {/* Subnet Scan */}
-                  {(() => {
-                    const scan = subnetScan?.stations[station];
-                    if (!scan || scan.hosts.length === 0) return null;
-                    const aliveCount = scan.hosts.filter(h => h.alive).length;
-                    return (
-                      <Box sx={{ mt: 0.5 }}>
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            px: 1,
-                            mb: 0.25,
-                          }}
-                        >
-                          <Typography variant="caption" color="text.secondary">
-                            Subnet {scan.subnet}
-                          </Typography>
-                          <Chip
-                            label={`${aliveCount} / ${scan.hosts.length}`}
-                            size="small"
-                            color={aliveCount > 0 ? 'success' : 'default'}
-                            sx={{ height: 18, fontSize: '0.7rem' }}
-                          />
-                        </Box>
-                        <Table
-                          size="small"
-                          sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
-                        >
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>Host</TableCell>
-                              <TableCell>Status</TableCell>
-                              <TableCell>Device</TableCell>
-                              <TableCell>Last Seen</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {scan.hosts.map(host => (
-                              <TableRow key={host.ip} sx={{ opacity: host.alive ? 1 : 0.5 }}>
-                                <TableCell sx={{ fontFamily: 'monospace' }}>
-                                  <HostDisplay ip={host.ip} />
-                                </TableCell>
-                                <TableCell>
-                                  <Chip
-                                    label={host.alive ? 'UP' : 'DOWN'}
-                                    size="small"
-                                    color={host.alive ? 'success' : 'error'}
-                                    variant={host.alive ? 'filled' : 'outlined'}
-                                    sx={{ height: 18, fontSize: '0.7rem' }}
-                                  />
-                                </TableCell>
-                                <TableCell>{describeIp(host) ?? ''}</TableCell>
-                                <TableCell>{formatAge(host.lastSeen)}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </Box>
-                    );
-                  })()}
-
-                  {/* mDNS Activity */}
-                  {(() => {
-                    const mdns = mdnsActivity?.stations[station];
-                    if (!mdns) return null;
-                    return (
-                      <Box sx={{ mt: 0.5 }}>
-                        <Box
-                          sx={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            px: 1,
-                            mb: 0.25,
-                          }}
-                        >
-                          <Typography variant="caption" color="text.secondary">
-                            mDNS Reflector
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                            {mdns.queriesForwarded}q / {mdns.responsesForwarded}r
-                          </Typography>
-                        </Box>
-                        {mdns.recentNames.length > 0 && (
-                          <Table
-                            size="small"
-                            sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
-                          >
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Name</TableCell>
-                                <TableCell>IP</TableCell>
-                                <TableCell>Requester</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {mdns.recentNames.map(entry => (
-                                <TableRow key={entry.name}>
-                                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                    {entry.services && entry.services.length > 0 ? (
-                                      <Tooltip title={entry.services.join(', ')} arrow placement="right">
-                                        <span style={{ cursor: 'help', textDecoration: 'underline dotted' }}>
-                                          {entry.name}
-                                        </span>
-                                      </Tooltip>
-                                    ) : (
-                                      entry.name
-                                    )}
-                                  </TableCell>
-                                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                    {entry.resolvedIp ?? '—'}
-                                  </TableCell>
-                                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                    {entry.requester ?? '—'}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        )}
-                      </Box>
-                    );
-                  })()}
                 </Box>
-              ) : stationSsid ? (
-                <Typography variant="body2" color="warning.main" sx={{ fontStyle: 'italic', mt: 1 }}>
-                  Radio not linked — waiting for connection...
-                </Typography>
-              ) : null}
-            </CardContent>
-          </Card>
-        </>
-      )}
+              );
+            })()}
 
-      {/* Network diagnostics card */}
-      <StationNetworkCard
-        station={station}
-        stats={networkStats?.stations[station]}
-        scan={subnetScan?.stations[station]}
-        mdns={mdnsActivity?.stations[station]}
-        dsInfo={matchState?.connectedStations[station]}
-        hideStationLabel
-        yourIp={yourIp}
-      />
-    </>
+            {/* mDNS Activity */}
+            {(() => {
+              const mdns = mdnsActivity?.stations[station];
+              if (!mdns) return null;
+              return (
+                <Box sx={{ mt: 0.5 }}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      px: 1,
+                      mb: 0.25,
+                    }}
+                  >
+                    <Typography variant="caption" color="text.secondary">
+                      mDNS Reflector
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
+                      {mdns.queriesForwarded}q / {mdns.responsesForwarded}r
+                    </Typography>
+                  </Box>
+                  {mdns.recentNames.length > 0 && (
+                    <Table size="small" sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Name</TableCell>
+                          <TableCell>IP</TableCell>
+                          <TableCell>Requester</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {mdns.recentNames.map(entry => (
+                          <TableRow key={entry.name}>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                              {entry.services && entry.services.length > 0 ? (
+                                <Tooltip title={entry.services.join(', ')} arrow placement="right">
+                                  <span style={{ cursor: 'help', textDecoration: 'underline dotted' }}>
+                                    {entry.name}
+                                  </span>
+                                </Tooltip>
+                              ) : (
+                                entry.name
+                              )}
+                            </TableCell>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                              {entry.resolvedIp ?? '—'}
+                            </TableCell>
+                            <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                              {entry.requester ?? '—'}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </Box>
+              );
+            })()}
+          </Box>
+        ) : stationSsid ? (
+          <Typography variant="body2" color="warning.main" sx={{ fontStyle: 'italic', mt: 1 }}>
+            Radio not linked — waiting for connection...
+          </Typography>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
