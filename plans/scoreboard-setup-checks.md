@@ -168,8 +168,28 @@ The ladder, as asked for (usually turns green in this order):
       to setup); screenshots looked right. The harness lives in
       `%TEMP%/pw/scenario.mjs` (playwright-core in a scratch dir, cached
       Chromium from `%LOCALAPPDATA%/ms-playwright`).
-- [ ] Step 5 — Cast / admin toggle ← current
-- [ ] Step 6 — docs, commits
+- [x] Step 5 — Cast / admin toggle (`castReceiverChecks`, receivers report
+      `checks`, the Cast sender passes it on session start). Verified against
+      a dry-run backend with a Chromecast-UA page: it registered, was flipped
+      from an admin socket, and reloaded into Field Setup.
+- [x] Step 6 — docs (`docs/match-system.md` "Setup checks on the
+      scoreboard", README `/scores` row) and commits: `29bb320` (backend),
+      `5b6a9f8` (scoreboard), `2f66d9a` (Cast/admin). Not pushed or deployed.
+- [ ] On the field: confirm against real robots (see "Not yet proven on
+      hardware").
+
+## Not yet proven on hardware
+
+- **Joysticks.** `countDsJoysticks` follows the documented DS→robot packet
+  layout and is unit-tested against hand-built packets, not a capture. The
+  first time a legacy DS drives through steamboat, check the column shows
+  the right count. Two things could leave it reading `?`: DS→robot traffic
+  not crossing steamboat (memory `ds-out-of-match-observability` says it
+  only sometimes does), or the DS sending a tag layout that differs from
+  the docs. To look: `tcpdump -i <vlan parent> -X 'udp and dst port 1110'`.
+- **Comms without DS status.** The fallback (robot→DS 1150 replies mean
+  comms) relies on those replies always crossing steamboat, which the
+  memory notes say is true.
 
 ## Open questions for the user
 
@@ -178,6 +198,9 @@ The ladder, as asked for (usually turns green in this order):
    could keep compact score boxes above the ladder. (Default: ladder only.)
 2. Battery threshold is a hard 12.0 V. A yellow band (e.g. 11.8–12.2) is
    easy to add if wanted.
+3. The big 3-2-1 and score ease-in happen only with checks on (otherwise
+   the scores are already on screen). Want the big countdown in the normal
+   view too?
 
 ## Things not to do
 
