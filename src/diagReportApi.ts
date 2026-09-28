@@ -156,7 +156,23 @@ export function createDiagReportHandler(opts: DiagReportOptions) {
     const ds = (report.driverStation ?? {}) as { teamNumber?: unknown };
     const computer = (report.computer ?? {}) as { name?: unknown };
     const teamFromDs = typeof ds.teamNumber === 'number' ? ds.teamNumber : undefined;
-    const teamFromIp = opts.teamForIp?.(ip);
+    // The address the upload came from first; failing that, the laptop's own
+    // addresses. A dual-stack laptop that reached pFMS over IPv6 is known to
+    // its station by its IPv4 address, which it lists in the report.
+    const reported = Array.isArray(report.addresses)
+      ? (report.addresses as { address?: unknown }[])
+          .map(a => a?.address)
+          .filter((a): a is string => typeof a === 'string')
+      : [];
+    let teamFromIp: number | undefined;
+    let teamMatchedAddress: string | undefined;
+    for (const candidate of [ip, ...reported]) {
+      teamFromIp = opts.teamForIp?.(candidate);
+      if (teamFromIp !== undefined) {
+        teamMatchedAddress = candidate;
+        break;
+      }
+    }
     const team = teamFromIp ?? teamFromDs;
     const safeIp = ip.replace(/[^0-9A-Za-z.]/g, '_');
     const stamp = `${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}`;
@@ -172,6 +188,8 @@ export function createDiagReportHandler(opts: DiagReportOptions) {
       receivedAt: t.toISOString(),
       sourceIp: ip,
       teamFromIp: teamFromIp ?? null,
+      /** Which address found `teamFromIp`: the source, or one the laptop reported. */
+      teamMatchedAddress: teamMatchedAddress ?? null,
       teamFromDriverStation: teamFromDs ?? null,
       computerName: typeof computer.name === 'string' ? computer.name : null,
       wlanDisconnects: disconnects,

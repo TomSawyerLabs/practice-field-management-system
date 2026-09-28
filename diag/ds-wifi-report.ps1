@@ -201,16 +201,30 @@ param(
     }
   } catch { Note-Error 'adapters' $_ }
 
+  # Both families: pFMS matches a laptop to its station by any of these, so a
+  # laptop that uploads over IPv6 is still found by its IPv4 address.
   $addresses = @()
   try {
-    $addresses = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-        Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-        ForEach-Object { [ordered]@{ interface = $_.InterfaceAlias; address = $_.IPAddress; prefix = $_.PrefixLength; origin = [string]$_.PrefixOrigin } })
+    $addresses = @(Get-NetIPAddress -ErrorAction Stop |
+        Where-Object {
+          $_.IPAddress -ne '::1' -and $_.IPAddress -notlike '127.*' -and
+          $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike 'fe80:*'
+        } |
+        ForEach-Object {
+          [ordered]@{
+            interface = $_.InterfaceAlias
+            family    = [string]$_.AddressFamily
+            address   = ($_.IPAddress -replace '%\d+$', '')
+            prefix    = $_.PrefixLength
+            origin    = [string]$_.PrefixOrigin
+            suffix    = [string]$_.SuffixOrigin
+          }
+        })
   } catch { Note-Error 'addresses' $_ }
   $defaultRoutes = @()
   try {
-    $defaultRoutes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
-        ForEach-Object { [ordered]@{ interface = $_.InterfaceAlias; gateway = $_.NextHop; metric = $_.RouteMetric + $_.InterfaceMetric } })
+    $defaultRoutes = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0', '::/0' -ErrorAction Stop |
+        ForEach-Object { [ordered]@{ interface = $_.InterfaceAlias; family = [string]$_.AddressFamily; gateway = $_.NextHop; metric = $_.RouteMetric + $_.InterfaceMetric } })
   } catch { Note-Error 'routes' $_ }
 
   $power = [ordered]@{}

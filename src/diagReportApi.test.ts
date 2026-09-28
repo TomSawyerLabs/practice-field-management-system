@@ -101,6 +101,24 @@ describe('uploading a report', () => {
     expect(stored.report.schema).toBe('pfms-ds-wifi-report/1');
   });
 
+  test('a laptop that uploads over IPv6 is still found by the IPv4 address it reports', async () => {
+    const { base, reportsDir } = await serve({ teamForIp: ip => (ip === '10.55.48.12' ? 840 : undefined) });
+    const body = report({
+      addresses: [
+        { family: 'IPv6', address: '2600:1700:459:8a1f:c4bf:3132:2acc:2ae2' },
+        { family: 'IPv4', address: '10.55.48.12' },
+      ],
+    });
+    const res = (await (await fetch(`${base}/api/diag/wifi-report`, { method: 'POST', body })).json()) as {
+      id: string;
+    };
+    expect(res.id).toContain('_team840_');
+    const [day] = readdirSync(join(reportsDir, 'wifi'));
+    const stored = JSON.parse(readFileSync(join(reportsDir, 'wifi', day, `${res.id}.json`), 'utf-8'));
+    expect(stored.teamFromIp).toBe(840);
+    expect(stored.teamMatchedAddress).toBe('10.55.48.12');
+  });
+
   test('falls back to the team the Driver Station is set to', async () => {
     const { base } = await serve();
     const body = (await (await fetch(`${base}/api/diag/wifi-report`, { method: 'POST', body: report() })).json()) as {

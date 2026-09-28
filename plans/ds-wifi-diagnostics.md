@@ -68,13 +68,30 @@ own WLAN-AutoConfig log does.
 
 ## Findings / gotchas
 
-- **IPv6 arrivals get no `teamFromIp`.** The live test came from
-  `2600:1700:459:8a1f:…` because the laptop reached `pfms.tsl` over IPv6;
-  pFMS's station → DS map holds IPv4 addresses, so `teamFromIp` was null.
-  The DS's own team number (from its settings file) covers it; teams'
-  laptops without the DS installed show as `teamunknown`. A possible fix is
-  to match the report's `addresses[]` (the laptop's IPv4s) instead of the
-  source address. Not built.
+- **IPv6 arrivals now tagged (2026-09-28).** The live test came from
+  `2600:1700:459:8a1f:…` (staff network) and got no `teamFromIp`, because
+  pFMS knows Driver Stations by IPv4. The server now falls back to the
+  addresses the laptop lists (`report.addresses`, both families since the
+  same change) and records which matched in `teamMatchedAddress`.
+- **The team network has no IPv6 today (checked 2026-09-28, read-only).**
+  UniFi's "Public" network (VLAN 3, 10.55.0.0/16) is set to IPv6 by prefix
+  delegation with SLAAC, but 0 of its 9 clients held a global address,
+  steamboat's `eno1.3` has only link-local, and a 20 s capture there saw no
+  router advertisements. The WAN (AT&T Business Fiber) requests the
+  default delegation size (`wan_dhcpv6_pd_size_auto: true`); the WAN has
+  `2600:1700:459:8a10::48` and the only delegated /64 in use is
+  `2600:1700:459:8a1f::/64` on the staff "TSL" network. So every IPv6 web
+  client in three days (5 addresses, 182 connections) was on the staff
+  network. Changing the delegation is an infrastructure change and needs
+  the user's per-change approval.
+- **Latent pFMS gap if the team network gets IPv6:** the team page's Drive
+  button acts on the page's source address (`src/websocketServer.ts`
+  `isDriveAction` → `setRoutePreference(clientIp, …)`), and every drive
+  rule is IPv4. A dual-stack DS laptop whose page arrives over IPv6 would
+  hand pFMS an address it cannot route. Steamboat has no global address on
+  VLAN 3, so such a page would arrive through the gateway and the kernel
+  neighbour table could not pair it with the laptop's IPv4 either. Not
+  reachable today; not built.
 - Report files are root-owned (the service runs as root): reading is fine,
   deleting needs `sudo`.
 
@@ -118,9 +135,13 @@ Set-ExecutionPolicy -Scope Process Bypass }; & '<file>'`) under the same
 
 ## Open questions for the user
 
-1. Worth making `teamFromIp` work for laptops that arrive over IPv6, by
-   matching the report's IPv4 addresses? My recommendation: only if real
-   reports come in untagged; the DS's own team number covers most laptops.
+1. Give the team network IPv6? It needs a larger delegation from AT&T
+   (request a /60 instead of the automatic size) so VLAN 3 gets its own /64.
+   Infrastructure change: needs a staged change and your explicit yes.
+2. If yes, pFMS must first stop keying Drive on the page's source address
+   (see Findings). My recommendation: have the Driver Station's own FMS
+   handshake (always IPv4) be the laptop's identity, and let a page claim
+   it with a short-lived pairing code, rather than guessing from addresses.
 
 ## Things not to do
 

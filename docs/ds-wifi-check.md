@@ -51,14 +51,13 @@ host:
 
 `DIAG_REPORTS_DIR` moves the base directory. On steamboat that is
 `~/practice-field-management-system/diag-reports/`. Each file wraps the
-laptop's report with `receivedAt`, `sourceIp`, `teamFromIp` (the team on
-the station whose Driver Station spoke from that address) and
-`teamFromDriverStation`. `teamFromIp` only works when the laptop reached
-pFMS over IPv4: pFMS knows Driver Stations by their IPv4 address, and a
-laptop that reaches `pfms.tsl` over IPv6 arrives from its IPv6 address. The
-team number set in the Driver Station covers that case, and
-`report.addresses` lists the laptop's IPv4 addresses for matching by hand.
-The files are owned by root, like everything else the service writes, and
+laptop's report with `receivedAt`, `sourceIp`, `teamFromIp`,
+`teamMatchedAddress` and `teamFromDriverStation`. `teamFromIp` is the team
+on the station whose Driver Station uses the upload's source address or,
+failing that, any address the laptop lists in `report.addresses` (both
+families). `teamMatchedAddress` says which one matched. The fallback
+matters for a dual-stack laptop that reaches `pfms.tsl` over IPv6, because
+pFMS knows Driver Stations by their IPv4 address. The files are owned by root, like everything else the service writes, and
 readable by everyone on the host. The journal gets one line per upload:
 
 ```
