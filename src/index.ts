@@ -1431,6 +1431,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           prevAlliance.set(station, alliance);
           if (!joinedChanged && !allianceChanged) continue;
           const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
+          const edge = joinedChanged ? (joined ? 'joined' : 'left') : `changed to ${alliance}`;
           if (dsIp) {
             appInfo(
               joinedChanged
@@ -1441,7 +1442,39 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             );
             fms.emit('disconnectDS', { address: dsIp });
           }
+          // The station may have no DS address on record (the team was just
+          // moved here, or its drive session was cleared) while the DS still
+          // holds a session with an old assignment — so also close by team
+          // number. A no-op for the socket disconnectDS just closed.
+          const team = state.stationStates[station]?.teamNumber;
+          if (team) fms.emit('disconnectTeam', { teamNumber: team, reason: `${station} ${edge}` });
         }
+      });
+
+      // A team moved to another station (or released from one) keeps its DS
+      // session, and with it the old station's assignment, until the TCP
+      // connection drops. Close it so the next handshake resolves against
+      // the new config — 4159 sat out match 64 (2026-09-27) on a stale one.
+      const stationByTeam = () => {
+        const map = new Map<number, StationName>();
+        for (const station of StationNameList) {
+          const team = radioManager.getTeamForStation(station);
+          if (team !== null) map.set(team, station);
+        }
+        return map;
+      };
+      let prevStationByTeam = stationByTeam();
+      radioManager.addConfigChangeListener(() => {
+        const now = stationByTeam();
+        for (const [team, was] of prevStationByTeam) {
+          const is = now.get(team);
+          if (is === was) continue;
+          fms.emit('disconnectTeam', {
+            teamNumber: team,
+            reason: is ? `team moved from ${was} to ${is}` : `team released from ${was}`,
+          });
+        }
+        prevStationByTeam = now;
       });
 
       fms.on('dsConnected', ({ address }) => {

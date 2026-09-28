@@ -428,6 +428,14 @@ type Events = {
    *  current station-assignment answer — this is how join/leave hands the DS
    *  to the FMS (0x19 reply locks out local enable) or releases it (no reply). */
   disconnectDS: [{ address: string }];
+  /** Inbound command: close every TCP connection whose handshake reported
+   *  this team number, wherever it came from. For when the station has no DS
+   *  address on record — a team just moved to it, or its drive session was
+   *  cleared — but the DS is still holding a session with an old station
+   *  assignment. 2026-09-27, match 64: 4159 was moved slot3→slot4 during
+   *  setup, kept its slot3 session, never attached to slot4, and its robot
+   *  never enabled. `reason` is for the log line. */
+  disconnectTeam: [{ teamNumber: number; reason: string }];
 };
 
 /** The FMS server: DS events plus the UDP socket bound to 10.0.100.5:1160.
@@ -463,6 +471,9 @@ export async function startFMSServer({
     const tcpConnections = new Map<string, number>();
     // Live sockets per IP, so the disconnectDS command can force a re-handshake
     const socketsByAddr = new Map<string, Set<net.Socket>>();
+    // The team each live socket last handshaked as, so disconnectTeam can find
+    // a DS whose address the rest of pFMS has lost track of.
+    const teamBySocket = new Map<net.Socket, number>();
 
     // Log dampening: a DS that never completes the station-assignment handshake
     // (or can't reach its station) cycles TCP every ~6s. Log the first connect,
@@ -517,6 +528,7 @@ export async function startFMSServer({
           // local enable. Freeplay DSes get no reply and keep local control —
           // they retry TCP every ~6s, which the churn dampener below keeps out
           // of the logs.
+          teamBySocket.set(socket, obj.teamNumber);
           const resolved = resolveTeamSlot?.(obj.teamNumber);
           if (resolved === 'release') {
             // Known team, not in a match: tell the DS explicitly it is NOT in
@@ -549,6 +561,7 @@ export async function startFMSServer({
       });
 
       socket.on('close', () => {
+        teamBySocket.delete(socket);
         const s = socketsByAddr.get(addr);
         if (s) {
           s.delete(socket);
@@ -590,6 +603,20 @@ export async function startFMSServer({
       if (!sockets?.size) return;
       console.log(`Closing ${sockets.size} TCP connection(s) to DS ${address} to force a fresh handshake`);
       for (const socket of [...sockets]) socket.destroy();
+    });
+
+    emitter.on('disconnectTeam', ({ teamNumber, reason }) => {
+      // Sockets disconnectDS just destroyed are skipped (destroy() flags them
+      // synchronously), so a join that knows the DS address logs once.
+      const sockets = [...teamBySocket]
+        .filter(([socket, team]) => team === teamNumber && !socket.destroyed)
+        .map(([socket]) => socket);
+      if (!sockets.length) return;
+      const addrs = [...new Set(sockets.map(s => (s.remoteAddress ?? '?').replace(/^::ffff:/, '')))].join(', ');
+      console.log(
+        `Closing ${sockets.length} TCP connection(s) from team ${teamNumber}'s DS (${addrs}) to force a fresh handshake: ${reason}`,
+      );
+      for (const socket of sockets) socket.destroy();
     });
 
     tcpServer.on('error', error);

@@ -34,7 +34,14 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
    each) from their station page. Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
-   freely. The roster names the robot that joined — a team whose Wi-Fi
+   freely. Joining, leaving and switching alliance each close the Driver
+   Station's field session so it re-handshakes and picks up the answer
+   within seconds — by the DS address the station has on record, and also
+   by team number, which catches a DS still holding a session for a
+   station its team was just moved off (journal: `Closing N TCP
+connection(s) from team T's DS … to force a fresh handshake: slot4
+joined`). Moving a team between stations, or releasing it, closes its
+   session the same way. The roster names the robot that joined — a team whose Wi-Fi
    request is still held (see below) joins under its own number, not the
    number of the team the radio still holds for that slot. If that robot
    changes during setup (its team releases the Wi-Fi, staff release the
