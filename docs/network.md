@@ -173,37 +173,51 @@ iptables -t nat -A PREROUTING -i eth0.slot1 -p udp -d 10.TE.AM.254 \
 This catches all UDP packets from the robot destined for the gateway IP on
 the station's VLAN interface and rewrites the destination to the DS
 laptop's guest WiFi IP. The rule is scoped to the gateway IP to avoid
-catching multicast/broadcast traffic. The rule is:
+catching multicast/broadcast traffic.
 
-- **Added** when the DS announces itself via TCP 1750 and its station is
-  resolved
+### Drive sessions belong to the robot, not the slot
+
+Which laptop drives which robot is a _drive session_
+(`src/driveSessions.ts`). It is keyed by the robot's SSID and the laptop's
+IP, never by slot. The slot a robot is on is looked up from the radio config
+only when a rule is built on that slot's bridge.
+
+- **Starting.** A laptop announces its team number in every DS handshake and
+  UDP status. When that team has exactly one robot on the field, the laptop
+  drives it. With two robots of one team, the laptop picks one with the Drive
+  button on its team page (or `/route`).
+- **Kernel state is derived.** From the sessions and the current radio
+  config, pFMS works out which DNAT rules, duplicate-DS blocks and route
+  preferences should exist, and one serialised sync adds or removes the
+  difference. It runs on every change and every 5 seconds, so a burst of
+  handshakes cannot create duplicate rules, a failed iptables call is
+  retried, and anything that drifts heals.
+- **A slot changing hands needs no special case.** The previous robot is no
+  longer on any slot, so its session ends and its rules go; the new robot
+  has no session, so its team's laptop takes it. The previous team's laptop
+  can keep handshaking from the guest Wi-Fi without effect. When this was
+  keyed by slot, that laptop kept the slot, the new team's only laptop was
+  refused as a "duplicate DS", and joining a match handed control to the old
+  laptop (2026-09-27, slots 1 and 4).
+- **A robot moving slots keeps its laptop**, and its rules follow it.
+- **"Multiple DSes"** means a second laptop for the same robot. It is held
+  off the robot's VLAN with a FORWARD drop and told so in its game data,
+  until the first laptop goes quiet or the second disconnects.
 - **Persistent** across DS TCP reconnects (the DS flaps every ~6 s when no
-  match is running)
-- **Removed** when the station's team assignment is cleared or changed.
-  The in-memory record is dropped before the kernel delete runs, and every
-  copy of the rule is deleted, so a rule on its way out can neither hand the
-  slot back to the laptop that just left it nor linger as a duplicate
-- **Serialised** per station: add and remove never interleave, so a burst
-  of handshakes from one laptop cannot create duplicate rules
+  match is running). A session ends when its laptop has said nothing for
+  20 s, when its robot leaves the field, or when the laptop's DS is switched
+  to another team.
 - **Cleaned up** on hard restart via the `pfms-` comment prefix (same as
-  all other rules)
-- **Preserved** across graceful restarts (SIGHUP / `systemctl reload`);
-  restored from kernel iptables on startup so stale rules are properly
-  cleaned up if a DS reconnects with a different IP
+  all other rules).
+- **Preserved** across graceful restarts (SIGHUP / `systemctl reload`): DNAT
+  rules found in the kernel become sessions again when the robot on their
+  slot is still of that team, so robots stay connected. Anything else found
+  there (rules for robots that left, duplicate copies, leftover blocks) is
+  removed.
 
-### A laptop belongs to its team, not to a slot
-
-The accepted Driver Station for a station (its _drive session_) is only
-kept while that laptop's team owns the station. pFMS remembers which team
-each laptop last announced (TCP handshake, UDP status). A laptop is only
-refreshed off an existing DNAT rule while the rule still matches the
-station's current team, and a 5-second sweep clears any session whose
-laptop's team no longer matches the station (or whose station has no team).
-Without this, when a slot changed hands the previous team's laptop, still on
-the guest Wi-Fi and still handshaking every few seconds, could win the slot
-back during the reconfigure; the new team's only laptop was then refused as a
-"duplicate DS", and joining a match handed control to the old laptop
-(2026-09-27, slots 1 and 4).
+The match engine still records a Driver Station per station; the drive
+sessions keep it in step, so a station shows the laptop of the robot on it
+now.
 
 ## Duplicate Team Handling
 

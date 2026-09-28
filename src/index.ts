@@ -10,7 +10,8 @@ import { waitForRadio, detectFirmwareMode, checkInterfaceIps, checkRequiredTools
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 import CIDRMatcher from 'cidr-matcher';
-import { perKeySerializer, toCidr } from './utils.js';
+import { toCidr } from './utils.js';
+import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine } from './matchEngine.js';
 import {
   stopAllDHCP,
@@ -1038,11 +1039,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   if (StartFMS) {
-    // Synchronous record of the accepted DS IP per station. Updated immediately
-    // in trySetDSAddress (before the async addDnatRule resolves) to close the race
-    // window where a second DS could sneak in during the first DS's iptables call.
-    const acceptedDsForStation = new Map<StationName, string>();
-
     const telemetryManager = new TelemetryManager(
       () => radioManager.getTeamMappings(),
       update => {
@@ -1053,16 +1049,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           radioManager.retryDeferredCommit();
         }
       },
-      // Resolve station for duplicate teams using the accepted DS IP map
-      (teamNumber, address) => {
-        if (!radioManager.isTeamDuplicated(teamNumber)) return undefined;
-        for (const [station, dsIp] of acceptedDsForStation) {
-          if (dsIp === address && radioManager.getTeamForStation(station) === teamNumber) {
-            return station;
-          }
-        }
-        return undefined;
-      },
+      // Two robots of one team: the station of the robot this laptop drives.
+      (teamNumber, address) =>
+        radioManager.isTeamDuplicated(teamNumber) ? driveSessions.stationDrivenBy(address, teamNumber) : undefined,
     );
 
     // Defer radio configuration while robots are enabled or a match is running
@@ -1074,36 +1063,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     matchEngine.addStateListener(() => {
       radioManager.retryDeferredCommit();
     });
-
-    // Track active DNAT rules so we can clean them up when stations are reconfigured.
-    // Map: station → { dsIp, gatewayIp, vlanInterface }
-    const activeDnatRules = new Map<StationName, { dsIp: string; gatewayIp: string; vlanInterface: string }>();
-
-    // After a graceful restart, restore DNAT rules from the kernel so we can
-    // properly clean them up if a DS reconnects with a different IP.
-    if (KeepNetwork) {
-      try {
-        const { stdout } = await execFile('iptables', ['-t', 'nat', '-S', 'PREROUTING']);
-        for (const line of stdout.split('\n')) {
-          if (!line.includes(`${IPTABLES_COMMENT_PREFIX}dnat-`)) continue;
-          const iMatch = line.match(/-i\s+(\S+)/);
-          const dMatch = line.match(/-d\s+(\S+)/);
-          const commentMatch = line.match(/--comment\s+(\S+)/);
-          const toMatch = line.match(/--to-destination\s+(\S+)/);
-          if (!iMatch || !dMatch || !commentMatch || !toMatch) {
-            console.warn(`Failed to parse DNAT rule for restoration: ${line.trim()}`);
-            continue;
-          }
-          const station = commentMatch[1].replace(`${IPTABLES_COMMENT_PREFIX}dnat-`, '') as StationName;
-          if (!StationNameList.includes(station)) continue;
-          const gatewayIp = dMatch[1].replace(/\/\d+$/, '');
-          activeDnatRules.set(station, { dsIp: toMatch[1], gatewayIp, vlanInterface: iMatch[1] });
-          console.log(`Restored DNAT rule: ${station} UDP → ${gatewayIp} rewritten to ${toMatch[1]}`);
-        }
-      } catch (err) {
-        console.warn('Failed to restore DNAT rules from kernel:', (err as Error).message);
-      }
-    }
 
     /**
      * Compute the gateway (MASQUERADE source) IP on a team's VLAN.
@@ -1138,68 +1097,126 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       }
     }
 
-    // Track last activity (TCP or UDP) timestamp per accepted DS IP.
-    // Used to detect stale drive sessions: if a DS hasn't been seen for
-    // DS_STALE_TIMEOUT_MS, its drive session is cleared so a replacement
-    // DS can auto-connect. This handles laptop swaps without needing a
-    // manual "takeover" button.
-    const DS_STALE_TIMEOUT_MS = 20_000; // 20 seconds (covers ~3 DS TCP flap cycles)
-    const dsLastActivity = new Map<string, number>();
+    // Which laptop drives which robot — keyed by robot and laptop, never by
+    // slot (see src/driveSessions.ts). The slot is looked up here only to
+    // build a kernel rule on that slot's bridge.
+    const dnatComment = (station: StationName) => `${IPTABLES_COMMENT_PREFIX}dnat-${station}`;
+    const blockComment = (station: StationName) => `${IPTABLES_COMMENT_PREFIX}block-dup-ds-${station}`;
+    const dnatOptions = (rule: DnatRule) => ({
+      table: 'nat' as const,
+      chain: 'PREROUTING',
+      inInterface: bridgeName(rule.station),
+      protocol: 'udp' as const,
+      destination: teamGatewayIp(rule.team),
+      jump: 'DNAT',
+      toDestination: rule.dsIp,
+      comment: dnatComment(rule.station),
+    });
+    const blockOptions = (rule: BlockRule) => ({
+      chain: 'FORWARD',
+      source: rule.dsIp,
+      outInterface: bridgeName(rule.station),
+      jump: 'DROP',
+      comment: blockComment(rule.station),
+    });
 
-    /** Update the last-activity timestamp for a DS IP. */
-    function touchDsActivity(dsIp: string) {
-      dsLastActivity.set(dsIp, Date.now());
+    const driveSessions = new DriveSessions({
+      robotOn: station => radioManager.getStationConfig(station)?.ssid || null,
+      async addDnat(rule) {
+        if (!net || !VlanInterface) return;
+        await net.iptables({ action: '-A', ...dnatOptions(rule) });
+        // Flush any stale conntrack entries for UDP traffic to the gateway IP.
+        // Without this, packets that arrived before the DNAT rule was inserted get
+        // cached as local-delivery flows, and subsequent packets bypass the nat table entirely.
+        const gatewayIp = teamGatewayIp(rule.team);
+        try {
+          const { stdout } = await execFile('conntrack', ['-D', '-p', 'udp', '-d', gatewayIp]);
+          console.log(`conntrack flush: ${stdout.trim()}`);
+        } catch (err: unknown) {
+          const { code } = err as { code?: number | string };
+          if (code === 1) {
+            // No entries matched — the race didn't happen this time. Nothing to flush.
+          } else if (code === 'ENOENT') {
+            console.error('conntrack binary not found — install with: sudo apt install conntrack');
+          } else {
+            console.error(`conntrack flush failed (code ${code}):`, (err as Error).message);
+          }
+        }
+      },
+      async removeDnat(rule, copies) {
+        if (!net) return;
+        // The backend deletes one matching rule per call.
+        for (let i = 0; i < copies; i++) await net.iptables({ action: '-D', ...dnatOptions(rule) });
+      },
+      async addBlock(rule) {
+        if (!net || !VlanInterface) return;
+        await net.iptables({ action: '-I', ...blockOptions(rule) });
+        startBlockedDsControlLoop();
+      },
+      async removeBlock(rule) {
+        if (!net) return;
+        await net.iptables({ action: '-D', ...blockOptions(rule) });
+      },
+      routeOf: dsIp => getPreference(dsIp),
+      setRoute: (dsIp, station, team) => setRoutePreference(dsIp, station, team),
+      clearRoute: dsIp => clearRoutePreference(dsIp),
+      engineSetDs: (station, dsIp) => matchEngine.setDSAddress(station, dsIp),
+      engineClearDs: station => matchEngine.clearDSAddress(station),
+      changed: () => {
+        broadcastDriveSessionState();
+        broadcastRouteState();
+      },
+      info: appInfo,
+      warn: appWarn,
+      error: (message, err) => console.error(`${message}:`, err),
+      now: Date.now,
+    });
+
+    // After a graceful restart the kernel still holds the previous process's
+    // rules. Hand them to the drive sessions: DNAT rules that still match the
+    // robot on their slot become sessions again (robots stay connected across
+    // a reload); everything else is removed.
+    if (KeepNetwork) {
+      const dnat: DnatRule[] = [];
+      const blocks: BlockRule[] = [];
+      try {
+        const { stdout } = await execFile('iptables', ['-t', 'nat', '-S', 'PREROUTING']);
+        for (const line of stdout.split('\n')) {
+          const comment = line.match(/--comment\s+"?([^"\s]+)"?/)?.[1];
+          if (!comment?.startsWith(`${IPTABLES_COMMENT_PREFIX}dnat-`)) continue;
+          const station = comment.slice(`${IPTABLES_COMMENT_PREFIX}dnat-`.length) as StationName;
+          const gateway = line.match(/-d\s+10\.(\d+)\.(\d+)\.\d+/);
+          const dsIp = line.match(/--to-destination\s+(\S+)/)?.[1];
+          if (!StationNameList.includes(station) || !gateway || !dsIp) {
+            console.warn(`Failed to parse DNAT rule for restoration: ${line.trim()}`);
+            continue;
+          }
+          dnat.push({ station, team: Number(gateway[1]) * 100 + Number(gateway[2]), dsIp });
+        }
+      } catch (err) {
+        console.warn('Failed to read DNAT rules from kernel:', (err as Error).message);
+      }
+      try {
+        const { stdout } = await execFile('iptables', ['-S', 'FORWARD']);
+        for (const line of stdout.split('\n')) {
+          const comment = line.match(/--comment\s+"?([^"\s]+)"?/)?.[1];
+          if (!comment?.startsWith(`${IPTABLES_COMMENT_PREFIX}block-dup-ds-`)) continue;
+          const station = comment.slice(`${IPTABLES_COMMENT_PREFIX}block-dup-ds-`.length) as StationName;
+          const dsIp = line.match(/-s\s+([\d.]+)/)?.[1];
+          if (StationNameList.includes(station) && dsIp) blocks.push({ station, dsIp });
+        }
+      } catch (err) {
+        console.warn('Failed to read duplicate-DS blocks from kernel:', (err as Error).message);
+      }
+      driveSessions.restore(dnat, blocks);
+      console.log(`Restored ${dnat.length} DNAT rule(s) and ${blocks.length} duplicate-DS block(s) from the kernel`);
     }
 
-    /** Which team each Driver Station laptop last said it was, by IP (from
-     *  its TCP handshake and UDP status). A laptop belongs to its team, not
-     *  to a slot: when a slot changes hands the previous team's laptop must
-     *  not keep, or win back, that slot's drive session. */
-    const dsTeam = new Map<string, number>();
-
-    /** True while a DNAT rule still describes the station's current team —
-     *  false for a rule that is on its way out because the slot changed
-     *  hands (2026-09-27: 972's laptop re-took slot1 off such a rule while
-     *  the iptables delete was in flight, and 751's only laptop was then
-     *  reported as a duplicate). */
-    function dnatRuleIsCurrent(station: StationName, rule: { gatewayIp: string }): boolean {
-      const team = radioManager.getTeamForStation(station);
-      return team !== null && teamGatewayIp(team) === rule.gatewayIp;
-    }
-
-    /** True unless this laptop is known to belong to a team other than the
-     *  one on the station. Unknown laptops (no handshake seen yet) pass. */
-    function dsMayDrive(dsIp: string, station: StationName): boolean {
-      const team = dsTeam.get(dsIp);
-      if (team === undefined) return true;
-      return radioManager.getTeamForStation(station) === team;
-    }
-
-    // Liveness is activity-only, never "the TCP socket is open": team VLANs
-    // are masqueraded, and a DS that vanishes without a FIN (laptop swap,
-    // unplugged cable) leaves an established socket behind for ~10 minutes
-    // until keepalive reaps it — long enough to lock the replacement out.
-    /** Check if a DS IP is considered stale (no activity for DS_STALE_TIMEOUT_MS). */
-    function isDsStale(dsIp: string): boolean {
-      const last = dsLastActivity.get(dsIp);
-      if (!last) return true;
-      return Date.now() - last > DS_STALE_TIMEOUT_MS;
-    }
-
-    /** Build and broadcast drive session state to all clients. */
+    /** Build and broadcast drive session state to all clients. Keyed by
+     *  station on the wire, computed fresh from where each robot is now. */
     function broadcastDriveSessionState() {
-      const now = Date.now();
-      const sessions: DriveSessionState['sessions'] = {};
-      for (const [station, dsIp] of acceptedDsForStation) {
-        const lastActivity = dsLastActivity.get(dsIp) ?? now;
-        const elapsed = now - lastActivity;
-        const timeoutRemaining = Math.max(0, (DS_STALE_TIMEOUT_MS - elapsed) / 1000);
-        sessions[station] = { dsIp, lastActivity, timeoutRemaining: Math.round(timeoutRemaining) };
-      }
-      const blockedDs: DriveSessionState['blockedDs'] = {};
-      for (const [station, blocks] of blockedDsRules) {
-        if (blocks.size > 0) blockedDs[station] = [...blocks.keys()];
-      }
+      const sessions = driveSessions.sessionsByStation();
+      const blockedDs = driveSessions.blockedByStation();
       // Resolve device names for every DS the UI is about to show — blocked
       // DSes especially, since "Multiple DSes Detected" should name the laptop.
       for (const session of Object.values(sessions)) hostnameResolver.track(session.dsIp);
@@ -1207,9 +1224,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       broadcast({ type: 'driveSessionState', sessions, blockedDs } satisfies DriveSessionState);
     }
 
-    // Track blocked (duplicate) DS IPs per station. Multiple DSes can be blocked
-    // simultaneously (e.g. someone opens 3 Driver Stations). Map: station → ip → vlanInterface
-    const blockedDsRules = new Map<StationName, Map<string, string>>();
     let blockedDsControlTimer: NodeJS.Timeout | null = null;
 
     /** Send periodic disabled+game data packets to all blocked DSes so they show the warning. */
@@ -1217,8 +1231,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       if (blockedDsControlTimer) return;
       blockedDsControlTimer = setInterval(() => {
         let anyBlocked = false;
-        for (const [station, blocks] of blockedDsRules) {
-          for (const ip of blocks.keys()) {
+        for (const [station, ips] of Object.entries(driveSessions.blockedByStation()) as [StationName, string[]][]) {
+          for (const ip of ips) {
             anyBlocked = true;
             matchEngine.sendRawControlPacket(ip, station, [
               { type: 'gameData', data: 'Multiple DSes Detected. Close Others.' },
@@ -1232,304 +1246,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       }, 500);
     }
 
-    /** Block a duplicate DS from forwarding packets to the robot's VLAN. */
-    async function blockDuplicateDS(station: StationName, dsIp: string) {
-      if (!net || !VlanInterface) return;
-      let stationBlocks = blockedDsRules.get(station);
-      if (stationBlocks?.has(dsIp)) return; // Already blocked
-      if (!stationBlocks) {
-        stationBlocks = new Map();
-        blockedDsRules.set(station, stationBlocks);
-      }
-      const brName = bridgeName(station);
-      await net.iptables({
-        action: '-I',
-        chain: 'FORWARD',
-        source: dsIp,
-        outInterface: brName,
-        jump: 'DROP',
-        comment: `${IPTABLES_COMMENT_PREFIX}block-dup-ds-${station}`,
-      });
-      stationBlocks.set(dsIp, brName);
-      appWarn(`Blocked duplicate DS ${dsIp} from forwarding to ${station} (${brName})`);
-      broadcastDriveSessionState();
-      startBlockedDsControlLoop();
-    }
-
-    /** Remove the FORWARD DROP rule for one blocked DS. */
-    async function unblockDS(station: StationName, dsIp: string) {
-      if (!net) return;
-      const stationBlocks = blockedDsRules.get(station);
-      const vlanInterface = stationBlocks?.get(dsIp);
-      if (!vlanInterface) return;
-      await net.iptables({
-        action: '-D',
-        chain: 'FORWARD',
-        source: dsIp,
-        outInterface: vlanInterface,
-        jump: 'DROP',
-        comment: `${IPTABLES_COMMENT_PREFIX}block-dup-ds-${station}`,
-      });
-      stationBlocks!.delete(dsIp);
-      if (stationBlocks!.size === 0) blockedDsRules.delete(station);
-      appInfo(`Unblocked duplicate DS ${dsIp} for ${station}`);
-      broadcastDriveSessionState();
-    }
-
-    /** Remove all FORWARD DROP rules for a station. */
-    async function unblockAllDS(station: StationName) {
-      const stationBlocks = blockedDsRules.get(station);
-      if (!stationBlocks) return;
-      for (const ip of [...stationBlocks.keys()]) {
-        await unblockDS(station, ip);
-      }
-    }
-
-    /**
-     * Attempt to set the DS address for a station. Returns true if accepted,
-     * false if this DS was blocked as a duplicate.
-     */
-    function trySetDSAddress(station: StationName, dsIp: string): boolean {
-      const accepted = acceptedDsForStation.get(station);
-      // Same IP as current — always accept (idempotent)
-      if (!accepted || accepted === dsIp) {
-        acceptedDsForStation.set(station, dsIp);
-        matchEngine.setDSAddress(station, dsIp);
-        return true;
-      }
-      // Different IP — check if the current DS is still active. Liveness is
-      // activity-based only: an open TCP socket proves nothing, because a laptop
-      // that sleeps or drops off WiFi never sends FIN, and the ghost socket would
-      // block takeover forever (2854's laptop swap, 2026-07-12). A live DS always
-      // produces activity within seconds (UDP status at 2 Hz, or the ~6s TCP
-      // reconnect cycle), so recent activity still prevents takeover during flaps
-      // while allowing it when the old DS is truly gone (~20s).
-      // A laptop whose team no longer owns the station never holds it,
-      // however lively: the slot changed hands, so the newcomer takes over
-      // at once instead of being reported as a duplicate.
-      if (!dsMayDrive(accepted, station)) {
-        appInfo(
-          `DS takeover: ${dsIp} replacing ${accepted} on ${station} ` +
-            `(that laptop is team ${dsTeam.get(accepted)}'s, the station is not)`,
-        );
-        clearRoutePreference(accepted).catch(err =>
-          console.error(`Failed to clear route preference for ${accepted}:`, err),
-        );
-        acceptedDsForStation.set(station, dsIp);
-        matchEngine.setDSAddress(station, dsIp);
-        return true;
-      }
-      if (!isDsStale(accepted)) {
-        blockDuplicateDS(station, dsIp).catch(err => {
-          console.error(`Failed to block duplicate DS for ${station}:`, err);
-        });
-        return false;
-      }
-      // Current DS is stale — accept the new one
-      appInfo(`DS takeover: ${dsIp} replacing stale DS ${accepted} on ${station}`);
-      acceptedDsForStation.set(station, dsIp);
-      matchEngine.setDSAddress(station, dsIp);
-      return true;
-    }
-
-    /**
-     * Add a PREROUTING DNAT rule so all UDP from the robot destined for
-     * the gateway (MASQUERADE source) gets forwarded to the real DS laptop
-     * on the guest network. Scoped to the gateway IP to avoid catching
-     * multicast (mDNS) or broadcast (DHCP) traffic.
-     */
-    // One DNAT operation at a time per station. The backend's "check, then
-    // add" is not atomic across calls: five messages from one laptop in the
-    // same second once produced five identical DNAT rules for slot4, and
-    // removing "the" rule later left four behind (2026-09-27 14:20).
-    const dnatOp = perKeySerializer<StationName>();
-
-    /** Route the station's robot UDP to `dsIp`, for `team`. Skipped if the
-     *  station no longer belongs to `team` by the time the queued operation
-     *  runs — otherwise a drive start that raced a slot change would build
-     *  the new team's rule pointing at the old team's laptop. */
-    function addDnatRule(station: StationName, dsIp: string, team: number): Promise<void> {
-      return dnatOp(station, () => addDnatRuleNow(station, dsIp, team));
-    }
-
-    function removeDnatRule(station: StationName): Promise<void> {
-      return dnatOp(station, () => removeDnatRuleNow(station));
-    }
-
-    async function addDnatRuleNow(station: StationName, dsIp: string, forTeam: number) {
-      if (!net || !VlanInterface) return;
-      const team = radioManager.getTeamForStation(station);
-      if (!team) return;
-      if (team !== forTeam) {
-        appInfo(`DNAT for ${dsIp} on ${station} skipped: station is now team ${team}'s, not ${forTeam}'s`);
-        return;
-      }
-      const brName = bridgeName(station);
-      const gatewayIp = teamGatewayIp(team);
-      const existing = activeDnatRules.get(station);
-      if (existing?.dsIp === dsIp && existing.gatewayIp === gatewayIp) return; // Already set, idempotent
-      // Don't swap DNAT to a different DS while the current one shows recent
-      // activity — prevents thrashing when two DSes compete for one station.
-      // Activity-based, not TCP-based: ghost sockets from vanished laptops
-      // must not pin the DNAT to a dead DS. A rule for a team that no longer
-      // owns the station is swapped regardless.
-      if (existing && dnatRuleIsCurrent(station, existing) && !isDsStale(existing.dsIp)) return;
-      if (existing) await removeDnatRuleNow(station); // Current DS gone (or slot changed hands), swap to new one
-      await net.iptables({
-        action: '-A',
-        table: 'nat',
-        chain: 'PREROUTING',
-        inInterface: brName,
-        protocol: 'udp',
-        destination: gatewayIp,
-        jump: 'DNAT',
-        toDestination: dsIp,
-        comment: `${IPTABLES_COMMENT_PREFIX}dnat-${station}`,
-      });
-      activeDnatRules.set(station, { dsIp, gatewayIp, vlanInterface: brName });
-      appInfo(`DNAT rule added: ${station} UDP → ${gatewayIp} rewritten to ${dsIp}`);
-      // Flush any stale conntrack entries for UDP traffic to the gateway IP.
-      // Without this, packets that arrived before the DNAT rule was inserted get
-      // cached as local-delivery flows, and subsequent packets bypass the nat table entirely.
-      try {
-        const { stdout } = await execFile('conntrack', ['-D', '-p', 'udp', '-d', gatewayIp]);
-        console.log(`conntrack flush: ${stdout.trim()}`);
-      } catch (err: unknown) {
-        const { code } = err as { code?: number | string };
-        if (code === 1) {
-          // No entries matched — the race didn't happen this time. Nothing to flush.
-        } else if (code === 'ENOENT') {
-          console.error('conntrack binary not found — install with: sudo apt install conntrack');
-        } else {
-          console.error(`conntrack flush failed (code ${code}):`, (err as Error).message);
-        }
-      }
-    }
-
-    /** How many DNAT rules the kernel holds for a station right now. Normally
-     *  one; more after the concurrent-add race. Falls back to 1 when the
-     *  listing is unavailable (dry-run, no iptables binary). */
-    async function countKernelDnatRules(station: StationName): Promise<number> {
-      try {
-        const { stdout } = await execFile('iptables', ['-t', 'nat', '-S', 'PREROUTING']);
-        const tag = `${IPTABLES_COMMENT_PREFIX}dnat-${station}`;
-        return Math.max(1, stdout.split('\n').filter(line => line.includes(tag)).length);
-      } catch {
-        return 1;
-      }
-    }
-
-    async function removeDnatRuleNow(station: StationName) {
-      if (!net) return;
-      const existing = activeDnatRules.get(station);
-      if (!existing) return;
-      // Forget the rule before touching the kernel: the FMS message handler
-      // re-accepts laptops off this map, and a rule that is being deleted
-      // must not hand the slot back to the team that just left it.
-      activeDnatRules.delete(station);
-      const rule = {
-        action: '-D' as const,
-        table: 'nat' as const,
-        chain: 'PREROUTING',
-        inInterface: existing.vlanInterface,
-        protocol: 'udp' as const,
-        destination: existing.gatewayIp,
-        jump: 'DNAT',
-        toDestination: existing.dsIp,
-        comment: `${IPTABLES_COMMENT_PREFIX}dnat-${station}`,
-      };
-      // The backend deletes one matching rule per call; take them all so a
-      // duplicate left by an earlier race cannot keep routing the robot's
-      // packets to a laptop that is no longer driving it.
-      const copies = await countKernelDnatRules(station);
-      for (let i = 0; i < copies; i++) await net.iptables(rule);
-      appInfo(`DNAT rule removed: ${station}${copies > 1 ? ` (${copies} copies)` : ''}`);
-    }
-
-    // Clean up DNAT, route preferences, and blocked DS rules when stations are deconfigured or team changes
-    radioManager.addConfigChangeListener(() => {
-      for (const [station, existing] of [...activeDnatRules]) {
-        const team = radioManager.getTeamForStation(station);
-        if (team === null || teamGatewayIp(team) !== existing.gatewayIp) {
-          // Clear route preference for the DS that was driving this station
-          clearRoutePreference(existing.dsIp).catch(err => {
-            console.error(`Failed to clear route preference for ${existing.dsIp}:`, err);
-          });
-          removeDnatRule(station).catch(err => {
-            console.error(`Failed to remove DNAT rule for ${station}:`, err);
-          });
-          unblockAllDS(station).catch(err => {
-            console.error(`Failed to unblock DSes for ${station}:`, err);
-          });
-          acceptedDsForStation.delete(station);
-          matchEngine.clearDSAddress(station);
-        }
-      }
-    });
-
-    /**
-     * Unified "drive" action: sets up both the forward path (ip rule) and
-     * reverse path (DNAT) so a DS laptop can communicate bidirectionally
-     * with a specific station's robot. Also registers the DS with the match engine.
-     */
-    async function startDrive(dsIp: string, station: StationName, team: number) {
-      if (!trySetDSAddress(station, dsIp)) return; // Blocked as duplicate
-
-      // Forward path: ip rule so DS→robot traffic uses the correct VLAN routing table
-      await setRoutePreference(dsIp, station, team);
-
-      // Reverse path: DNAT so robot→gateway UDP gets rewritten to the DS's guest WiFi IP
-      await addDnatRule(station, dsIp, team);
-
-      appInfo(`Drive started: ${dsIp} → ${station} (team ${team})`);
-      broadcastRouteState();
-    }
-
-    /**
-     * Stop driving: tear down both the forward path (ip rule) and reverse path (DNAT)
-     * for whichever station this DS was driving.
-     */
-    async function stopDrive(dsIp: string) {
-      // Find the station this DS was driving (by DNAT rule)
-      for (const [station, rule] of activeDnatRules) {
-        if (rule.dsIp === dsIp) {
-          await clearRoutePreference(dsIp);
-          await removeDnatRule(station);
-          acceptedDsForStation.delete(station);
-          matchEngine.clearDSAddress(station);
-          appInfo(`Drive stopped: ${dsIp} (was on ${station})`);
-          broadcastRouteState();
-          return;
-        }
-      }
-      // Not driving via DNAT — still clear any route preference
-      await clearRoutePreference(dsIp);
-      broadcastRouteState();
-    }
+    // Robots arriving, leaving or moving: sessions follow the robot.
+    radioManager.addConfigChangeListener(() => driveSessions.configChanged());
 
     // Wire up the drive action callback from WebSocket clients
-    onDriveAction = (dsIp, station) => {
-      if (station === null) {
-        stopDrive(dsIp).catch(err => {
-          console.error('Failed to stop drive:', err);
-        });
-      } else {
-        const team = radioManager.getTeamForStation(station);
-        if (!team) return;
-        // If already driving a different station, stop the old one first
-        for (const [oldStation, rule] of activeDnatRules) {
-          if (rule.dsIp === dsIp && oldStation !== station) {
-            stopDrive(dsIp)
-              .then(() => startDrive(dsIp, station, team))
-              .catch(err => console.error('Failed to switch drive:', err));
-            return;
-          }
-        }
-        startDrive(dsIp, station, team).catch(err => {
-          console.error('Failed to start drive:', err);
-        });
-      }
-    };
+    onDriveAction = (dsIp, station) => driveSessions.drive(dsIp, station);
 
     const tcpReplyAll = FmsTcpReplyStations.trim() === 'all';
     const tcpReplyOptIn = new Set(
@@ -1587,7 +1308,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           const joined = state.stationStates[station]?.joined ?? false;
           const blocked = policyBlockReason(station) !== null;
           const held = blocked || outOfMatchControlOff();
-          const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
+          const dsIp = driveSessions.laptopOn(station) ?? state.connectedStations[station]?.ip;
           if (held !== (wasHeld.get(station) ?? false)) {
             wasHeld.set(station, held);
             // A joined station's answer is its slot either way — don't bounce
@@ -1636,7 +1357,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           prevJoined.set(station, joined);
           prevAlliance.set(station, alliance);
           if (!joinedChanged && !allianceChanged) continue;
-          const dsIp = acceptedDsForStation.get(station) ?? state.connectedStations[station]?.ip;
+          const dsIp = driveSessions.laptopOn(station) ?? state.connectedStations[station]?.ip;
           const edge = joinedChanged ? (joined ? 'joined' : 'left') : `changed to ${alliance}`;
           if (dsIp) {
             appInfo(
@@ -1683,62 +1404,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         prevStationByTeam = now;
       });
 
-      fms.on('dsConnected', ({ address }) => {
-        touchDsActivity(address);
-      });
-      fms.on('dsDisconnected', ({ address }) => {
-        // Drive sessions (DNAT, route preference, accepted DS) are NOT cleaned up
-        // on disconnect — DS TCP flaps every ~6s. Instead, the periodic stale
-        // session cleanup below handles old DSes that are truly gone.
+      fms.on('dsConnected', ({ address }) => driveSessions.heard(address));
+      // Sessions survive a TCP drop (the DS flaps every ~6 s out of a match);
+      // a blocked laptop that disconnects is unblocked.
+      fms.on('dsDisconnected', ({ address }) => driveSessions.disconnected(address));
 
-        // Clean up blocked DS FORWARD DROP rules when a blocked DS disconnects
-        for (const [station, stationBlocks] of [...blockedDsRules]) {
-          if (stationBlocks.has(address)) {
-            unblockDS(station, address).catch(err => {
-              console.error(`Failed to unblock DS ${address} for ${station}:`, err);
-            });
-          }
-        }
-      });
-
-      // Periodically clean up stale drive sessions and broadcast session state.
-      // A drive session is stale when the accepted DS has had no TCP/UDP activity
-      // for DS_STALE_TIMEOUT_MS (~20s). This handles laptop swaps: close the old
-      // DS, wait ~20s, open the new one — it auto-connects.
-      // The 5s interval also keeps the timeout countdown in the UI fresh.
-      /** Tear down a station's drive session so another laptop can take over. */
-      function clearDriveSession(station: StationName, dsIp: string, why: string) {
-        appInfo(`Clearing drive session: ${dsIp} on ${station} (${why})`);
-        removeDnatRule(station).catch(err => console.error(`Failed to remove DNAT for ${station}:`, err));
-        clearRoutePreference(dsIp).catch(err => console.error(`Failed to clear route preference for ${dsIp}:`, err));
-        unblockAllDS(station).catch(err => console.error(`Failed to unblock DSes for ${station}:`, err));
-        acceptedDsForStation.delete(station);
-        matchEngine.clearDSAddress(station);
-        broadcastRouteState();
-      }
-
+      // End sessions whose laptop went quiet (DS_STALE_TIMEOUT_MS), re-sync the
+      // kernel rules, and keep the UI's timeout countdown fresh. A laptop swap
+      // needs no button: close the old DS, and the new one takes over ~20 s later.
       setInterval(() => {
-        for (const [station, dsIp] of [...acceptedDsForStation]) {
-          if (isDsStale(dsIp)) {
-            clearDriveSession(station, dsIp, `no activity for ${DS_STALE_TIMEOUT_MS / 1000}s`);
-            dsLastActivity.delete(dsIp);
-            continue;
-          }
-          // Safety net for the slot-changed-hands case: whatever path
-          // accepted this laptop, it only keeps the slot while its team owns
-          // it. Otherwise the new team's own laptop is refused as a
-          // duplicate for as long as the old one stays on the network, and a
-          // join hands match control to the wrong laptop (2026-09-27, slot4
-          // and slot1).
-          const stationTeam = radioManager.getTeamForStation(station);
-          const laptopTeam = dsTeam.get(dsIp);
-          if (stationTeam === null) {
-            clearDriveSession(station, dsIp, 'station has no team');
-          } else if (laptopTeam !== undefined && laptopTeam !== stationTeam) {
-            clearDriveSession(station, dsIp, `laptop is team ${laptopTeam}'s, station is team ${stationTeam}'s`);
-          }
-        }
-        // Broadcast drive session state so the UI can show DS IPs and timeout countdowns
+        driveSessions.sweep();
         broadcastDriveSessionState();
       }, 5_000);
 
@@ -1803,20 +1478,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         // holds one long TCP connection (0x18 is only sent at connect) gets
         // stale-swept after 20s and the field silently stops sending it
         // match control packets (2026-07-17: 5940's auto never enabled).
-        // Only for a laptop whose rule still belongs to the station's current
-        // team: after a slot changes hands, the previous team's laptop must
-        // not refresh or re-take the session off the rule being removed.
-        if (!('teamNumber' in msg.data)) {
-          const address = msg.address.replace(/^::ffff:/, '');
-          for (const [station, rule] of activeDnatRules) {
-            if (rule.dsIp !== address) continue;
-            if (dnatRuleIsCurrent(station, rule) && dsMayDrive(address, station)) {
-              touchDsActivity(address);
-              trySetDSAddress(station, address);
-            }
-            break;
-          }
-        }
+        if (!('teamNumber' in msg.data)) driveSessions.heard(msg.address.replace(/^::ffff:/, ''));
 
         // Auto-discover DS addresses and set up drive sessions.
         // Match on any message carrying teamNumber — TCP 0x18/0x1e and UDP all do.
@@ -1832,51 +1494,21 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             else if (msg.data.type === 0x18) matchEngine.setDsEndpoint(address, 'legacy', UdpSendPort);
           }
 
-          // Track activity for staleness detection
-          touchDsActivity(address);
-
           // Ignore connections from team subnets — these are devices on the robot
-          // network (roboRIO, coprocessors), not Driver Stations.
+          // network (roboRIO, coprocessors), not Driver Stations. A laptop drives
+          // its team's robot wherever that robot is; two robots of one team wait
+          // for the Drive button.
           isTeamSubnetAddress(address)
             .then(isRobotNetwork => {
-              if (isRobotNetwork) return;
-
-              // This laptop belongs to this team, wherever that team's robot is.
-              dsTeam.set(address, teamNumber);
-
-              // If this DS is already driving a station for this team, just refresh.
-              for (const [station, rule] of activeDnatRules) {
-                if (rule.dsIp === address && radioManager.getTeamForStation(station) === teamNumber) {
-                  // Already driving — refresh match engine liveness
-                  trySetDSAddress(station, address);
-                  return;
-                }
-              }
-
-              if (radioManager.isTeamDuplicated(teamNumber)) {
-                // Same team on multiple stations — do NOT auto-assign. The DS must
-                // explicitly pick which robot to drive via the "Drive" button in the UI.
-                // No DNAT, no route preference — just let the FMS track the connection.
-                return;
-              }
-
-              // Common case: unique team on one station — auto-drive (full setup).
-              // If another DS already has a drive session, startDrive → trySetDSAddress
-              // will handle the staleness check and either block or allow takeover.
-              const station = radioManager.getStationForTeam(teamNumber);
-              if (station) {
-                startDrive(address, station, teamNumber).catch(err => {
-                  console.error('Auto-drive failed:', err);
-                });
-              }
+              if (!isRobotNetwork) driveSessions.heard(address, teamNumber);
             })
             .catch(err => console.error('DS processing error:', err));
         }
       });
 
-      // DNAT rules persist across DS TCP reconnects (the DS flaps every ~6s
-      // when no match is running). Rules are cleaned up by the config change
-      // listener above when a station loses its team assignment.
+      // Drive sessions persist across DS TCP reconnects (the DS flaps every ~6s
+      // when no match is running) and end when the laptop goes quiet or its
+      // robot leaves the field.
     });
   }
 
