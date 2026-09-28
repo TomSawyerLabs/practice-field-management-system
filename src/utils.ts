@@ -48,6 +48,32 @@ export function prettyStationName(station: StationName) {
   return `Slot ${match[1]}`;
 }
 
+/**
+ * Run async tasks one at a time per key, in the order they were submitted;
+ * tasks for different keys run concurrently. A task that rejects does not
+ * block the ones queued behind it. Returns each task's own promise.
+ *
+ * Used to serialise kernel-touching operations (iptables add/remove) per
+ * station, so a burst of identical requests cannot interleave their
+ * check-then-act steps and leave duplicate rules behind.
+ */
+export function perKeySerializer<K>(): <T>(key: K, task: () => Promise<T>) => Promise<T> {
+  const tails = new Map<K, Promise<unknown>>();
+  return function run<T>(key: K, task: () => Promise<T>): Promise<T> {
+    const prev = tails.get(key) ?? Promise.resolve();
+    const next = prev.then(
+      () => task(),
+      () => task(),
+    );
+    tails.set(key, next);
+    next.then(
+      () => tails.get(key) === next && tails.delete(key),
+      () => tails.get(key) === next && tails.delete(key),
+    );
+    return next;
+  };
+}
+
 /** Team number out of a robot's SSID ("1234-Comp" → 1234), or null. */
 export function teamOfSsid(ssid: string | null | undefined): number | null {
   if (!ssid) return null;

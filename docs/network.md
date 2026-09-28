@@ -179,12 +179,31 @@ catching multicast/broadcast traffic. The rule is:
   resolved
 - **Persistent** across DS TCP reconnects (the DS flaps every ~6 s when no
   match is running)
-- **Removed** when the station's team assignment is cleared or changed
+- **Removed** when the station's team assignment is cleared or changed.
+  The in-memory record is dropped before the kernel delete runs, and every
+  copy of the rule is deleted, so a rule on its way out can neither hand the
+  slot back to the laptop that just left it nor linger as a duplicate
+- **Serialised** per station: add and remove never interleave, so a burst
+  of handshakes from one laptop cannot create duplicate rules
 - **Cleaned up** on hard restart via the `pfms-` comment prefix (same as
   all other rules)
 - **Preserved** across graceful restarts (SIGHUP / `systemctl reload`);
   restored from kernel iptables on startup so stale rules are properly
   cleaned up if a DS reconnects with a different IP
+
+### A laptop belongs to its team, not to a slot
+
+The accepted Driver Station for a station (its _drive session_) is only
+kept while that laptop's team owns the station. pFMS remembers which team
+each laptop last announced (TCP handshake, UDP status). A laptop is only
+refreshed off an existing DNAT rule while the rule still matches the
+station's current team, and a 5-second sweep clears any session whose
+laptop's team no longer matches the station (or whose station has no team).
+Without this, when a slot changed hands the previous team's laptop, still on
+the guest Wi-Fi and still handshaking every few seconds, could win the slot
+back during the reconfigure; the new team's only laptop was then refused as a
+"duplicate DS", and joining a match handed control to the old laptop
+(2026-09-27, slots 1 and 4).
 
 ## Duplicate Team Handling
 
