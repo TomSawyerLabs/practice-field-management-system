@@ -15,6 +15,12 @@
  */
 import { writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import {
+  MATCH_SOUND_LUFS,
+  MATCH_SOUND_PEAK_CEILING_DBFS,
+  integratedLoudness,
+  samplePeakDbfs,
+} from '../src/loudness.js';
 
 const SAMPLE_RATE = 44100;
 const SOUNDS_DIR = resolve(__dirname, '..', 'sounds');
@@ -67,6 +73,25 @@ class Track {
 
       this.samples[index] += value * gain * envelope;
     }
+  }
+
+  /**
+   * Scale to the loudness every match sound shares (enforced by
+   * src/sounds.test.ts). The `gain`s passed to tone() set the balance within
+   * a clip; this sets its overall level.
+   */
+  level(): this {
+    const audio = { sampleRate: SAMPLE_RATE, channels: [this.samples] };
+    const gain = 10 ** ((MATCH_SOUND_LUFS - integratedLoudness(audio)) / 20);
+    for (let i = 0; i < this.samples.length; i++) this.samples[i] *= gain;
+    const peak = samplePeakDbfs(audio);
+    if (peak > MATCH_SOUND_PEAK_CEILING_DBFS) {
+      throw new Error(
+        `At ${MATCH_SOUND_LUFS} LUFS this clip peaks at ${peak.toFixed(1)} dBFS, above the ` +
+          `${MATCH_SOUND_PEAK_CEILING_DBFS} dBFS ceiling. Make the loudest tone less dominant.`,
+      );
+    }
+    return this;
   }
 
   toWav(): Buffer {
@@ -129,7 +154,7 @@ for (const [name, track] of outputs) {
     console.log(`${name}: already exists, skipping (use --force to overwrite)`);
     continue;
   }
-  const wav = track.toWav();
+  const wav = track.level().toWav();
   writeFileSync(path, wav);
   console.log(`${name}: wrote ${wav.length} bytes (${(track.samples.length / SAMPLE_RATE).toFixed(2)}s)`);
 }
