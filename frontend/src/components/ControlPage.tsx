@@ -44,6 +44,7 @@ import { MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
+import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksModal } from './TeamChecksModal';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
@@ -207,7 +208,8 @@ function useRobotPending(ssid: string): RobotPending {
 const CONTROL_TABS = [
   { id: 'robots', label: 'Robots', needsRobot: false },
   { id: 'radio', label: 'Radio', needsRobot: true },
-  { id: 'network', label: 'Network', needsRobot: true },
+  // Open without a robot too: it holds the laptop's own Wi-Fi check
+  { id: 'network', label: 'Network', needsRobot: false },
   { id: 'video', label: 'Video', needsRobot: false },
 ] as const;
 type ControlTab = (typeof CONTROL_TABS)[number]['id'];
@@ -226,7 +228,7 @@ function tabFromHash(): ControlTab | null {
  * into tabs:
  * - Robots: saved robot configs, enable/release, add robot, verify passphrase
  * - Radio: the selected robot's radio status, charts or tables
- * - Network: port bridging and network diagnostics
+ * - Network: port bridging and network diagnostics, and the laptop Wi-Fi check
  * - Video: match and practice recordings
  *
  * Each DS laptop opens /<ssid> for the specific robot it drives.
@@ -444,6 +446,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
               <StationNetwork station={station} />
             </Box>
           ))}
+
+      {tab === 'network' && <LaptopWifiCheck />}
 
       {tab === 'video' && (
         <MatchVideoCard

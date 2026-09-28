@@ -71,6 +71,9 @@ import { PracticeStore } from './practiceStore.js';
 import { PracticeRecorder } from './practiceRecorder.js';
 import { FieldTimelapse } from './fieldTimelapse.js';
 import { handleTimelapseRequest } from './timelapseApi.js';
+import { createDiagReportHandler } from './diagReportApi.js';
+import { findAssetDir } from './staticServer.js';
+import { getRealClientIp } from './utils.js';
 import { PracticeNotifier } from './practiceNotifier.js';
 import { countPracticeDayItems, handlePracticeRequest, type PracticeApiDeps } from './practiceApi.js';
 import { UsageTracker } from './usageTracker.js';
@@ -592,6 +595,21 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // instead of bare IPs. `broadcast` is const-declared below; the callback only
   // fires after async resolutions, well past initialization.
   const hostnameResolver = new HostnameResolver(state => broadcast(state));
+  // Driver Station laptop Wi-Fi reports: the collector script teams run, and
+  // where it uploads to (see src/diagReportApi.ts). A report is tagged with
+  // the team on the station whose DS spoke from the same address.
+  const handleDiagRequest = createDiagReportHandler({
+    scriptDir: findAssetDir(['diag']),
+    reportsDir: process.env.DIAG_REPORTS_DIR ?? 'diag-reports',
+    clientIp: req => getRealClientIp(req.socket.remoteAddress, req.headers, trustedProxyMatcher),
+    teamForIp: ip => {
+      const { connectedStations } = matchEngine.getState();
+      for (const station of StationNameList) {
+        if (connectedStations[station]?.ip === ip) return radioManager.getTeamForStation(station) ?? undefined;
+      }
+      return undefined;
+    },
+  });
   const { wss, broadcast, broadcastRouteState, publicConnections } = setupWebSocket(
     radioManager,
     matchEngine,
@@ -607,6 +625,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder),
       (req, res) => handlePracticeRequest(req, res, practiceApi),
       (req, res) => handleTimelapseRequest(req, res, fieldTimelapse),
+      handleDiagRequest,
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
       handleManifestRequest,

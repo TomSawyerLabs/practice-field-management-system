@@ -8,6 +8,7 @@
  *   pfms            the binary (no node, no bun, no npm install)
  *   web/            the built frontend
  *   sounds/         match audio
+ *   diag/           the Driver Station Wi-Fi check teams download
  *
  * Assets sit NEXT TO the binary rather than inside it because
  * `bun build --compile` keeps each bundled module's build-time `__dirname` —
@@ -33,6 +34,7 @@ const binaryName = isWindows ? 'pfms.exe' : 'pfms';
 
 const webSource = resolve(ROOT, 'frontend', 'dist');
 const soundsSource = resolve(ROOT, 'sounds');
+const diagSource = resolve(ROOT, 'diag');
 
 if (!existsSync(webSource)) {
   console.error(`No built frontend at ${webSource}. Run "bun run build" first.`);
@@ -55,9 +57,10 @@ if (build.status !== 0) {
 
 cpSync(webSource, resolve(outDir, 'web'), { recursive: true });
 cpSync(soundsSource, resolve(outDir, 'sounds'), { recursive: true });
+cpSync(diagSource, resolve(outDir, 'diag'), { recursive: true });
 
 console.log(`\nPackaged into ${outDir}`);
-console.log('Contents: the binary, web/ (frontend), sounds/ (match audio)');
+console.log('Contents: the binary, web/ (frontend), sounds/ (match audio), diag/ (Wi-Fi check script)');
 console.log('\nZip that directory and it runs anywhere with no dependencies:');
 console.log(`  sudo ./${binaryName}        # then open http://<host>:3000/setup`);
-console.log('\nKeep the three items together — the binary looks for web/ and sounds/ beside it.');
+console.log('\nKeep the four items together — the binary looks for web/, sounds/ and diag/ beside it.');

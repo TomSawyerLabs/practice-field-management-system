@@ -136,6 +136,8 @@ The [`docs/`](docs/README.md) directory has the full documentation:
 - [Network architecture](docs/network.md) — VLANs, routing, DNAT,
   discovery
 - [Robot network tester](docs/robot-tester.md) — the `/test` CSA tool
+- [Driver Station Wi-Fi check](docs/ds-wifi-check.md) — the laptop check
+  teams run from the Network tab, and where its reports land
 - [Backend internals](docs/internals.md) — startup, config flow, graceful
   reload, telemetry
 
