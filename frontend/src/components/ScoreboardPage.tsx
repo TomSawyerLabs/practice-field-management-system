@@ -17,9 +17,19 @@ import {
   sendCastReceiverRegister,
   usePublicUrl,
   matchSummaryUrl,
+  useStationChecks,
 } from '../hooks/useBackend';
-import type { Alliance, ScoreBatch, StationName, TelemetryUpdate } from '../../../src/types';
-import { StationNameList } from '../../../src/types';
+import type {
+  Alliance,
+  ScoreBatch,
+  SetupCheckLevel,
+  StationChecksState,
+  StationName,
+  StationSetupChecks,
+  TelemetryUpdate,
+} from '../../../src/types';
+import { StationNameList, StationSetupCheckList } from '../../../src/types';
+import { checkRow, checksTone, firstFailingCheck, robotAlert, type RobotAlert } from '../utils/stationChecks';
 import { getAllianceShiftState, getAllianceScoringShifts, getMatchSubPeriod } from '../utils/shiftState';
 import type { MatchSubPeriod } from '../utils/shiftState';
 import { isChallengeConfig, formatName, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
@@ -36,6 +46,7 @@ declare global {
     __castReady?: boolean;
     __castSendSwap?: (swap: boolean) => void;
     __castSendMute?: (mute: boolean) => void;
+    __castSendChecks?: (checks: boolean) => void;
     __isCastReceiver?: boolean;
   }
 }
@@ -126,6 +137,23 @@ function getInitialMuted(): boolean {
   return localStorage.getItem('scoreboard-muted') === '1';
 }
 
+// ── Setup checks (browser-local) ────────────────────────────────────
+// Between matches, each robot gets a column of the checks it has to turn
+// green (DS, radio, comms, joysticks, battery, Ready) so field staff can see
+// what is wrong from across the room. ?checks=1 overrides; persisted per
+// browser, and pushed to Cast TVs from the admin page.
+
+function getInitialChecks(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const param = params.get('checks');
+  if (param !== null) return param === '1' || param === 'true';
+  return localStorage.getItem('scoreboard-checks') === '1';
+}
+
+/** How long the setup columns take to fold down into the battery row (and
+ *  back out after a match). */
+const SETUP_TRANSITION = '0.9s cubic-bezier(0.4, 0, 0.2, 1)';
+
 // ── Video mode (browser-local) ──────────────────────────────────────
 // The video view is configured per browser: mode and stream source live in
 // localStorage, with URL params (?video=1&videoSrc=...) as overrides.
@@ -182,9 +210,11 @@ export function ScoreboardPage() {
   const score = useScoreState();
   const matchState = useMatchState();
   const matchHistory = useMatchHistory();
+  const stationChecks = useStationChecks();
   const [, setTick] = useState(0);
   const [swapped, setSwapped] = useState(getInitialSwap);
   const [muted, setMuted] = useState(getInitialMuted);
+  const [checksMode, setChecksMode] = useState(getInitialChecks);
   const [videoMode, setVideoMode] = useState(getInitialVideoMode);
   const [videoSource, setVideoSource] = useState(getInitialVideoSource);
   const [videoLayout, setVideoLayout] = useState(getInitialVideoLayout);
@@ -245,6 +275,15 @@ export function ScoreboardPage() {
       localStorage.setItem('scoreboard-muted', next ? '1' : '0');
       if (next) stopAllSounds();
       window.__castSendMute?.(next);
+      return next;
+    });
+  };
+
+  const toggleChecks = () => {
+    setChecksMode(c => {
+      const next = !c;
+      localStorage.setItem('scoreboard-checks', next ? '1' : '0');
+      window.__castSendChecks?.(next);
       return next;
     });
   };
@@ -510,6 +549,17 @@ export function ScoreboardPage() {
   const stationKey = stationInfoKey(matchState);
   const matchAlliancesKey = matchAlliances.join(',');
 
+  // Setup checks: between matches they take over the main area; at the start
+  // countdown they fold down into the battery row while a big 3-2-1 plays,
+  // and the scores ease in when the match goes live. Normal layout only — the
+  // video layouts keep the video.
+  const phase = matchState?.phase;
+  const showSetup = checksMode && !videoMode && (phase === undefined || phase === 'idle' || phase === 'created');
+  const showCountdown = checksMode && !videoMode && phase === 'countdown';
+  const cardChecks = showSetup || showCountdown ? stationChecks : null;
+  const pinnedKey = pinnedStationsKey(matchState, stationChecks, showSetup || showCountdown);
+  const alertsKey = robotAlertsKey(matchState, stationChecks);
+
   // Match progress bar for the video layouts — overlaid on the video's top edge
   // (rather than a flow strip) so a starting match never reflows the page.
   const videoTimelineOverlay = (
@@ -576,6 +626,12 @@ export function ScoreboardPage() {
               onClick={toggleVideoLayout}
             />
           )}
+          <ControlChip
+            icon="✅"
+            label={checksMode ? 'checks on' : 'checks'}
+            active={checksMode}
+            onClick={toggleChecks}
+          />
           <ControlChip icon="⇄" label="swap" onClick={toggleSwap} />
           <ControlChip icon="🪶" label={LITE ? 'lite on' : 'lite'} active={LITE} onClick={toggleLite} />
           <ControlChip
@@ -638,6 +694,8 @@ export function ScoreboardPage() {
                 stationKey={stationKey}
                 leftAlliance={left}
                 matchAlliancesKey={matchAlliancesKey}
+                pinnedKey={pinnedKey}
+                alertsKey={alertsKey}
                 vertical
               />
             </Box>
@@ -730,6 +788,8 @@ export function ScoreboardPage() {
                 stationKey={stationKey}
                 leftAlliance={left}
                 matchAlliancesKey={matchAlliancesKey}
+                pinnedKey={pinnedKey}
+                alertsKey={alertsKey}
                 vertical
               />
             </Box>
@@ -743,6 +803,8 @@ export function ScoreboardPage() {
                 stationKey={stationKey}
                 leftAlliance={left}
                 matchAlliancesKey={matchAlliancesKey}
+                pinnedKey={pinnedKey}
+                alertsKey={alertsKey}
                 align="right"
               />
               <AllianceScoreBox
@@ -805,6 +867,8 @@ export function ScoreboardPage() {
                 stationKey={stationKey}
                 leftAlliance={left}
                 matchAlliancesKey={matchAlliancesKey}
+                pinnedKey={pinnedKey}
+                alertsKey={alertsKey}
                 align="left"
               />
             </Box>
@@ -840,9 +904,9 @@ export function ScoreboardPage() {
                 transition: 'color 1s ease',
               }}
             >
-              {titleText}
+              {showSetup ? 'Field Setup' : titleText}
             </Typography>
-            {isFreePlay && (
+            {(showSetup || isFreePlay) && (
               <Typography
                 sx={{
                   color: 'rgba(255,255,255,0.35)',
@@ -850,113 +914,142 @@ export function ScoreboardPage() {
                   mt: 0.25,
                 }}
               >
-                Scores reset after {score.batchTimeoutSeconds}s of inactivity
+                {showSetup
+                  ? 'Each robot works down its checks — fix the first red one'
+                  : `Scores reset after ${score.batchTimeoutSeconds}s of inactivity`}
               </Typography>
             )}
           </Box>
 
-          {/* Main score display — forced 50/50 split with period breakdowns on outside */}
+          {/* Score area — gives its space to the setup checks between matches
+              (flex-grow animates), and holds the big 3-2-1 at the start */}
           <Box
             sx={{
-              flex: 1,
-              display: 'grid',
-              gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
-              alignItems: 'center',
-              // Tighter than before so the flanking period-breakdown columns keep
-              // enough width to render their labels without clipping at the edges.
-              px: 'max(10px, 1.5vw)',
+              flex: `${showSetup ? 0 : 1} 1 0px`,
               minHeight: 0,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+              opacity: showSetup ? 0 : 1,
+              transition: LITE ? 'none' : `flex-grow ${SETUP_TRANSITION}, opacity ${SETUP_TRANSITION}`,
             }}
           >
-            {/* Left alliance — flanking info + score box */}
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                alignItems: 'center',
-                pr: 1.5,
-                gap: 1.5,
-                minWidth: 0,
-                overflow: 'hidden',
-              }}
-            >
-              {isFreePlay && leftBatches.length > 0 && (
-                <BatchList batches={leftBatches} color={left === 'red' ? '#ef5350' : '#42a5f5'} align="right" />
-              )}
-              {isMatchMode && leftInMatch && score.periodBreakdown && (
-                <PeriodBreakdown
-                  alliance={left}
-                  breakdown={score.periodBreakdown}
-                  autoWinner={autoWinner}
-                  currentSubPeriod={currentSubPeriod}
-                  align="right"
-                />
-              )}
-              <AllianceScoreBox
-                alliance={left}
-                total={boxTotal(left)}
-                active={leftActive}
-                inactiveTotal={leftInMatch ? leftInactive : undefined}
-                freePlayLabel={boxLabel(left, leftLabel)}
-                isAutoWinner={isMatchMode && autoWinner === left}
-                isFreePlay={isFreePlay}
-                side="left"
-              />
-            </Box>
+            {showCountdown ? (
+              <BigCountdown remaining={displayRemaining} />
+            ) : (
+              /* Main score display — forced 50/50 split with period breakdowns on outside */
+              <Box
+                sx={{
+                  flex: 1,
+                  // Coming out of the countdown, the 0–0 eases in
+                  ...(checksMode &&
+                    !LITE && {
+                      '@keyframes scoresIn': {
+                        from: { opacity: 0, transform: 'scale(0.92)' },
+                        to: { opacity: 1, transform: 'scale(1)' },
+                      },
+                      animation: 'scoresIn 1s ease-out',
+                    }),
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+                  alignItems: 'center',
+                  // Tighter than before so the flanking period-breakdown columns keep
+                  // enough width to render their labels without clipping at the edges.
+                  px: 'max(10px, 1.5vw)',
+                  minHeight: 0,
+                }}
+              >
+                {/* Left alliance — flanking info + score box */}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    alignItems: 'center',
+                    pr: 1.5,
+                    gap: 1.5,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {isFreePlay && leftBatches.length > 0 && (
+                    <BatchList batches={leftBatches} color={left === 'red' ? '#ef5350' : '#42a5f5'} align="right" />
+                  )}
+                  {isMatchMode && leftInMatch && score.periodBreakdown && (
+                    <PeriodBreakdown
+                      alliance={left}
+                      breakdown={score.periodBreakdown}
+                      autoWinner={autoWinner}
+                      currentSubPeriod={currentSubPeriod}
+                      align="right"
+                    />
+                  )}
+                  <AllianceScoreBox
+                    alliance={left}
+                    total={boxTotal(left)}
+                    active={leftActive}
+                    inactiveTotal={leftInMatch ? leftInactive : undefined}
+                    freePlayLabel={boxLabel(left, leftLabel)}
+                    isAutoWinner={isMatchMode && autoWinner === left}
+                    isFreePlay={isFreePlay}
+                    side="left"
+                  />
+                </Box>
 
-            {/* Center panel */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, minWidth: 120 }}>
-              {/* Match countdown timer */}
-              {isMatchMode && matchState && matchProgress !== null && (
-                <CenterMatchDisplay
-                  matchState={matchState}
-                  remainingTime={displayRemaining}
-                  color={activeColor}
-                  pulse={shouldPulse}
-                  fontSize="clamp(2.5rem, 6vw, 5rem)"
-                />
-              )}
-            </Box>
+                {/* Center panel */}
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, minWidth: 120 }}>
+                  {/* Match countdown timer */}
+                  {isMatchMode && matchState && matchProgress !== null && (
+                    <CenterMatchDisplay
+                      matchState={matchState}
+                      remainingTime={displayRemaining}
+                      color={activeColor}
+                      pulse={shouldPulse}
+                      fontSize="clamp(2.5rem, 6vw, 5rem)"
+                    />
+                  )}
+                </Box>
 
-            {/* Right alliance — score box + period breakdown */}
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'flex-start',
-                alignItems: 'center',
-                pl: 1.5,
-                gap: 1.5,
-                minWidth: 0,
-                overflow: 'hidden',
-              }}
-            >
-              <AllianceScoreBox
-                alliance={right}
-                total={boxTotal(right)}
-                active={rightActive}
-                inactiveTotal={rightInMatch ? rightInactive : undefined}
-                freePlayLabel={boxLabel(right, rightLabel)}
-                isAutoWinner={isMatchMode && autoWinner === right}
-                isFreePlay={isFreePlay}
-                side="right"
-              />
-              {isMatchMode && rightInMatch && score.periodBreakdown && (
-                <PeriodBreakdown
-                  alliance={right}
-                  breakdown={score.periodBreakdown}
-                  autoWinner={autoWinner}
-                  currentSubPeriod={currentSubPeriod}
-                  align="left"
-                />
-              )}
-              {isFreePlay && rightBatches.length > 0 && (
-                <BatchList batches={rightBatches} color={right === 'red' ? '#ef5350' : '#42a5f5'} align="left" />
-              )}
-            </Box>
+                {/* Right alliance — score box + period breakdown */}
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'flex-start',
+                    alignItems: 'center',
+                    pl: 1.5,
+                    gap: 1.5,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <AllianceScoreBox
+                    alliance={right}
+                    total={boxTotal(right)}
+                    active={rightActive}
+                    inactiveTotal={rightInMatch ? rightInactive : undefined}
+                    freePlayLabel={boxLabel(right, rightLabel)}
+                    isAutoWinner={isMatchMode && autoWinner === right}
+                    isFreePlay={isFreePlay}
+                    side="right"
+                  />
+                  {isMatchMode && rightInMatch && score.periodBreakdown && (
+                    <PeriodBreakdown
+                      alliance={right}
+                      breakdown={score.periodBreakdown}
+                      autoWinner={autoWinner}
+                      currentSubPeriod={currentSubPeriod}
+                      align="left"
+                    />
+                  )}
+                  {isFreePlay && rightBatches.length > 0 && (
+                    <BatchList batches={rightBatches} color={right === 'red' ? '#ef5350' : '#42a5f5'} align="left" />
+                  )}
+                </Box>
+              </Box>
+            )}
           </Box>
 
           {/* Between runs at a field event, the TV is the leaderboard. */}
-          {showLeaderboard && (
+          {showLeaderboard && !showSetup && (
             <Box sx={{ px: 3, pb: 2, maxWidth: 900, width: '100%', alignSelf: 'center' }}>
               <Box
                 sx={{
@@ -976,7 +1069,15 @@ export function ScoreboardPage() {
           )}
 
           {/* Battery voltage for connected robots */}
-          <BatteryPanel stationKey={stationKey} leftAlliance={left} matchAlliancesKey={matchAlliancesKey} />
+          <BatteryPanel
+            stationKey={stationKey}
+            leftAlliance={left}
+            matchAlliancesKey={matchAlliancesKey}
+            pinnedKey={pinnedKey}
+            alertsKey={alertsKey}
+            checks={cardChecks}
+            expanded={showSetup}
+          />
         </>
       )}
     </Box>
@@ -1164,7 +1265,9 @@ interface BatteryRobot {
   teamNumber: number | null;
   alliance: Alliance | null;
   ssid: string | null;
-  battery: BatteryInfo;
+  /** Null for a pinned robot with no recent reading (lost comms, or not yet
+   *  talking) — it keeps its card so the problem stays visible. */
+  battery: BatteryInfo | null;
 }
 
 // Module-level battery store. With six robots, telemetry arrives many times a
@@ -1223,9 +1326,35 @@ function stationInfoKey(matchState: ReturnType<typeof useMatchState>): string {
   }).join('|');
 }
 
+/** Stations that keep a card even without a battery reading: every robot on
+ *  the field while the setup checks are showing, and every robot in a match
+ *  — a match robot that loses comms is exactly the one staff need to see,
+ *  not one whose card should quietly disappear. Comma-joined for memo. */
+function pinnedStationsKey(
+  matchState: ReturnType<typeof useMatchState>,
+  checks: StationChecksState | null,
+  setup: boolean,
+): string {
+  const phase = matchState?.phase;
+  const inMatch = phase !== undefined && phase !== 'idle' && phase !== 'created';
+  return StationNameList.filter(s =>
+    setup ? checks?.stations[s] !== undefined : inMatch && !!matchState?.stationStates[s]?.joined,
+  ).join(',');
+}
+
+/** In-match problems per station (see robotAlert), JSON-encoded for memo. */
+function robotAlertsKey(matchState: ReturnType<typeof useMatchState>, checks: StationChecksState | null): string {
+  const alerts: Partial<Record<StationName, RobotAlert>> = {};
+  for (const s of StationNameList) {
+    const alert = robotAlert(matchState?.stationStates[s], matchState?.phase, checks?.stations[s]?.robotComms);
+    if (alert) alerts[s] = alert;
+  }
+  return JSON.stringify(alerts);
+}
+
 /** Sorted battery robot list + duplicate-team counts, driven by the battery
  *  store (updates at most ~1 Hz). */
-function useBatteryRobots(stationKey: string, leftAlliance: Alliance) {
+function useBatteryRobots(stationKey: string, leftAlliance: Alliance, pinnedKey: string) {
   const version = useSyncExternalStore(batteryStore.subscribe, batteryStore.getVersion);
 
   return useMemo(() => {
@@ -1237,12 +1366,14 @@ function useBatteryRobots(stationKey: string, leftAlliance: Alliance) {
         alliance: (alliance || null) as Alliance | null,
       });
     }
+    const pinned = new Set(pinnedKey ? pinnedKey.split(',') : []);
 
     const now = Date.now();
     const robots: BatteryRobot[] = [];
     for (const station of StationNameList) {
-      const batt = batteryStore.data[station];
-      if (!batt || now - batt.lastSeen > BATTERY_STALE_MS) continue;
+      const stored = batteryStore.data[station];
+      const batt = stored && now - stored.lastSeen <= BATTERY_STALE_MS ? stored : null;
+      if (!batt && !pinned.has(station)) continue;
       const info = infoByStation.get(station);
       robots.push({
         station,
@@ -1267,7 +1398,11 @@ function useBatteryRobots(stationKey: string, leftAlliance: Alliance) {
     }
 
     return { robots, teamCounts };
-  }, [version, stationKey, leftAlliance]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [version, stationKey, leftAlliance, pinnedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+function useRobotAlerts(alertsKey: string): Partial<Record<StationName, RobotAlert>> {
+  return useMemo(() => JSON.parse(alertsKey) as Partial<Record<StationName, RobotAlert>>, [alertsKey]);
 }
 
 // Static chart options hoisted so each render doesn't rebuild them
@@ -1282,13 +1417,34 @@ const BATTERY_CHART_LABELS = { disabled: true };
 const BATTERY_CHART_TITLE = { text: '' };
 const emptyChartLabel = () => '';
 
-/** Single robot battery card — voltage chart with team/voltage overlay. */
+const ALLIANCE_COLOR: Record<Alliance, string> = { red: '#ef5350', blue: '#42a5f5' };
+
+/** Colours for check verdicts and in-match alerts. */
+const LEVEL_COLOR: Record<SetupCheckLevel, string> = {
+  ok: '#66bb6a',
+  partial: '#ffa726',
+  bad: '#ef5350',
+  waiting: 'rgba(255,255,255,0.3)',
+  unknown: 'rgba(255,255,255,0.45)',
+};
+const ALERT_COLOR: Record<RobotAlert['tone'], { fg: string; bg: string }> = {
+  bad: { fg: '#ef5350', bg: 'rgba(239,83,80,0.18)' },
+  warn: { fg: '#ffa726', bg: 'rgba(255,167,38,0.16)' },
+  neutral: { fg: 'rgba(255,255,255,0.6)', bg: 'rgba(255,255,255,0.06)' },
+};
+
+/** Single robot card — voltage chart with team/voltage overlay. Between
+ *  matches with the setup checks on it `expanded`s into a column of the
+ *  robot's checks; in a match, a problem replaces the chart with an alert. */
 function BatteryCard({
   robot,
   inMatch,
   isDuplicate,
   compact,
   fill,
+  alert,
+  checks,
+  expanded = false,
 }: {
   robot: BatteryRobot;
   /** Robots participating in a match get alliance colors; non-participants get white */
@@ -1299,16 +1455,32 @@ function BatteryCard({
   /** Flex to share the row's width (with a max) instead of a fixed width, so the
    *  bottom panel keeps every robot on one row rather than wrapping. */
   fill?: boolean;
+  /** Shown in place of the chart when something is wrong in a match */
+  alert?: RobotAlert;
+  checks?: StationSetupChecks;
+  /** Show the setup checks (animates open and closed) */
+  expanded?: boolean;
 }) {
-  const color = inMatch ? (robot.alliance === 'red' ? '#ef5350' : '#42a5f5') : 'rgba(255,255,255,0.5)';
+  const color = inMatch && robot.alliance ? ALLIANCE_COLOR[robot.alliance] : 'rgba(255,255,255,0.5)';
   const bgColor = inMatch
     ? robot.alliance === 'red'
       ? 'rgba(239,83,80,0.10)'
       : 'rgba(66,165,245,0.10)'
     : 'rgba(255,255,255,0.05)';
+  // A card that appears while the checks are showing (a robot just put on the
+  // field) starts folded and opens on the next frame, like the rest did.
+  const [opened, setOpened] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpened(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  // Open, the column's border says how the robot is doing overall
+  const showChecks = expanded && opened && checks !== undefined;
+  const borderColor = showChecks ? LEVEL_COLOR[checksTone(checks)] : alert ? ALERT_COLOR[alert.tone].fg : color;
   const ts = stationTimeSeries[robot.station];
   const minFloor = batteryMinState[robot.station]?.floor;
   const chartHeight = compact ? 40 : 52;
+  const transition = (props: string[]) => (LITE ? 'none' : props.map(p => `${p} ${SETUP_TRANSITION}`).join(', '));
 
   const series = useMemo(
     () => [
@@ -1330,7 +1502,7 @@ function BatteryCard({
   return (
     <Box
       sx={{
-        border: `1px solid ${color}`,
+        border: `${showChecks ? 2 : 1}px solid ${borderColor}`,
         borderRadius: 1,
         backgroundColor: bgColor,
         // Fill mode: equal flex columns capped at a max, so N robots always share
@@ -1338,9 +1510,15 @@ function BatteryCard({
         // Inline-size container so the header can drop the least-critical figure
         // when a card gets narrow. Otherwise a fixed width (video-mode groups).
         ...(fill
-          ? { flex: '1 1 0', minWidth: 0, maxWidth: compact ? 170 : 190, containerType: 'inline-size' }
+          ? {
+              flex: '1 1 0',
+              minWidth: 0,
+              maxWidth: expanded ? 360 : compact ? 170 : 190,
+              containerType: 'inline-size',
+            }
           : { width: compact ? 170 : 180 }),
         overflow: 'hidden',
+        transition: transition(['max-width', 'border-color']),
       }}
     >
       {/* Team above, voltages below the chart — two full-width rows so a long
@@ -1350,21 +1528,23 @@ function BatteryCard({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: 0.5,
+          gap: expanded ? 1 : 0.5,
           px: 0.75,
-          pt: 0.25,
+          pt: expanded ? 1 : 0.25,
           minWidth: 0,
+          transition: transition(['padding']),
         }}
       >
-        <TeamAvatar teamNumber={robot.teamNumber} size={16} />
+        <TeamAvatar teamNumber={robot.teamNumber} size={expanded ? 32 : 16} />
         <Typography
           noWrap
           sx={{
-            fontSize: compact ? '0.8rem' : '0.9rem',
-            fontWeight: 700,
-            color: 'rgba(255,255,255,0.7)',
+            fontSize: expanded ? 'clamp(1.2rem, 2.4vw, 2.2rem)' : compact ? '0.8rem' : '0.9rem',
+            fontWeight: expanded ? 800 : 700,
+            color: expanded && robot.alliance ? ALLIANCE_COLOR[robot.alliance] : 'rgba(255,255,255,0.7)',
             minWidth: 0,
-            '@container (max-width: 150px)': { fontSize: '0.8rem' },
+            transition: transition(['font-size', 'color']),
+            ...(!expanded && { '@container (max-width: 150px)': { fontSize: '0.8rem' } }),
           }}
         >
           {robot.teamNumber ?? robot.station}
@@ -1376,7 +1556,20 @@ function BatteryCard({
           )}
         </Typography>
       </Box>
-      {LITE ? (
+      {/* Setup checks — a 0fr→1fr grid row animates the height open and shut */}
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateRows: showChecks ? '1fr' : '0fr',
+          opacity: showChecks ? 1 : 0,
+          transition: transition(['grid-template-rows', 'opacity']),
+        }}
+      >
+        <Box sx={{ overflow: 'hidden', minHeight: 0 }}>{checks && <SetupLadder checks={checks} />}</Box>
+      </Box>
+      {alert ? (
+        <RobotAlertBadge alert={alert} height={chartHeight} compact={compact} />
+      ) : LITE ? (
         <Box sx={{ height: chartHeight, display: 'flex', alignItems: 'flex-end', px: 0.75 }}>
           <Box
             sx={{
@@ -1423,14 +1616,14 @@ function BatteryCard({
             fontFamily: 'monospace',
             fontSize: compact ? '1rem' : '1.1rem',
             fontWeight: 700,
-            color,
+            color: robot.battery ? color : 'rgba(255,255,255,0.3)',
             whiteSpace: 'nowrap',
             '@container (max-width: 150px)': { fontSize: '0.95rem' },
           }}
         >
-          {robot.battery.current.toFixed(1)}V
+          {robot.battery ? `${robot.battery.current.toFixed(1)}V` : '—'}
         </Typography>
-        {!isNaN(minFloor) && (
+        {robot.battery && !isNaN(minFloor) && (
           <Typography
             sx={{
               fontFamily: 'monospace',
@@ -1446,6 +1639,127 @@ function BatteryCard({
           </Typography>
         )}
       </Box>
+    </Box>
+  );
+}
+
+/** In-match problem shown where the battery chart would be. */
+function RobotAlertBadge({ alert, height, compact }: { alert: RobotAlert; height: number; compact?: boolean }) {
+  const { fg, bg } = ALERT_COLOR[alert.tone];
+  return (
+    <Box
+      sx={{
+        height,
+        mx: 0.75,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 0.5,
+        bgcolor: bg,
+        ...(alert.tone === 'bad' &&
+          !LITE && {
+            '@keyframes alertPulse': { '0%, 100%': { opacity: 1 }, '50%': { opacity: 0.55 } },
+            animation: 'alertPulse 1.2s ease-in-out infinite',
+          }),
+      }}
+    >
+      <Typography
+        noWrap
+        sx={{
+          color: fg,
+          fontWeight: 900,
+          letterSpacing: 1.5,
+          fontSize: compact ? '0.85rem' : '1rem',
+          '@container (max-width: 150px)': { fontSize: '0.8rem', letterSpacing: 0.5 },
+        }}
+      >
+        {alert.label}
+      </Typography>
+    </Box>
+  );
+}
+
+/** Glyph for a check verdict, in a filled or outlined circle. */
+const LEVEL_GLYPH: Record<SetupCheckLevel, string> = {
+  ok: '✓',
+  partial: '!',
+  bad: '✕',
+  waiting: '–',
+  unknown: '?',
+};
+
+/** A robot's setup checks, top to bottom in the order a team usually gets
+ *  through them. The first failure is the one to fix; the checks after it
+ *  usually fail because of it, so they are quieted. */
+function SetupLadder({ checks }: { checks: StationSetupChecks }) {
+  const first = firstFailingCheck(checks);
+  const firstIndex = first ? StationSetupCheckList.indexOf(first) : -1;
+  // Sized to the card (an inline-size container), not the screen: six robots
+  // on a 1280 px TV leave each column under 200 px.
+  const fontSize = 'clamp(0.75rem, 7.5cqi, 1.35rem)';
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, px: 0.75, py: 0.75 }}>
+      {StationSetupCheckList.map((check, i) => {
+        const level = checks[check];
+        const { label, value } = checkRow(checks, check);
+        const blocking = check === first;
+        const filled = level === 'ok' || level === 'partial' || level === 'bad';
+        return (
+          <Box
+            key={check}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              px: 0.5,
+              py: 0.3,
+              borderRadius: 1,
+              bgcolor: blocking ? 'rgba(239,83,80,0.16)' : 'transparent',
+              opacity: firstIndex >= 0 && i > firstIndex ? 0.4 : 1,
+            }}
+          >
+            <Box
+              sx={{
+                width: '1.5em',
+                height: '1.5em',
+                fontSize,
+                flexShrink: 0,
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 900,
+                lineHeight: 1,
+                ...(filled
+                  ? { bgcolor: LEVEL_COLOR[level], color: '#000' }
+                  : { border: `2px solid ${LEVEL_COLOR[level]}`, color: LEVEL_COLOR[level] }),
+              }}
+            >
+              <Box component="span" sx={{ fontSize: '0.75em' }}>
+                {LEVEL_GLYPH[level]}
+              </Box>
+            </Box>
+            <Typography
+              noWrap
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                fontSize,
+                fontWeight: blocking ? 800 : 600,
+                color: level === 'waiting' ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.85)',
+              }}
+            >
+              {label}
+            </Typography>
+            <Typography
+              noWrap
+              sx={{ fontSize, fontFamily: 'monospace', fontWeight: 700, color: LEVEL_COLOR[level], flexShrink: 0 }}
+            >
+              {value}
+            </Typography>
+          </Box>
+        );
+      })}
     </Box>
   );
 }
@@ -1475,6 +1789,8 @@ const BatteryGroup = memo(function BatteryGroup({
   stationKey,
   leftAlliance,
   matchAlliancesKey,
+  pinnedKey,
+  alertsKey,
   align,
   vertical,
 }: {
@@ -1482,10 +1798,13 @@ const BatteryGroup = memo(function BatteryGroup({
   stationKey: string;
   leftAlliance: Alliance;
   matchAlliancesKey: string;
+  pinnedKey: string;
+  alertsKey: string;
   align?: 'left' | 'right';
   vertical?: boolean;
 }) {
-  const { robots, teamCounts } = useBatteryRobots(stationKey, leftAlliance);
+  const { robots, teamCounts } = useBatteryRobots(stationKey, leftAlliance, pinnedKey);
+  const alerts = useRobotAlerts(alertsKey);
   const [leftRobots, rightRobots] = splitBatteryRobots(robots, leftAlliance);
   const mine = side === 'left' ? leftRobots : rightRobots;
   const matchAlliances = matchAlliancesKey ? (matchAlliancesKey.split(',') as Alliance[]) : [];
@@ -1513,6 +1832,7 @@ const BatteryGroup = memo(function BatteryGroup({
           compact
           inMatch={robot.alliance != null && matchAlliances.includes(robot.alliance)}
           isDuplicate={robot.teamNumber ? (teamCounts.get(robot.teamNumber) ?? 0) > 1 : false}
+          alert={alerts[robot.station]}
         />
       ))}
     </Box>
@@ -1520,35 +1840,63 @@ const BatteryGroup = memo(function BatteryGroup({
 });
 
 /** Bottom battery row for the normal scoreboard. Subscribes to the battery
- *  store itself (memoized — see BatteryGroup). */
+ *  store itself (memoized — see BatteryGroup). With the setup checks showing
+ *  it grows to fill the page and each card opens into a column of checks;
+ *  when the match starts the columns fold back down into this row. */
 const BatteryPanel = memo(function BatteryPanel({
   stationKey,
   leftAlliance,
   matchAlliancesKey,
+  pinnedKey,
+  alertsKey,
+  checks,
+  expanded,
 }: {
   stationKey: string;
   leftAlliance: Alliance;
   matchAlliancesKey: string;
+  pinnedKey: string;
+  alertsKey: string;
+  /** Setup checks to show in the cards (only passed while they can show) */
+  checks: StationChecksState | null;
+  expanded: boolean;
 }) {
-  const { robots, teamCounts } = useBatteryRobots(stationKey, leftAlliance);
+  const { robots, teamCounts } = useBatteryRobots(stationKey, leftAlliance, pinnedKey);
+  const alerts = useRobotAlerts(alertsKey);
   const matchAlliances = matchAlliancesKey ? (matchAlliancesKey.split(',') as Alliance[]) : [];
-  if (robots.length === 0) return null;
+
+  const panelSx = {
+    // Grows into the space the score area gives up (and back); basis stays
+    // auto so only flex-grow animates.
+    flex: `${expanded ? 1 : 0} 0 auto`,
+    minHeight: 0,
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexWrap: 'nowrap',
+    gap: expanded ? 2 : 1,
+    px: 2,
+    pb: 2,
+    transition: LITE ? 'none' : `flex-grow ${SETUP_TRANSITION}, gap ${SETUP_TRANSITION}`,
+  } as const;
+
+  if (robots.length === 0) {
+    if (!expanded) return null;
+    return (
+      <Box sx={panelSx}>
+        <Typography sx={{ color: 'rgba(255,255,255,0.35)', fontSize: 'clamp(1rem, 2.5vw, 2rem)', fontWeight: 700 }}>
+          No robots on the field
+        </Typography>
+      </Box>
+    );
+  }
 
   // Single row, never wrapping: the cards are sorted red → unassigned → blue to
   // read left-to-right in line with the score boxes, and a wrapped second row
   // would break that grouping. The `fill` cards flex to share the width (capped),
   // shrinking to fit however many robots are on the field.
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        justifyContent: 'center',
-        flexWrap: 'nowrap',
-        gap: 1,
-        px: 2,
-        pb: 2,
-      }}
-    >
+    <Box sx={panelSx}>
       {robots.map(robot => (
         <BatteryCard
           key={robot.station}
@@ -1556,11 +1904,42 @@ const BatteryPanel = memo(function BatteryPanel({
           fill
           inMatch={robot.alliance != null && matchAlliances.includes(robot.alliance)}
           isDuplicate={robot.teamNumber ? (teamCounts.get(robot.teamNumber) ?? 0) > 1 : false}
+          alert={alerts[robot.station]}
+          checks={checks?.stations[robot.station]}
+          expanded={expanded}
         />
       ))}
     </Box>
   );
 });
+
+/** The big 3-2-1 before a match when the setup checks were showing — the
+ *  scores ease in once it ends. */
+function BigCountdown({ remaining }: { remaining: number }) {
+  const n = Math.max(1, Math.ceil(remaining));
+  return (
+    <Box sx={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Typography
+        key={n}
+        sx={{
+          fontSize: 'clamp(6rem, 36vh, 24rem)',
+          fontWeight: 800,
+          fontFamily: 'monospace',
+          lineHeight: 1,
+          color: '#fff',
+          '@keyframes countdownPop': {
+            from: { transform: 'scale(1.5)', opacity: 0 },
+            '25%': { opacity: 1 },
+            to: { transform: 'scale(1)', opacity: 1 },
+          },
+          animation: LITE ? 'none' : 'countdownPop 0.6s ease-out',
+        }}
+      >
+        {n}
+      </Typography>
+    </Box>
+  );
+}
 
 // ── Video Mode ────────────────────────────────────────────────────────
 

@@ -106,6 +106,40 @@ page can be reopened on a phone or spare device in one scan. The check is
 live — plugging a DS in (or unplugging it) flips the pages without a
 reload, and a blocked staff page also stops sending presence heartbeats.
 
+## Setup checks on the scoreboard
+
+Turn on **✅ checks** on the scoreboard (`/scores?checks=1`, remembered per
+browser) and, between matches, every robot on the field gets a column of
+the checks it has to turn green, roughly in the order a team gets through
+them:
+
+| Check      | Green when                                                                                                                                                                                        |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DS link    | The Driver Station sends the FMS status (it holds a station assignment). **Yellow**: connected to the FMS but not sending status — normal for a DS that hasn't joined a match yet. Red: not seen. |
+| Radio link | The robot radio is linked to the field radio.                                                                                                                                                     |
+| Comms      | The DS reports robot comms — or, when the DS isn't sending status, the robot is answering its DS (those replies always cross pFMS).                                                               |
+| Joysticks  | The DS's control packets to the robot carry at least one joystick. **?** when that traffic doesn't cross pFMS (it only does for DSes routed through the field), and for 2027 (SystemCore) DSes.   |
+| Battery    | The latest reading is at least 12.0 V (shown live).                                                                                                                                               |
+| Ready      | The team pressed Ready. Grey until the ready check opens, or while the robot isn't in the match.                                                                                                  |
+
+A robot needs a column at all only once its Wi-Fi is on a field station.
+The first red check is highlighted and the ones after it are dimmed, since
+they usually fail because of it; the column's border shows the robot's
+overall state. The checks are worked out by the backend (`src/stationChecks.ts`)
+and sent to the scoreboard as `stationChecks`.
+
+When the match starts, the columns fold down into the usual battery row,
+a big 3-2-1 plays, and the 0–0 scores ease in. After the match clears, the
+columns open back up.
+
+**During any match** (with or without checks on), a robot in the match that
+has a problem shows it in place of its battery chart: **E-STOPPED**,
+**A-STOPPED**, **NO DS** (its DS stopped sending status), **NO ROBOT**
+(DS without robot comms), **BLOCKED** (controller policy), or **DISABLED**
+while robots should be driving (**LEG DONE**, in grey, for a relay robot
+whose leg is over). Match robots keep their card even when their telemetry
+stops, instead of it vanishing after 15 s.
+
 ## Stops, Disables, and Recovery
 
 E-Stop and A-Stop are latched **backend-only** states — the FMS never
