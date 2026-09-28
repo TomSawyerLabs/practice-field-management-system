@@ -292,6 +292,29 @@ Teams see where they stand at the top of their page: "You're in Match 12
 on the Red alliance — next up", "3rd in line", or the Play next button.
 The queue is broadcast to the scoreboard socket too, so a TV can show it.
 
+### Nudges: Slack and push
+
+Each team picks, at the bottom of its Robots tab under **Match nudges**,
+how it wants to hear that it is next up, on deck, or being waited for:
+
+- **The page banner** — always on.
+- **A Slack DM** — to Slack members whose display name contains the team
+  number (the same lookup the practice-day notifier uses). Only offered
+  once field staff have connected Slack on `/admin`.
+- **A notification on this device** — web push. Ticking it asks the
+  browser for permission and subscribes the device; a team can subscribe
+  several devices and **Send a test notification** to all of them. A
+  device the push service reports gone is forgotten automatically.
+
+Each nudge goes once per team per match. Push needs the site over HTTPS
+(the field's public address, or the LAN name behind Caddy's certificate)
+and the first run generates the VAPID key pair into `push-keys.json` —
+keep that file, since every subscribed device is bound to it.
+
+The team page is installable as an app named for the team ("Team 1234"
+opens on that page); installed, pushes arrive with the tab closed. On an
+iPhone, Add to Home Screen first, then turn notifications on from the app.
+
 ## The Match Window
 
 Tapping **Join** also opens a small match window for that station:

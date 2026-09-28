@@ -16,6 +16,12 @@ import {
   isQueueLeaveLine,
   isQueueAdmin,
   QueueAdmin,
+  isTeamPrefsGet,
+  isTeamPrefsSet,
+  isPushSubscribe,
+  isPushUnsubscribe,
+  isPushTest,
+  TeamPrefsState,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -126,6 +132,7 @@ import { MatchEngine } from './matchEngine.js';
 import type { SavedTeamStore } from './savedTeamStore.js';
 import type { MatchQueue } from './matchQueue.js';
 import type { SetupMode, SetupResult } from './matchSetup.js';
+import type { TeamPrefsStore } from './teamPrefsStore.js';
 import type { ApiKeyStore } from './apiKeyStore.js';
 import type { ScoringEngine } from './scoringEngine.js';
 import type { PortBridgeManager } from './portBridgeManager.js';
@@ -253,6 +260,13 @@ export function setupWebSocket(
       store: MatchQueue;
       setupNext: (id: string | undefined, mode: SetupMode) => Promise<SetupResult>;
     };
+    /** Per-team nudge preferences and push devices (src/queueNudger.ts). */
+    teamPrefs?: {
+      store: TeamPrefsStore;
+      vapidPublicKey: () => string | null;
+      slackAvailable: () => boolean;
+      testPush: (team: number) => Promise<{ sent: number; gone: number; devices: number }>;
+    };
   },
 ): WebSocketContext {
   let serverVersion = 'unknown';
@@ -358,7 +372,14 @@ export function setupWebSocket(
   const publicConnections = new Set<WebSocket>();
 
   /** Message types safe to send to public (unauthenticated) connections. */
-  const PUBLIC_SAFE_TYPES = new Set(['scoreState', 'matchState', 'telemetry', 'playGetReady', 'queueState']);
+  const PUBLIC_SAFE_TYPES = new Set([
+    'scoreState',
+    'matchState',
+    'telemetry',
+    'playGetReady',
+    'queueState',
+    'stationChecks',
+  ]);
 
   /** Track which WebSocket connections are in which chat sessions */
   const wsToChatSession = new Map<WebSocket, string>();
@@ -488,6 +509,23 @@ export function setupWebSocket(
   /** Tell the asking client what its Wi-Fi request came to. Waits and
    *  applies show through the broadcast pending state; the two quiet
    *  outcomes need a word. Releases stay quiet either way. */
+  /** A team's preferences, to the asking client only. */
+  function sendTeamPrefs(ws: WebSocket, team: number) {
+    const tp = setup?.teamPrefs;
+    if (!tp) return;
+    const prefs = tp.store.get(team);
+    ws.send(
+      JSON.stringify({
+        type: 'teamPrefsState',
+        team,
+        nudge: prefs.nudge,
+        pushDevices: prefs.push.map(d => ({ endpoint: d.endpoint, label: d.label, addedAt: d.addedAt })),
+        vapidPublicKey: tp.vapidPublicKey() ?? undefined,
+        slackAvailable: tp.slackAvailable(),
+      } satisfies TeamPrefsState),
+    );
+  }
+
   /** The queue manager's actions from /queue and /match. */
   function handleQueueAdmin(queue: NonNullable<NonNullable<typeof setup>['queue']>, msg: QueueAdmin, ws: WebSocket) {
     const store = queue.store;
@@ -556,6 +594,11 @@ export function setupWebSocket(
       case 'queueClear':
         store.clear(msg.played);
         break;
+      case 'queueImport': {
+        const n = store.addMany(msg.entries, msg.replace);
+        info(`${n} match${n === 1 ? '' : 'es'} added to the queue`);
+        break;
+      }
     }
   }
 
@@ -893,6 +936,36 @@ export function setupWebSocket(
         else if (!setupWritesAllowed(ws))
           ws.send(JSON.stringify({ error: 'Admin login required to manage the queue' }));
         else handleQueueAdmin(setup.queue, data, ws);
+
+        // ── Team preferences: nudges and push (team-page trust, like the
+        //    rest of the team page) ─────────────────────────────────────
+      } else if (isTeamPrefsGet(data)) {
+        sendTeamPrefs(ws, data.team);
+      } else if (isTeamPrefsSet(data)) {
+        setup?.teamPrefs?.store.setNudge(data.team, data.nudge);
+        sendTeamPrefs(ws, data.team);
+      } else if (isPushSubscribe(data)) {
+        setup?.teamPrefs?.store.addPushDevice(data.team, data.subscription, data.label);
+        sendTeamPrefs(ws, data.team);
+      } else if (isPushUnsubscribe(data)) {
+        setup?.teamPrefs?.store.removePushDevice(data.team, data.endpoint);
+        sendTeamPrefs(ws, data.team);
+      } else if (isPushTest(data)) {
+        const tp = setup?.teamPrefs;
+        if (!tp) ws.send(JSON.stringify({ error: 'Push is not set up on this field' }));
+        else {
+          tp.testPush(data.team)
+            .then(r => {
+              const text =
+                r.devices === 0
+                  ? 'No devices are subscribed for this team yet'
+                  : `Test sent to ${r.sent} device${r.sent === 1 ? '' : 's'}` +
+                    (r.gone ? ` (${r.gone} no longer reachable, forgotten)` : '');
+              ws.send(JSON.stringify({ info: text }));
+              if (r.gone) sendTeamPrefs(ws, data.team);
+            })
+            .catch(err => ws.send(JSON.stringify({ error: 'Test push failed', details: String(err) })));
+        }
       } else if (isInternetToggle(data)) {
         if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot toggle internet access during an active match' }));

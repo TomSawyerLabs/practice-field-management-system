@@ -88,15 +88,15 @@ only team numbers and positions.
 
 ## Steps
 
-1. [ ] Plan (this file), explore integration points.
-2. [ ] Queue store, types, messages, tests.
-3. [ ] Team page: join/leave the line, position banner.
-4. [ ] /queue page (list, line, form match, settings).
-5. [ ] Set up next match on /match (main + sub-buttons).
+1. [x] Plan (this file), explore integration points.
+2. [x] Queue store, types, messages, tests.
+3. [x] Team page: join/leave the line, position banner.
+4. [x] /queue page (list, line, form match, settings).
+5. [x] Set up next match on /match (main + sub-buttons).
 6. [ ] Schedule import + generation.
-7. [ ] Nudge preferences + Slack nudge.
-8. [ ] PWA + web push.
-9. [ ] Docs, README page table.
+7. [x] Nudge preferences + Slack nudge.
+8. [x] PWA + web push.
+9. [x] Docs, README page table (queue, nudges, push).
 
 ## Open questions
 

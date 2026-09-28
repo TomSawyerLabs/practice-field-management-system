@@ -39,3 +39,6 @@ samples/
 scripts.local/
 debug.log
 *.log
+match-queue.json
+team-prefs.json
+push-keys.json

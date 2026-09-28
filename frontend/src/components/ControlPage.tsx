@@ -43,6 +43,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
 import { MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
+import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
 import { TeamChecksModal } from './TeamChecksModal';
 import { StationNetworkCard } from './NetworkPage';
@@ -441,6 +442,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
               No robots on the field yet. Enable a robot&apos;s Wi-Fi to see its radio and network status.
             </Typography>
           )}
+          <NudgeSettings teamNumber={teamNumber} />
         </>
       )}
 

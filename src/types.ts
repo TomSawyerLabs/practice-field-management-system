@@ -1736,6 +1736,56 @@ export function isTelemetryUpdate(msg: unknown): msg is TelemetryUpdate {
   return (msg as TelemetryUpdate).type === 'telemetry';
 }
 
+// ── Station Setup Checks ────────────────────────────────────────────
+
+/** Verdict for one setup check. `waiting`: not asked for yet (Ready before
+ *  the ready check opens). `unknown`: pFMS can't see it right now. */
+export type SetupCheckLevel = 'ok' | 'partial' | 'bad' | 'waiting' | 'unknown';
+
+/** The checks a robot has to turn green before a match, roughly in the order
+ *  a team gets through them. Having a column at all means the robot's Wi-Fi
+ *  is configured on a field station. */
+export const StationSetupCheckList = ['ds', 'radio', 'robotComms', 'joysticks', 'battery', 'ready'] as const;
+export type StationSetupCheck = (typeof StationSetupCheckList)[number];
+
+export interface StationSetupChecks {
+  station: StationName;
+  team: number;
+  /** Alliance the station joined (null = not in a match) */
+  alliance: Alliance | null;
+  /** The DS is talking to the FMS: ok = status heartbeats (FMS mode),
+   *  partial = connected but not sending status, bad = not seen. */
+  ds: SetupCheckLevel;
+  /** The robot radio is linked to the field radio. */
+  radio: SetupCheckLevel;
+  /** The DS has robot comms. */
+  robotComms: SetupCheckLevel;
+  /** The DS has at least one joystick. */
+  joysticks: SetupCheckLevel;
+  /** Joysticks the DS is sending, when seen. */
+  joystickCount?: number;
+  /** Battery at or above SETUP_CHECK_MIN_BATTERY_VOLTS. */
+  battery: SetupCheckLevel;
+  batteryVoltage?: number;
+  /** The team has pressed Ready. */
+  ready: SetupCheckLevel;
+}
+
+/** Battery voltage a robot should have before a match. */
+export const SETUP_CHECK_MIN_BATTERY_VOLTS = 12;
+
+/** Setup checks for every station with a robot configured. Derived verdicts
+ *  only — safe for the public scoreboard socket. */
+export interface StationChecksState {
+  type: 'stationChecks';
+  stations: Partial<Record<StationName, StationSetupChecks>>;
+}
+
+export function isStationChecksState(msg: unknown): msg is StationChecksState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as StationChecksState).type === 'stationChecks';
+}
+
 // ── Network Stats ───────────────────────────────────────────────────
 
 export interface StationNetworkStats {
@@ -4155,7 +4205,14 @@ export type QueueAdmin =
   | { type: 'queueLineMove'; team: number; index: number }
   | { type: 'queueReplaceTeam'; id: string; team: number }
   | { type: 'queueSetupNext'; id?: string; mode: 'all' | 'wifi' | 'match' }
-  | { type: 'queueClear'; played?: boolean };
+  | { type: 'queueClear'; played?: boolean }
+  | {
+      type: 'queueImport';
+      /** A generated or pasted schedule, in order. */
+      entries: { red: number[]; blue: number[]; scheduledAt?: number; notes?: string }[];
+      /** Drop the queued and skipped entries first. */
+      replace?: boolean;
+    };
 
 export function isQueueAdmin(msg: unknown): msg is QueueAdmin {
   if (typeof msg !== 'object' || !msg) return false;
@@ -4213,7 +4270,117 @@ export function isQueueAdmin(msg: unknown): msg is QueueAdmin {
       );
     case 'queueClear':
       return m.played === undefined || typeof m.played === 'boolean';
+    case 'queueImport':
+      return (
+        Array.isArray(m.entries) &&
+        m.entries.length <= 500 &&
+        m.entries.every(
+          e =>
+            typeof e === 'object' &&
+            !!e &&
+            isTeamList(e.red) &&
+            isTeamList(e.blue) &&
+            (e.scheduledAt === undefined || typeof e.scheduledAt === 'number') &&
+            (e.notes === undefined || typeof e.notes === 'string'),
+        ) &&
+        (m.replace === undefined || typeof m.replace === 'boolean')
+      );
     default:
       return false;
   }
+}
+
+// ── Team preferences: nudges and push ───────────────────────────────
+
+/** How a team wants to hear that it is next up, on deck, or being waited
+ *  for. The page banner is always on; Slack and push are opt-in per team. */
+export type NudgeChannels = { banner: boolean; slack: boolean; push: boolean };
+
+/** A browser's push subscription, as PushSubscription.toJSON() gives it. */
+export type PushSubscriptionInput = { endpoint: string; keys: { p256dh: string; auth: string } };
+
+export function isPushSubscriptionInput(v: unknown): v is PushSubscriptionInput {
+  if (typeof v !== 'object' || !v) return false;
+  const s = v as PushSubscriptionInput;
+  return (
+    typeof s.endpoint === 'string' &&
+    /^https:\/\//.test(s.endpoint) &&
+    typeof s.keys === 'object' &&
+    !!s.keys &&
+    typeof s.keys.p256dh === 'string' &&
+    typeof s.keys.auth === 'string'
+  );
+}
+
+const isNudgePatch = (v: unknown): v is Partial<NudgeChannels> =>
+  typeof v === 'object' &&
+  !!v &&
+  (['banner', 'slack', 'push'] as const).every(k => {
+    const val = (v as Record<string, unknown>)[k];
+    return val === undefined || typeof val === 'boolean';
+  });
+
+export type TeamPrefsGet = { type: 'teamPrefsGet'; team: number };
+export type TeamPrefsSet = { type: 'teamPrefsSet'; team: number; nudge: Partial<NudgeChannels> };
+export type PushSubscribe = {
+  type: 'pushSubscribe';
+  team: number;
+  subscription: PushSubscriptionInput;
+  label?: string;
+};
+export type PushUnsubscribe = { type: 'pushUnsubscribe'; team: number; endpoint: string };
+export type PushTest = { type: 'pushTest'; team: number };
+
+export function isTeamPrefsGet(msg: unknown): msg is TeamPrefsGet {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as TeamPrefsGet;
+  return m.type === 'teamPrefsGet' && isTeamNumber(m.team);
+}
+
+export function isTeamPrefsSet(msg: unknown): msg is TeamPrefsSet {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as TeamPrefsSet;
+  return m.type === 'teamPrefsSet' && isTeamNumber(m.team) && isNudgePatch(m.nudge);
+}
+
+export function isPushSubscribe(msg: unknown): msg is PushSubscribe {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as PushSubscribe;
+  return (
+    m.type === 'pushSubscribe' &&
+    isTeamNumber(m.team) &&
+    isPushSubscriptionInput(m.subscription) &&
+    (m.label === undefined || (typeof m.label === 'string' && m.label.length <= 80))
+  );
+}
+
+export function isPushUnsubscribe(msg: unknown): msg is PushUnsubscribe {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as PushUnsubscribe;
+  return m.type === 'pushUnsubscribe' && isTeamNumber(m.team) && typeof m.endpoint === 'string';
+}
+
+export function isPushTest(msg: unknown): msg is PushTest {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as PushTest;
+  return m.type === 'pushTest' && isTeamNumber(m.team);
+}
+
+/** A team's preferences, sent to the asking client only. */
+export type TeamPrefsState = {
+  type: 'teamPrefsState';
+  team: number;
+  nudge: NudgeChannels;
+  /** Devices subscribed for push (endpoints are opaque to the client but
+   *  let it tell "this device" from the others). */
+  pushDevices: { endpoint: string; label?: string; addedAt: number }[];
+  /** Present when the server can send pushes; what the browser subscribes with. */
+  vapidPublicKey?: string;
+  /** Slack is connected, so a Slack DM nudge can actually go somewhere. */
+  slackAvailable: boolean;
+};
+
+export function isTeamPrefsState(msg: unknown): msg is TeamPrefsState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TeamPrefsState).type === 'teamPrefsState';
 }

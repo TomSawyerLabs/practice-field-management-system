@@ -18,6 +18,16 @@ if (!raw) {
   clearTeamNumberCookie();
   window.location.href = '/';
 } else {
+  // Installable as an app named for the team, and a service worker so the
+  // queue's "you're next up" pushes reach the device with the tab closed.
+  const manifest = document.createElement('link');
+  manifest.rel = 'manifest';
+  manifest.href = `/api/manifest?team=${teamNumber}`;
+  document.head.appendChild(manifest);
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(err => console.warn('Service worker registration failed:', err));
+  }
+
   createRoot(document.getElementById('root')!).render(
     <WrapAll>
       <ControlPage teamNumber={teamNumber} selectedSsid={raw} />

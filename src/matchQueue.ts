@@ -136,6 +136,30 @@ export class MatchQueue {
     return entry;
   }
 
+  /** Import a schedule: append the entries in order (optionally dropping
+   *  the queued and skipped ones first). Teams in them leave the line. */
+  addMany(entries: AddEntryInput[], replace = false): number {
+    if (replace) this.entries = this.entries.filter(e => e.status !== 'queued' && e.status !== 'skipped');
+    let number = this.entries.reduce((max, e) => Math.max(max, e.number), 0);
+    for (const input of entries) {
+      number++;
+      const entry: QueueEntry = {
+        id: randomUUID().slice(0, 8),
+        number,
+        source: input.source ?? 'schedule',
+        scheduledAt: input.scheduledAt,
+        red: [...input.red],
+        blue: [...input.blue],
+        status: 'queued',
+        notes: input.notes,
+      };
+      this.line = this.line.filter(l => !entry.red.includes(l.team) && !entry.blue.includes(l.team));
+      this.entries.push(entry);
+    }
+    this.changed();
+    return entries.length;
+  }
+
   update(id: string, patch: { red?: number[]; blue?: number[]; scheduledAt?: number | null; notes?: string }): boolean {
     const entry = this.get(id);
     if (!entry || entry.status === 'played') return false;

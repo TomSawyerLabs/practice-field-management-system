@@ -111,8 +111,14 @@ import {
   SetupStepId,
   StagedStationChange,
   QueueState,
+  StationChecksState,
   QueueAdmin,
   isQueueState,
+  isStationChecksState,
+  TeamPrefsState,
+  isTeamPrefsState,
+  NudgeChannels,
+  PushSubscriptionInput,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -343,6 +349,7 @@ let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
+let currentStationChecks: StationChecksState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
 let currentPendingCommit = false;
@@ -471,9 +478,21 @@ function handleSavedTeamsState(state: SavedTeamsState) {
   events.dispatchEvent(new CustomEvent('savedTeamsState', { detail: state }));
 }
 
+function handleStationChecks(state: StationChecksState) {
+  currentStationChecks = state;
+  events.dispatchEvent(new CustomEvent('stationChecks', { detail: state }));
+}
+
 function handleQueueState(state: QueueState) {
   currentQueueState = state;
   events.dispatchEvent(new CustomEvent('queueState', { detail: state }));
+}
+
+const currentTeamPrefs = new Map<number, TeamPrefsState>();
+
+function handleTeamPrefsState(state: TeamPrefsState) {
+  currentTeamPrefs.set(state.team, state);
+  events.dispatchEvent(new CustomEvent('teamPrefsState', { detail: state }));
 }
 
 // ── Port Bridge State ────────────────────────────────────────────────
@@ -791,8 +810,18 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isStationChecksState(detail)) {
+    handleStationChecks(detail);
+    return;
+  }
+
   if (isQueueState(detail)) {
     handleQueueState(detail);
+    return;
+  }
+
+  if (isTeamPrefsState(detail)) {
+    handleTeamPrefsState(detail);
     return;
   }
 
@@ -1012,6 +1041,23 @@ export function useSavedTeams(): SavedTeamsState | null {
   return state;
 }
 
+// ── Station setup checks ────────────────────────────────────────────
+
+/** Per-robot setup checks (DS link, radio, comms, joysticks, battery,
+ *  Ready), for every station with a robot configured. */
+export function useStationChecks(): StationChecksState | null {
+  const [state, setState] = useState<StationChecksState | null>(currentStationChecks);
+
+  useEffect(() => {
+    setState(currentStationChecks);
+    const handler = (e: Event) => setState((e as CustomEvent<StationChecksState>).detail);
+    events.addEventListener('stationChecks', handler);
+    return () => events.removeEventListener('stationChecks', handler);
+  }, []);
+
+  return state;
+}
+
 // ── Match queue ─────────────────────────────────────────────────────
 
 /** The match queue: upcoming matches, the fill line, and its settings. */
@@ -1040,6 +1086,43 @@ export function sendQueueLeaveLine(team: number) {
 /** The queue manager's actions (admin-gated on the server). */
 export function sendQueueAdmin(msg: QueueAdmin) {
   ws?.send(JSON.stringify(msg));
+}
+
+// ── Team preferences: nudges and push ───────────────────────────────
+
+/** This team's nudge preferences and push devices. Asks the server on
+ *  mount; the server answers this connection only. */
+export function useTeamPrefs(team: number): TeamPrefsState | null {
+  const [state, setState] = useState<TeamPrefsState | null>(currentTeamPrefs.get(team) ?? null);
+
+  useEffect(() => {
+    setState(currentTeamPrefs.get(team) ?? null);
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<TeamPrefsState>).detail;
+      if (detail.team === team) setState(detail);
+    };
+    events.addEventListener('teamPrefsState', handler);
+    sendWhenOpen({ type: 'teamPrefsGet', team });
+    return () => events.removeEventListener('teamPrefsState', handler);
+  }, [team]);
+
+  return state;
+}
+
+export function sendTeamPrefsSet(team: number, nudge: Partial<NudgeChannels>) {
+  ws?.send(JSON.stringify({ type: 'teamPrefsSet', team, nudge }));
+}
+
+export function sendPushSubscribe(team: number, subscription: PushSubscriptionInput, label?: string) {
+  ws?.send(JSON.stringify({ type: 'pushSubscribe', team, subscription, label }));
+}
+
+export function sendPushUnsubscribe(team: number, endpoint: string) {
+  ws?.send(JSON.stringify({ type: 'pushUnsubscribe', team, endpoint }));
+}
+
+export function sendPushTest(team: number) {
+  ws?.send(JSON.stringify({ type: 'pushTest', team }));
 }
 
 // ── Match State ─────────────────────────────────────────────────────

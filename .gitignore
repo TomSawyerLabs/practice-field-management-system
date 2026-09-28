@@ -27,3 +27,6 @@ deploy-announced.json
 
 # Append-only work log that concurrent Claude sessions use to coordinate.
 /.agent.status
+match-queue.json
+team-prefs.json
+push-keys.json

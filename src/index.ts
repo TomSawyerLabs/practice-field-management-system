@@ -58,6 +58,10 @@ import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { MatchQueue } from './matchQueue.js';
 import { setupNextMatch, type SetupMode, type StageOutcome } from './matchSetup.js';
+import { TeamPrefsStore } from './teamPrefsStore.js';
+import { PushService } from './pushService.js';
+import { QueueNudger } from './queueNudger.js';
+import { handleManifestRequest } from './manifestApi.js';
 import { MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
 import { handlePublicMatchRequest } from './publicMatchApi.js';
@@ -565,6 +569,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     retentionDays: () => matchRecorder.effectiveRetentionDays(),
   });
 
+  // How each team wants to hear about the queue (Slack DM, web push), and
+  // the nudger that acts on it when a team is next up, on deck, or a no-show.
+  const teamPrefsStore = new TeamPrefsStore();
+  const pushService = new PushService(undefined, publicUrl);
+  const queueNudger = new QueueNudger({
+    queue: matchQueue,
+    prefs: teamPrefsStore,
+    slack: slackBridge,
+    push: pushService,
+    publicUrl,
+  });
+
   // Initialize WebSocket server (callbacks are set below after subsystems are created)
   let onRunTeamChecks: ((station: StationName) => void) | undefined;
   let onDriveAction: ((dsIp: string, station: StationName | null) => void) | undefined;
@@ -590,6 +606,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleTimelapseRequest(req, res, fieldTimelapse),
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
+      handleManifestRequest,
     ],
     (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
@@ -665,6 +682,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
+      teamPrefs: {
+        store: teamPrefsStore,
+        vapidPublicKey: () => pushService.publicKey,
+        slackAvailable: () => slackBridge.isConnected(),
+        testPush: team => queueNudger.test(team),
+      },
       practice: {
         recorder: practiceRecorder,
         store: practiceStore,
@@ -698,6 +721,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   practiceRecorder.start();
   practiceNotifier.start();
+  queueNudger.start();
   fieldTimelapse.start();
 
   // Broadcast score state changes to all WebSocket clients
