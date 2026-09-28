@@ -381,7 +381,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     const radioSettled = latest?.radioUpdate?.status === 'ACTIVE';
     if (control?.teamNumber && teamOfSsid(ssid) !== control.teamNumber) {
       if (joined) {
-        // The team pressed Join / Enable Wi-Fi but the AP still has someone else: a held change.
+        // The team pressed Join / Enable Robot but the AP still has someone else: a held change.
         push({
           id: `team-mismatch-${station}`,
           severity: 'info',

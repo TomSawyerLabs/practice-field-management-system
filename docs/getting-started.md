@@ -226,7 +226,7 @@ box.
    none is set, so do this before opening the field up.
 2. **Assign a team to a station.** From the home page, enter a team
    number to open its control page, then add the robot's SSID and WPA key
-   and press **Enable Wi-Fi**. The AP reconfigures in ~30 seconds — later
+   and press **Enable Robot**. The AP reconfigures in ~30 seconds — later
    if robots are enabled or a match is set up (see
    [match-system.md](match-system.md#wi-fi-changes-and-matches)).
 3. **Check the network page.** `/network` should show the VLAN coming up

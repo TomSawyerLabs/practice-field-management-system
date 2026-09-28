@@ -230,7 +230,7 @@ which one team's E-Stop reaches their alliance partners.
 
 ## Wi-Fi changes and matches
 
-A team puts a robot on the field with one button, **Enable Wi-Fi**, and
+A team puts a robot on the field with one button, **Enable Robot**, and
 takes it off with **Release**. Reconfiguring the radio takes about 30
 seconds and drops every robot's Wi-Fi while it does, so the server — not
 the team — decides when that happens:
@@ -261,7 +261,7 @@ the list ("the field is full").
 **After a match**, every robot on the field is queued to leave (a release
 per robot, marked "the match is over"), so the next match starts clean
 without anyone pressing Release. A robot that joins the next match, or
-whose team presses **Keep** or **Enable Wi-Fi** again, comes off the list
+whose team presses **Keep** or **Enable Robot** again, comes off the list
 and stays. Nothing leaves until staff apply. The admin page's "Queue every
 robot to leave when a match ends" box turns this off.
 
@@ -282,7 +282,7 @@ push shows "Reconfiguration in progress" on every page and drops each
 robot's Wi-Fi, which is why it does not retry faster. For a field that is
 stuck anyway, the admin page has a **Field reset** card: **Clear all robots
 from the radio** empties every station and drops waiting requests (teams
-press Enable Wi-Fi again), and **Restart pFMS** restarts the backend the
+press Enable Robot again), and **Restart pFMS** restarts the backend the
 same graceful way a deploy does, keeping network rules so robots stay
 connected. Both ask first and refuse while a match is running.
 

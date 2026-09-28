@@ -846,7 +846,7 @@ function RobotRow({
               disabled={configCooldown || !availableStation}
               onClick={e => handleEnable(e)}
             >
-              Enable Wi-Fi
+              Enable Robot
             </Button>
           )}
         </Box>
@@ -854,7 +854,7 @@ function RobotRow({
 
       {showEnableHint && !isActive && (
         <Alert severity="info" sx={{ mx: 2, mb: 0.5 }} onClose={() => setShowEnableHint(false)}>
-          Enable this robot&apos;s Wi-Fi first to see its status.
+          Enable this robot first to see its status.
         </Alert>
       )}
     </>
@@ -898,7 +898,8 @@ function AddRobotForm({
     onDone();
   };
 
-  const handleSaveForLater = () => {
+  /** Field full: keep the robot so Enable Robot is one tap once room opens. */
+  const handleAdd = () => {
     if (!isValid) return;
     sendSaveTeam(ssid, passphrase);
     onSelectRobot(ssid);
@@ -920,6 +921,7 @@ function AddRobotForm({
         onChange={e => setSuffix(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 10))}
         fullWidth
         size="small"
+        helperText="Exactly as set on the radio. Capitals matter: Comp and comp are different robots."
         sx={{ mb: 1 }}
         InputProps={
           suffix
@@ -939,7 +941,11 @@ function AddRobotForm({
         onChange={e => setPassphrase(e.target.value)}
         fullWidth
         size="small"
-        helperText={passphrase && !isValid ? 'Must be 8-16 alphanumeric characters.' : ''}
+        helperText={
+          passphrase && !isValid
+            ? 'Must be 8-16 letters and numbers.'
+            : 'The 6 GHz passphrase set on the radio. Capitals matter.'
+        }
         error={!!passphrase && !isValid}
         sx={{ mb: 2 }}
       />
@@ -948,16 +954,17 @@ function AddRobotForm({
           <Button variant="contained" size="small" color="warning" disabled={!isValid} onClick={handleReplace}>
             Replace
           </Button>
+        ) : availableStation ? (
+          <Button variant="contained" size="small" disabled={!isValid} onClick={handleSubmit}>
+            Enable Robot
+          </Button>
         ) : (
-          // Disabled when the field is full — the alert above says what to do;
-          // "Save for Later" still works so the robot is ready when room opens.
-          <Button variant="contained" size="small" disabled={!isValid || !availableStation} onClick={handleSubmit}>
-            Enable Wi-Fi
+          // Field full — the alert above says to ask field staff. Keep the
+          // robot so Enable Robot is one tap once there is room.
+          <Button variant="contained" size="small" disabled={!isValid} onClick={handleAdd}>
+            Add robot
           </Button>
         )}
-        <Button variant="outlined" size="small" disabled={!isValid} onClick={handleSaveForLater}>
-          Save for Later
-        </Button>
         <Button size="small" onClick={onDone}>
           Cancel
         </Button>

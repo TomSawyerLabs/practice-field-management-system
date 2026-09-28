@@ -542,7 +542,7 @@ function WifiChangesSection() {
           />
           <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
             {hold
-              ? 'Teams can still press Enable Wi-Fi, but nothing reaches the radio until you press Apply now below.'
+              ? 'Teams can still press Enable Robot, but nothing reaches the radio until you press Apply now below.'
               : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled — unless something is already waiting, in which case they join that batch. They are held automatically while a match exists; tick this to hold them at other times too, e.g. a busy scrimmage day. Waiting changes only go out when you press Apply now.'}
           </Typography>
           <FormControlLabel
@@ -603,7 +603,7 @@ function FieldResetSection() {
         <DialogContent>
           <Typography variant="body2">
             {confirm === 'clear'
-              ? 'Every robot loses its Wi-Fi and any waiting Wi-Fi requests are dropped, so teams will need to press Enable Wi-Fi again. Robots joined to a match being set up leave it.'
+              ? 'Every robot loses its Wi-Fi and any waiting Wi-Fi requests are dropped, so teams will need to press Enable Robot again. Robots joined to a match being set up leave it.'
               : 'Every page reconnects in a few seconds. Network rules and routing are kept, so robots stay on Wi-Fi and Driver Stations re-attach on their own.'}
           </Typography>
         </DialogContent>

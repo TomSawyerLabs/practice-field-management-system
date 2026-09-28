@@ -65,7 +65,7 @@ export function holdReasonText(hold: RadioHoldReason | undefined, audience: 'tea
 }
 
 export const DEFERRED_TEXT_TEAM =
-  'Waiting for every robot on the field to be disabled. Your Wi-Fi is enabled right after.';
+  'Waiting for every robot on the field to be disabled. Your robot joins the field right after.';
 export const DEFERRED_TEXT_STAFF =
   'Applied, waiting for every robot to be disabled — the radio reconfigures right after.';
 
