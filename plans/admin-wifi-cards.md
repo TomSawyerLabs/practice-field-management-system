@@ -65,8 +65,8 @@ card (`robotWifiInterface`) to hear robots' `FRC-<team>` 2.4 GHz networks.
 3. Admin UI: cards table with status + Test join form + recent results; the
    robot-scan picker shows each card's status and disables host-used ones.
 4. Docs (`docs/robot-tester.md` robot Wi-Fi scan section), checks, commit.
-5. Deploy only if the user asks. ← current: built, tested, committed;
-   waiting on the user for deploy and for first use on real hardware.
+5. Deploy only if the user asks. ← current: deployed; no real test join
+   run yet.
 
 ## Findings / gotchas
 
@@ -100,7 +100,10 @@ card (`robotWifiInterface`) to hear robots' `FRC-<team>` 2.4 GHz networks.
 - [x] 3 admin UI (Wireless cards card, Test join dialog, recent results,
       picker shows card status)
 - [x] 4 docs (`docs/robot-tester.md` → Wireless cards and test joins)
-- [ ] Deploy (user's call) and first use on steamboat
+- [x] Deployed `ade56ed` (2026-09-29 14:31). Live on steamboat: one card,
+      `wlp0s20f3` (iwlwifi, 18:cc:18:c6:42:6a), shown as Robot scan /
+      "Listening for robots", test join available.
+- [ ] First real test join (none run yet)
 
 ## Open questions for the user
 

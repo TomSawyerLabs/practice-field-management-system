@@ -102,7 +102,7 @@ teams that capitalization matters.
    table.
 7. Checks, commit.
 
-Current step: **round 2 (stall-triggered passphrase test) built and committed; waiting on deploy and the go-ahead to turn the scan on at steamboat.**
+Current step: **deployed and ON at steamboat (2026-09-29 14:31, `ade56ed`, card `wlp0s20f3`); waiting for a real robot to verify against.**
 Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
 
 ## Findings / gotchas
@@ -147,8 +147,19 @@ Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
       team page, CSA issues, admin column, docs. Tests: scanner 21, wording
       43; mutation-checked (ignoring `linked` fails a test). Team page
       checked in a browser with injected stalls.
-- [ ] Deploy, pick `wlp0s20f3` on the admin page (user's go-ahead), verify
-      against a real robot
+- [x] Deployed `ade56ed` (user: "go ahead. I don't think that wifi is
+      being used right now", 2026-09-29). Checked the card was free first
+      (DOWN, no address, not the default route, rfkill off, networkd
+      "unmanaged", system wpa_supplicant's socket dir empty, no netplan
+      wifis). Turned on by adding `"robotWifiInterface": "wlp0s20f3"` to
+      steamboat's `setup-config.json` (backup
+      `setup-config.json.bak-20260929-143106`) just before `update.sh`, so
+      one reload picked up both. Result: status Listening, card shown as
+      Robot scan, still no address; pFMS's own wpa_supplicant (`scan_results`) hears 29 networks (building Wi-Fi, `FRC-VH-COMPETITION`
+      — not `FRC-<number>`, correctly ignored). No robot radios on at the
+      time.
+- [ ] Verify against a real robot: its `FRC-<team>` network listed on
+      /admin; a stalled connection warns on the team page and tests.
 
 ## Open questions for the user
 
