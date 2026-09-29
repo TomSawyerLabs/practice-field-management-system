@@ -46,7 +46,7 @@ import { ScoringEngine } from './scoringEngine.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
-import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces } from './robotWifiScan.js';
+import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
 import { WifiCards } from './wifiCards.js';
 import { ApiKeyStore } from './apiKeyStore.js';
 import { PortBridgeManager, parseFieldPorts } from './portBridgeManager.js';
@@ -431,9 +431,38 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Cards come and go (USB), and the host can take one over at any time.
   setInterval(() => wifiCards.refresh(), 10_000);
   const robotWifiState = (): RobotWifiScanState => ({
-    ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [] }),
+    ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [], stalls: [] }),
     interfaces: listWirelessInterfaces(),
   });
+  // What the field is trying to connect, for spotting a robot that is taking
+  // too long to join: every configured station, whether its robot is linked,
+  // and since when it has been trying. Nothing while the radio isn't ACTIVE —
+  // it can't link anyone then, so that wait doesn't count.
+  let radioActiveSince: number | null = null;
+  let linkedNow: Partial<Record<StationName, boolean>> = {};
+  radioManager.addStatusListener(entry => {
+    const update = entry.radioUpdate;
+    if (update?.status !== 'ACTIVE') {
+      radioActiveSince = null;
+      return;
+    }
+    radioActiveSince ??= Date.now();
+    linkedNow = Object.fromEntries(StationNameList.map(s => [s, update.stationStatuses[s]?.isLinked ?? false]));
+  });
+  const connectAttempts = (): ConnectAttempt[] => {
+    if (radioActiveSince === null) return [];
+    const lastLinked = radioManager.getLastLinkedTimestamps();
+    return StationNameList.flatMap(station => {
+      const config = radioManager.getStationConfig(station);
+      if (!config?.ssid) return [];
+      const since = Math.max(
+        radioManager.getConnectedAtForStation(station) ?? 0,
+        radioActiveSince ?? 0,
+        lastLinked[station] ?? 0,
+      );
+      return [{ station, ssid: config.ssid, wpaKey: config.wpaKey, since, linked: linkedNow[station] ?? false }];
+    });
+  };
   const applyRobotWifiSetting = () => {
     const iface = setupConfigStore.resolveSetting('robotWifiInterface', 'ROBOT_WIFI_INTERFACE').value || undefined;
     if ((robotWifi?.iface ?? undefined) === iface) return;
@@ -444,8 +473,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       robotWifi = new RobotWifiScanner({
         iface,
         runner: new WpaSupplicantRunner(iface),
-        savedRobots: () =>
-          savedTeamStore.getTeams().map(({ ssid, wpaKey, wpaKeyHash }) => ({ ssid, wpaKey, wpaKeyHash })),
+        savedSsids: () => savedTeamStore.getTeams().map(t => t.ssid),
+        connectAttempts,
         onChange: () => {
           broadcastRobotWifi(robotWifiState());
           wifiCards.refresh();
@@ -458,11 +487,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   };
   applyRobotWifiSetting();
   setupConfigStore.addListener(applyRobotWifiSetting);
-  // A robot saved or changed: re-match what is on the air, and check the new passphrase.
-  savedTeamStore.addListener(() => {
-    broadcastRobotWifi(robotWifiState());
-    void robotWifi?.checkNextKey();
-  });
+  // A robot saved or changed: re-match what is on the air.
+  savedTeamStore.addListener(() => broadcastRobotWifi(robotWifiState()));
   process.on('exit', () => robotWifi?.stop());
 
   // A stream server saved in the setup UI wins over the environment, and is
@@ -764,7 +790,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
-      robotWifi: { getState: robotWifiState, recheck: ssid => robotWifi?.recheck(ssid) },
+      robotWifi: { getState: robotWifiState, test: station => robotWifi?.test(station) },
       wifiCards,
       teamPrefs: {
         store: teamPrefsStore,

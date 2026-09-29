@@ -40,7 +40,7 @@ import { PendingRadioChangesPanel } from './PendingRadioChanges';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
 import type {
-  RobotWifiBroadcast,
+  RobotWifiKeyCheck,
   RobotWifiScanState,
   WifiCardInfo,
   WifiSecurity,
@@ -531,7 +531,7 @@ function OutOfMatchControlSection() {
   );
 }
 
-const KEY_CHECK_LABELS: Record<NonNullable<RobotWifiBroadcast['keyCheck']>['result'], string> = {
+const KEY_CHECK_LABELS: Record<RobotWifiKeyCheck['result'], string> = {
   checking: 'Checking…',
   ok: 'Works',
   wrongKey: 'Wrong passphrase',
@@ -853,47 +853,52 @@ function RobotWifiScanSection() {
                     <TableCell>Heard</TableCell>
                     <TableCell>Signal</TableCell>
                     <TableCell>Saved as</TableCell>
-                    <TableCell>Passphrase</TableCell>
+                    <Tooltip title="Tried only when a robot is taking too long to join the field">
+                      <TableCell>Field passphrase</TableCell>
+                    </Tooltip>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {scan.broadcasts.map(b => (
-                    <TableRow key={b.ssid}>
-                      <TableCell sx={{ fontFamily: 'monospace' }}>{b.ssid}</TableCell>
-                      <TableCell>{b.signal} dBm</TableCell>
-                      <TableCell>
-                        {b.match.kind === 'exact' ? (
-                          <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
-                            {b.match.savedSsid}
-                          </Typography>
-                        ) : b.match.kind === 'caseOnly' ? (
-                          <Chip size="small" color="error" label={`${b.match.savedSsid} — capitals differ`} />
-                        ) : (
-                          <Typography variant="body2" sx={{ color: 'text.disabled' }}>
-                            not saved
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {b.keyCheck ? (
-                          <Chip
-                            size="small"
-                            variant="outlined"
-                            color={
-                              b.keyCheck.result === 'ok'
-                                ? 'success'
-                                : b.keyCheck.result === 'wrongKey'
-                                  ? 'error'
-                                  : 'default'
-                            }
-                            label={KEY_CHECK_LABELS[b.keyCheck.result]}
-                          />
-                        ) : (
-                          '—'
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {scan.broadcasts.map(b => {
+                    const keyCheck = scan.stalls?.find(st => st.broadcast.ssid === b.ssid)?.keyCheck;
+                    return (
+                      <TableRow key={b.ssid}>
+                        <TableCell sx={{ fontFamily: 'monospace' }}>{b.ssid}</TableCell>
+                        <TableCell>{b.signal} dBm</TableCell>
+                        <TableCell>
+                          {b.match.kind === 'exact' ? (
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                              {b.match.savedSsid}
+                            </Typography>
+                          ) : b.match.kind === 'caseOnly' ? (
+                            <Chip size="small" color="error" label={`${b.match.savedSsid} — capitals differ`} />
+                          ) : (
+                            <Typography variant="body2" sx={{ color: 'text.disabled' }}>
+                              not saved
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {keyCheck ? (
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              color={
+                                keyCheck.result === 'ok'
+                                  ? 'success'
+                                  : keyCheck.result === 'wrongKey'
+                                    ? 'error'
+                                    : 'default'
+                              }
+                              label={KEY_CHECK_LABELS[keyCheck.result]}
+                            />
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}

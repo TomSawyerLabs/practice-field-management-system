@@ -1,8 +1,8 @@
 /**
  * Robot Wi-Fi scan: listen for the 2.4 GHz network a team's robot radio
  * broadcasts (`FRC-<team>` or `FRC-<team>-<suffix>`), compare it with the
- * robots the team has saved, and — once per saved passphrase — try joining
- * it to see whether the passphrase works.
+ * robots the team has saved, and — when a team's robot is taking a while to
+ * join the field — try the field's passphrase on it.
  *
  * The field connects to the robot on 6 GHz with the SSID `<team>[-suffix]`,
  * which pFMS cannot hear from outside the field AP. The 2.4 GHz network
@@ -15,7 +15,7 @@
  * host is touched. See plans/robot-wifi-scan.md.
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
-import { pbkdf2Sync } from 'node:crypto';
+import { createHash, pbkdf2Sync } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join } from 'node:path';
@@ -24,9 +24,12 @@ import type {
   RobotWifiBroadcast,
   RobotWifiKeyCheck,
   RobotWifiScanState,
+  RobotWifiStall,
+  StationName,
   WifiSecurity,
   WifiTestJoinResult,
 } from './types.js';
+import { teamOfSsid } from './utils.js';
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -331,11 +334,49 @@ export class WpaSupplicantRunner implements WifiRunner {
 
 // ── The scanner ─────────────────────────────────────────────────────
 
-/** A saved robot, as the scanner needs it. The key never leaves the server. */
-export interface SavedRobot {
+/** A station the field is trying to connect a robot on. */
+export interface ConnectAttempt {
+  station: StationName;
+  /** The SSID the field is set up to join (the station's active config) */
   ssid: string;
+  /** Its passphrase. Never leaves the server. */
   wpaKey: string;
-  wpaKeyHash: string;
+  /** Epoch ms it has been trying since: the latest of the team taking the
+   *  station, the radio going ACTIVE, and the robot last being linked. */
+  since: number;
+  /** The robot radio is linked right now */
+  linked: boolean;
+}
+
+/** How long a robot may take to join before it counts as stalled. A healthy
+ *  robot links well inside this once the radio is up. */
+export const STALL_MS = 60_000;
+
+type Heard = Pick<RobotWifiBroadcast, 'ssid' | 'team' | 'robotSsid' | 'signal'>;
+
+export interface Stall {
+  attempt: ConnectAttempt;
+  broadcast: Heard;
+  match: RobotWifiStall['broadcast']['match'];
+}
+
+/** Connect attempts that have stalled while the team's robot network is on
+ *  the air, each with the network to test against: the one named like the
+ *  field's SSID (exactly, then ignoring capitals), else the team's
+ *  strongest. Attempts with nothing heard for the team give nothing. */
+export function findStalls(attempts: ConnectAttempt[], heard: Heard[], now: number, stallMs = STALL_MS): Stall[] {
+  const stalls: Stall[] = [];
+  for (const attempt of attempts) {
+    if (attempt.linked || now - attempt.since < stallMs) continue;
+    const team = teamOfSsid(attempt.ssid);
+    const mine = heard.filter(h => h.team === team).sort((a, b) => b.signal - a.signal);
+    const exact = mine.find(h => h.robotSsid === attempt.ssid);
+    const caseOnly = mine.find(h => h.robotSsid.toLowerCase() === attempt.ssid.toLowerCase());
+    const broadcast = exact ?? caseOnly ?? mine[0];
+    if (!broadcast) continue;
+    stalls.push({ attempt, broadcast, match: exact ? 'exact' : caseOnly ? 'caseOnly' : 'otherName' });
+  }
+  return stalls;
 }
 
 /** 2.4 GHz channels 1–13 and 14: robot radios only broadcast there. */
@@ -344,7 +385,10 @@ const SCAN_FREQS = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 
 export interface RobotWifiScannerOptions {
   iface: string;
   runner: WifiRunner;
-  savedRobots: () => SavedRobot[];
+  /** SSIDs of the robots teams have saved, for name matching */
+  savedSsids: () => string[];
+  /** Stations the field is trying to connect robots on */
+  connectAttempts: () => ConnectAttempt[];
   onChange: (state: RobotWifiScanState) => void;
   now?: () => number;
   scanIntervalMs?: number;
@@ -354,21 +398,27 @@ export interface RobotWifiScannerOptions {
   expireMs?: number;
   /** How long a join attempt may take before it counts as unreachable. */
   keyCheckTimeoutMs?: number;
-  /** Minimum gap between checks of the same network ("Check again"). */
-  recheckMinMs?: number;
+  /** How long a robot may take to join before it counts as stalled. */
+  stallMs?: number;
+  /** Minimum gap between tests of one station ("Test connection"). */
+  testMinGapMs?: number;
 }
 
-type Seen = Omit<RobotWifiBroadcast, 'match' | 'keyCheck'> & { flags: string };
+type Seen = RobotWifiBroadcast & { flags: string };
+
+const keyHash = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 16);
 
 export class RobotWifiScanner {
   private readonly o: Required<Omit<RobotWifiScannerOptions, 'now'>> & { now: () => number };
   private status: RobotWifiScanState['status'] = 'off';
   private error: string | undefined;
   private lastScanAt: number | undefined;
-  private seen = new Map<string, Seen>();
-  /** Key check results by `${broadcastSsid}\n${savedKeyHash}` — so a changed
-   *  passphrase gets checked afresh, and an unchanged one never again. */
+  private seen = new Map<string, Omit<Seen, 'match'>>();
+  /** Results by `${broadcastSsid}\n${hash of the field's key}` — a changed
+   *  passphrase is a new test; an unchanged one is not re-run by itself. */
   private keyChecks = new Map<string, RobotWifiKeyCheck>();
+  /** Stations whose team pressed "Test connection", waiting for the radio */
+  private asked = new Set<StationName>();
   private checking: string | null = null;
   private pendingEvents: ((e: WpaEvent) => void) | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -385,7 +435,8 @@ export class RobotWifiScanner {
       scanSettleMs: 5_000,
       expireMs: 90_000,
       keyCheckTimeoutMs: 20_000,
-      recheckMinMs: 30_000,
+      stallMs: STALL_MS,
+      testMinGapMs: 30_000,
       ...options,
     };
   }
@@ -443,7 +494,7 @@ export class RobotWifiScanner {
   }
 
   /** One scan: trigger it, give the card time to hop the channels, read the
-   *  results, then check any passphrase that has not been checked yet. */
+   *  results, then test any stalled connection that is due one. */
   async scanOnce(): Promise<void> {
     if (this.status !== 'running' || this.checking) return; // a join attempt owns the radio
     try {
@@ -482,74 +533,76 @@ export class RobotWifiScanner {
     this.emit();
   }
 
-  /** The saved robot a broadcast should be checked against, with its key. */
-  private candidate(s: Seen): SavedRobot | null {
-    const saved = this.o.savedRobots();
-    const match = matchSavedRobot(
-      s.robotSsid,
-      saved.map(r => r.ssid),
-    );
-    if (match.kind === 'unknown') return null;
-    return saved.find(r => r.ssid === match.savedSsid) ?? null;
+  private stalls(): Stall[] {
+    return findStalls(this.o.connectAttempts(), [...this.seen.values()], this.o.now(), this.o.stallMs);
   }
 
-  private checkKey(s: Seen, robot: SavedRobot): string {
-    return `${s.ssid}\n${robot.wpaKeyHash}`;
+  private checkId(st: Stall): string {
+    return `${st.broadcast.ssid}\n${keyHash(st.attempt.wpaKey)}`;
   }
 
-  /** Check the first seen network whose saved passphrase has not been tried. */
+  /** Test one stalled connection, if one is due: first any a team asked
+   *  for, then any not yet tested whose robot is named like the field
+   *  expects (capitals aside). One at a time — the radio also scans. */
   async checkNextKey(): Promise<void> {
     if (this.checking || this.status !== 'running') return;
-    for (const s of this.seen.values()) {
-      const robot = this.candidate(s);
-      if (!robot || this.keyChecks.has(this.checkKey(s, robot))) continue;
-      await this.runKeyCheck(s, robot);
-      return; // one per scan cycle — the radio is shared with scanning
-    }
+    const stalls = this.stalls();
+    for (const station of this.asked)
+      if (!stalls.some(st => st.attempt.station === station)) this.asked.delete(station);
+    const next =
+      stalls.find(st => this.asked.has(st.attempt.station)) ??
+      stalls.find(st => st.match !== 'otherName' && !this.keyChecks.has(this.checkId(st)));
+    if (!next) return;
+    this.asked.delete(next.attempt.station);
+    await this.runKeyCheck(next);
+    if (this.asked.size) void this.checkNextKey();
   }
 
-  /** "Check again": forget the result for this network so the next cycle
-   *  re-tries it. Rate-limited so a button cannot hammer a robot. */
-  recheck(ssid: string): void {
-    const s = this.seen.get(ssid);
-    if (!s) return;
-    const robot = this.candidate(s);
-    if (!robot) return;
-    const key = this.checkKey(s, robot);
-    const prev = this.keyChecks.get(key);
-    if (!prev || prev.result === 'checking' || this.o.now() - prev.at < this.o.recheckMinMs) return;
-    this.keyChecks.delete(key);
+  /** "Test connection" for a stalled station: try the field's passphrase
+   *  now. Rate-limited, so a button cannot hammer a robot. */
+  test(station: StationName): void {
+    const st = this.stalls().find(s => s.attempt.station === station);
+    if (!st) return;
+    const prev = this.keyChecks.get(this.checkId(st));
+    if (prev && (prev.result === 'checking' || this.o.now() - prev.at < this.o.testMinGapMs)) return;
+    this.asked.add(station);
     void this.checkNextKey();
   }
 
-  private async runKeyCheck(s: Seen, robot: SavedRobot): Promise<void> {
-    const key = this.checkKey(s, robot);
-    const security = keyMgmtFor(s.flags);
+  private async runKeyCheck(st: Stall): Promise<void> {
+    const id = this.checkId(st);
+    const seen = this.seen.get(st.broadcast.ssid);
+    if (!seen) return;
+    const { ssid: fieldSsid, wpaKey } = st.attempt;
+    const security = keyMgmtFor(seen.flags);
     if (security === 'open') {
-      this.keyChecks.set(key, { result: 'open', at: this.o.now(), savedSsid: robot.ssid });
+      this.keyChecks.set(id, { result: 'open', at: this.o.now(), fieldSsid });
       this.emit();
       return;
     }
-    if (joinProblem(s.ssid, security, robot.wpaKey)) return;
+    if (joinProblem(seen.ssid, security, wpaKey)) return;
 
-    this.checking = s.ssid;
-    this.keyChecks.set(key, { result: 'checking', at: this.o.now(), savedSsid: robot.ssid });
+    this.checking = seen.ssid;
+    this.keyChecks.set(id, { result: 'checking', at: this.o.now(), fieldSsid });
     this.emit();
     let result: RobotWifiKeyCheck['result'];
     try {
       const r = await attemptJoin(
         this.o.runner.cli.bind(this.o.runner),
         h => (this.pendingEvents = h),
-        { ssid: s.ssid, security, passphrase: robot.wpaKey },
+        { ssid: seen.ssid, security, passphrase: wpaKey },
         this.o.keyCheckTimeoutMs,
       );
-      if (r.outcome === 'failed') console.warn(`Robot Wi-Fi passphrase check for ${s.ssid} failed: ${r.reason}`);
+      if (r.outcome === 'failed') console.warn(`Robot Wi-Fi passphrase check for ${seen.ssid} failed: ${r.reason}`);
       result = r.outcome === 'connected' ? 'ok' : r.outcome === 'wrongKey' ? 'wrongKey' : 'unreachable';
     } finally {
       this.checking = null;
     }
-    console.log(`Robot Wi-Fi passphrase check for ${s.ssid} (saved as ${robot.ssid}): ${result}`);
-    this.keyChecks.set(key, { result, at: this.o.now(), savedSsid: robot.ssid });
+    console.log(
+      `Robot Wi-Fi passphrase check: ${st.attempt.station} set up for ${fieldSsid}, stalled; ` +
+        `field passphrase on ${seen.ssid}: ${result}`,
+    );
+    this.keyChecks.set(id, { result, at: this.o.now(), fieldSsid });
     this.emit();
   }
 
@@ -571,16 +624,26 @@ export class RobotWifiScanner {
   }
 
   getState(): RobotWifiScanState {
-    const saved = this.o.savedRobots();
-    const savedSsids = saved.map(r => r.ssid);
+    const savedSsids = this.o.savedSsids();
     const broadcasts: RobotWifiBroadcast[] = [...this.seen.values()]
       .sort((a, b) => a.team - b.team || a.ssid.localeCompare(b.ssid))
-      .map(({ flags: _flags, ...s }) => {
-        const match = matchSavedRobot(s.robotSsid, savedSsids);
-        const robot = match.kind === 'unknown' ? undefined : saved.find(r => r.ssid === match.savedSsid);
-        const keyCheck = robot ? this.keyChecks.get(`${s.ssid}\n${robot.wpaKeyHash}`) : undefined;
-        return { ...s, match, ...(keyCheck && { keyCheck }) };
-      });
+      .map(({ flags: _flags, ...s }) => ({ ...s, match: matchSavedRobot(s.robotSsid, savedSsids) }));
+    const stalls: RobotWifiStall[] = this.stalls().map(st => {
+      const keyCheck = this.keyChecks.get(this.checkId(st));
+      return {
+        station: st.attempt.station,
+        team: st.broadcast.team,
+        fieldSsid: st.attempt.ssid,
+        since: st.attempt.since,
+        broadcast: {
+          ssid: st.broadcast.ssid,
+          robotSsid: st.broadcast.robotSsid,
+          signal: st.broadcast.signal,
+          match: st.match,
+        },
+        ...(keyCheck && { keyCheck }),
+      };
+    });
     return {
       type: 'robotWifiScan',
       status: this.status,
@@ -589,6 +652,7 @@ export class RobotWifiScanner {
       ...(this.lastScanAt !== undefined && { lastScanAt: this.lastScanAt }),
       interfaces: [],
       broadcasts,
+      stalls,
     };
   }
 }

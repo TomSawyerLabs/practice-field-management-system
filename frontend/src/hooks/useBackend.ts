@@ -74,6 +74,7 @@ import {
   RobotWifiScanState,
   isWifiCardsState,
   WifiCardsState,
+  RobotWifiTest,
   WifiTestJoin,
   isExternalAccessState,
   isExternalAccessTokenCreated,
@@ -1986,9 +1987,10 @@ export function useRobotWifiScan(): RobotWifiScanState | null {
   return state;
 }
 
-/** "Check again": re-try the saved passphrase on a robot network. */
-export function sendRobotWifiRecheck(ssid: string) {
-  ws?.send(JSON.stringify({ type: 'robotWifiRecheck', ssid }));
+/** "Test connection": try the field's passphrase for a stalled station on
+ *  its robot's network (rate-limited on the server). */
+export function sendRobotWifiTest(station: StationName) {
+  ws?.send(JSON.stringify({ type: 'robotWifiTest', station } satisfies RobotWifiTest));
 }
 
 // ── Wireless cards (admin) ──────────────────────────────────────────

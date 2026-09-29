@@ -22,7 +22,7 @@ import {
   isPushUnsubscribe,
   isPushTest,
   TeamPrefsState,
-  isRobotWifiRecheck,
+  isRobotWifiTest,
   isWifiTestJoin,
   RobotWifiScanState,
   WifiCardsState,
@@ -275,7 +275,8 @@ export function setupWebSocket(
     /** Robots' 2.4 GHz networks as heard by pFMS (src/robotWifiScan.ts). */
     robotWifi?: {
       getState: () => RobotWifiScanState;
-      recheck: (ssid: string) => void;
+      /** "Test connection" for a stalled station (rate-limited in the scanner) */
+      test: (station: StationName) => void;
     };
     /** Wireless cards on the host and staff test joins (src/wifiCards.ts). */
     wifiCards?: {
@@ -983,9 +984,9 @@ export function setupWebSocket(
       } else if (isPushUnsubscribe(data)) {
         setup?.teamPrefs?.store.removePushDevice(data.team, data.endpoint);
         sendTeamPrefs(ws, data.team);
-      } else if (isRobotWifiRecheck(data)) {
-        // Rate-limited per network inside the scanner.
-        setup?.robotWifi?.recheck(data.ssid);
+      } else if (isRobotWifiTest(data)) {
+        // Rate-limited per station inside the scanner.
+        setup?.robotWifi?.test(data.station);
       } else if (isWifiTestJoin(data)) {
         if (!setupWritesAllowed(ws)) {
           ws.send(JSON.stringify({ error: 'Admin authentication required to test a Wi-Fi network' }));

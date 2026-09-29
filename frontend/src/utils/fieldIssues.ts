@@ -672,7 +672,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
 
   // ── Robots heard on 2.4 GHz (robot Wi-Fi scan) ──────────────────────
   // Per team, not per station: a robot that never connects has no station.
-  for (const w of robotWifiStaffIssues(input.robotWifi)) {
+  for (const w of robotWifiStaffIssues(input.robotWifi, input.now)) {
     push({
       id: w.id,
       severity: w.severity,

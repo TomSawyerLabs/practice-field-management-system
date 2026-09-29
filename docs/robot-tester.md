@@ -148,25 +148,44 @@ not be used for anything else. Linux only.
 
 **What teams see** on their page, per robot network heard for their team:
 
-- **Matches a saved robot** — a green note, plus the passphrase result.
+- **Matches a saved robot** — a green note.
 - **Differs only in capitals** — an error saying the field will never
   connect, with **Add as 1234-Suffix** to save it under the right name.
 - **Not saved** — a note with the same **Add as …** button.
 
-**Passphrase check:** the first time a heard network matches a saved robot
-(exactly, or ignoring capitals), pFMS joins it with the saved passphrase
-and leaves straight away — no DHCP, no address, no retries. It happens
-once per saved passphrase; changing the passphrase checks again, and the
-team can press **Check again** after a failure (at most every 30 s). The
-check uses the robot's **2.4 GHz** network, which can be given its own
-passphrase when the radio is configured. A team that did that sees "did not
-open" even though the field's 6 GHz passphrase may be fine; the wording
+**A robot taking too long to join.** When a station is set up for a team's
+robot, the radio is up, and the robot still hasn't linked after **60
+seconds** (counted from the latest of: the team taking the station, the
+radio coming up, the robot last being linked) — and pFMS can hear the
+team's `FRC-…` network — the team's page warns that the robot hasn't
+joined, and says what pFMS hears:
+
+- **The name the field is set up for** (exactly, or only the capitals
+  differ): pFMS tries the passphrase the field is using on the robot's
+  network once, by itself, and reports **correct** (so look at the radio:
+  still starting, out of range — power-cycle it), **wrong**, or that it
+  couldn't finish. A capitals-only difference is an error on its own: the
+  field will never connect, and **Add as …** fixes it.
+- **Another name from the team** (e.g. set up for `1234-Comp`, hearing
+  `FRC-1234`): a warning with **Add as …**, and no test until the team
+  asks.
+
+**Test connection** runs the test again, or for the first time when the
+names differ — at most once every 30 seconds per station. A test joins the
+robot's network once and leaves straight away: no DHCP, no address, no
+retries. Nothing is tried just because a robot is heard. The test uses the
+field's own passphrase (the station's set-up, which is what the field is
+failing with) on the robot's **2.4 GHz** network, which can be given its
+own passphrase when the radio is configured. A team that did that sees
+"wrong" even though the field's 6 GHz passphrase may be fine; the wording
 says so.
 
-**What CSAs see:** `/csa` lists a capitals mismatch as critical, a failed
-passphrase check as a warning, and a robot on the air that its team has
-not saved as a note. `/admin` shows every robot network heard, with its
-signal, what it is saved as, and the passphrase result.
+**What CSAs see:** `/csa` lists a robot taking too long to join — critical
+when the passphrase is wrong or only the capitals differ, a warning
+otherwise, with what to try — as well as a capitals mismatch on any robot
+heard (critical) and a robot on the air that its team has not saved (a
+note). `/admin` shows every robot network heard, with its signal, what it
+is saved as, and the field's passphrase result when there is one.
 
 ### Wireless cards and test joins
 

@@ -35,14 +35,21 @@ import {
   usePortBridgeState,
   sendPortBridge,
   useRobotWifiScan,
-  sendRobotWifiRecheck,
+  sendRobotWifiTest,
+  getServerTime,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
-import { broadcastsForTeam, describeKeyForTeam, describeNameForTeam, suffixOf } from '../utils/robotWifi';
+import {
+  broadcastsForTeam,
+  describeNameForTeam,
+  describeStallForTeam,
+  stallsForTeam,
+  suffixOf,
+} from '../utils/robotWifi';
 import { MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
@@ -890,8 +897,10 @@ function RobotRow({
 /**
  * What pFMS hears of this team's robots on 2.4 GHz (`FRC-<team>[-suffix]`),
  * matched against their saved robots: the fastest way to spot a name typed
- * with the wrong capitals, or a passphrase that does not work. Renders
- * nothing unless the field has the robot Wi-Fi scan turned on.
+ * with the wrong capitals. When a robot is taking too long to join the
+ * field, says so and offers "Test connection" — the field's passphrase,
+ * tried on the robot's network (pFMS also tries it once by itself when the
+ * names match). Renders nothing unless the robot Wi-Fi scan is on.
  */
 function RobotWifiHeard({
   teamNumber,
@@ -904,9 +913,12 @@ function RobotWifiHeard({
 }) {
   const scan = useRobotWifiScan();
   if (scan?.status !== 'running') return null;
-  const heard = broadcastsForTeam(scan, teamNumber);
+  const stalls = stallsForTeam(scan, teamNumber);
+  // A robot a stall already talks about isn't described twice
+  const heard = broadcastsForTeam(scan, teamNumber).filter(b => !stalls.some(st => st.broadcast.ssid === b.ssid));
+  const now = getServerTime();
 
-  if (heard.length === 0) {
+  if (heard.length === 0 && stalls.length === 0) {
     // Only worth saying while they are still trying to get a robot on.
     if (hasRobotOnField) return null;
     return (
@@ -917,30 +929,41 @@ function RobotWifiHeard({
     );
   }
 
-  const rank = { error: 0, warning: 1, info: 2, success: 3 } as const;
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
+      {stalls.map(st => {
+        const { severity, lines } = describeStallForTeam(st, now);
+        const checking = st.keyCheck?.result === 'checking';
+        return (
+          <Alert key={st.station} severity={severity}>
+            {lines.map(line => (
+              <Typography key={line} variant="body2">
+                {line}
+              </Typography>
+            ))}
+            <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+              <Button size="small" variant="outlined" disabled={checking} onClick={() => sendRobotWifiTest(st.station)}>
+                {checking ? 'Testing…' : st.keyCheck ? 'Test again' : 'Test connection'}
+              </Button>
+              {st.broadcast.match !== 'exact' && (
+                <Button size="small" variant="contained" onClick={() => onAdd(suffixOf(st.broadcast.robotSsid))}>
+                  Add as {st.broadcast.robotSsid}
+                </Button>
+              )}
+            </Box>
+          </Alert>
+        );
+      })}
       {heard.map(b => {
         const name = describeNameForTeam(b);
-        const key = describeKeyForTeam(b);
-        const severity = key && rank[key.severity] < rank[name.severity] ? key.severity : name.severity;
-        const canRecheck = b.keyCheck?.result === 'wrongKey' || b.keyCheck?.result === 'unreachable';
         return (
-          <Alert key={b.ssid} severity={severity}>
+          <Alert key={b.ssid} severity={name.severity}>
             <Typography variant="body2">{name.text}</Typography>
-            {key && <Typography variant="body2">{key.text}</Typography>}
-            {(b.match.kind !== 'exact' || canRecheck) && (
+            {b.match.kind !== 'exact' && (
               <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
-                {b.match.kind !== 'exact' && (
-                  <Button size="small" variant="contained" onClick={() => onAdd(suffixOf(b.robotSsid))}>
-                    Add as {b.robotSsid}
-                  </Button>
-                )}
-                {canRecheck && (
-                  <Button size="small" variant="outlined" onClick={() => sendRobotWifiRecheck(b.ssid)}>
-                    Check again
-                  </Button>
-                )}
+                <Button size="small" variant="contained" onClick={() => onAdd(suffixOf(b.robotSsid))}>
+                  Add as {b.robotSsid}
+                </Button>
               </Box>
             )}
           </Alert>

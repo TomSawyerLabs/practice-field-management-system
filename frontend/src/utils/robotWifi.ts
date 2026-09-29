@@ -7,7 +7,7 @@
  * 2.4 GHz, which is what pFMS hears. Same name either side of `FRC-`, so a
  * difference in capitals here is a difference the field will trip on.
  */
-import type { RobotWifiBroadcast, RobotWifiScanState } from '../../../src/types';
+import type { RobotWifiBroadcast, RobotWifiScanState, RobotWifiStall } from '../../../src/types';
 
 export type RobotWifiSeverity = 'error' | 'warning' | 'info' | 'success';
 
@@ -41,31 +41,81 @@ export function describeNameForTeam(b: RobotWifiBroadcast): RobotWifiLine {
   };
 }
 
-/** What the passphrase check found, for the team. Null when there is none. */
-export function describeKeyForTeam(b: RobotWifiBroadcast): RobotWifiLine | null {
-  const k = b.keyCheck;
-  if (!k) return null;
-  switch (k.result) {
-    case 'checking':
-      return { severity: 'info', text: 'Checking your saved passphrase against it…' };
-    case 'ok':
-      return { severity: 'success', text: 'Your saved passphrase works.' };
-    case 'open':
-      return { severity: 'warning', text: `${b.ssid} has no passphrase at all, so we could not check yours.` };
-    case 'unreachable':
-      return {
-        severity: 'warning',
-        text: 'We could not finish checking your passphrase. The robot may be too far away or busy. Try again in a moment.',
-      };
-    case 'wrongKey':
-      return {
-        severity: 'error',
-        text:
-          `Your saved passphrase did not open ${b.ssid}. Check it on the radio, capitals included. ` +
-          `(This checks the robot's 2.4 GHz network. If you gave that network its own passphrase, ` +
-          `the field's 6 GHz passphrase may still be right.)`,
-      };
+/** How long a stalled robot has been trying, for a sentence. */
+export function stalledFor(st: RobotWifiStall, now: number): string {
+  const min = Math.max(1, Math.floor((now - st.since) / 60_000));
+  return `${min} min`;
+}
+
+const WORSE = { error: 0, warning: 1, info: 2, success: 3 } as const;
+
+/** What a robot that is taking too long to join tells its team: what we
+ *  can hear, and what trying the field's passphrase on it found. */
+export function describeStallForTeam(
+  st: RobotWifiStall,
+  now: number,
+): { severity: RobotWifiSeverity; lines: string[] } {
+  const b = st.broadcast;
+  const waited = `Your robot hasn't joined the field after ${stalledFor(st, now)}.`;
+  const lines: string[] = [];
+  let severity: RobotWifiSeverity = 'warning';
+  if (b.match === 'exact') {
+    lines.push(`${waited} We can hear it as ${b.ssid}, so it is on.`);
+  } else if (b.match === 'caseOnly') {
+    severity = 'error';
+    lines.push(
+      `${waited} The field is set up for ${st.fieldSsid}, but your robot is ${b.robotSsid} (we can hear ${b.ssid}). ` +
+        `Capitals must match exactly, so it never will. Add it again as ${b.robotSsid}.`,
+    );
+  } else {
+    lines.push(
+      `${waited} The field is set up for ${st.fieldSsid}, but the robot we can hear is ${b.ssid}. ` +
+        `If that is the one you're connecting, add it as ${b.robotSsid}.`,
+    );
   }
+
+  const k = st.keyCheck;
+  const bump = (s: RobotWifiSeverity) => {
+    if (WORSE[s] < WORSE[severity]) severity = s;
+  };
+  switch (k?.result) {
+    case undefined:
+      lines.push(
+        b.match === 'otherName'
+          ? `Test connection tries the field's passphrase for ${st.fieldSsid} on ${b.ssid}.`
+          : "We'll check the passphrase the field is using in a moment.",
+      );
+      break;
+    case 'checking':
+      lines.push('Checking the passphrase the field is using…');
+      break;
+    case 'ok':
+      lines.push(
+        'The passphrase the field is using is correct. The radio may still be starting, or be too far from ' +
+          'the field — power-cycling the robot radio usually helps.',
+      );
+      break;
+    case 'wrongKey':
+      bump('error');
+      lines.push(
+        `The passphrase the field is using is wrong for ${b.ssid}. Add the robot again with its passphrase, ` +
+          `capitals included. (This checks the robot's 2.4 GHz network. If you gave that network its own ` +
+          `passphrase, the field's may still be right.)`,
+      );
+      break;
+    case 'unreachable':
+      lines.push("We couldn't finish checking the passphrase. The robot may be too far away or busy.");
+      break;
+    case 'open':
+      lines.push(`${b.ssid} has no passphrase, so we couldn't check the field's.`);
+      break;
+  }
+  return { severity, lines };
+}
+
+/** Stalled connections for one team. */
+export function stallsForTeam(scan: RobotWifiScanState | null, team: number): RobotWifiStall[] {
+  return scan?.stalls?.filter(st => st.team === team) ?? [];
 }
 
 /** Broadcasts for one team. */
@@ -73,8 +123,8 @@ export function broadcastsForTeam(scan: RobotWifiScanState | null, team: number)
   return scan?.broadcasts.filter(b => b.team === team) ?? [];
 }
 
-/** A problem worth a CSA's attention, per heard robot network. Healthy
- *  networks (exact name, passphrase fine or not yet known) give nothing. */
+/** A problem worth a CSA's attention: a robot taking too long to join, or
+ *  a heard robot network whose name is off. Healthy ones give nothing. */
 export interface RobotWifiStaffIssue {
   id: string;
   severity: 'critical' | 'warning' | 'info';
@@ -84,7 +134,10 @@ export interface RobotWifiStaffIssue {
   fix?: string;
 }
 
-export function robotWifiStaffIssues(scan: RobotWifiScanState | null | undefined): RobotWifiStaffIssue[] {
+export function robotWifiStaffIssues(
+  scan: RobotWifiScanState | null | undefined,
+  now: number = Date.now(),
+): RobotWifiStaffIssue[] {
   if (!scan) return [];
   const issues: RobotWifiStaffIssue[] = [];
   if (scan.status === 'error') {
@@ -97,8 +150,47 @@ export function robotWifiStaffIssues(scan: RobotWifiScanState | null | undefined
       fix: 'Check the interface picked on the admin page, then pick it again to restart the scan.',
     });
   }
+  // A robot that is taking too long to join, with its network on the air:
+  // what the field is set up for, and what its passphrase did on the robot.
+  const stalls = scan.stalls ?? [];
+  for (const st of stalls) {
+    const b = st.broadcast;
+    const k = st.keyCheck?.result;
+    const critical = b.match === 'caseOnly' || k === 'wrongKey';
+    const name =
+      b.match === 'exact'
+        ? `Heard ${b.ssid} at ${b.signal} dBm.`
+        : `Set up for ${st.fieldSsid}, but heard ${b.ssid} at ${b.signal} dBm` +
+          (b.match === 'caseOnly' ? ' — capitals differ, so it never will.' : '.');
+    const key =
+      k === 'ok'
+        ? " The field's passphrase works on it."
+        : k === 'wrongKey'
+          ? " The field's passphrase does not open its 2.4 GHz network."
+          : k === 'unreachable'
+            ? ' The passphrase check could not finish.'
+            : '';
+    issues.push({
+      id: `robotWifi-stall-${st.station}`,
+      severity: critical ? 'critical' : 'warning',
+      team: st.team,
+      title: `Team ${st.team}'s robot hasn't joined the field after ${stalledFor(st, now)}`,
+      detail: name + key,
+      fix:
+        b.match === 'caseOnly'
+          ? `Have the team add the robot again as ${b.robotSsid} (their page offers it).`
+          : k === 'wrongKey'
+            ? 'Re-enter the passphrase with the team; ask whether the 2.4 GHz passphrase was set separately.'
+            : k === 'ok'
+              ? 'Name and passphrase are right: power-cycle the robot radio, and check it is within range of the field.'
+              : 'The team can press Test connection on their page.',
+    });
+  }
+
   for (const b of scan.broadcasts) {
     const heard = `Heard ${b.ssid} at ${b.signal} dBm.`;
+    // A stall for this robot already says it
+    if (stalls.some(st => st.broadcast.ssid === b.ssid)) continue;
     if (b.match.kind === 'caseOnly') {
       issues.push({
         id: `robotWifi-case-${b.ssid}`,
@@ -107,15 +199,6 @@ export function robotWifiStaffIssues(scan: RobotWifiScanState | null | undefined
         title: `Team ${b.team}'s robot name differs only in capitals from what they saved`,
         detail: `${heard} Saved as ${b.match.savedSsid}; the field will never connect.`,
         fix: `Have the team add the robot again as ${b.robotSsid} (their page offers it).`,
-      });
-    } else if (b.keyCheck?.result === 'wrongKey') {
-      issues.push({
-        id: `robotWifi-key-${b.ssid}`,
-        severity: 'warning',
-        team: b.team,
-        title: `Team ${b.team}'s saved passphrase did not open ${b.ssid}`,
-        detail: `${heard} Checked against the robot's 2.4 GHz network, which can have its own passphrase.`,
-        fix: 'Ask whether the 2.4 GHz passphrase was set separately; if not, re-enter the passphrase with the team.',
       });
     } else if (b.match.kind === 'unknown') {
       issues.push({

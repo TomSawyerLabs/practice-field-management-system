@@ -672,6 +672,7 @@ describe('robots heard on 2.4 GHz', () => {
           type: 'robotWifiScan',
           status: 'running',
           interfaces: [],
+          stalls: [],
           broadcasts: [
             {
               ssid: 'FRC-1234-Comp',

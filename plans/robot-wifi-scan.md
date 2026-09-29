@@ -55,13 +55,34 @@ teams that capitalization matters.
   (`1234`, `1234-Comp`). Exact → OK. Equal ignoring case → **critical**
   ("the field will never connect"). Team number matches but no saved
   robot does → info, offer to add it with the suffix prefilled.
-- **Passphrase test:** only for a broadcast that matches a saved robot
-  (exact or case-only), once per (broadcast SSID, saved-key hash); re-runs
-  when the saved passphrase changes. One test at a time. The network is
-  removed right after — no retries, no DHCP, no IP.
-  Results: `ok` / `wrongKey` / `unreachable`. Wording must say the check
-  used the robot's **2.4 GHz** network: a team who set a separate 2.4 GHz
-  passphrase will see `wrongKey` even though the field (6 GHz) key is fine.
+- **Passphrase test — superseded 2026-09-29 (round 2, below).** Was: only
+  for a broadcast that matches a saved robot (exact or case-only), once per
+  (broadcast SSID, saved-key hash), the first time it is heard.
+- **Passphrase test, round 2 (user, 2026-09-29):** "the test joining for
+  FRC-### should be automatic - it only tries to join when a team tries to
+  connect to their robot and it's taking a while to connect (if the AP is
+  configured for that team, and the matching team FRC-### SSID is seen,
+  warn and offer a test connection button that reports passphrase is
+  correct or not)". So:
+  - A **stalled connection** = a station's active config is the team's
+    robot, the radio is ACTIVE, the robot radio is not linked, and it has
+    not been for `STALL_MS` = 60 s — counted from the latest of: the team
+    taking the station, the radio going ACTIVE, the robot last being
+    linked — **and** the team's `FRC-<team>…` network is heard.
+  - What is tested: the **field's** passphrase (the station's active
+    config key — what the field is actually using) against the heard
+    network. Keyed (broadcast SSID, sha256 of that key).
+  - **Automatic** once per stalled connection when the heard name equals
+    the field's SSID, exactly or ignoring capitals. A heard name that
+    differs otherwise (other suffix) warns, and tests only on the button.
+  - **Test connection** button on the team page for a stall: re-runs it,
+    at most every 30 s per station. Replaces "Check again".
+  - No more testing just because a robot was heard.
+    One test at a time. The network is removed right after — no retries, no
+    DHCP, no IP.
+    Results: `ok` / `wrongKey` / `unreachable`. Wording must say the check
+    used the robot's **2.4 GHz** network: a team who set a separate 2.4 GHz
+    passphrase will see `wrongKey` even though the field (6 GHz) key is fine.
 - Never send a passphrase to clients; results are keyed by SSID only.
 - Full field: the add form's single button saves the robot ("Add robot")
   instead of a second "Save for Later" choice.
@@ -81,7 +102,8 @@ teams that capitalization matters.
    table.
 7. Checks, commit.
 
-Current step: **built, tested and committed; waiting on deploy and the go-ahead to turn it on at steamboat.**
+Current step: **round 2 (stall-triggered passphrase test) built and committed; waiting on deploy and the go-ahead to turn the scan on at steamboat.**
+Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
 
 ## Findings / gotchas
 
@@ -119,6 +141,12 @@ Current step: **built, tested and committed; waiting on deploy and the go-ahead 
       admin "Robot Wi-Fi scan" card with interface picker and heard list
 - [x] 6 docs (`docs/robot-tester.md#robot-wi-fi-scan`, configuration table)
 - [x] 7 typecheck, prettier, full suite 686/686 — `f47d00f`
+- [x] Round 2 (2026-09-29): passphrase test only for a stalled connection
+      (`findStalls`, `STALL_MS` 60 s, field's key, auto when names match,
+      "Test connection" `robotWifiTest {station}` replaces "Check again");
+      team page, CSA issues, admin column, docs. Tests: scanner 21, wording
+      43; mutation-checked (ignoring `linked` fails a test). Team page
+      checked in a browser with injected stalls.
 - [ ] Deploy, pick `wlp0s20f3` on the admin page (user's go-ahead), verify
       against a real robot
 

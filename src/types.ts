@@ -2159,8 +2159,8 @@ export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
 export interface RobotWifiKeyCheck {
   result: 'checking' | 'ok' | 'wrongKey' | 'unreachable' | 'open';
   at: number;
-  /** The saved robot whose passphrase was tried. */
-  savedSsid: string;
+  /** The SSID the field is set up to join, whose passphrase was tried. */
+  fieldSsid: string;
 }
 
 /** A robot radio's 2.4 GHz network, heard by pFMS. */
@@ -2178,6 +2178,23 @@ export interface RobotWifiBroadcast {
   /** Against the team's saved robots. `caseOnly` means it differs from a
    *  saved robot only in capitalization — the field will never connect. */
   match: { kind: 'exact' | 'caseOnly'; savedSsid: string } | { kind: 'unknown' };
+}
+
+/** A team trying to connect whose robot has not joined the field for a
+ *  while, with the team's robot network on the air. The field's passphrase
+ *  is tried against that network — automatically when the names match, on
+ *  the team's "Test connection" otherwise. */
+export interface RobotWifiStall {
+  station: StationName;
+  team: number;
+  /** The SSID the field is set up to join (the station's active config) */
+  fieldSsid: string;
+  /** Epoch ms (server clock) it has been trying since */
+  since: number;
+  /** The team's robot network heard. `otherName`: same team, but not the
+   *  name the field is set up for, capitals aside. */
+  broadcast: { ssid: string; robotSsid: string; signal: number; match: 'exact' | 'caseOnly' | 'otherName' };
+  /** The field's passphrase, tried against that network */
   keyCheck?: RobotWifiKeyCheck;
 }
 
@@ -2191,6 +2208,8 @@ export interface RobotWifiScanState {
   /** Wireless interfaces on the host, for the admin picker. */
   interfaces: string[];
   broadcasts: RobotWifiBroadcast[];
+  /** Connections that are taking too long, with the robot on the air */
+  stalls: RobotWifiStall[];
 }
 
 export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {
@@ -2198,16 +2217,17 @@ export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {
   return (msg as RobotWifiScanState).type === 'robotWifiScan';
 }
 
-/** Client → server: "Check again" — re-try the passphrase on a network. */
-export interface RobotWifiRecheck {
-  type: 'robotWifiRecheck';
-  ssid: string;
+/** Client → server: "Test connection" — try the field's passphrase for a
+ *  stalled station against its robot's network (rate-limited). */
+export interface RobotWifiTest {
+  type: 'robotWifiTest';
+  station: StationName;
 }
 
-export function isRobotWifiRecheck(msg: unknown): msg is RobotWifiRecheck {
+export function isRobotWifiTest(msg: unknown): msg is RobotWifiTest {
   if (typeof msg !== 'object' || !msg) return false;
-  const m = msg as RobotWifiRecheck;
-  return m.type === 'robotWifiRecheck' && typeof m.ssid === 'string' && m.ssid.length <= 32;
+  const m = msg as RobotWifiTest;
+  return m.type === 'robotWifiTest' && typeof m.station === 'string' && StationNameRegex.test(m.station);
 }
 
 // ── Wireless cards (admin) ──────────────────────────────────────────

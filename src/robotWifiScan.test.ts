@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  findStalls,
   joinProblem,
   keyMgmtFor,
   matchSavedRobot,
@@ -9,7 +10,8 @@ import {
   parseWpaEvent,
   robotOfBroadcast,
   RobotWifiScanner,
-  type SavedRobot,
+  STALL_MS,
+  type ConnectAttempt,
   type WifiRunner,
 } from './robotWifiScan.js';
 import type { RobotWifiScanState } from './types.js';
@@ -152,115 +154,199 @@ class FakeRunner implements WifiRunner {
 
 const flush = () => new Promise(r => setTimeout(r, 30));
 
+const NOW = 10_000_000;
+/** The field set up for a robot that has been trying for over a minute. */
+const stalled = (over: Partial<ConnectAttempt> = {}): ConnectAttempt => ({
+  station: 'slot3',
+  ssid: '1234-Comp',
+  wpaKey: 'passphrase1',
+  since: NOW - STALL_MS - 1,
+  linked: false,
+  ...over,
+});
+
+describe('which connections have stalled', () => {
+  const heard = [
+    { ssid: 'FRC-1234-Comp', team: 1234, robotSsid: '1234-Comp', signal: -60 },
+    { ssid: 'FRC-1234', team: 1234, robotSsid: '1234', signal: -40 },
+    { ssid: 'FRC-972', team: 972, robotSsid: '972', signal: -50 },
+  ];
+
+  test('a robot not joined for a minute, with its network on the air, has stalled', () => {
+    const [st] = findStalls([stalled()], heard, NOW);
+    expect(st.broadcast.ssid).toBe('FRC-1234-Comp'); // the name the field wants beats a stronger one
+    expect(st.match).toBe('exact');
+  });
+
+  test('not while it is still within the minute, linked, or silent', () => {
+    expect(findStalls([stalled({ since: NOW - STALL_MS + 1000 })], heard, NOW)).toEqual([]);
+    expect(findStalls([stalled({ linked: true })], heard, NOW)).toEqual([]);
+    expect(findStalls([stalled({ ssid: '254' })], heard, NOW)).toEqual([]);
+  });
+
+  test('a name that differs in capitals, or not at all like the field expects', () => {
+    expect(findStalls([stalled({ ssid: '1234-comp' })], heard, NOW)[0]).toMatchObject({
+      match: 'caseOnly',
+      broadcast: { ssid: 'FRC-1234-Comp' },
+    });
+    expect(findStalls([stalled({ ssid: '1234-Practice' })], heard, NOW)[0]).toMatchObject({
+      match: 'otherName',
+      broadcast: { ssid: 'FRC-1234' }, // the team's strongest
+    });
+  });
+});
+
 let scanner: RobotWifiScanner | null = null;
 afterEach(() => {
   scanner?.stop();
   scanner = null;
 });
 
-function setup(saved: SavedRobot[], overrides: { now?: () => number; keyCheckTimeoutMs?: number } = {}) {
+function setup(
+  attempts: ConnectAttempt[],
+  overrides: { now?: () => number; keyCheckTimeoutMs?: number; saved?: string[] } = {},
+) {
   const runner = new FakeRunner();
   let state: RobotWifiScanState | null = null;
   scanner = new RobotWifiScanner({
     iface: 'wlan0',
     runner,
-    savedRobots: () => saved,
+    savedSsids: () => overrides.saved ?? ['1234-Comp'],
+    connectAttempts: () => attempts,
     onChange: s => (state = s),
     scanIntervalMs: 1_000_000, // tests drive scans by hand
     scanSettleMs: 0,
+    now: () => NOW,
     ...overrides,
   });
   return { runner, scanner, state: () => state! };
 }
 
-const comp: SavedRobot = { ssid: '1234-Comp', wpaKey: 'passphrase1', wpaKeyHash: 'hash-a' };
-
 describe('the scanner', () => {
-  test('reports a robot that matches a saved one, and checks its passphrase once', async () => {
-    const { runner, scanner, state } = setup([comp]);
+  test('hearing a robot matches its name against saved robots, but never joins it', async () => {
+    const { runner, scanner, state } = setup([]);
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp'), row('aa:bb:cc:dd:ee:09', 'Guest')].join('\n');
     await scanner.start();
     await flush();
-
-    const [b] = state().broadcasts;
     expect(state().broadcasts).toHaveLength(1); // the guest network is not a robot
-    expect(b).toMatchObject({ ssid: 'FRC-1234-Comp', team: 1234, robotSsid: '1234-Comp', match: { kind: 'exact' } });
-    expect(b.keyCheck).toMatchObject({ result: 'ok', savedSsid: '1234-Comp' });
+    expect(state().broadcasts[0]).toMatchObject({ ssid: 'FRC-1234-Comp', match: { kind: 'exact' } });
+    expect(state().stalls).toEqual([]);
+    expect(runner.joins()).toBe(0);
+  });
+
+  test("a stalled connection gets the field's passphrase tried once, automatically", async () => {
+    const { runner, scanner, state } = setup([stalled()]);
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    await scanner.start();
+    await flush();
+
+    expect(state().stalls).toEqual([
+      {
+        station: 'slot3',
+        team: 1234,
+        fieldSsid: '1234-Comp',
+        since: NOW - STALL_MS - 1,
+        broadcast: { ssid: 'FRC-1234-Comp', robotSsid: '1234-Comp', signal: -50, match: 'exact' },
+        keyCheck: { result: 'ok', at: NOW, fieldSsid: '1234-Comp' },
+      },
+    ]);
     expect(runner.calls).toContainEqual(['set_network', '0', 'ssid', ssidHex('FRC-1234-Comp')]);
     expect(runner.calls).toContainEqual(['set_network', '0', 'psk', pskHex('passphrase1', 'FRC-1234-Comp')]);
-    // The passphrase itself never goes on a command line
+    // The passphrase itself never goes on a command line, or to a client
     expect(runner.calls.flat().some(a => a.includes('passphrase1'))).toBe(false);
+    expect(JSON.stringify(state())).not.toContain('passphrase1');
     expect(runner.calls).toContainEqual(['remove_network', '0']); // leaves the robot alone afterwards
 
     await scanner.scanOnce();
     await flush();
-    expect(runner.joins()).toBe(1); // never twice for the same passphrase
+    expect(runner.joins()).toBe(1); // not again by itself
   });
 
-  test('never puts a passphrase in the state it broadcasts', async () => {
-    const { runner, scanner, state } = setup([comp]);
-    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
-    await scanner.start();
-    await flush();
-    expect(JSON.stringify(state())).not.toContain('passphrase1');
-  });
-
-  test('a changed passphrase is checked afresh', async () => {
-    const saved = [comp];
-    const { runner, scanner, state } = setup(saved);
+  test('a wrong passphrase is reported, and a changed one is tried afresh', async () => {
+    const attempts = [stalled()];
+    const { runner, scanner, state } = setup(attempts);
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
     runner.outcome = 'wrongKey';
     await scanner.start();
     await flush();
-    expect(state().broadcasts[0].keyCheck?.result).toBe('wrongKey');
+    expect(state().stalls[0].keyCheck?.result).toBe('wrongKey');
 
-    saved[0] = { ...comp, wpaKey: 'passphrase2', wpaKeyHash: 'hash-b' };
+    attempts[0] = stalled({ wpaKey: 'passphrase2' });
     runner.outcome = 'connect';
     await scanner.scanOnce();
     await flush();
     expect(runner.joins()).toBe(2);
-    expect(state().broadcasts[0].keyCheck?.result).toBe('ok');
+    expect(state().stalls[0].keyCheck?.result).toBe('ok');
   });
 
-  test('capitalization-only match is flagged and still checked with the saved passphrase', async () => {
-    const { runner, scanner, state } = setup([{ ...comp, ssid: '1234-comp' }]);
+  test('capitals-only difference is still tested automatically', async () => {
+    const { runner, scanner, state } = setup([stalled({ ssid: '1234-comp' })], { saved: ['1234-comp'] });
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
     await scanner.start();
     await flush();
+    expect(state().stalls[0]).toMatchObject({ broadcast: { match: 'caseOnly' }, keyCheck: { result: 'ok' } });
     expect(state().broadcasts[0].match).toEqual({ kind: 'caseOnly', savedSsid: '1234-comp' });
-    expect(state().broadcasts[0].keyCheck?.result).toBe('ok');
   });
 
-  test('a robot the team has not saved is reported but not joined', async () => {
-    const { runner, scanner, state } = setup([comp]);
-    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Practice')].join('\n');
+  test('another name from the team waits for "Test connection"', async () => {
+    const { runner, scanner, state } = setup([stalled({ ssid: '1234-Practice' })]);
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234')].join('\n');
     await scanner.start();
     await flush();
-    expect(state().broadcasts[0].match).toEqual({ kind: 'unknown' });
+    expect(state().stalls[0]).toMatchObject({ broadcast: { ssid: 'FRC-1234', match: 'otherName' } });
+    expect(state().stalls[0].keyCheck).toBeUndefined();
     expect(runner.joins()).toBe(0);
+
+    scanner.test('slot3');
+    await flush();
+    expect(runner.joins()).toBe(1);
+    expect(state().stalls[0].keyCheck?.result).toBe('ok');
+  });
+
+  test('"Test connection" re-tries, but not within the rate limit, and only for a stall', async () => {
+    let t = NOW;
+    const { runner, scanner } = setup([stalled()], { now: () => t });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'wrongKey';
+    await scanner.start();
+    await flush();
+    expect(runner.joins()).toBe(1);
+
+    scanner.test('slot3');
+    await flush();
+    expect(runner.joins()).toBe(1); // too soon
+
+    t += 31_000;
+    scanner.test('slot3');
+    await flush();
+    expect(runner.joins()).toBe(2);
+
+    scanner.test('slot1'); // nothing stalled there
+    await flush();
+    expect(runner.joins()).toBe(2);
   });
 
   test('no answer from the robot counts as unreachable', async () => {
-    const { runner, scanner, state } = setup([comp], { keyCheckTimeoutMs: 20 });
+    const { runner, scanner, state } = setup([stalled()], { keyCheckTimeoutMs: 20 });
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
     runner.outcome = 'silent';
     await scanner.start();
     await flush();
     await flush();
-    expect(state().broadcasts[0].keyCheck?.result).toBe('unreachable');
+    expect(state().stalls[0].keyCheck?.result).toBe('unreachable');
   });
 
   test('an open network has no passphrase to check', async () => {
-    const { runner, scanner, state } = setup([comp]);
+    const { runner, scanner, state } = setup([stalled()]);
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp', -50, '[ESS]')].join('\n');
     await scanner.start();
     await flush();
-    expect(state().broadcasts[0].keyCheck?.result).toBe('open');
+    expect(state().stalls[0].keyCheck?.result).toBe('open');
     expect(runner.joins()).toBe(0);
   });
 
   test('a robot that goes quiet drops off the list', async () => {
-    let t = 1_000_000;
+    let t = NOW;
     const { runner, scanner, state } = setup([], { now: () => t });
     runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
     await scanner.start();
@@ -274,24 +360,5 @@ describe('the scanner', () => {
     t += 60_000;
     await scanner.scanOnce();
     expect(state().broadcasts).toHaveLength(0);
-  });
-
-  test('"Check again" re-tries, but not within the rate limit', async () => {
-    let t = 1_000_000;
-    const { runner, scanner } = setup([comp], { now: () => t });
-    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
-    runner.outcome = 'wrongKey';
-    await scanner.start();
-    await flush();
-    expect(runner.joins()).toBe(1);
-
-    scanner.recheck('FRC-1234-Comp');
-    await flush();
-    expect(runner.joins()).toBe(1); // too soon
-
-    t += 31_000;
-    scanner.recheck('FRC-1234-Comp');
-    await flush();
-    expect(runner.joins()).toBe(2);
   });
 });
