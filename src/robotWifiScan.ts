@@ -15,11 +15,18 @@
  * host is touched. See plans/robot-wifi-scan.md.
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { pbkdf2Sync } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { RobotWifiBroadcast, RobotWifiKeyCheck, RobotWifiScanState } from './types.js';
+import type {
+  RobotWifiBroadcast,
+  RobotWifiKeyCheck,
+  RobotWifiScanState,
+  WifiSecurity,
+  WifiTestJoinResult,
+} from './types.js';
 
 // ── Pure helpers ────────────────────────────────────────────────────
 
@@ -87,7 +94,7 @@ export function parseWpaEvent(line: string): WpaEvent | null {
 
 /** How to join a network, from its scan flags. PSK where offered (the
  *  plainest failure path), SAE otherwise, and nothing to check if open. */
-export function keyMgmtFor(flags: string): 'WPA-PSK' | 'SAE' | 'open' {
+export function keyMgmtFor(flags: string): WifiSecurity {
   if (/PSK/.test(flags)) return 'WPA-PSK';
   if (/SAE/.test(flags)) return 'SAE';
   if (!/WPA|RSN|WEP/.test(flags)) return 'open';
@@ -96,11 +103,161 @@ export function keyMgmtFor(flags: string): 'WPA-PSK' | 'SAE' | 'open' {
 
 /** Wireless interfaces on this host (Linux: anything with a `wireless` or
  *  `phy80211` entry under /sys/class/net). Empty elsewhere. */
-export function listWirelessInterfaces(sysNet = '/sys/class/net'): string[] {
-  if (platform() !== 'linux' || !existsSync(sysNet)) return [];
+export function listWirelessInterfaces(sysNet = '/sys/class/net', os: string = platform()): string[] {
+  if (os !== 'linux' || !existsSync(sysNet)) return [];
   return readdirSync(sysNet).filter(
     i => existsSync(join(sysNet, i, 'wireless')) || existsSync(join(sysNet, i, 'phy80211')),
   );
+}
+
+/** An SSID as wpa_cli takes it unquoted: hex bytes. Any SSID survives this
+ *  — quotes, backslashes, non-ASCII — where a quoted string would not. */
+export function ssidHex(ssid: string): string {
+  return Buffer.from(ssid, 'utf8').toString('hex');
+}
+
+/** The WPA2 pre-shared key for a passphrase (PBKDF2-SHA1, 4096 rounds, SSID
+ *  as salt), as the 64 hex digits wpa_cli takes unquoted — so a passphrase
+ *  never has to be quoted onto a command line. */
+export function pskHex(passphrase: string, ssid: string): string {
+  return pbkdf2Sync(passphrase, Buffer.from(ssid, 'utf8'), 4096, 32, 'sha1').toString('hex');
+}
+
+/** Why a join cannot be attempted as asked, or null if it can. */
+export function joinProblem(ssid: string, security: WifiSecurity, passphrase: string | undefined): string | null {
+  const bytes = Buffer.byteLength(ssid, 'utf8');
+  if (bytes < 1 || bytes > 32) return 'An SSID is 1 to 32 bytes';
+  if (security === 'open') return null;
+  if (!passphrase) return 'This network needs a passphrase';
+  if (!/^[\x20-\x7e]{8,63}$/.test(passphrase)) return 'A passphrase is 8 to 63 printable ASCII characters';
+  // SAE takes the passphrase itself, quoted — refuse what would break out.
+  if (security === 'SAE' && /["\\]/.test(passphrase))
+    return 'This network uses WPA3 (SAE); its passphrase cannot contain " or \\ here';
+  return null;
+}
+
+export type Cli = (...args: string[]) => Promise<string>;
+/** Route wpa_supplicant's events to a handler (null to stop). */
+export type Listen = (handler: ((e: WpaEvent) => void) | null) => void;
+
+export interface JoinOutcome {
+  outcome: 'connected' | 'wrongKey' | 'failed' | 'timeout';
+  /** wpa_supplicant's reason, for `failed` */
+  reason?: string;
+  /** The access point it associated with, when connected */
+  bssid?: string;
+}
+
+/** Join a network once, report how it went, and leave: the network is
+ *  removed afterwards and nothing is retried. Association only — no DHCP,
+ *  no address. The caller has checked joinProblem() first. */
+export async function attemptJoin(
+  cli: Cli,
+  listen: Listen,
+  target: { ssid: string; security: WifiSecurity; passphrase?: string },
+  timeoutMs: number,
+): Promise<JoinOutcome> {
+  let id: string | null = null;
+  try {
+    id = (await cli('add_network')).trim();
+    if (!/^\d+$/.test(id)) throw new Error(`add_network answered ${id}`);
+    const set = async (...args: string[]) => {
+      const out = (await cli('set_network', id!, ...args)).trim();
+      if (out !== 'OK') throw new Error(`set_network ${args[0]} answered ${out}`);
+    };
+    await set('ssid', ssidHex(target.ssid));
+    if (target.security === 'open') {
+      await set('key_mgmt', 'NONE');
+    } else if (target.security === 'SAE') {
+      await set('key_mgmt', 'SAE');
+      await set('ieee80211w', '2');
+      await set('sae_password', `"${target.passphrase}"`);
+    } else {
+      await set('key_mgmt', 'WPA-PSK');
+      await set('psk', pskHex(target.passphrase!, target.ssid));
+    }
+    await set('scan_ssid', '1');
+
+    return await new Promise<JoinOutcome>(resolve => {
+      let done = false;
+      const finish = (r: JoinOutcome) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        clearInterval(poll);
+        listen(null);
+        resolve(r);
+      };
+      const connected = () =>
+        cli('status')
+          .then(out => finish({ outcome: 'connected', bssid: /^bssid=(\S+)$/m.exec(out)?.[1] }))
+          .catch(() => finish({ outcome: 'connected' }));
+      const timeout = setTimeout(() => finish({ outcome: 'timeout' }), timeoutMs);
+      listen(e => {
+        if (e.type === 'connected') void connected();
+        else if (e.type === 'wrongKey') finish({ outcome: 'wrongKey' });
+        else finish({ outcome: 'failed', reason: e.reason });
+      });
+      // Belt and braces: if an event line is missed, the state still says it.
+      const poll = setInterval(() => {
+        cli('status')
+          .then(out => {
+            if (/^wpa_state=COMPLETED$/m.test(out))
+              finish({ outcome: 'connected', bssid: /^bssid=(\S+)$/m.exec(out)?.[1] });
+          })
+          .catch(() => {});
+      }, 1000);
+      cli('select_network', id!).catch(err => finish({ outcome: 'failed', reason: String(err?.message ?? err) }));
+    });
+  } catch (err) {
+    return { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) };
+  } finally {
+    // Leave the network alone: no retries, no lingering association.
+    if (id !== null && /^\d+$/.test(id)) await cli('remove_network', id).catch(() => {});
+    await cli('disconnect').catch(() => {});
+  }
+}
+
+/** A staff test join, minus the bookkeeping: scan every band for the SSID,
+ *  pick its strongest access point, and try it. */
+export async function testJoin(
+  cli: Cli,
+  listen: Listen,
+  request: { ssid: string; passphrase?: string },
+  opts: { settleMs: number; timeoutMs: number },
+): Promise<Omit<WifiTestJoinResult, 'id' | 'iface' | 'at'>> {
+  const started = Date.now();
+  let answer = (await cli('scan')).trim();
+  if (answer === 'FAIL-BUSY') {
+    await new Promise(r => setTimeout(r, opts.settleMs));
+    answer = (await cli('scan')).trim();
+  }
+  await new Promise(r => setTimeout(r, opts.settleMs));
+  const heard = parseScanResults(await cli('scan_results'))
+    .filter(r => r.ssid === request.ssid)
+    .sort((a, b) => b.signal - a.signal)[0];
+  if (!heard) return { ssid: request.ssid, outcome: 'notFound', durationMs: Date.now() - started };
+
+  const security = keyMgmtFor(heard.flags);
+  const seen = { ssid: request.ssid, bssid: heard.bssid, frequency: heard.frequency, signal: heard.signal, security };
+  const problem = joinProblem(request.ssid, security, request.passphrase);
+  if (problem) {
+    const outcome = security !== 'open' && !request.passphrase ? 'needsPassphrase' : 'failed';
+    return { ...seen, outcome, detail: problem, durationMs: Date.now() - started };
+  }
+  const r = await attemptJoin(
+    cli,
+    listen,
+    { ssid: request.ssid, security, passphrase: request.passphrase },
+    opts.timeoutMs,
+  );
+  return {
+    ...seen,
+    ...(r.bssid && { bssid: r.bssid }),
+    outcome: r.outcome,
+    ...(r.reason && { detail: r.reason }),
+    durationMs: Date.now() - started,
+  };
 }
 
 // ── Driving wpa_supplicant ──────────────────────────────────────────
@@ -367,80 +524,50 @@ export class RobotWifiScanner {
 
   private async runKeyCheck(s: Seen, robot: SavedRobot): Promise<void> {
     const key = this.checkKey(s, robot);
-    const mgmt = keyMgmtFor(s.flags);
-    if (mgmt === 'open') {
+    const security = keyMgmtFor(s.flags);
+    if (security === 'open') {
       this.keyChecks.set(key, { result: 'open', at: this.o.now(), savedSsid: robot.ssid });
       this.emit();
       return;
     }
-    // Both go to wpa_cli in quotes; refuse anything that could break out.
-    if (
-      !/^[A-Za-z0-9 _.-]{1,32}$/.test(s.ssid) ||
-      !/^[\x20-\x7e]{8,63}$/.test(robot.wpaKey) ||
-      /"/.test(robot.wpaKey)
-    ) {
-      return;
-    }
+    if (joinProblem(s.ssid, security, robot.wpaKey)) return;
 
     this.checking = s.ssid;
     this.keyChecks.set(key, { result: 'checking', at: this.o.now(), savedSsid: robot.ssid });
     this.emit();
-
-    const cli = this.o.runner.cli.bind(this.o.runner);
-    let id: string | null = null;
-    let result: RobotWifiKeyCheck['result'] = 'unreachable';
+    let result: RobotWifiKeyCheck['result'];
     try {
-      id = (await cli('add_network')).trim();
-      if (!/^\d+$/.test(id)) throw new Error(`add_network answered ${id}`);
-      const set = async (...args: string[]) => {
-        const out = (await cli('set_network', id!, ...args)).trim();
-        if (out !== 'OK') throw new Error(`set_network ${args[0]} answered ${out}`);
-      };
-      await set('ssid', `"${s.ssid}"`);
-      await set('key_mgmt', mgmt);
-      if (mgmt === 'SAE') {
-        await set('ieee80211w', '2');
-        await set('sae_password', `"${robot.wpaKey}"`);
-      } else {
-        await set('psk', `"${robot.wpaKey}"`);
-      }
-      await set('scan_ssid', '1');
-
-      result = await new Promise<RobotWifiKeyCheck['result']>(resolve => {
-        let done = false;
-        const finish = (r: RobotWifiKeyCheck['result']) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timeout);
-          clearInterval(poll);
-          this.pendingEvents = null;
-          resolve(r);
-        };
-        const timeout = setTimeout(() => finish('unreachable'), this.o.keyCheckTimeoutMs);
-        this.pendingEvents = e =>
-          finish(e.type === 'connected' ? 'ok' : e.type === 'wrongKey' ? 'wrongKey' : 'unreachable');
-        // Belt and braces: if an event line is missed, the state still says it.
-        const poll = setInterval(() => {
-          cli('status')
-            .then(out => {
-              if (/^wpa_state=COMPLETED$/m.test(out)) finish('ok');
-            })
-            .catch(() => {});
-        }, 1000);
-        cli('select_network', id!).catch(() => finish('unreachable'));
-      });
-    } catch (err) {
-      console.warn(`Robot Wi-Fi passphrase check for ${s.ssid} failed:`, err instanceof Error ? err.message : err);
-      result = 'unreachable';
+      const r = await attemptJoin(
+        this.o.runner.cli.bind(this.o.runner),
+        h => (this.pendingEvents = h),
+        { ssid: s.ssid, security, passphrase: robot.wpaKey },
+        this.o.keyCheckTimeoutMs,
+      );
+      if (r.outcome === 'failed') console.warn(`Robot Wi-Fi passphrase check for ${s.ssid} failed: ${r.reason}`);
+      result = r.outcome === 'connected' ? 'ok' : r.outcome === 'wrongKey' ? 'wrongKey' : 'unreachable';
     } finally {
-      // Leave the robot alone: no retries, no lingering association.
-      if (id !== null && /^\d+$/.test(id)) await cli('remove_network', id).catch(() => {});
-      await cli('disconnect').catch(() => {});
       this.checking = null;
     }
     console.log(`Robot Wi-Fi passphrase check for ${s.ssid} (saved as ${robot.ssid}): ${result}`);
     this.keyChecks.set(key, { result, at: this.o.now(), savedSsid: robot.ssid });
     this.emit();
+  }
+
+  /** A staff test join through this scan's wpa_supplicant. The scan pauses
+   *  for it (and it waits for a passphrase check already under way). */
+  async testJoin(
+    request: { ssid: string; passphrase?: string },
+    opts: { settleMs: number; timeoutMs: number },
+  ): Promise<Omit<WifiTestJoinResult, 'id' | 'iface' | 'at'>> {
+    if (this.status !== 'running') throw new Error(`the robot scan on ${this.o.iface} is not running`);
+    for (let i = 0; this.checking && i < 60; i++) await new Promise(r => setTimeout(r, 500));
+    if (this.checking) throw new Error(`${this.o.iface} is busy`);
+    this.checking = `test:${request.ssid}`;
+    try {
+      return await testJoin(this.o.runner.cli.bind(this.o.runner), h => (this.pendingEvents = h), request, opts);
+    } finally {
+      this.checking = null;
+    }
   }
 
   getState(): RobotWifiScanState {

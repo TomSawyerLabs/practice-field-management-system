@@ -168,6 +168,39 @@ passphrase check as a warning, and a robot on the air that its team has
 not saved as a note. `/admin` shows every robot network heard, with its
 signal, what it is saved as, and the passphrase result.
 
+### Wireless cards and test joins
+
+`/admin` → _Wireless cards_ lists every Wi-Fi card on the pFMS host with
+its driver and MAC, and what it is doing:
+
+| Status         | Meaning                                                                                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Free           | Nothing uses it. It can be picked for the robot scan, or test-join a network.                                                                                    |
+| Robot scan     | The robot Wi-Fi scan owns it. Test joins go through the scan's own `wpa_supplicant` (the scan pauses for them).                                                  |
+| Testing        | A test join is running on it.                                                                                                                                    |
+| In use by host | Another `wpa_supplicant` or `hostapd` controls it, it has an address (other than link-local), or the host's default route goes through it. pFMS leaves it alone. |
+| Blocked        | rfkill (software or the hardware switch) has its radio off.                                                                                                      |
+
+The robot-scan picker shows the same status per card and won't let you
+pick one the host is using (a card already picked stays selectable, so it
+can be switched off). The list refreshes every 10 seconds.
+
+**Test join** (Free or Robot scan cards, admins only, not during a match,
+one at a time): enter an SSID — robot networks already heard are suggested
+— and a passphrase if it needs one. pFMS scans every band for it, joins its
+strongest access point once, and leaves: association only, no DHCP, no
+address, no routes, so the host's networking is untouched. On a free card
+it starts a `wpa_supplicant` just for the test and stops it afterwards. The
+result lists as **Joined**, **Wrong passphrase**, **Not heard**, **Needs a
+passphrase**, **No answer** or **Failed** (with wpa_supplicant's reason),
+alongside the band and channel, signal, WPA2/WPA3, access point and time
+taken. The last ten are kept until pFMS restarts.
+
+The passphrase is used for that one test and never stored, logged or sent
+to any page. It reaches `wpa_cli` as the derived WPA2 key in hex, and the
+SSID as hex, so no name or passphrase can break the command. WPA3 (SAE)
+needs the passphrase itself, so there it cannot contain `"` or `\`.
+
 ## Factory Default Radio Detection
 
 A background probe runs every 2 seconds, fetching `http://192.168.69.1/status`. This works because the tester adds `192.168.69.8/24` as a secondary IP on the test interface at link-up, giving it a route to the `192.168.69.0/24` subnet.

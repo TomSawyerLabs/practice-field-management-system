@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  joinProblem,
   keyMgmtFor,
   matchSavedRobot,
+  pskHex,
+  ssidHex,
   parseScanResults,
   parseWpaEvent,
   robotOfBroadcast,
@@ -77,6 +80,29 @@ describe('reading wpa_supplicant output', () => {
     expect(keyMgmtFor('[WPA2-PSK+SAE-CCMP][ESS]')).toBe('WPA-PSK');
     expect(keyMgmtFor('[WPA2-SAE-CCMP][ESS]')).toBe('SAE');
     expect(keyMgmtFor('[ESS]')).toBe('open');
+  });
+});
+
+describe('joining safely', () => {
+  test('SSIDs go to wpa_cli as hex, so any SSID works', () => {
+    expect(ssidHex('FRC-1234')).toBe('4652432d31323334');
+    expect(ssidHex('a"b\\c')).toBe('6122625c63');
+  });
+
+  test('the WPA2 PSK matches the IEEE 802.11i test vector', () => {
+    expect(pskHex('password', 'IEEE')).toBe('f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e');
+  });
+
+  test('what can be joined as asked', () => {
+    expect(joinProblem('FRC-1234', 'WPA-PSK', 'passphrase1')).toBeNull();
+    expect(joinProblem('Guest', 'open', undefined)).toBeNull();
+    expect(joinProblem('FRC-1234', 'WPA-PSK', undefined)).toMatch(/needs a passphrase/);
+    expect(joinProblem('FRC-1234', 'WPA-PSK', 'short')).toMatch(/8 to 63/);
+    expect(joinProblem('', 'open', undefined)).toMatch(/1 to 32/);
+    expect(joinProblem('x'.repeat(33), 'open', undefined)).toMatch(/1 to 32/);
+    // A quote is fine for WPA2 (the PSK goes as hex) but not for SAE
+    expect(joinProblem('FRC-1234', 'WPA-PSK', 'pass"phrase')).toBeNull();
+    expect(joinProblem('FRC-1234', 'SAE', 'pass"phrase')).toMatch(/SAE/);
   });
 });
 
@@ -160,7 +186,10 @@ describe('the scanner', () => {
     expect(state().broadcasts).toHaveLength(1); // the guest network is not a robot
     expect(b).toMatchObject({ ssid: 'FRC-1234-Comp', team: 1234, robotSsid: '1234-Comp', match: { kind: 'exact' } });
     expect(b.keyCheck).toMatchObject({ result: 'ok', savedSsid: '1234-Comp' });
-    expect(runner.calls).toContainEqual(['set_network', '0', 'ssid', '"FRC-1234-Comp"']);
+    expect(runner.calls).toContainEqual(['set_network', '0', 'ssid', ssidHex('FRC-1234-Comp')]);
+    expect(runner.calls).toContainEqual(['set_network', '0', 'psk', pskHex('passphrase1', 'FRC-1234-Comp')]);
+    // The passphrase itself never goes on a command line
+    expect(runner.calls.flat().some(a => a.includes('passphrase1'))).toBe(false);
     expect(runner.calls).toContainEqual(['remove_network', '0']); // leaves the robot alone afterwards
 
     await scanner.scanOnce();

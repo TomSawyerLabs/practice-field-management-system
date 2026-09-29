@@ -72,6 +72,9 @@ import {
   HostnamesState,
   isRobotWifiScanState,
   RobotWifiScanState,
+  isWifiCardsState,
+  WifiCardsState,
+  WifiTestJoin,
   isExternalAccessState,
   isExternalAccessTokenCreated,
   isStationTestState,
@@ -812,6 +815,12 @@ function receiveMessage(detail: Message) {
   if (isRobotWifiScanState(detail)) {
     currentRobotWifiScan = detail;
     events.dispatchEvent(new CustomEvent('robotWifiScan', { detail }));
+    return;
+  }
+
+  if (isWifiCardsState(detail)) {
+    currentWifiCards = detail;
+    events.dispatchEvent(new CustomEvent('wifiCards', { detail }));
     return;
   }
 
@@ -1980,6 +1989,37 @@ export function useRobotWifiScan(): RobotWifiScanState | null {
 /** "Check again": re-try the saved passphrase on a robot network. */
 export function sendRobotWifiRecheck(ssid: string) {
   ws?.send(JSON.stringify({ type: 'robotWifiRecheck', ssid }));
+}
+
+// ── Wireless cards (admin) ──────────────────────────────────────────
+
+let currentWifiCards: WifiCardsState | null = null;
+
+/** The pFMS host's wireless cards, what each is doing, and recent test
+ *  joins. Null until the server says (older servers never do). */
+export function useWifiCards(): WifiCardsState | null {
+  const [state, setState] = useState(currentWifiCards);
+
+  useEffect(() => {
+    setState(currentWifiCards);
+    const handler = (e: Event) => setState((e as CustomEvent<WifiCardsState>).detail);
+    events.addEventListener('wifiCards', handler);
+    return () => events.removeEventListener('wifiCards', handler);
+  }, []);
+
+  return state;
+}
+
+/** Have a card join a network briefly as a test (admin). */
+export function sendWifiTestJoin(iface: string, ssid: string, passphrase?: string) {
+  ws?.send(
+    JSON.stringify({
+      type: 'wifiTestJoin',
+      iface,
+      ssid,
+      ...(passphrase && { passphrase }),
+    } satisfies WifiTestJoin),
+  );
 }
 
 export function sendScoreReset() {

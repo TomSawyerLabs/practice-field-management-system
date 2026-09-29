@@ -39,7 +39,13 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import { PendingRadioChangesPanel } from './PendingRadioChanges';
 
 import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '../../../src/types';
-import type { RobotWifiBroadcast, RobotWifiScanState } from '../../../src/types';
+import type {
+  RobotWifiBroadcast,
+  RobotWifiScanState,
+  WifiCardInfo,
+  WifiSecurity,
+  WifiTestJoinResult,
+} from '../../../src/types';
 import type { MatchRecordingStreamStatus, RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
 import {
   useMatchState,
@@ -81,6 +87,8 @@ import {
   sendRefreshAudioDevices,
   useSetupConfig,
   useRobotWifiScan,
+  useWifiCards,
+  sendWifiTestJoin,
   useMatchRecordingState,
   sendUpdateSetupSettings,
   testRecordingStream,
@@ -90,6 +98,8 @@ import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
 import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
+import Autocomplete from '@mui/material/Autocomplete';
+import CircularProgress from '@mui/material/CircularProgress';
 
 const phaseColors: Record<MatchPhase, string> = {
   idle: 'text.secondary',
@@ -529,6 +539,237 @@ const KEY_CHECK_LABELS: Record<NonNullable<RobotWifiBroadcast['keyCheck']>['resu
   open: 'No passphrase',
 };
 
+const CARD_USE: Record<
+  WifiCardInfo['use'],
+  { label: string; color: 'default' | 'success' | 'info' | 'warning' | 'error' }
+> = {
+  free: { label: 'Free', color: 'success' },
+  robotScan: { label: 'Robot scan', color: 'info' },
+  test: { label: 'Testing', color: 'info' },
+  host: { label: 'In use by host', color: 'warning' },
+  blocked: { label: 'Blocked', color: 'error' },
+};
+
+const TEST_OUTCOME: Record<
+  WifiTestJoinResult['outcome'],
+  { label: string; color: 'default' | 'success' | 'warning' | 'error' }
+> = {
+  running: { label: 'Joining…', color: 'default' },
+  connected: { label: 'Joined', color: 'success' },
+  wrongKey: { label: 'Wrong passphrase', color: 'error' },
+  notFound: { label: 'Not heard', color: 'default' },
+  needsPassphrase: { label: 'Needs a passphrase', color: 'warning' },
+  failed: { label: 'Failed', color: 'error' },
+  timeout: { label: 'No answer', color: 'warning' },
+};
+
+const SECURITY_LABEL: Record<WifiSecurity, string> = { 'WPA-PSK': 'WPA2', SAE: 'WPA3', open: 'open' };
+
+/** 2412 → 6, 5180 → 36, 5955 → 1 (6 GHz). */
+function wifiChannel(mhz: number): string {
+  if (mhz === 2484) return '2.4 GHz ch 14';
+  if (mhz >= 2412 && mhz <= 2472) return `2.4 GHz ch ${(mhz - 2407) / 5}`;
+  if (mhz >= 5160 && mhz <= 5885) return `5 GHz ch ${(mhz - 5000) / 5}`;
+  if (mhz >= 5955 && mhz <= 7115) return `6 GHz ch ${(mhz - 5950) / 5}`;
+  return `${mhz} MHz`;
+}
+
+/** The wireless cards on the pFMS host: what each is doing, and a test join
+ *  on the ones pFMS may use — join a network briefly (no address) to see
+ *  whether it can, then leave. */
+function WifiCardsSection() {
+  const state = useWifiCards();
+  const heard = useRobotWifiScan()?.broadcasts ?? [];
+  const phase = useMatchState()?.phase;
+  const matchActive = phase !== undefined && phase !== 'idle' && phase !== 'created' && phase !== 'postMatch';
+  const [testing, setTesting] = useState<string | null>(null);
+  const [ssid, setSsid] = useState('');
+  const [passphrase, setPassphrase] = useState('');
+  if (!state) return null;
+  const { cards, tests } = state;
+
+  const open = (iface: string) => {
+    setTesting(iface);
+    setSsid('');
+    setPassphrase('');
+  };
+  const submit = () => {
+    if (!testing || !ssid) return;
+    sendWifiTestJoin(testing, ssid, passphrase || undefined);
+    setTesting(null);
+    setPassphrase('');
+  };
+  const passphraseProblem =
+    passphrase && !/^[\x20-\x7e]{8,63}$/.test(passphrase) ? '8 to 63 printable characters' : null;
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h6">Wireless cards</Typography>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          Wi-Fi cards on the pFMS host. One can listen for robots (below). Any card the host isn&apos;t using can
+          test-join a network: pFMS joins it, says whether that worked, and leaves — it never takes an address, so the
+          host&apos;s own networking is untouched.
+        </Typography>
+        {cards.length === 0 ? (
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            No wireless card found on the pFMS host.
+          </Typography>
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Card</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="right" />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {cards.map(c => {
+                const use = CARD_USE[c.use];
+                const why = matchActive ? 'Not during a match' : c.canTestJoin ? '' : c.detail;
+                return (
+                  <TableRow key={c.iface}>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                        {c.iface}
+                      </Typography>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        {[c.driver, c.mac].filter(Boolean).join(' · ')}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Chip size="small" color={use.color} label={use.label} />
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                          {c.detail}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    <TableCell align="right">
+                      <Tooltip title={why}>
+                        <span>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            disabled={!!why}
+                            onClick={() => open(c.iface)}
+                            sx={{ whiteSpace: 'nowrap' }}
+                          >
+                            Test join
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+
+        {tests.length > 0 && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+              Recent test joins
+            </Typography>
+            <Table size="small">
+              <TableBody>
+                {tests.map(t => {
+                  const outcome = TEST_OUTCOME[t.outcome];
+                  const facts = [
+                    t.frequency !== undefined && wifiChannel(t.frequency),
+                    t.signal !== undefined && `${t.signal} dBm`,
+                    t.security && SECURITY_LABEL[t.security],
+                    t.bssid,
+                    t.durationMs !== undefined && `${(t.durationMs / 1000).toFixed(1)} s`,
+                  ].filter(Boolean);
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>
+                        {new Date(t.at).toLocaleTimeString()}
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                          {t.ssid}
+                        </Typography>
+                        <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                          on {t.iface}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          color={outcome.color}
+                          label={outcome.label}
+                          icon={t.outcome === 'running' ? <CircularProgress size={12} /> : undefined}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                          {facts.join(' · ')}
+                        </Typography>
+                        {t.detail && (
+                          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                            {t.detail}
+                          </Typography>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </Box>
+        )}
+      </CardContent>
+
+      <Dialog open={testing !== null} onClose={() => setTesting(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Test join on {testing}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
+            pFMS scans for the network, joins its strongest access point, reports what happened, and leaves. No address
+            is taken. The passphrase is used for this test only — never stored.
+          </Typography>
+          <Autocomplete
+            freeSolo
+            options={[...new Set(heard.map(b => b.ssid))]}
+            inputValue={ssid}
+            onInputChange={(_, v) => setSsid(v)}
+            renderInput={params => (
+              <TextField
+                {...params}
+                autoFocus
+                label="Network name (SSID)"
+                helperText="Exact, capitals included. Robot networks heard nearby are suggested."
+                inputProps={{ ...params.inputProps, maxLength: 32 }}
+              />
+            )}
+          />
+          <TextField
+            fullWidth
+            sx={{ mt: 2 }}
+            type="password"
+            label="Passphrase"
+            value={passphrase}
+            onChange={e => setPassphrase(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !passphraseProblem && submit()}
+            error={!!passphraseProblem}
+            helperText={passphraseProblem ?? 'Leave empty for an open network'}
+            autoComplete="off"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTesting(null)}>Cancel</Button>
+          <Button variant="contained" onClick={submit} disabled={!ssid || !!passphraseProblem}>
+            Join
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Card>
+  );
+}
+
 /** Robot Wi-Fi scan: which wireless card pFMS may use to listen for robots'
  *  2.4 GHz networks and check saved passphrases, and what it hears. The card
  *  is dedicated to this — pFMS runs its own wpa_supplicant on it. */
@@ -537,6 +778,7 @@ function RobotWifiScanSection() {
   const scan = useRobotWifiScan();
   const chosen = setupConfig?.config.settings.robotWifiInterface ?? '';
   const interfaces = scan?.interfaces ?? [];
+  const cards = useWifiCards()?.cards ?? [];
   const statusChip: Record<
     RobotWifiScanState['status'],
     { label: string; color: 'default' | 'success' | 'info' | 'error' }
@@ -570,12 +812,21 @@ function RobotWifiScanSection() {
             onChange={e => sendUpdateSetupSettings({ robotWifiInterface: String(e.target.value) })}
           >
             <MenuItem value="">Off</MenuItem>
-            {[...new Set([...interfaces, ...(chosen ? [chosen] : [])])].map(i => (
-              <MenuItem key={i} value={i}>
-                {i}
-                {interfaces.includes(i) ? '' : ' (not found on this host)'}
-              </MenuItem>
-            ))}
+            {[...new Set([...interfaces, ...(chosen ? [chosen] : [])])].map(i => {
+              const card = cards.find(c => c.iface === i);
+              return (
+                // A card the host is using can't be picked (it stays listed,
+                // and selectable once chosen, so it can be switched off).
+                <MenuItem key={i} value={i} disabled={card ? !card.canRobotScan && i !== chosen : false}>
+                  <Box>
+                    <Box sx={{ fontFamily: 'monospace' }}>{i}</Box>
+                    <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                      {interfaces.includes(i) ? (card?.detail ?? '') : 'not found on this host'}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              );
+            })}
           </Select>
         </FormControl>
         {interfaces.length === 0 && (
@@ -822,6 +1073,7 @@ export function AdminPage() {
       <MatchStatusSection />
       <WifiChangesSection />
       <FieldResetSection />
+      <WifiCardsSection />
       <RobotWifiScanSection />
       <OutOfMatchControlSection />
       <ControllerPolicySection />

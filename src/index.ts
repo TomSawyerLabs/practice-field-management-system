@@ -47,6 +47,7 @@ import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
 import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces } from './robotWifiScan.js';
+import { WifiCards } from './wifiCards.js';
 import { ApiKeyStore } from './apiKeyStore.js';
 import { PortBridgeManager, parseFieldPorts } from './portBridgeManager.js';
 import { StationTestManager } from './stationTestManager.js';
@@ -89,6 +90,7 @@ import {
   isRecordingStreamConfig,
   RobotController,
   RobotWifiScanState,
+  WifiCardsState,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -412,6 +414,22 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Off unless an admin picks the interface; switching it restarts the scan.
   let robotWifi: RobotWifiScanner | null = null;
   let broadcastRobotWifi: (state: RobotWifiScanState) => void = () => {};
+  // Every wireless card on the host, for the admin page: what each is doing
+  // (the robot scan, the host, nothing) and staff test joins on the ones
+  // pFMS may use. Test joins only associate — no address, no routes.
+  let broadcastWifiCards: (state: WifiCardsState) => void = () => {};
+  const wifiCards = new WifiCards({
+    onChange: state => broadcastWifiCards(state),
+    robotScan: () => {
+      const scanner = robotWifi;
+      if (!scanner) return null;
+      const { status, error } = scanner.getState();
+      return { iface: scanner.iface, status, ...(error && { error }), testJoin: (r, o) => scanner.testJoin(r, o) };
+    },
+    matchRunning: () => matchEngine.isMatchActive(),
+  });
+  // Cards come and go (USB), and the host can take one over at any time.
+  setInterval(() => wifiCards.refresh(), 10_000);
   const robotWifiState = (): RobotWifiScanState => ({
     ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [] }),
     interfaces: listWirelessInterfaces(),
@@ -428,11 +446,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         runner: new WpaSupplicantRunner(iface),
         savedRobots: () =>
           savedTeamStore.getTeams().map(({ ssid, wpaKey, wpaKeyHash }) => ({ ssid, wpaKey, wpaKeyHash })),
-        onChange: () => broadcastRobotWifi(robotWifiState()),
+        onChange: () => {
+          broadcastRobotWifi(robotWifiState());
+          wifiCards.refresh();
+        },
       });
       void robotWifi.start();
     }
     broadcastRobotWifi(robotWifiState());
+    wifiCards.refresh();
   };
   applyRobotWifiSetting();
   setupConfigStore.addListener(applyRobotWifiSetting);
@@ -743,6 +765,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       publicUrl,
       queue: { store: matchQueue, setupNext },
       robotWifi: { getState: robotWifiState, recheck: ssid => robotWifi?.recheck(ssid) },
+      wifiCards,
       teamPrefs: {
         store: teamPrefsStore,
         vapidPublicKey: () => pushService.publicKey,
@@ -775,6 +798,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   );
   setBroadcast(broadcast);
   broadcastRobotWifi = broadcast;
+  broadcastWifiCards = broadcast;
 
   // Starts listening to match phases; verifies ffmpeg first and says so in
   // the log if recording can't work on this host.

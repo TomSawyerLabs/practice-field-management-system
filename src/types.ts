@@ -2210,6 +2210,87 @@ export function isRobotWifiRecheck(msg: unknown): msg is RobotWifiRecheck {
   return m.type === 'robotWifiRecheck' && typeof m.ssid === 'string' && m.ssid.length <= 32;
 }
 
+// ── Wireless cards (admin) ──────────────────────────────────────────
+
+/** How a network is secured, as far as joining it goes. */
+export type WifiSecurity = 'WPA-PSK' | 'SAE' | 'open';
+
+/** A wireless card on the pFMS host, and what it is doing. */
+export interface WifiCardInfo {
+  iface: string;
+  mac?: string;
+  /** Kernel driver, e.g. iwlwifi */
+  driver?: string;
+  /** Kernel operstate: up, down, dormant, … */
+  operstate?: string;
+  /** Addresses on the card other than link-local ones */
+  addresses: string[];
+  /** robotScan: pFMS's robot Wi-Fi scan owns it. test: pFMS is running a
+   *  test join on it. host: something else on the host uses it. blocked:
+   *  rfkill. free: nothing does. */
+  use: 'robotScan' | 'test' | 'host' | 'blocked' | 'free';
+  /** One line on what the card is doing, or why it can't be used */
+  detail: string;
+  /** Staff can have pFMS test-join a network on it */
+  canTestJoin: boolean;
+  /** It may be picked for the robot Wi-Fi scan */
+  canRobotScan: boolean;
+}
+
+/** One staff test join: pFMS joined a network briefly on a card to see
+ *  whether it could — association only, no address — and left. */
+export interface WifiTestJoinResult {
+  id: number;
+  iface: string;
+  ssid: string;
+  /** Epoch ms the test started */
+  at: number;
+  durationMs?: number;
+  outcome: 'running' | 'connected' | 'wrongKey' | 'notFound' | 'needsPassphrase' | 'failed' | 'timeout';
+  /** wpa_supplicant's reason, or why it could not be tried */
+  detail?: string;
+  /** The access point: the one it joined, else the strongest heard */
+  bssid?: string;
+  frequency?: number;
+  signal?: number;
+  security?: WifiSecurity;
+}
+
+/** Wireless cards on the pFMS host and recent test joins (admin). */
+export interface WifiCardsState {
+  type: 'wifiCards';
+  cards: WifiCardInfo[];
+  /** Newest first */
+  tests: WifiTestJoinResult[];
+}
+
+export function isWifiCardsState(msg: unknown): msg is WifiCardsState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as WifiCardsState).type === 'wifiCards';
+}
+
+/** Admin → server: test-join a network on a card. The passphrase is used
+ *  once and never stored, logged or sent back. */
+export interface WifiTestJoin {
+  type: 'wifiTestJoin';
+  iface: string;
+  ssid: string;
+  passphrase?: string;
+}
+
+export function isWifiTestJoin(msg: unknown): msg is WifiTestJoin {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as WifiTestJoin;
+  return (
+    m.type === 'wifiTestJoin' &&
+    typeof m.iface === 'string' &&
+    /^[a-zA-Z0-9._-]{1,15}$/.test(m.iface) &&
+    typeof m.ssid === 'string' &&
+    m.ssid.length <= 32 &&
+    (m.passphrase === undefined || (typeof m.passphrase === 'string' && m.passphrase.length <= 63))
+  );
+}
+
 // ── mDNS Reflector Activity ─────────────────────────────────────────
 
 export interface MdnsResolvedName {

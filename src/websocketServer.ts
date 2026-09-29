@@ -23,7 +23,9 @@ import {
   isPushTest,
   TeamPrefsState,
   isRobotWifiRecheck,
+  isWifiTestJoin,
   RobotWifiScanState,
+  WifiCardsState,
   isAdminGlobalEStop,
   isAdminStationEStop,
   isAdminStationDisable,
@@ -274,6 +276,11 @@ export function setupWebSocket(
     robotWifi?: {
       getState: () => RobotWifiScanState;
       recheck: (ssid: string) => void;
+    };
+    /** Wireless cards on the host and staff test joins (src/wifiCards.ts). */
+    wifiCards?: {
+      getState: () => WifiCardsState;
+      testJoin: (iface: string, ssid: string, passphrase?: string) => Promise<unknown>;
     };
   },
 ): WebSocketContext {
@@ -877,6 +884,10 @@ export function setupWebSocket(
     if (setup?.robotWifi) {
       ws.send(JSON.stringify(setup.robotWifi.getState()));
     }
+    // Wireless cards on the host (admin page)
+    if (setup?.wifiCards) {
+      ws.send(JSON.stringify(setup.wifiCards.getState()));
+    }
 
     ws.on('close', () => {
       wsToIp.delete(ws);
@@ -975,6 +986,15 @@ export function setupWebSocket(
       } else if (isRobotWifiRecheck(data)) {
         // Rate-limited per network inside the scanner.
         setup?.robotWifi?.recheck(data.ssid);
+      } else if (isWifiTestJoin(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin authentication required to test a Wi-Fi network' }));
+        } else if (setup?.wifiCards) {
+          // The result is broadcast in the card state; only a refusal comes back here.
+          setup.wifiCards.testJoin(data.iface, data.ssid, data.passphrase || undefined).catch((err: Error) => {
+            ws.send(JSON.stringify({ error: `Test join refused: ${err.message}` }));
+          });
+        }
       } else if (isPushTest(data)) {
         const tp = setup?.teamPrefs;
         if (!tp) ws.send(JSON.stringify({ error: 'Push is not set up on this field' }));
