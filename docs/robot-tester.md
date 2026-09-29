@@ -208,8 +208,14 @@ can be switched off). The list refreshes every 10 seconds.
 one at a time): enter an SSID — robot networks already heard are suggested
 — and a passphrase if it needs one. pFMS scans every band for it, joins its
 strongest access point once, and leaves: association only, no DHCP, no
-address, no routes, so the host's networking is untouched. On a free card
-it starts a `wpa_supplicant` just for the test and stops it afterwards. The
+address, no routes, so the host's networking is untouched. It disconnects
+the instant `wpa_supplicant` says the join succeeded or was refused, and the
+result says how long that answer took. While pFMS has a card (for the robot
+scan or a test) it keeps the card's IPv6 autoconfiguration (`accept_ra`,
+`autoconf`) off, and puts it back when it lets go, so a router advertisement
+heard in that moment can't leave the card with an address or a route. On a
+free card it starts a `wpa_supplicant` just for the test and stops it
+afterwards. The
 result lists as **Joined**, **Wrong passphrase**, **Not heard**, **Needs a
 passphrase**, **No answer** or **Failed** (with wpa_supplicant's reason),
 alongside the band and channel, signal, WPA2/WPA3, access point and time

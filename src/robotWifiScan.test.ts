@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  attemptJoin,
   findStalls,
+  holdIpv6Autoconf,
   joinProblem,
   keyMgmtFor,
   matchSavedRobot,
@@ -13,6 +18,7 @@ import {
   STALL_MS,
   type ConnectAttempt,
   type WifiRunner,
+  type WpaEvent,
 } from './robotWifiScan.js';
 import type { RobotWifiScanState } from './types.js';
 
@@ -60,7 +66,9 @@ describe('reading wpa_supplicant output', () => {
   test('connected, wrong key, other failures', () => {
     expect(parseWpaEvent('wlp0s20f3: CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed')).toEqual({
       type: 'connected',
+      bssid: 'aa:bb:cc:dd:ee:01',
     });
+    expect(parseWpaEvent('wlp0s20f3: CTRL-EVENT-CONNECTED')).toEqual({ type: 'connected' });
     expect(parseWpaEvent('wlp0s20f3: WPA: 4-Way Handshake failed - pre-shared key may be incorrect')).toEqual({
       type: 'wrongKey',
     });
@@ -82,6 +90,65 @@ describe('reading wpa_supplicant output', () => {
     expect(keyMgmtFor('[WPA2-PSK+SAE-CCMP][ESS]')).toBe('WPA-PSK');
     expect(keyMgmtFor('[WPA2-SAE-CCMP][ESS]')).toBe('SAE');
     expect(keyMgmtFor('[ESS]')).toBe('open');
+  });
+});
+
+describe('joining just long enough for an answer', () => {
+  /** A wpa_cli that answers `select_network` with the given event line. */
+  function scripted(line: string) {
+    const calls: string[] = [];
+    let handler: ((e: WpaEvent) => void) | null = null;
+    const cli = async (...args: string[]) => {
+      calls.push(args[0]);
+      if (args[0] === 'add_network') return '3\n';
+      if (args[0] === 'select_network') setTimeout(() => handler?.(parseWpaEvent(line)!), 5);
+      return 'OK\n';
+    };
+    return { calls, cli, listen: (h: ((e: WpaEvent) => void) | null) => (handler = h) };
+  }
+  const target = { ssid: 'FRC-1234', security: 'WPA-PSK' as const, passphrase: 'passphrase1' };
+
+  test('connected: disconnects before anything else, then forgets the network', async () => {
+    const w = scripted('wlan0: CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed [id=3]');
+    const r = await attemptJoin(w.cli, w.listen, target, 5_000);
+    expect(r).toMatchObject({ outcome: 'connected', bssid: 'aa:bb:cc:dd:ee:01' });
+    expect(r.ms).toBeGreaterThanOrEqual(0);
+    expect(r.ms).toBeLessThan(1_000);
+    const after = w.calls.slice(w.calls.indexOf('select_network') + 1);
+    expect(after).toEqual(['disconnect', 'remove_network']); // no status query in between
+  });
+
+  test('refused: the same', async () => {
+    const w = scripted('wlan0: WPA: 4-Way Handshake failed - pre-shared key may be incorrect');
+    const r = await attemptJoin(w.cli, w.listen, target, 5_000);
+    expect(r.outcome).toBe('wrongKey');
+    expect(w.calls.slice(w.calls.indexOf('select_network') + 1)).toEqual(['disconnect', 'remove_network']);
+  });
+});
+
+describe('keeping IPv6 autoconfiguration off the card', () => {
+  const proc = mkdtempSync(join(tmpdir(), 'pfms-proc-'));
+  afterAll(() => rmSync(proc, { recursive: true, force: true }));
+  const conf = join(proc, 'sys/net/ipv6/conf/wlan0');
+  mkdirSync(conf, { recursive: true });
+
+  test('turns accept_ra and autoconf off while held, and puts them back', () => {
+    writeFileSync(join(conf, 'accept_ra'), '1\n');
+    writeFileSync(join(conf, 'autoconf'), '1\n');
+    const restore = holdIpv6Autoconf('wlan0', proc);
+    expect(readFileSync(join(conf, 'accept_ra'), 'utf8')).toBe('0');
+    expect(readFileSync(join(conf, 'autoconf'), 'utf8')).toBe('0');
+    restore();
+    expect(readFileSync(join(conf, 'accept_ra'), 'utf8')).toBe('1');
+    expect(readFileSync(join(conf, 'autoconf'), 'utf8')).toBe('1');
+  });
+
+  test('leaves alone what is already off, and a card it cannot see', () => {
+    writeFileSync(join(conf, 'accept_ra'), '0');
+    writeFileSync(join(conf, 'autoconf'), '0');
+    holdIpv6Autoconf('wlan0', proc)();
+    expect(readFileSync(join(conf, 'accept_ra'), 'utf8')).toBe('0');
+    expect(() => holdIpv6Autoconf('wlan9', proc)()).not.toThrow();
   });
 });
 

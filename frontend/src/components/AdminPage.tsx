@@ -682,7 +682,8 @@ function WifiCardsSection() {
                     t.signal !== undefined && `${t.signal} dBm`,
                     t.security && SECURITY_LABEL[t.security],
                     t.bssid,
-                    t.durationMs !== undefined && `${(t.durationMs / 1000).toFixed(1)} s`,
+                    t.joinMs !== undefined && `answered in ${(t.joinMs / 1000).toFixed(1)} s, then left`,
+                    t.durationMs !== undefined && `${(t.durationMs / 1000).toFixed(1)} s in all`,
                   ].filter(Boolean);
                   return (
                     <TableRow key={t.id}>

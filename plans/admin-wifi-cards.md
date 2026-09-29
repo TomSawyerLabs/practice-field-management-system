@@ -103,6 +103,18 @@ card (`robotWifiInterface`) to hear robots' `FRC-<team>` 2.4 GHz networks.
 - [x] Deployed `ade56ed` (2026-09-29 14:31). Live on steamboat: one card,
       `wlp0s20f3` (iwlwifi, 18:cc:18:c6:42:6a), shown as Robot scan /
       "Listening for robots", test join available.
+- [x] Round 2 (user, 2026-09-29: "try joining the SSID and then disconnect
+      the moment it connects (or is denied)? we don't need to do a full
+      DHCP"). It already associated only; tightened: the BSSID now comes
+      from the CTRL-EVENT-CONNECTED line, so `disconnect` is the very next
+      command after the answer (was: a `status` query first), then
+      `remove_network`; the answer time is reported (`joinMs`). Found on
+      steamboat: the card had `accept_ra=1`/`autoconf=1`, so an RA heard
+      during a join could leave an IPv6 address or default route on it —
+      `WpaSupplicantRunner` now holds both at 0 while pFMS has the card and
+      restores them on stop (`holdIpv6Autoconf`). DHCP: pFMS's own dhcpcd
+      shows as "[manager]" but was started for `eno1.99` only, so it doesn't
+      touch the card.
 - [ ] First real test join (none run yet)
 
 ## Open questions for the user

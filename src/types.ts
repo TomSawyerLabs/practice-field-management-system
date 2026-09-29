@@ -2266,6 +2266,8 @@ export interface WifiTestJoinResult {
   /** Epoch ms the test started */
   at: number;
   durationMs?: number;
+  /** From asking to join to the answer — it leaves the moment it has one */
+  joinMs?: number;
   outcome: 'running' | 'connected' | 'wrongKey' | 'notFound' | 'needsPassphrase' | 'failed' | 'timeout';
   /** wpa_supplicant's reason, or why it could not be tried */
   detail?: string;

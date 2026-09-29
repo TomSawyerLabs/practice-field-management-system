@@ -16,7 +16,7 @@
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash, pbkdf2Sync } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { platform } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -85,10 +85,17 @@ export function matchSavedRobot(robotSsid: string, savedSsids: readonly string[]
 }
 
 /** What a line of wpa_supplicant's own output says about a join attempt. */
-export type WpaEvent = { type: 'connected' } | { type: 'wrongKey' } | { type: 'authFailed'; reason: string };
+export type WpaEvent =
+  | { type: 'connected'; bssid?: string }
+  | { type: 'wrongKey' }
+  | { type: 'authFailed'; reason: string };
 
 export function parseWpaEvent(line: string): WpaEvent | null {
-  if (line.includes('CTRL-EVENT-CONNECTED')) return { type: 'connected' };
+  if (line.includes('CTRL-EVENT-CONNECTED')) {
+    // "… CTRL-EVENT-CONNECTED - Connection to aa:bb:cc:dd:ee:01 completed …"
+    const bssid = /Connection to ([0-9a-f]{2}(?::[0-9a-f]{2}){5})/i.exec(line)?.[1];
+    return bssid ? { type: 'connected', bssid } : { type: 'connected' };
+  }
   if (line.includes('pre-shared key may be incorrect')) return { type: 'wrongKey' };
   const temp = /CTRL-EVENT-SSID-TEMP-DISABLED .*reason=(\S+)/.exec(line);
   if (temp) return temp[1] === 'WRONG_KEY' ? { type: 'wrongKey' } : { type: 'authFailed', reason: temp[1] };
@@ -149,6 +156,8 @@ export interface JoinOutcome {
   reason?: string;
   /** The access point it associated with, when connected */
   bssid?: string;
+  /** From asking to join to the answer (connected, refused, …) */
+  ms?: number;
 }
 
 /** Join a network once, report how it went, and leave: the network is
@@ -181,23 +190,22 @@ export async function attemptJoin(
     }
     await set('scan_ssid', '1');
 
+    const asked = Date.now();
     return await new Promise<JoinOutcome>(resolve => {
       let done = false;
+      // The answer is all we came for: stop listening and leave at once
+      // (the finally below disconnects before anything else runs).
       const finish = (r: JoinOutcome) => {
         if (done) return;
         done = true;
         clearTimeout(timeout);
         clearInterval(poll);
         listen(null);
-        resolve(r);
+        resolve(r.outcome === 'timeout' ? r : { ...r, ms: Date.now() - asked });
       };
-      const connected = () =>
-        cli('status')
-          .then(out => finish({ outcome: 'connected', bssid: /^bssid=(\S+)$/m.exec(out)?.[1] }))
-          .catch(() => finish({ outcome: 'connected' }));
       const timeout = setTimeout(() => finish({ outcome: 'timeout' }), timeoutMs);
       listen(e => {
-        if (e.type === 'connected') void connected();
+        if (e.type === 'connected') finish({ outcome: 'connected', ...(e.bssid && { bssid: e.bssid }) });
         else if (e.type === 'wrongKey') finish({ outcome: 'wrongKey' });
         else finish({ outcome: 'failed', reason: e.reason });
       });
@@ -215,9 +223,10 @@ export async function attemptJoin(
   } catch (err) {
     return { outcome: 'failed', reason: err instanceof Error ? err.message : String(err) };
   } finally {
-    // Leave the network alone: no retries, no lingering association.
-    if (id !== null && /^\d+$/.test(id)) await cli('remove_network', id).catch(() => {});
+    // Leave straight away — disconnect first, then forget the network so
+    // wpa_supplicant never retries it. No lingering association.
     await cli('disconnect').catch(() => {});
+    if (id !== null && /^\d+$/.test(id)) await cli('remove_network', id).catch(() => {});
   }
 }
 
@@ -257,6 +266,7 @@ export async function testJoin(
   return {
     ...seen,
     ...(r.bssid && { bssid: r.bssid }),
+    ...(r.ms !== undefined && { joinMs: r.ms }),
     outcome: r.outcome,
     ...(r.reason && { detail: r.reason }),
     durationMs: Date.now() - started,
@@ -264,6 +274,38 @@ export async function testJoin(
 }
 
 // ── Driving wpa_supplicant ──────────────────────────────────────────
+
+/** Keep IPv6 autoconfiguration off a card pFMS is joining networks on: with
+ *  `accept_ra`/`autoconf` on (the default), a router advertisement heard
+ *  during a brief test join would give the card an address — even a default
+ *  route — that outlives the connection. IPv6 itself stays on (link-local
+ *  only). Returns a function that puts the old values back. `procRoot` is
+ *  for tests. */
+export function holdIpv6Autoconf(iface: string, procRoot = '/proc'): () => void {
+  const dir = join(procRoot, 'sys/net/ipv6/conf', iface);
+  const saved: [string, string][] = [];
+  for (const key of ['accept_ra', 'autoconf']) {
+    const path = join(dir, key);
+    try {
+      const was = readFileSync(path, 'utf8').trim();
+      if (was !== '0') {
+        writeFileSync(path, '0');
+        saved.push([path, was]);
+      }
+    } catch (err) {
+      console.warn(`Could not turn off IPv6 ${key} on ${iface}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return () => {
+    for (const [path, was] of saved) {
+      try {
+        writeFileSync(path, was);
+      } catch {
+        // the card may have gone (USB); nothing to put back then
+      }
+    }
+  };
+}
 
 /** What the scanner needs from the host. Swapped for a fake in tests. */
 export interface WifiRunner {
@@ -280,6 +322,7 @@ const CTRL_DIR = '/run/pfms-wifi';
  *  line-buffered (glibc block-buffers a pipe otherwise), plus wpa_cli. */
 export class WpaSupplicantRunner implements WifiRunner {
   private child: ChildProcess | null = null;
+  private restoreIpv6: (() => void) | null = null;
 
   constructor(private readonly iface: string) {}
 
@@ -288,6 +331,7 @@ export class WpaSupplicantRunner implements WifiRunner {
     if (!listWirelessInterfaces().includes(this.iface))
       throw new Error(`${this.iface} is not a wireless interface here`);
     mkdirSync(CTRL_DIR, { recursive: true });
+    this.restoreIpv6 ??= holdIpv6Autoconf(this.iface);
     // A socket left by a previous run (crash, kill -9) stops wpa_supplicant starting.
     rmSync(join(CTRL_DIR, this.iface), { force: true });
     const conf = join(CTRL_DIR, 'wpa_supplicant.conf');
@@ -329,6 +373,8 @@ export class WpaSupplicantRunner implements WifiRunner {
   stop(): void {
     this.child?.kill('SIGTERM');
     this.child = null;
+    this.restoreIpv6?.();
+    this.restoreIpv6 = null;
   }
 }
 
