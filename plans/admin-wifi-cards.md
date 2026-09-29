@@ -115,7 +115,21 @@ card (`robotWifiInterface`) to hear robots' `FRC-<team>` 2.4 GHz networks.
       restores them on stop (`holdIpv6Autoconf`). DHCP: pFMS's own dhcpcd
       shows as "[manager]" but was started for `eno1.99` only, so it doesn't
       touch the card.
-- [ ] First real test join (none run yet)
+- [x] Deployed `f99f14d` (2026-09-29 15:05); card now accept_ra=0,
+      autoconf=0.
+- [x] First real test join, 2026-09-29 (user OK'd using the building
+      Wi-Fi to prove the mechanics; the feature itself is for robots'
+      `FRC-<team>` networks). Driven through the deployed `testJoin` in
+      `dist/` against pFMS's own wpa_supplicant (`/run/pfms-wifi`), with a
+      second `wpa_cli` attached as an event monitor — no admin session
+      needed or used. `Tom Sawyer Labs WPA2` (WPA2-PSK), deliberately wrong
+      passphrase: associated at +0.1 s, AP gave up on the 4-way handshake
+      at +4.2 s (`reason=15`, `WRONG_KEY`), `disconnect` 3 ms later,
+      network removed 6 ms later; result `wrongKey`, `joinMs` 4196. 3 s
+      after: DISCONNECTED, no networks, no address, no v4/v6 routes. The
+      ~4 s is the AP's handshake timeout — any wrong-key test takes about
+      that long. Not yet seen: a successful join (needs a real
+      passphrase), and a real robot network.
 
 ## Open questions for the user
 
