@@ -734,17 +734,42 @@ behind one switch:
   finished film would have thrown away.
 - **A fast timelapse while robots are here.** Any packet from any Driver
   Station starts it; it keeps running for five minutes after the last one,
-  so a practice night is one piece rather than confetti, and pauses during
-  matches (the match recorder owns the streams then, at full rate). The
-  default samples keyframes only, which costs about a fifth of the CPU of
-  decoding every frame to keep one, and runs at 60× — a three-hour practice
-  is three minutes of film, about 60 MB. "Every second" instead gives 30×
-  and smoother motion for roughly the same disk, at most of a CPU core.
+  so a practice night is one piece rather than confetti. It pauses from the
+  countdown to the final buzzer — the match recorder owns the streams then,
+  at full rate — and picks up again for the post-match count. Once a
+  match's recording is finished, a chunk is made from it at the same
+  settings (a keyframe-only decode of a few minutes of file: seconds of
+  CPU), so the film runs straight through every match. The default samples
+  keyframes only, which costs about a fifth of the CPU of decoding every
+  frame to keep one, and runs at 60× — a three-hour practice is three
+  minutes of film, about 60 MB. "Every second" instead gives 30× and
+  smoother motion for roughly the same disk, at most of a CPU core.
+
+Every chunk is **finalized** once it closes, for the viewer: a sidecar
+(`<chunk>.json`) records the wall-clock span it covers and its length as
+film, which is what places it on the timeline; the chunk is remuxed to a
+faststart MP4 so a browser can seek anywhere in it at once (it is captured
+fragmented, so a crash still leaves a playable file); and a sheet of small
+frames (`<chunk>.scrub.jpg`, one 160 px tile per 20 s of field time) is cut
+from it for instant scrub previews. That costs a couple of seconds of CPU
+per half-hour chunk, runs one at a time and never during a match, and
+chunks from before it existed are finalized in the background at startup.
+
+Alongside, a **field activity log** (`activity/<day>.jsonl`,
+`src/fieldActivityLog.ts`) records what the timeline draws: when each
+station had a robot (radio linked, or telemetry in the last 15 s — keyed by
+the team on that station), when each robot was enabled, and every match
+(copied from history, which only keeps 250). Spans still open are
+checkpointed every 10 s, so a restart closes them where their evidence
+ended rather than stretching them over the downtime. It is a few kB a day,
+runs whether or not the timelapse is on, and is swept with the archival
+frames.
 
 Everything lives in `<recordings>/.timelapse/` — `frames/<day>/`,
-`active/<day>/` and `renders/`. The leading dot keeps it clear of the match
-retention sweep; the timelapse sweeps itself, with separate retention for
-frames (default: forever) and practice films (default: 60 days).
+`active/<day>/`, `activity/` and `renders/`. The leading dot keeps it clear
+of the match retention sweep; the timelapse sweeps itself, with separate
+retention for frames (default: forever) and practice films (default: 60
+days).
 
 ### Watching it, and taking it away
 

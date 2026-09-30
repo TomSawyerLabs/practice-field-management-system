@@ -4243,6 +4243,113 @@ export function isTimelapseListing(msg: unknown): msg is TimelapseListing {
   return (msg as TimelapseListing).type === 'timelapseListing';
 }
 
+// ── The timelapse viewer's timeline (/timelapse) ─────────────────────
+
+/** A stretch of time one robot was on the field (`robot`) or enabled
+ *  (`enable`), from the field activity log. */
+export interface FieldActivitySpan {
+  kind: 'robot' | 'enable';
+  team: number;
+  station: StationName;
+  start: number;
+  end: number;
+  /** Still going: `end` is "now". */
+  open?: boolean;
+}
+
+/** A match, as the timeline draws it. */
+export interface FieldActivityMatch {
+  /** `matchId`, or `t<startedAt>` for entries from before match ids. */
+  id: string;
+  matchNumber: number;
+  start: number;
+  end: number;
+  teams: { team: number; alliance: Alliance | null }[];
+  red?: number;
+  blue?: number;
+  /** A speed-challenge run rather than a scored match. */
+  challenge?: boolean;
+}
+
+/** A sheet of small frames from one chunk, for instant scrub previews:
+ *  tile `i` is the frame at `i × interval` seconds into the chunk, laid out
+ *  left to right, `cols` to a row. */
+export interface TimelapseScrub {
+  /** Path under `/api/timelapse/scrub/`. */
+  file: string;
+  cols: number;
+  count: number;
+  tileWidth: number;
+  tileHeight: number;
+  /** Seconds of the chunk's own playback between tiles. */
+  interval: number;
+}
+
+/** One piece of the logical film: a chunk, placed on the wall clock. Media
+ *  time maps linearly onto wall time between (`mediaStart`, `start`) and
+ *  (`mediaEnd`, `end`). Overlapping chunks are trimmed so every moment is
+ *  covered by one segment at most. */
+export interface TimelapseSegment {
+  /** Path under `/api/timelapse/active/`. */
+  file: string;
+  /** Captured live while robots were here, or made afterwards from a
+   *  match recording (the live capture pauses for matches). */
+  source: 'live' | 'match';
+  start: number;
+  end: number;
+  mediaStart: number;
+  mediaEnd: number;
+  /** Still being written — its end is "now" and it has no scrub sheet yet. */
+  capturing?: boolean;
+  /** The chunk's timing was estimated rather than measured (it has not been
+   *  finalized yet); it can be off by a few seconds of field time. */
+  estimated?: boolean;
+  scrub?: TimelapseScrub;
+  matchId?: string;
+}
+
+export interface TimelapseTimeline {
+  type: 'timelapseTimeline';
+  from: number;
+  to: number;
+  now: number;
+  /** Stream the segments and frames are for (by name), and the others that
+   *  have footage in the range. */
+  stream: string | null;
+  streams: string[];
+  segments: TimelapseSegment[];
+  /** Archival stills in the range, for the gaps between segments. */
+  frames: { at: number; file: string; thumb?: string }[];
+  matches: FieldActivityMatch[];
+  robots: FieldActivitySpan[];
+  enables: FieldActivitySpan[];
+  /** Robots and enables before this come from coarser records (radio-link
+   *  sessions, practice runs) because the activity log did not exist yet. */
+  activityLoggedSince?: number;
+}
+
+export function isTimelapseTimeline(msg: unknown): msg is TimelapseTimeline {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TimelapseTimeline).type === 'timelapseTimeline';
+}
+
+/** One practice day (04:00–04:00) that has something to watch. */
+export interface TimelapseDaySummary {
+  day: string;
+  /** Field time covered by video, in seconds. */
+  videoSeconds: number;
+  segments: number;
+  frames: number;
+  firstAt: number;
+  lastAt: number;
+}
+
+export interface TimelapseDays {
+  type: 'timelapseDays';
+  /** Oldest first. */
+  days: TimelapseDaySummary[];
+}
+
 /** Admin asks pFMS to reach Home Assistant and list its lights, to fill the
  *  entity picker and prove the token works. The token may be omitted, in
  *  which case the stored one is used. */

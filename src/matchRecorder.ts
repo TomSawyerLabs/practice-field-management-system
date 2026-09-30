@@ -91,6 +91,12 @@ export interface MatchRecorderOptions {
   getRetentionDays: () => number | undefined;
 }
 
+/** A match whose videos are finalized: one entry per stream that recorded. */
+export interface FinishedMatchRecording {
+  matchId: string;
+  recordings: { name: string; path: string; startedAt: number; durationSeconds?: number }[];
+}
+
 /** Sidecar written into each match directory. */
 export interface RecordingManifest {
   matchId: string;
@@ -179,6 +185,7 @@ export class MatchRecorder {
   private metadata: SessionMetadataCollector | null = null;
   private session: Session | null = null;
   private sweepListeners: (() => void)[] = [];
+  private finishListeners: ((match: FinishedMatchRecording) => void)[] = [];
   /** Status of the last run per stream name, shown while idle. */
   private lastStatus = new Map<string, MatchRecordingStreamStatus>();
   private listeners: ((state: MatchRecordingState) => void)[] = [];
@@ -238,6 +245,15 @@ export class MatchRecorder {
     return () => {
       const i = this.sweepListeners.indexOf(fn);
       if (i >= 0) this.sweepListeners.splice(i, 1);
+    };
+  }
+
+  /** Called once a match's videos are finalized and on disk. */
+  addFinishListener(fn: (match: FinishedMatchRecording) => void): () => void {
+    this.finishListeners.push(fn);
+    return () => {
+      const i = this.finishListeners.indexOf(fn);
+      if (i >= 0) this.finishListeners.splice(i, 1);
     };
   }
 
@@ -729,6 +745,24 @@ export class MatchRecorder {
     );
     void this.refreshDiskStats();
     this.emit();
+    const finished: FinishedMatchRecording = {
+      matchId,
+      recordings: recordings
+        .filter(r => r.status !== 'failed')
+        .map(r => ({
+          name: r.name,
+          path: join(session.dir, r.file),
+          startedAt: r.startedAt,
+          durationSeconds: r.durationSeconds,
+        })),
+    };
+    for (const fn of this.finishListeners) {
+      try {
+        fn(finished);
+      } catch (err) {
+        console.error('Error in match recording finish listener:', err);
+      }
+    }
   }
 
   private stopJob(job: StreamJob): Promise<void> {

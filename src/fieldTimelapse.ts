@@ -26,15 +26,26 @@
  * its own (separate) retention for frames and chunks.
  *
  * Matches are left alone — the match recorder owns the streams then, and that
- * footage already exists at full rate.
+ * footage already exists at full rate. Once a match's recording is finished,
+ * a chunk is made from it at the same settings (a keyframe-only decode of a
+ * file, seconds of CPU), so the film has no hole where each match was.
+ *
+ * Every closed chunk is then finalized for the viewer (/timelapse): its
+ * timing goes in a sidecar (`<chunk>.json`: wall-clock start/end and its
+ * playback length, which is what places it on the timeline), it is remuxed
+ * to a faststart MP4 so a browser can seek anywhere without reading the whole
+ * file, and a sheet of small frames (`<chunk>.scrub.jpg`) is cut from it so
+ * scrubbing can show a picture instantly. Chunks from before this existed
+ * are finalized in the background, one at a time, never during a match.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { inputArgs, runCommand, slugify } from './matchRecorder.js';
+import type { ChunkInfo } from './timelapseTimeline.js';
 import {
   TIMELAPSE_DEFAULTS,
   TIMELAPSE_RESTORE_SCENE,
@@ -50,6 +61,7 @@ import {
   type TimelapseListing,
   type TimelapseRenderFile,
   type TimelapseRenderState,
+  type TimelapseScrub,
   type TimelapseSource,
   type TimelapseSessionEntry,
   type TimelapseState,
@@ -82,6 +94,54 @@ const STATE_FILE = 'timelapse.json';
 const FRAMES_IN_STATE = 30;
 const SESSIONS_IN_STATE = 30;
 const LOG_KEEP = 500;
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Scrub sheets: one tile every this many frames of a chunk — 20 s of field
+ *  time at the default 60× — this wide, this many to a row. A half-hour chunk
+ *  makes a ~1600×1400 sheet of ~350 kB. */
+const SCRUB_EVERY_FRAMES = 10;
+const SCRUB_TILE_WIDTH = 160;
+const SCRUB_COLS = 10;
+const FINALIZE_TIMEOUT_MS = 10 * 60_000;
+const PROBE_TIMEOUT_MS = 60_000;
+
+/** Sidecar beside each finalized chunk: what places it on the timeline. */
+interface ChunkMeta {
+  version: 1;
+  /** Stream name (not slug). */
+  stream: string;
+  source: 'live' | 'match';
+  matchId?: string;
+  /** Wall-clock span the footage covers. */
+  startedAt: number;
+  endedAt: number;
+  /** Playback length, and what it is made of. */
+  mediaSeconds: number;
+  frames: number;
+  width: number;
+  height: number;
+  /** Remuxed with the index up front, so seeking is instant. */
+  faststart: boolean;
+  scrub?: Omit<TimelapseScrub, 'file'> & { name: string };
+  error?: string;
+}
+
+/** A closed chunk waiting to be finalized. */
+interface FinalizeJob {
+  file: string;
+  day: string;
+  stream: string;
+  source: 'live' | 'match';
+  matchId?: string;
+  startedAt: number;
+  endedAt: number;
+  /** Fragmented capture that needs its index moved up front. */
+  remux: boolean;
+  /** Made from a match recording: encode this file first. */
+  derive?: { input: string };
+}
+
+/** `<stream slug>-HHMMSS.mp4` */
+const CHUNK_NAME = /^(.+)-(\d{6})\.mp4$/;
 
 /** Just enough of `fetch` for the pre/post actions, so a test can stand in
  *  for it without building a whole Response. */
@@ -94,6 +154,8 @@ export interface FieldTimelapseOptions {
   /** Recordings root; the store is `<directory>/.timelapse`. */
   directory: string;
   ffmpegPath: string;
+  /** Defaults to the ffprobe next to `ffmpegPath`. */
+  ffprobePath?: string;
   getStreams: () => RecordingStreamConfig[];
   getConfig: () => TimelapseConfig | undefined;
   /** ffmpeg works on this host (the match recorder checked at startup). */
@@ -106,6 +168,9 @@ export interface FieldTimelapseOptions {
   now?: () => number;
   /** Schedule/presence cadence; tests turn it down so they don't wait 15 s. */
   tickMs?: number;
+  /** The field activity log, swept with the archival frames (it is the
+   *  timeline those frames and films are watched against). */
+  activity?: { sweep(beforeDay: string): number };
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: TimelapseFetch;
 }
@@ -151,10 +216,18 @@ export class FieldTimelapse {
   private pendingReady: { nonce: string; resolve: () => void } | null = null;
   private totals = { frameCount: 0, frameBytes: 0, sessionBytes: 0, renderBytes: 0 };
   private stopping = false;
+  private readonly ffprobePath: string;
+  private finalizeQueue: FinalizeJob[] = [];
+  private finalizing: FinalizeJob | null = null;
+  /** Parsed sidecars, reused while the file is unchanged. */
+  private readonly metaCache = new Map<string, { mtimeMs: number; meta: ChunkMeta | null }>();
+  /** Field seconds per film second, as last measured, per stream. */
+  private readonly lastSpeed = new Map<string, number>();
 
   constructor(opts: FieldTimelapseOptions) {
     this.opts = opts;
     this.now = opts.now ?? Date.now;
+    this.ffprobePath = opts.ffprobePath ?? opts.ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
     this.fetchImpl = opts.fetchImpl ?? ((url, init) => fetch(url, init));
     this.root = join(opts.directory, DIRNAME);
     this.framesRoot = join(this.root, 'frames');
@@ -165,6 +238,7 @@ export class FieldTimelapse {
   start(): void {
     this.load();
     this.sweep();
+    this.queueUnfinalized();
     this.tickTimer = setInterval(() => this.tick(), this.opts.tickMs ?? TICK_MS);
     this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     const config = this.config();
@@ -202,6 +276,8 @@ export class FieldTimelapse {
   onMatchState(state: MatchState): void {
     this.matchPhase = state.phase;
     if (!this.isIdlePhase() && this.jobs) void this.stopActive('match starting');
+    // Leaving a match may be what the finalize queue was waiting for.
+    if (this.isIdlePhase()) this.pumpFinalize();
   }
 
   /** Settings changed: apply them without waiting for the next tick. */
@@ -249,8 +325,11 @@ export class FieldTimelapse {
     return this.now() - this.lastTelemetryAt < PRESENCE_HOLD_MS;
   }
 
+  /** Not in a match: before the countdown, or after the final buzzer. The
+   *  post-match count is included — robots are still on the field, and the
+   *  match recorder stops a few seconds into it. */
   private isIdlePhase(): boolean {
-    return this.matchPhase === 'idle' || this.matchPhase === 'created';
+    return this.matchPhase === 'idle' || this.matchPhase === 'created' || this.matchPhase === 'postMatch';
   }
 
   // ── scheduling ─────────────────────────────────────────────────────
@@ -272,6 +351,7 @@ export class FieldTimelapse {
     if (wantActive && !this.jobs) this.startActive();
     else if (!wantActive && this.jobs) void this.stopActive(this.robotsPresent() ? 'match starting' : 'field quiet');
     else if (this.jobs) this.rotateIfDue();
+    this.pumpFinalize();
   }
 
   /** The scheduled time that should have fired by now and has not, if any. */
@@ -709,7 +789,6 @@ export class FieldTimelapse {
   private spawn(job: ActiveJob): void {
     if (this.jobs === null || !this.jobs.includes(job)) return;
     const config = this.config();
-    const sample = config.activeMode === 'everySecond' ? 'fps=1,' : '';
     const proc = spawn(
       this.opts.ffmpegPath,
       [
@@ -722,24 +801,9 @@ export class FieldTimelapse {
         ...(config.activeMode === 'keyframes' ? ['-skip_frame', 'nokey'] : []),
         ...(this.opts.inputPrefixArgs ?? []),
         ...inputArgs(job.config.url),
-        '-vf',
-        `${sample}scale=${config.activeWidth}:-2,setpts=N/${PLAYBACK_FPS}/TB`,
-        '-r',
-        String(PLAYBACK_FPS),
-        '-an',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        String(config.activeCrf),
-        // One output keyframe per second of playback. With fragmented MP4 the
-        // file is flushed at each one, so a chunk lost to a kill costs a
+        // A keyframe every second of film, so a chunk lost to a kill costs a
         // second of film (~a minute of field time) rather than the lot.
-        '-g',
-        String(PLAYBACK_FPS),
-        '-pix_fmt',
-        'yuv420p',
+        ...this.encodeArgs(config),
         // Fragmented MP4: a chunk stays playable even if the process is killed
         // rather than asked to quit, which a plain moov-at-the-end file is not.
         // (`default_base_moof`, not `default_base_is_moof` — ffmpeg rejects the
@@ -853,6 +917,513 @@ export class FieldTimelapse {
     if (this.persisted.sessions.length > LOG_KEEP)
       this.persisted.sessions.splice(0, this.persisted.sessions.length - LOG_KEEP);
     this.persist();
+    this.enqueueFinalize({
+      file: job.file,
+      day: job.day,
+      stream: job.config.name,
+      source: 'live',
+      startedAt: job.startedAt,
+      endedAt,
+      remux: true,
+    });
+  }
+
+  // ── finalizing chunks for the viewer ───────────────────────────────
+
+  private enqueueFinalize(job: FinalizeJob): void {
+    if (this.finalizing?.file === job.file || this.finalizeQueue.some(j => j.file === job.file)) return;
+    this.finalizeQueue.push(job);
+    this.pumpFinalize();
+  }
+
+  /**
+   * Chunks on disk with no sidecar: written before finalizing existed, or
+   * cut off by a restart before it ran. Their timing comes from the session
+   * log when it has them, otherwise from the name (start) and the file's last
+   * write (end) — the moment the encoder stopped writing. Read before the
+   * remux, which rewrites the file.
+   */
+  private queueUnfinalized(): void {
+    const writing = new Set((this.jobs ?? []).map(j => j.file));
+    let queued = 0;
+    for (const day of this.days(this.activeRoot)) {
+      const dir = join(this.activeRoot, day);
+      for (const name of readdirSync(dir).sort()) {
+        const m = CHUNK_NAME.exec(name);
+        if (!m) continue;
+        const file = join(dir, name);
+        if (writing.has(file) || existsSync(metaPathOf(file))) continue;
+        const logged = this.persisted.sessions.find(s => s.file === `${day}/${name}`);
+        let endedAt: number;
+        try {
+          endedAt = logged?.endedAt ?? statSync(file).mtimeMs;
+        } catch {
+          continue;
+        }
+        this.enqueueFinalize({
+          file,
+          day,
+          stream: this.streamNameOf(m[1]),
+          source: 'live',
+          startedAt: logged?.startedAt ?? stampTime(day, m[2]),
+          endedAt,
+          remux: true,
+        });
+        queued++;
+      }
+    }
+    if (queued > 0) console.log(`Field timelapse: finalizing ${queued} chunk(s) for the viewer in the background`);
+  }
+
+  /** One at a time, and never during a match. */
+  private pumpFinalize(): void {
+    if (this.finalizing || this.stopping || !this.isIdlePhase() || !this.opts.isAvailable()) return;
+    const job = this.finalizeQueue.shift();
+    if (!job) return;
+    this.finalizing = job;
+    void this.finalizeChunk(job)
+      .catch(err => console.error(`Field timelapse: could not finalize ${job.file}: ${errText(err)}`))
+      .finally(() => {
+        this.finalizing = null;
+        this.pumpFinalize();
+      });
+  }
+
+  /** Resolves once nothing is waiting to be finalized (tests). */
+  async whenFinalized(): Promise<void> {
+    while (this.finalizing || this.finalizeQueue.length > 0) await sleep(50);
+  }
+
+  /**
+   * Measure a closed chunk, move its index up front, cut its scrub sheet and
+   * write the sidecar that places it on the timeline. For a chunk made from
+   * a match recording, encode it first.
+   *
+   * A failure still writes the sidecar with whatever was measured: a chunk
+   * that plays but has no scrub sheet is still on the timeline.
+   */
+  private async finalizeChunk(job: FinalizeJob): Promise<void> {
+    if (job.derive) {
+      const made = await this.encodeFromMatch(job);
+      if (!made) return;
+    }
+    if (!existsSync(job.file)) return;
+    const meta: ChunkMeta = {
+      version: 1,
+      stream: job.stream,
+      source: job.source,
+      ...(job.matchId ? { matchId: job.matchId } : {}),
+      startedAt: job.startedAt,
+      endedAt: job.endedAt,
+      mediaSeconds: 0,
+      frames: 0,
+      width: 0,
+      height: 0,
+      faststart: !job.remux,
+    };
+    const probe = await this.probe(job.file);
+    if (!probe || probe.frames === 0) {
+      meta.error = probe ? 'the chunk has no frames' : 'ffprobe could not read the chunk';
+      this.writeMeta(job.file, meta);
+      return;
+    }
+    Object.assign(meta, {
+      frames: probe.frames,
+      width: probe.width,
+      height: probe.height,
+      mediaSeconds: probe.frames / PLAYBACK_FPS,
+    });
+
+    const count = Math.ceil(probe.frames / SCRUB_EVERY_FRAMES);
+    const cols = Math.min(SCRUB_COLS, count);
+    const rows = Math.ceil(count / cols);
+    const tileWidth = Math.min(SCRUB_TILE_WIDTH, probe.width - (probe.width % 2));
+    const tileHeight = Math.max(2, 2 * Math.round((tileWidth * probe.height) / probe.width / 2));
+    const sheet = scrubPathOf(job.file);
+    const remuxed = `${job.file}.remux`;
+    // One read of the chunk for both: the stream copy costs nothing, and the
+    // sheet only keeps what it needs.
+    const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2', '-i', job.file];
+    if (job.remux) args.push('-map', '0:v', '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', '-y', remuxed);
+    args.push(
+      '-map',
+      '0:v',
+      '-vf',
+      `select=not(mod(n\\,${SCRUB_EVERY_FRAMES})),scale=${tileWidth}:${tileHeight},tile=${cols}x${rows}`,
+      '-frames:v',
+      '1',
+      '-q:v',
+      '5',
+      '-y',
+      sheet,
+    );
+    try {
+      await runCommand(this.opts.ffmpegPath, args, FINALIZE_TIMEOUT_MS);
+      if (existsSync(sheet)) {
+        meta.scrub = {
+          name: sheet.split(/[\\/]/).pop()!,
+          cols,
+          count,
+          tileWidth,
+          tileHeight,
+          interval: SCRUB_EVERY_FRAMES / PLAYBACK_FPS,
+        };
+      }
+      if (job.remux) {
+        renameSync(remuxed, job.file);
+        meta.faststart = true;
+      }
+    } catch (err) {
+      // The fragmented original still plays; it just seeks more slowly.
+      meta.error = `finalize failed: ${errText(err)}`;
+      console.warn(`Field timelapse: finalizing ${job.file} failed: ${meta.error}`);
+    } finally {
+      rmSync(remuxed, { force: true });
+    }
+    this.writeMeta(job.file, meta);
+  }
+
+  /** Frame count and size of a chunk's video. Counting packets reads the
+   *  index only — no decoding. */
+  private async probe(file: string): Promise<{ frames: number; width: number; height: number } | null> {
+    try {
+      const out = await runCommand(
+        this.ffprobePath,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-count_packets',
+          '-show_entries',
+          'stream=nb_read_packets,width,height',
+          '-of',
+          'json',
+          file,
+        ],
+        PROBE_TIMEOUT_MS,
+      );
+      const stream = (JSON.parse(out) as { streams?: { nb_read_packets?: string; width?: number; height?: number }[] })
+        .streams?.[0];
+      if (!stream?.width || !stream.height) return null;
+      return { frames: Number(stream.nb_read_packets ?? 0) || 0, width: stream.width, height: stream.height };
+    } catch {
+      return null;
+    }
+  }
+
+  private writeMeta(chunk: string, meta: ChunkMeta): void {
+    const file = metaPathOf(chunk);
+    try {
+      writeFileSync(`${file}.tmp`, JSON.stringify(meta, null, 2));
+      renameSync(`${file}.tmp`, file);
+      this.metaCache.delete(file);
+    } catch (err) {
+      console.error(`Field timelapse: could not write ${file}: ${errText(err)}`);
+    }
+  }
+
+  private readMeta(chunk: string): ChunkMeta | null {
+    const file = metaPathOf(chunk);
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(file).mtimeMs;
+    } catch {
+      return null;
+    }
+    const cached = this.metaCache.get(file);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.meta;
+    let meta: ChunkMeta | null = null;
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as ChunkMeta;
+      if (typeof parsed.startedAt === 'number' && typeof parsed.endedAt === 'number') meta = parsed;
+    } catch {
+      // Unreadable: treated as not finalized.
+    }
+    this.metaCache.set(file, { mtimeMs, meta });
+    return meta;
+  }
+
+  // ── matches, filled in from their recordings ───────────────────────
+
+  /**
+   * A match recording is finished. The live capture pauses for matches, so
+   * make the chunk it could not from the recording itself, at the same
+   * settings — the film then runs straight through each match. A
+   * keyframe-only decode of a few minutes of file is seconds of CPU, and it
+   * waits in the finalize queue until the match is over.
+   */
+  onMatchRecorded(match: {
+    matchId: string;
+    recordings: { name: string; path: string; startedAt: number; durationSeconds?: number }[];
+  }): void {
+    const config = this.config();
+    if (!config.enabled || !config.captureWhileRobotsPresent || this.unavailableReason() !== undefined) return;
+    for (const stream of this.streams()) {
+      const rec = match.recordings.find(r => r.name === stream.name);
+      if (!rec?.durationSeconds || !existsSync(rec.path)) continue;
+      const day = localDay(rec.startedAt);
+      const dir = join(this.activeRoot, day);
+      const slug = slugify(stream.name);
+      // Named by its start like a live chunk; a second later if that name is
+      // taken (a live chunk that started the same second).
+      let at = rec.startedAt;
+      let file = join(dir, `${slug}-${hhmmss(at)}.mp4`);
+      while (existsSync(file) || this.finalizeQueue.some(j => j.file === file)) {
+        at += 1000;
+        file = join(dir, `${slug}-${hhmmss(at)}.mp4`);
+      }
+      this.enqueueFinalize({
+        file,
+        day,
+        stream: stream.name,
+        source: 'match',
+        matchId: match.matchId,
+        startedAt: rec.startedAt,
+        endedAt: rec.startedAt + rec.durationSeconds * 1000,
+        remux: false,
+        derive: { input: rec.path },
+      });
+    }
+  }
+
+  private async encodeFromMatch(job: FinalizeJob): Promise<boolean> {
+    const config = this.config();
+    const partial = `${job.file}.encoding`;
+    try {
+      mkdirSync(join(this.activeRoot, job.day), { recursive: true });
+      await runCommand(
+        this.opts.ffmpegPath,
+        [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-nostdin',
+          '-threads',
+          '2',
+          ...(config.activeMode === 'keyframes' ? ['-skip_frame', 'nokey'] : []),
+          '-i',
+          job.derive!.input,
+          '-map',
+          '0:v:0',
+          ...this.encodeArgs(config),
+          '-movflags',
+          '+faststart',
+          '-f',
+          'mp4',
+          '-y',
+          partial,
+        ],
+        FINALIZE_TIMEOUT_MS,
+      );
+      renameSync(partial, job.file);
+      console.log(`Field timelapse: made ${job.file.split(/[\\/]/).pop()} from match ${job.matchId}`);
+      return true;
+    } catch (err) {
+      rmSync(partial, { force: true });
+      console.warn(`Field timelapse: could not make a chunk from match ${job.matchId}: ${errText(err)}`);
+      return false;
+    }
+  }
+
+  /** Output side of every chunk encode: sample, scale, retime to 30 fps
+   *  playback, x264. Live capture and match chunks must agree, or joining
+   *  them into a film falls back to a re-encode. */
+  private encodeArgs(config: TimelapseConfig): string[] {
+    const sample = config.activeMode === 'everySecond' ? 'fps=1,' : '';
+    return [
+      '-vf',
+      `${sample}scale=${config.activeWidth}:-2,setpts=N/${PLAYBACK_FPS}/TB`,
+      '-r',
+      String(PLAYBACK_FPS),
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      String(config.activeCrf),
+      // One output keyframe per second of playback: a fragmented file is
+      // flushed at each one, and a seek never decodes more than a second of
+      // film to land.
+      '-g',
+      String(PLAYBACK_FPS),
+      '-pix_fmt',
+      'yuv420p',
+    ];
+  }
+
+  // ── the viewer's timeline ──────────────────────────────────────────
+
+  /** Every chunk overlapping [from, to], placed on the wall clock. */
+  chunkInfos(from: number, to: number): ChunkInfo[] {
+    const out: ChunkInfo[] = [];
+    const now = this.now();
+    const writing = new Map((this.jobs ?? []).map(j => [j.file, j]));
+    const firstDay = localDay(from - DAY_MS);
+    const lastDay = localDay(to);
+    for (const day of this.days(this.activeRoot)) {
+      if (day < firstDay || day > lastDay) continue;
+      const dir = join(this.activeRoot, day);
+      let names: string[];
+      try {
+        names = readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const m = CHUNK_NAME.exec(name);
+        if (!m) continue;
+        const file = join(dir, name);
+        const info = this.chunkInfo(file, day, name, m, writing.get(file), now);
+        if (info && info.end >= from && info.start <= to) out.push(info);
+      }
+    }
+    return out;
+  }
+
+  private chunkInfo(
+    file: string,
+    day: string,
+    name: string,
+    m: RegExpExecArray,
+    job: ActiveJob | undefined,
+    now: number,
+  ): ChunkInfo | null {
+    const rel = `${day}/${name}`;
+    if (job) {
+      // Still being written: it ends now, and its length is estimated.
+      const end = Math.max(job.startedAt + 1000, now);
+      return {
+        file: rel,
+        stream: job.config.name,
+        source: 'live',
+        start: job.startedAt,
+        end,
+        mediaSeconds: (end - job.startedAt) / 1000 / this.fieldSpeed(job.config.name),
+        capturing: true,
+        estimated: true,
+      };
+    }
+    const meta = this.readMeta(file);
+    if (meta) {
+      if (meta.mediaSeconds > 0 && meta.endedAt > meta.startedAt) {
+        this.lastSpeed.set(meta.stream, (meta.endedAt - meta.startedAt) / 1000 / meta.mediaSeconds);
+      }
+      return {
+        file: rel,
+        stream: meta.stream,
+        source: meta.source,
+        start: meta.startedAt,
+        end: meta.endedAt,
+        mediaSeconds: meta.mediaSeconds,
+        ...(meta.matchId ? { matchId: meta.matchId } : {}),
+        ...(meta.scrub
+          ? {
+              scrub: {
+                file: `${day}/${meta.scrub.name}`,
+                cols: meta.scrub.cols,
+                count: meta.scrub.count,
+                tileWidth: meta.scrub.tileWidth,
+                tileHeight: meta.scrub.tileHeight,
+                interval: meta.scrub.interval,
+              },
+            }
+          : {}),
+      };
+    }
+    // Closed but not finalized yet (it is in the queue): estimate.
+    const logged = this.persisted.sessions.find(s => s.file === rel);
+    let end = logged?.endedAt;
+    if (end === undefined) {
+      try {
+        end = statSync(file).mtimeMs;
+      } catch {
+        return null;
+      }
+    }
+    const start = logged?.startedAt ?? stampTime(day, m[2]);
+    const stream = this.streamNameOf(m[1]);
+    return {
+      file: rel,
+      stream,
+      source: 'live',
+      start,
+      end,
+      mediaSeconds: (end - start) / 1000 / this.fieldSpeed(stream),
+      estimated: true,
+    };
+  }
+
+  /** Field seconds per second of film: measured from the latest finalized
+   *  chunk of the stream, else what the capture mode should give (the
+   *  stitched field stream has a 2 s GOP, so keyframes-only is 60×). */
+  private fieldSpeed(stream: string): number {
+    const measured = this.lastSpeed.get(stream);
+    if (measured && Number.isFinite(measured) && measured > 0) return measured;
+    return this.config().activeMode === 'everySecond' ? PLAYBACK_FPS : 2 * PLAYBACK_FPS;
+  }
+
+  /** Archival frames in [from, to], optionally for one stream. The time
+   *  comes from the name (the slot, or the second of a manual capture), not
+   *  the file's mtime, which copying can change. */
+  framesBetween(
+    from: number,
+    to: number,
+    stream?: string,
+  ): { at: number; file: string; thumb?: string; stream: string }[] {
+    const out: { at: number; file: string; thumb?: string; stream: string }[] = [];
+    const slug = stream === undefined ? undefined : slugify(stream);
+    const firstDay = localDay(from);
+    const lastDay = localDay(to);
+    for (const day of this.days(this.framesRoot)) {
+      if (day < firstDay || day > lastDay) continue;
+      let names: string[];
+      try {
+        names = readdirSync(join(this.framesRoot, day)).sort();
+      } catch {
+        continue;
+      }
+      const thumbs = new Set(names.filter(n => n.endsWith('.thumb.jpg')));
+      for (const name of names) {
+        const m = /^(\d{4}|\d{6})-(.+)\.jpg$/.exec(name);
+        if (!m || name.endsWith('.thumb.jpg')) continue;
+        if (slug !== undefined && m[2] !== slug) continue;
+        const at = stampTime(day, m[1]);
+        if (at < from || at > to) continue;
+        const thumb = `${m[1]}-${m[2]}.thumb.jpg`;
+        out.push({
+          at,
+          file: `${day}/${name}`,
+          ...(thumbs.has(thumb) ? { thumb: `${day}/${thumb}` } : {}),
+          stream: this.streamNameOf(m[2]),
+        });
+      }
+    }
+    return out.sort((a, b) => a.at - b.at);
+  }
+
+  /** A stream's configured name from its slug (files are named by slug). */
+  private streamNameOf(slug: string): string {
+    return this.opts.getStreams().find(s => slugify(s.name) === slug)?.name ?? slug;
+  }
+
+  /**
+   * Whether a chunk may be cached by a browser: only once it is finalized.
+   * Before that it is either still growing or about to be remuxed in place,
+   * and a cached copy mixed with range reads of the new file would decode
+   * as garbage.
+   */
+  isChunkFinal(path: string): boolean {
+    const full = this.filePath('active', path);
+    if (!full || (this.jobs ?? []).some(j => j.file === full)) return false;
+    const meta = this.readMeta(full);
+    return meta !== null && (meta.faststart || meta.error !== undefined);
+  }
+
+  /** The stream the viewer shows first: the first enabled one. */
+  primaryStream(): string | undefined {
+    return this.streams()[0]?.name;
   }
 
   // ── rendering ──────────────────────────────────────────────────────
@@ -1110,7 +1681,7 @@ export class FieldTimelapse {
 
   /** Absolute path of a stored file, or undefined if the name is not one of
    *  ours. Paths from clients never reach the filesystem unchecked. */
-  filePath(kind: 'frame' | 'active' | 'render', path: string): string | undefined {
+  filePath(kind: 'frame' | 'active' | 'scrub' | 'render', path: string): string | undefined {
     if (kind === 'render') {
       if (!/^[A-Za-z0-9._-]{1,120}\.mp4$/.test(path) || path.includes('..')) return undefined;
       const full = join(this.rendersRoot, path);
@@ -1121,6 +1692,7 @@ export class FieldTimelapse {
     const [, day, name] = m;
     if (kind === 'frame' && !name.endsWith('.jpg')) return undefined;
     if (kind === 'active' && !name.endsWith('.mp4')) return undefined;
+    if (kind === 'scrub' && !name.endsWith('.scrub.jpg')) return undefined;
     const full = join(kind === 'frame' ? this.framesRoot : this.activeRoot, day, name);
     return existsSync(full) ? full : undefined;
   }
@@ -1147,6 +1719,12 @@ export class FieldTimelapse {
         rmSync(join(this.framesRoot, day), { recursive: true, force: true });
         removed++;
       }
+    }
+    if (config.frameRetentionDays > 0 && this.opts.activity) {
+      // Kept as long as anything it describes: tiny, and the frames outlive
+      // the chunks unless frames are set to go sooner.
+      const keepDays = Math.max(config.frameRetentionDays, config.activeRetentionDays);
+      removed += this.opts.activity.sweep(localDay(now - keepDays * DAY_MS));
     }
     const activeCutoff = localDay(now - config.activeRetentionDays * 24 * 60 * 60 * 1000);
     for (const day of this.days(this.activeRoot)) {
@@ -1305,6 +1883,20 @@ function hhmmss(at: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
+
+/** Epoch ms of a file-name stamp (`HHMM` or `HHMMSS`) on a local day. */
+export function stampTime(day: string, stamp: string): number {
+  const [y, mo, d] = day.split('-').map(Number);
+  const h = Number(stamp.slice(0, 2));
+  const mi = Number(stamp.slice(2, 4));
+  const sec = stamp.length >= 6 ? Number(stamp.slice(4, 6)) : 0;
+  return new Date(y, mo - 1, d, h, mi, sec, 0).getTime();
+}
+
+/** Sidecar of a chunk: `<chunk minus .mp4>.json`. */
+const metaPathOf = (chunk: string) => chunk.replace(/\.mp4$/, '.json');
+/** Scrub sheet of a chunk: `<chunk minus .mp4>.scrub.jpg`. */
+const scrubPathOf = (chunk: string) => chunk.replace(/\.mp4$/, '.scrub.jpg');
 
 /** Epoch ms of "HH:MM" on the local day of `now`. Built from local calendar
  *  fields so it lands on the right wall-clock time across a DST change. */

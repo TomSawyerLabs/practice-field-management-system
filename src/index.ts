@@ -72,6 +72,7 @@ import { SessionMetadataCollector } from './sessionMetadata.js';
 import { PracticeStore } from './practiceStore.js';
 import { PracticeRecorder } from './practiceRecorder.js';
 import { FieldTimelapse } from './fieldTimelapse.js';
+import { FieldActivityLog } from './fieldActivityLog.js';
 import { handleTimelapseRequest } from './timelapseApi.js';
 import { createDiagReportHandler } from './diagReportApi.js';
 import { findAssetDir } from './staticServer.js';
@@ -633,9 +634,25 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // once the FMS server exists, since that is what owns the telemetry
   // manager; before then nothing can be enabled anyway.
   let anyRobotEnabled = (): boolean => false;
+  // What was on the field and when — robots, enables, matches — for the
+  // timelapse viewer's timeline. Always on: it is a few kB a day.
+  const fieldActivity = new FieldActivityLog({
+    directory: join(matchRecorder.recordingsDirectory, '.timelapse', 'activity'),
+    getTeamForStation: teamForStation,
+  });
+  radioManager.addStatusListener(entry => {
+    const update = entry.radioUpdate;
+    if (!update) return;
+    for (const station of StationNameList)
+      fieldActivity.onLinkState(station, update.stationStatuses[station]?.isLinked ?? false);
+  });
+  radioManager.addConfigChangeListener(() => fieldActivity.onConfigChanged());
+  matchHistoryStore.addListener(state => fieldActivity.onMatchHistory(state.matches));
   const fieldTimelapse = new FieldTimelapse({
     directory: matchRecorder.recordingsDirectory,
     ffmpegPath: matchRecorder.ffmpegPath,
+    ffprobePath: matchRecorder.ffprobePath,
+    activity: fieldActivity,
     getStreams: () => setupConfigStore.get().settings.recordingStreams ?? envRecordingStreams,
     getConfig: () => setupConfigStore.get().settings.timelapse,
     isAvailable: () => matchRecorder.isAvailable(),
@@ -643,6 +660,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   matchEngine.addStateListener(state => fieldTimelapse.onMatchState(state));
   setupConfigStore.addListener(() => fieldTimelapse.onConfigChanged());
+  // The live timelapse pauses for matches; each match's recording fills in.
+  matchRecorder.addFinishListener(match => fieldTimelapse.onMatchRecorded(match));
 
   const publicUrl = () => setupConfigStore.get().settings.publicUrl ?? process.env.PUBLIC_URL;
   const practiceApi: PracticeApiDeps = {
@@ -710,7 +729,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleRecordingsRequest(req, res, matchRecorder),
       (req, res) => handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder),
       (req, res) => handlePracticeRequest(req, res, practiceApi),
-      (req, res) => handleTimelapseRequest(req, res, fieldTimelapse),
+      (req, res) =>
+        handleTimelapseRequest(req, res, fieldTimelapse, {
+          activity: fieldActivity,
+          historyMatches: () => matchHistoryStore.getState().matches,
+          usageSessions: () => usageTracker.getState().sessions,
+          practiceRuns: () => practiceStore.getRuns(),
+        }),
       handleDiagRequest,
       (req, res) => handleFirmwareRequest(req, res, firmwareStore),
       handleTeamAvatarRequest,
@@ -834,6 +859,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   practiceRecorder.start();
   practiceNotifier.start();
   queueNudger.start();
+  fieldActivity.start();
+  fieldActivity.onMatchHistory(matchHistoryStore.getState().matches);
   fieldTimelapse.start();
 
   // Broadcast score state changes to all WebSocket clients
@@ -1004,6 +1031,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // practice recorder's enable/disable detection.
     sessionMetadata.onTelemetry(update);
     practiceRecorder.onTelemetry(update);
+    fieldActivity.onTelemetry(update);
     // Any packet from any station means robots are here, which is what the
     // timelapse keys off — it does not care which station or whether enabled.
     fieldTimelapse.onTelemetry();

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -720,6 +720,70 @@ describe('FieldTimelapse', () => {
 
     timelapse.onMatchState({ phase: 'idle' } as MatchState);
   }, 40_000);
+
+  test('a closed chunk is finalized for the viewer: faststart, a scrub sheet, and its place on the clock', async () => {
+    await timelapse.whenFinalized();
+    const session = timelapse.getState().recentSessions[0];
+    const file = timelapse.filePath('active', session.file)!;
+
+    // Faststart: the index comes before the media, and nothing is fragmented.
+    const head = readFileSync(file).toString('latin1');
+    expect(head.indexOf('moov')).toBeGreaterThan(-1);
+    expect(head.indexOf('moov')).toBeLessThan(head.indexOf('mdat'));
+    expect(head.includes('moof')).toBe(false);
+    expect(timelapse.isChunkFinal(session.file)).toBe(true);
+
+    const [chunk] = timelapse.chunkInfos(session.startedAt - 1, session.endedAt! + 1);
+    expect(chunk).toMatchObject({ file: session.file, stream: 'All field', source: 'live' });
+    expect(chunk.estimated).toBeUndefined();
+    expect(chunk.start).toBe(session.startedAt);
+    expect(chunk.end).toBe(session.endedAt!);
+    // Frames at 30 fps: whole frames of film.
+    expect(Math.round(chunk.mediaSeconds * 30)).toBeCloseTo(chunk.mediaSeconds * 30, 5);
+    expect(chunk.scrub).toBeTruthy();
+    expect(chunk.scrub!.tileWidth).toBe(160);
+    expect(chunk.scrub!.tileHeight).toBe(120);
+    expect(timelapse.filePath('scrub', chunk.scrub!.file)).toBeTruthy();
+    // Only the sheet is served from there.
+    expect(timelapse.filePath('scrub', session.file)).toBeUndefined();
+  }, 30_000);
+
+  test('a match recording becomes a chunk at the same settings, so the film runs through the match', async () => {
+    // A match an hour ago, recorded as the match recorder would (-c copy).
+    const matchDir = join(dir, 'match-1');
+    mkdirSync(matchDir);
+    const recording = join(matchDir, 'all-field.mp4');
+    execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', source, '-c', 'copy', '-movflags', '+faststart', recording]);
+    const startedAt = Date.now() - 60 * 60_000;
+    timelapse.onMatchRecorded({
+      matchId: 'match-1',
+      recordings: [{ name: 'All field', path: recording, startedAt, durationSeconds: 20 }],
+    });
+    await timelapse.whenFinalized();
+
+    const chunks = timelapse.chunkInfos(startedAt - 1000, startedAt + 30_000);
+    const made = chunks.find(c => c.source === 'match');
+    expect(made).toMatchObject({ matchId: 'match-1', start: startedAt, end: startedAt + 20_000 });
+    // 20 s with a 2 s GOP, keyframes only: 10 frames, a third of a second of film.
+    expect(made!.mediaSeconds).toBeCloseTo(10 / 30, 5);
+    expect(made!.scrub?.count).toBe(1);
+    const probe = execFileSync(
+      ffprobe,
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v',
+        '-show_entries',
+        'stream=r_frame_rate,width',
+        '-of',
+        'csv=p=0',
+        join(dir, '.timelapse', 'active', made!.file),
+      ],
+      { encoding: 'utf8' },
+    ).trim();
+    expect(probe).toBe('320,30/1');
+  }, 60_000);
 
   test('a film is rendered from the archival frames', async () => {
     // captureFrame above left a handful of frames under today's date.
