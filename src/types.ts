@@ -3864,9 +3864,9 @@ export interface PracticeDayToken {
 /** Live practice-recording status, broadcast to internal clients. */
 export interface PracticeRecordingState {
   type: 'practiceRecordingState';
-  /** Teams that ticked "record while enabled". */
-  optIn: number[];
-  /** ffmpeg is pulling the streams into the ring buffer (an opted-in team is on the field). */
+  /** Teams that turned "record while enabled" off. Every other team records. */
+  optOut: number[];
+  /** ffmpeg is pulling the streams into the ring buffer (a recording team is on the field). */
   buffering: boolean;
   /** Robots being recorded right now, one run each. */
   activeRuns: { station: StationName; teamNumber: number; startedAt: number }[];

@@ -1,11 +1,11 @@
 /**
  * PracticeRecorder — "record while enabled".
  *
- * A team that ticks the box on its station page gets a clip of every time
- * its robot is enabled outside a match, from PRACTICE_PAD_SECONDS before the
+ * Every team (unless it unticks the box on its station page) gets a clip of
+ * every time its robot is enabled outside a match, from PRACTICE_PAD_SECONDS before the
  * enable to the same after the disable. The pre-roll is the reason this is
  * not a copy of MatchRecorder: footage from before the trigger only exists if
- * it was already being captured. So while any opted-in team is on the field
+ * it was already being captured. So while any recording team is on the field
  * (its DS or robot is sending telemetry) one ffmpeg per stream pulls the
  * source continuously into 1 s MPEG-TS segments in a ring buffer
  * (`<recordings>/.practice-buffer/<stream>/seg-NNNNNN.ts`), and segments older
@@ -149,7 +149,7 @@ export class PracticeRecorder {
     rmSync(this.bufferRoot, { recursive: true, force: true });
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     this.opts.store.addListener(() => this.emit());
-    console.log(`Practice recorder ready: ${this.opts.store.getOptIn().length} team(s) opted in`);
+    console.log(`Practice recorder ready: every team records, ${this.opts.store.getOptOut().length} opted out`);
   }
 
   /** Stop the buffer and drop any run in progress (shutdown/tests). */
@@ -179,7 +179,7 @@ export class PracticeRecorder {
     const runs = this.opts.store.getRuns();
     return {
       type: 'practiceRecordingState',
-      optIn: this.opts.store.getOptIn(),
+      optOut: this.opts.store.getOptOut(),
       buffering: this.jobs !== null,
       activeRuns: [...this.runs.values()].map(r => ({
         station: r.station,

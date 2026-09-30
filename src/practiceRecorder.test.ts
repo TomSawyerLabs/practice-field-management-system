@@ -35,16 +35,20 @@ describe('practiceDayOf', () => {
 });
 
 describe('PracticeStore', () => {
-  test('opt-in and day tokens persist and reload', () => {
+  test('every team records by default; an opt-out and day tokens persist', () => {
     const dir = mkdtempSync(join(tmpdir(), 'pfms-practice-store-'));
     const file = join(dir, 'practice.json');
     const store = new PracticeStore(file);
-    store.setOptIn(5940, true);
+    expect(store.isOptedIn(5940)).toBe(true);
+    store.setOptIn(6036, false);
     const day = store.getOrCreateDayToken(5940, '2026-09-18');
     expect(store.getOrCreateDayToken(5940, '2026-09-18').token).toBe(day.token);
     store.markSlackPosted(day.token, 123);
     const again = new PracticeStore(file);
     expect(again.isOptedIn(5940)).toBe(true);
+    expect(again.isOptedIn(6036)).toBe(false);
+    again.setOptIn(6036, true);
+    expect(new PracticeStore(file).isOptedIn(6036)).toBe(true);
     expect(again.findByToken(day.token)?.slackPostedAt).toBe(123);
     rmSync(dir, { recursive: true, force: true });
   });
@@ -136,7 +140,9 @@ describe('PracticeRecorder', () => {
   });
 
   test('an enable outside a match becomes a padded clip with its metadata', async () => {
-    // Not opted in: telemetry does not start the buffer.
+    // Opted out: telemetry does not start the buffer.
+    store.setOptIn(5940, false);
+    store.setOptIn(6036, false);
     recorder.onTelemetry(telemetry(false));
     await sleep(1500);
     expect(recorder.getState().buffering).toBe(false);

@@ -21,8 +21,9 @@ and provides:
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review
   ([details](docs/scoring.md))
-- **Practice video** — tick "record while enabled" on the station page and
-  every enable outside a match becomes a clip (3 s either side), with the
+- **Practice video** — on for every team by default (a team can untick
+  "record while enabled" on its station page): every enable outside a match
+  becomes a clip (3 s either side), with the
   balls scored and the robot's telemetry alongside; a per-day link (and zip)
   for taking home, posted to the team's mentors on Slack
   ([details](docs/match-system.md#record-while-enabled-practice-runs))

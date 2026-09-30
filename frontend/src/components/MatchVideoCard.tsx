@@ -156,7 +156,8 @@ export function MatchVideoCard({
   const publicUrl = usePublicUrl();
 
   const canRecord = !!recording?.available && recording.streams.some(s => s.enabled);
-  const optedIn = teamNumber !== null && !!practice?.optIn.includes(teamNumber);
+  // Every team records unless it has turned it off.
+  const optedIn = teamNumber !== null && !!practice && !practice.optOut.includes(teamNumber);
 
   const rows: VideoRow[] = [];
   if (teamNumber !== null) {
@@ -197,7 +198,7 @@ export function MatchVideoCard({
         ? practice?.buffering
           ? 'Ready: enabling your robot starts a clip (with 3 s before and after).'
           : 'Recording starts as soon as your Driver Station connects and you enable.'
-        : 'Tick to get a video of every time you enable your robot outside a match.';
+        : 'Recording is off for your team. Tick to get a video of every time you enable your robot outside a match.';
 
   return (
     <Card sx={{ mb: 2 }}>

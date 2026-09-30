@@ -621,18 +621,19 @@ link") for every match in history and shows the QR code after each match.
 ### Record while enabled (practice runs)
 
 Most field time is not matches: a robot is enabled from its own Driver
-Station for a minute at a time. A team that ticks **Record while enabled**
-on its station page (the Video card) gets a clip of every such enable,
-from 3 s before the robot was enabled to 3 s after it was disabled.
+Station for a minute at a time. **Every team gets a clip of every such
+enable by default**, from 3 s before the robot was enabled to 3 s after it
+was disabled. A team that doesn't want them unticks **Record while enabled**
+on its station page (the Video card); that choice is remembered.
 
 How it works (`src/practiceRecorder.ts`):
 
-- While any opted-in team is on the field (its DS or robot is sending
+- While any recording team is on the field (its DS or robot is sending
   telemetry) one ffmpeg per enabled stream pulls the source continuously
   into 1 s MPEG-TS segments under `recordings/.practice-buffer/`, and
   segments older than ~15 s are deleted. That ring buffer is what makes the
   3 s pre-roll possible; it costs one extra RTSP reader per stream and no
-  transcoding. The buffer stops when no opted-in robot has been heard from
+  transcoding. The buffer stops when no recording robot has been heard from
   for 15 s.
 - An enable (the DS status's enabled bit, outside a match) starts that
   robot's run; its disable ends it. Every robot gets its own clip cut to its
@@ -653,7 +654,8 @@ How it works (`src/practiceRecorder.ts`):
   progress is closed the moment a match leaves the idle/created phases.
 
 Runs are listed on the team's station page next to its matches, and are
-indexed in `practice-recordings.json` (opt-in per team, runs, day tokens).
+indexed in `practice-recordings.json` (teams that opted out, runs, day
+tokens).
 
 ### Recording metadata: balls scored and telemetry
 
@@ -902,8 +904,8 @@ Match control happens over the app WebSocket. The main message types
   optionally running the light actions), `renderTimelapse` (build a film from
   the frames or the practice chunks), `deleteTimelapseRender` →
   `timelapseState` broadcasts.
-- **Practice recording:** `setPracticeRecording` (a station page ticks
-  "record while enabled" for its team), `requestPracticeDayLink` → a
+- **Practice recording:** `setPracticeRecording` (a station page ticks or
+  unticks "record while enabled" for its team), `requestPracticeDayLink` → a
   `practiceDayLink` reply to that client only; broadcast
   `practiceRecordingState`.
 - **Recordings on disk (admin):** `requestRecordingsInventory` →

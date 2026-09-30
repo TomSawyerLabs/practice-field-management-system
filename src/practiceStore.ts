@@ -1,7 +1,11 @@
 /**
  * Persistent state for practice recording ("record while enabled"):
- * which teams opted in, the runs that were recorded, and the per-team
+ * which teams turned it off, the runs that were recorded, and the per-team
  * per-day capability tokens behind `/practice/<token>`.
+ *
+ * Every team records by default; a team that unticks the box on its station
+ * page is remembered here. Version 1 of the file kept the opposite list
+ * (teams that had ticked it) — everyone is in now, so that list is ignored.
  *
  * Kept apart from match history: matches are a field-wide event log, while
  * practice runs are filed per team and referenced by day links.
@@ -16,8 +20,9 @@ const MAX_RUNS = 500;
 const DAY_ROLLOVER_HOUR = 4;
 
 interface Persisted {
-  version: 1;
-  optIn: number[];
+  version: 2;
+  /** Teams that turned recording off. */
+  optOut: number[];
   runs: PracticeRunEntry[];
   days: PracticeDayToken[];
 }
@@ -42,7 +47,7 @@ export function practiceDayLabel(day: string): string {
 }
 
 export class PracticeStore {
-  private optIn = new Set<number>();
+  private optOut = new Set<number>();
   private runs: PracticeRunEntry[] = [];
   private days: PracticeDayToken[] = [];
   private readonly filePath: string;
@@ -53,20 +58,21 @@ export class PracticeStore {
     this.load();
   }
 
-  // ── opt-in ─────────────────────────────────────────────────────────
+  // ── opt-out ────────────────────────────────────────────────────────
 
+  /** Every team records unless it turned recording off. */
   isOptedIn(teamNumber: number): boolean {
-    return this.optIn.has(teamNumber);
+    return !this.optOut.has(teamNumber);
   }
 
-  getOptIn(): number[] {
-    return [...this.optIn].sort((a, b) => a - b);
+  getOptOut(): number[] {
+    return [...this.optOut].sort((a, b) => a - b);
   }
 
   setOptIn(teamNumber: number, enabled: boolean): void {
-    if (enabled === this.optIn.has(teamNumber)) return;
-    if (enabled) this.optIn.add(teamNumber);
-    else this.optIn.delete(teamNumber);
+    if (enabled !== this.optOut.has(teamNumber)) return;
+    if (enabled) this.optOut.delete(teamNumber);
+    else this.optOut.add(teamNumber);
     this.persist();
     this.notify();
   }
@@ -164,11 +170,11 @@ export class PracticeStore {
     try {
       if (!existsSync(this.filePath)) return;
       const parsed = JSON.parse(readFileSync(this.filePath, 'utf-8')) as Partial<Persisted>;
-      this.optIn = new Set((parsed.optIn ?? []).filter(n => Number.isInteger(n) && n > 0));
+      this.optOut = new Set((parsed.optOut ?? []).filter(n => Number.isInteger(n) && n > 0));
       this.runs = Array.isArray(parsed.runs) ? parsed.runs : [];
       this.days = Array.isArray(parsed.days) ? parsed.days : [];
       console.log(
-        `Loaded practice recording state from ${this.filePath}: ${this.optIn.size} team(s) opted in, ${this.runs.length} run(s)`,
+        `Loaded practice recording state from ${this.filePath}: ${this.optOut.size} team(s) opted out, ${this.runs.length} run(s)`,
       );
     } catch (err) {
       console.warn(`Failed to load practice recording state from ${this.filePath}:`, (err as Error).message);
@@ -176,7 +182,7 @@ export class PracticeStore {
   }
 
   private persist(): void {
-    const data: Persisted = { version: 1, optIn: this.getOptIn(), runs: this.runs, days: this.days };
+    const data: Persisted = { version: 2, optOut: this.getOptOut(), runs: this.runs, days: this.days };
     try {
       writeFileSync(this.filePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (err) {
