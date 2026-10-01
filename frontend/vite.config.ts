@@ -104,6 +104,9 @@ function stationRoutes(): Plugin {
         if (url === '/usage') {
           req.url = '/usage.html';
         }
+        if (url === '/timelapse') {
+          req.url = '/timelapse.html';
+        }
         if (url === '/setup') {
           req.url = '/setup.html';
         }
@@ -180,6 +183,10 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      '/api/timelapse': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
     },
   },
   build: {
@@ -199,6 +206,7 @@ export default defineConfig({
         staff: 'staff.html',
         overview: 'overview.html',
         usage: 'usage.html',
+        timelapse: 'timelapse.html',
         setup: 'setup.html',
         notfound: '404.html',
       },

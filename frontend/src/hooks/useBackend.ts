@@ -54,6 +54,8 @@ import {
   MatchRecordingState,
   TimelapseState,
   TimelapseListing,
+  TimelapseTimeline,
+  TimelapseDays,
   TimelapseLightsProbe,
   RenderTimelapse,
   isRecordingStreamTestResult,
@@ -2329,6 +2331,37 @@ export async function fetchTimelapseListing(from?: string, to?: string): Promise
     const res = await fetch(`/api/timelapse/list${query.size > 0 ? `?${query}` : ''}`);
     if (!res.ok) return null;
     return (await res.json()) as TimelapseListing;
+  } catch {
+    return null;
+  }
+}
+
+/** The /timelapse viewer's one logical timeline for [from, to] (epoch ms):
+ *  film segments, stills, matches, robots and enables. */
+export async function fetchTimelapseTimeline(
+  from: number,
+  to: number,
+  stream?: string,
+): Promise<TimelapseTimeline | null> {
+  const query = new URLSearchParams({ from: String(Math.round(from)), to: String(Math.round(to)) });
+  if (stream) query.set('stream', stream);
+  try {
+    const res = await fetch(`/api/timelapse/timeline?${query}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return (await res.json()) as TimelapseTimeline;
+  } catch {
+    return null;
+  }
+}
+
+/** Practice days that have timelapse footage, for the viewer's day picker. */
+export async function fetchTimelapseDays(stream?: string): Promise<TimelapseDays | null> {
+  try {
+    const res = await fetch(`/api/timelapse/days${stream ? `?stream=${encodeURIComponent(stream)}` : ''}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as TimelapseDays;
   } catch {
     return null;
   }

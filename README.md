@@ -32,7 +32,9 @@ and provides:
   ([details](docs/match-system.md#match-video-recording))
 - **Field timelapse** — a few full-resolution frames a day (optionally with
   the shop lights driven to a known level first) plus a fast timelapse of
-  every stretch when robots are here, rendered into a film on demand
+  every stretch when robots are here, watched at `/timelapse` as one film per
+  day with the robots, enables and matches laid out on a timeline under it,
+  or rendered into a film on demand
   ([details](docs/match-system.md#long-term-field-timelapse))
 - **Laptop ↔ robot routing** — laptops on the site network reach robots on
   their team VLANs, including duplicate-team disambiguation
@@ -114,6 +116,7 @@ bun run build       # Compile backend + build frontend
 | `/test`             | Robot tester — plug in a robot, diagnose network config (requires `TEST_INTERFACE`)                                                                                                                                                                                                                                                                                                                         |
 | `/scores`           | Scoreboard — full-screen TV-optimized score display for casting; ✅ (or `?checks=1`) shows each robot's setup checks between matches ([details](docs/match-system.md#setup-checks-on-the-scoreboard)); 🎥 toggles a per-browser video stream view (wide or square layout); 🪶 (or `?lite=1`) drops glow/gradients/charts for low-memory TVs; 🔇 mutes that display (admins can mute cast displays remotely) |
 | `/setup`            | Setup wizard — guided first-run checks for a new field, with live re-checking and saved progress                                                                                                                                                                                                                                                                                                            |
+| `/timelapse`        | Timelapse viewer (admin) — a practice day as one film, with a scrubbable timeline of the video, matches, robots on the field and enables; see [watching it](docs/match-system.md#watching-it-and-taking-it-away)                                                                                                                                                                                            |
 | `/usage`            | Usage page — per-station link session history (which teams used the field, when)                                                                                                                                                                                                                                                                                                                            |
 | `/support`          | _(redirects to `/`)_ — support is a floating widget available on every page                                                                                                                                                                                                                                                                                                                                 |
 | `/api/score/schema` | Scoring API schema — machine-readable API docs for building scoring clients                                                                                                                                                                                                                                                                                                                                 |

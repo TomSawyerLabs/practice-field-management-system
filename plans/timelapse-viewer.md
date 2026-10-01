@@ -119,6 +119,24 @@ Cameron (2026-09-30):
 - Telemetry-only presence first stretched `lastSeen` to "now" on every tick
   (the robot span ran 10 s past the last packet). Fixed: evidence time is
   the packet time unless the radio says linked.
+- **Browser verification** (headless real Chrome via playwright-core in
+  `C:\Users\camer\pfms-timelapse-sample\pw\check.mjs`, against
+  `harness.ts`, which serves only the timelapse API plus a stub admin `/ws`;
+  the full backend was NOT run locally because its deploy announcer posts to
+  Slack). Real chunks + real robots/matches; **enables were synthetic**
+  (no log existed on 09-27). Results: opens on the exact frame; 3 s of play
+  = 3 min of field time; playback crosses chunk boundaries and skips gaps;
+  61 scrub moves → 47 landed seeks; gaps show the archival still.
+- Bugs found that way and fixed: the gap caption claimed "no robots" during
+  a match whose recording wasn't in the sample (now "no timelapse video");
+  the hover preview was clipped by the timeline's scroll box (now
+  `position: fixed`); the URL throttle dropped the final scrub position
+  (trailing write); a deep link outside the day's activity opened with the
+  playhead off-screen; the header summary sat under the support widget.
+- The in-app T3 preview host was unavailable; Playwright's bundled Chromium
+  can't decode H.264 — use `channel: 'chrome'`.
+- `frontend` ESLint is broken in this checkout (`typescript-eslint` not
+  installed); not part of the pre-commit hook. Typecheck is the gate.
 - Bash heredocs with backticks, and Python string literals containing
   `C:\Users`, both break. Write patch scripts with the Write tool
   (`C:\Users\camer\pfms-timelapse-sample\patch_*.py`) and keep Windows paths
@@ -133,9 +151,16 @@ Cameron (2026-09-30):
 - [x] Chunk finalize (sidecar, faststart, sprite) + backfill queue + tests.
 - [x] Match-derived chunks (+ capture resumes in post-match).
 - [x] Timeline merge module + API + tests; verified on the real day.
-- [ ] `/timelapse` page (routing: vite input, dev route, static server).
-- [ ] Verify in a browser against the real sample day.
-- [ ] Docs (match-system.md, README), commits.
+- [x] `/timelapse` page (routing: vite input, dev route; the static server
+      maps clean URLs already), link from Admin → Field Timelapse.
+- [x] Verified in headless Chrome against the real sample day.
+- [x] Docs (match-system.md, README), commits.
+- [ ] Deploy to steamboat — needs Cameron's go-ahead (`deploy` skill). On
+      first start it finalizes the existing chunks in the background (~24
+      on disk; a few seconds each).
+- [ ] After deploy: open `/timelapse` on a real practice night and check
+      enables/robots against what happened; check the first match-derived
+      chunk appears a few seconds after a match.
 
 ## Open questions for the user
 

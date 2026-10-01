@@ -773,7 +773,50 @@ days).
 
 ### Watching it, and taking it away
 
-Everything is viewable in the admin section itself, no file browser needed:
+**`/timelapse`** (admin passphrase, like `/admin`; also linked from the
+section) is the place to watch it: one practice day (04:00–04:00) as **one
+logical film**, not a list of files. Every chunk of the day — live capture
+and the ones made from matches — is placed on the wall clock and played back
+to back, skipping the quiet gaps between them; in a gap the archival still
+taken in it is shown instead. Under the film is a timeline of the day:
+
+- **Video** — where there is footage, drawn as a filmstrip from the chunks'
+  scrub sheets, with a marker at each archival frame.
+- **Matches** — one block per match (hover for the teams and score).
+- **On field** — how many robots were here (grey) and enabled (green) at
+  every moment.
+- **One row per team** — when its robot was on the field, and each enable.
+
+Crowds are **decimated** to the zoom: spans closer together than a few
+pixels merge into one bar, shaded by how much of it was actually busy and
+labelled with how many it holds (`×12`); hovering says how many enables and
+how long, and double-clicking zooms to it, where they come apart again.
+
+Scrubbing is built to keep up with a dragged mouse: each chunk is a
+faststart MP4 with a keyframe every second of film, only one seek per video
+is ever in flight (newer targets queue behind it, latest wins), and the
+chunk's scrub sheet paints the frame under the pointer instantly while the
+video catches up. Hovering the timeline shows the same picture above it.
+Measured in Chrome on a real event day: 61 pointer moves across the day
+produced 47 landed seeks.
+
+Controls: drag on the timeline to scrub, wheel to zoom around the pointer,
+drag the time axis (or Shift-drag) to pan, double-click to zoom to a match
+or cluster; Space plays and pauses, ←/→ steps a frame (2 s of field time),
+Shift ←/→ a minute, `,` and `.` jump to the previous/next match or enable,
+F fits the day's activity. The speed menu runs from 15× to 960× real time.
+The address bar follows the playhead (`/timelapse?day=…&t=…`), so a link
+opens on the same moment. A day still in progress refreshes every 20 s.
+
+The page reads `GET /api/timelapse/timeline?from=&to=` (the day assembled
+server-side by `src/timelapseApi.ts` and `src/timelapseTimeline.ts`) and
+`GET /api/timelapse/days` (the day picker). For days from before the field
+activity log existed, robots come from the usage sessions (which bridge
+link drops, so they look more continuous than they were) and enables from
+practice runs (teams that recorded only); a dashed line marks where the log
+takes over.
+
+The admin section keeps the file-level tools:
 
 - **Browse** a date range to get each day's frames as a strip of thumbnails
   (a small copy is written beside every archival frame at capture time, so a

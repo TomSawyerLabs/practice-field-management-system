@@ -642,6 +642,10 @@ export function TimelapseSection() {
           {state?.capturing && <Chip size="small" color="error" label="● Capturing" />}
           {state?.robotsPresent && !state.capturing && <Chip size="small" color="info" label="Robots here" />}
           {state?.unavailableReason && <Chip size="small" color="error" label={state.unavailableReason} />}
+          <Box sx={{ flex: 1 }} />
+          <Button variant="contained" size="small" href="/timelapse">
+            Watch the timelapse
+          </Button>
         </Box>
 
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2 }}>
