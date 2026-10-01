@@ -155,9 +155,13 @@ Cameron (2026-09-30):
       maps clean URLs already), link from Admin → Field Timelapse.
 - [x] Verified in headless Chrome against the real sample day.
 - [x] Docs (match-system.md, README), commits.
-- [ ] Deploy to steamboat — needs Cameron's go-ahead (`deploy` skill). On
-      first start it finalizes the existing chunks in the background (~24
-      on disk; a few seconds each).
+- [x] Deployed 2026-10-01 16:04 PDT (`5425f4c`, 7 changes announced).
+      `/timelapse` answers 200; `/api/timelapse/timeline` for 09-27 returns
+      24 segments, 12 matches, 59 robot spans (backfilled from usage
+      sessions — the log starts at the deploy). The activity log copied the
+      match history in at startup. All 24 existing chunks were finalized
+      (sidecar, faststart, scrub sheet) within a minute of startup. No match-derived chunks for 09-27: only matches recorded
+      from now on get one.
 - [ ] After deploy: open `/timelapse` on a real practice night and check
       enables/robots against what happened; check the first match-derived
       chunk appears a few seconds after a match.

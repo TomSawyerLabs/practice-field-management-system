@@ -62,7 +62,7 @@ every team (`plans/timelapse-viewer.md`, open question 1):
 - [x] Admin UI, practice-day page / Slack wording, docs.
 - [ ] Not seen in a browser: the admin fields/warning and the station-card
       pause text are typechecked only.
-- [ ] Deploy (needs Cameron's go-ahead).
+- [x] Deployed 2026-10-01 16:04 PDT (`5425f4c`), 387 GB free at the time.
 - [ ] steamboat's stored `recordingRetentionDays` is 360 — Cameron sets it
       to 30 on the admin page after deploy (or says to leave it).
 
