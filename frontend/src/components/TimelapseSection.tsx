@@ -290,9 +290,12 @@ actions:
     data:
       scene_id: pfms_timelapse_restore
       snapshot_entities: "{{ (${snapshot}) | map(attribute='entity_id') | list }}"
+  # continue_on_error: a fixture that does not answer raises here, and an
+  # action that raises ends the run — the restore below would never happen
   - action: light.turn_on
     target:
       entity_id: ${target}
+    continue_on_error: true
   # proceed as soon as they are on — wait_template, not wait_for_trigger,
   # so it also passes when they were already on
   - wait_template: "{{ ${entityList.map(e => `is_state('${e}', 'on')`).join(' and ')} }}"
@@ -315,6 +318,7 @@ actions:
   - action: scene.turn_on
     target:
       entity_id: scene.pfms_timelapse_restore
+    continue_on_error: true
 `
     : '';
 

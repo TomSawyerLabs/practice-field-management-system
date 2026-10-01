@@ -861,7 +861,15 @@ the ids are secrets, so once saved the server never sends them back to a
 browser (regenerate if you need the YAML again, and update the automation to
 match).
 
-**Two traps, both learned the hard way on the reference field:**
+**Three traps, all learned the hard way on the reference field:**
+
+_A fixture that does not answer must not skip the restore._ Home Assistant has
+no try/finally: any action that raises ends the run. One Zigbee switch failing
+to acknowledge `light.turn_on` ("Failed to send request: device did not
+respond") did exactly that — every other light had come on, the run stopped
+at that step, and the shop stayed lit. The generated automation therefore
+marks both `light.turn_on` and the final `scene.turn_on` as
+`continue_on_error: true`; if yours predates that, add it to both.
 
 _The callback must not be able to kill its caller._ Calling the
 `rest_command` straight from the automation reads better and is wrong:

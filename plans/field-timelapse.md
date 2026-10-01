@@ -460,11 +460,41 @@ Seven that were off before the frame are still on: `bay_34_north_{1,3,4}`,
 off: `bay_34_south_{1,3,4}`. `scene.pfms_timelapse_restore` still holds the
 12:59 state, until the next run (17:00) overwrites it.
 
-Proposed fix, not applied (needs Cameron's yes — it is a Home Assistant
-change): `continue_on_error: true` on the `light.turn_on` and on the final
-`scene.turn_on`. This error is an ordinary `HomeAssistantError`, which
-`continue_on_error` does cover (unlike the missing-service case). Then make
-the admin page's YAML generator emit the same.
+Cameron's answers (2026-10-01): **do not** restore the lights from the
+snapshot (the 13:58 hand changes stand); **yes** to the fix; check the logs
+for the fixture.
+
+**Fix, applied 2026-10-01 (afternoon, before the 17:00 frame).** `automation.pfms_timelapse_lights` now has
+`continue_on_error: true` on "Light the shop" and on the final restore (config
+hash `d8f2915e6981e5a0` → `0960f71ff9bf57ec`), with the reason added to its
+description. This error is an ordinary `HomeAssistantError`, which
+`continue_on_error` does cover (unlike the missing-service case). The admin
+page's YAML generator and `docs/match-system.md` say the same. Not yet proven
+by a failing run — it needs the fixture to misbehave again; the 17:00 trace is
+the first normal run through the edited automation.
+
+Residual: `scene.turn_on` can hit the same error, in which case the run now
+finishes cleanly but one switch's channels may be left unrestored. A retry of
+the restore would close that; not built, nobody asked.
+
+**Which fixture.** The logs cannot say: ZHA logs at WARNING and the error
+names no device (`zha` logger level 30; raising it to debug is a Home
+Assistant change, not made). The lights are eight Tuya `TS0004` four-gang
+Zigbee switches (`_TZ3000_mmkbptmx`), four channels each, so "all lights" is
+32 unicast commands to 8 radios at once. Circumstantial evidence points at
+**Bay 4/5 North**:
+
+- 13:00 today: every channel answered within 1.5 s except `bay_45_north_2`,
+  at 13:00:13.16, ~2 s behind the rest.
+- 2026-09-30 15:16 (`script.cycle_lights`, same error): the bulk went off at
+  15:16:37–38; the stragglers at 15:16:43 were `bay_45_north_1`,
+  `bay_45_north_3`, `bay_45_south_3`, `bay_12_north_1`.
+- Its link is weak: LQI 144–152, RSSI −73 to −75 dBm, against LQI 232 /
+  −53 dBm for the only other switch with those sensors enabled
+  (`…_lqi_3` / `…_rssi_3`; the other six have them disabled).
+
+That is a suspect, not a finding. To settle it: enable the LQI/RSSI sensors on
+all eight switches, or set `zha`/`zigpy` to debug around a scheduled frame.
 
 ## Progress log
 
@@ -499,10 +529,11 @@ the admin page's YAML generator emit the same.
       still occupied.
 - [x] 2026-10-01 Diagnosed the 13:00 lights-left-on: `light.turn_on` raised
       and aborted the run before the restore (section above).
-- [ ] Make `light.turn_on` and the restore `continue_on_error` in the HA
-      automation, and in the YAML the admin page generates. Waiting on
-      Cameron's go-ahead.
-- [ ] Find the fixture that intermittently does not respond.
+- [x] 2026-10-01 `light.turn_on` and the restore are `continue_on_error` in
+      the HA automation, the generated YAML and the docs.
+- [ ] Check the 17:00 trace: first run through the edited automation.
+- [ ] Pin down the fixture that intermittently does not respond — logs do not
+      name it; Bay 4/5 North is the suspect (weak link, late both times).
 - [ ] Track the automation and script in ops (`homeassistant/ha-tsl`).
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
