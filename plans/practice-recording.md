@@ -108,7 +108,7 @@ a robot enabled from its own Driver Station for a minute at a time. Cameron
         announced). Backend reports a782360; practice recorder up; the public
         practice API and `/practice/<token>` both serve from the internet.
 18. [ ] First real use: a team ticks the box, enables, and the clip + Slack DM are checked end to end on the field.
-19. [ ] Decide the eviction policy once a few weeks of growth data exist (retention is 360 days today; the admin page now shows the rate).
+19. [x] Eviction policy decided 2026-10-01 (`plans/recording-retention-and-disk.md`): practice clips 7 days, match videos 30, a free-space floor pauses clips, none while matches are being run.
 
 ## Findings / gotchas
 

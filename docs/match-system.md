@@ -596,10 +596,42 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   first time a row is shown and cached beside the video, so the first look
   at a long list takes a moment and later ones are instant. Any recording
   can be deleted there, or everything older than N days at once; deleted
-  matches keep their history entry but lose their download buttons. This is
-  the manual lever while the retention policy is being worked out.
-- Each match directory carries a `recording.json` sidecar, and a daily sweep
-  deletes matches older than the configured retention (default 30 days).
+  matches keep their history entry but lose their download buttons.
+- Each match directory carries a `recording.json` sidecar.
+
+#### How long things are kept, and what happens when the disk fills
+
+Three kinds of video, three lifetimes, each its own setting:
+
+| What                               | Kept              | Set in                        |
+| ---------------------------------- | ----------------- | ----------------------------- |
+| Match videos                       | 30 days           | Admin → Match Video Recording |
+| Teams' practice clips              | 7 days            | Admin → Match Video Recording |
+| Timelapse chunks / archival frames | 60 days / forever | Admin → Field Timelapse       |
+
+An hourly sweep deletes what is past its window (`MatchRecorder.sweep()`:
+`practice-*` directories by the clip window, every other one by the match
+window; the timelapse sweeps itself). Practice clips are the short one on
+purpose: there are far more of them — every enable of every robot, a
+separate file per robot — at about 5.5 GB per hour of enable time, and they
+are the team's to take home, not the field's record. The practice-day page
+and the Slack message both say how long each is kept.
+
+Free space on the recordings volume is checked every minute against two
+floors:
+
+- **Under the configured floor (default 25 GB): practice clips pause.** A
+  clip in progress is closed and kept, no new one starts, and the ring
+  buffer stops. Matches are still recorded. Nothing is deleted early — the
+  week-long window is what frees the space — so clips resume by themselves,
+  or sooner if an admin deletes some. The station page tells the team why,
+  and the admin page shows a warning.
+- **Under 2 GB (fixed): nothing is recorded, matches included.** Match
+  history, settings and logs live on the same volume, and a full disk
+  breaks more than video.
+
+A volume whose free space cannot be read counts as fine: a failed
+measurement must not stop recording.
 
 Environment seeds (`MATCH_RECORDING_STREAMS`, `MATCH_RECORDINGS_DIR`,
 `MATCH_RECORDING_RETENTION_DAYS`) are in [configuration.md](configuration.md#scoring--scoreboard);
@@ -652,6 +684,14 @@ How it works (`src/practiceRecorder.ts`):
   so up to one GOP more can be included on either side.
 - Matches are the match recorder's job. The buffer stops and a run in
   progress is closed the moment a match leaves the idle/created phases.
+- **No clips while matches are being run.** While a match is set up on the
+  field (any phase but idle) or the match queue is in use (the line is open,
+  or a match is queued, on deck or playing), enables are not recorded:
+  every match is recorded anyway, and a clip of each pit-side enable on a
+  scrimmage day is noise at 5.5 GB an hour. A clip in progress when that
+  begins is closed there and kept. The station page says so in place of the
+  usual hint. Clips are paused the same way when the disk is short of space
+  ([how long things are kept](#how-long-things-are-kept-and-what-happens-when-the-disk-fills)).
 
 Runs are listed on the team's station page next to its matches, and are
 indexed in `practice-recordings.json` (teams that opted out, runs, day

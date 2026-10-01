@@ -164,7 +164,9 @@ Cameron (2026-09-30):
 
 ## Open questions for the user
 
-1. **Storage with default-on recording.** Every enabled robot now gets its own
+1. _(Resolved 2026-10-01 — see `plans/recording-retention-and-disk.md`:
+   clips kept 7 days, a free-space floor pauses them, none in match mode.)_
+   **Storage with default-on recording.** Every enabled robot now gets its own
    full-rate clip (~5.5 GB per hour of enable time; overlapping robots each
    get their own copy). There is still no disk-pressure eviction
    (practice-recording plan item 19). Recommendation: a free-space floor

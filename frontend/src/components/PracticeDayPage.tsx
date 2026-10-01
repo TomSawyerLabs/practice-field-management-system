@@ -77,7 +77,8 @@ export function PracticeDayPage({ token }: { token: string }) {
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
         {describeCounts(matches, runs)}. Each recording comes with the balls scored while it ran and the robot&apos;s
-        battery and connection telemetry. Kept for {day.retentionDays} days.
+        battery and connection telemetry. Practice clips are kept for {day.practiceRetentionDays} days and match videos
+        for {day.retentionDays}, so download what you want to keep.
       </Typography>
 
       {day.items.length > 0 && (

@@ -162,8 +162,11 @@ export function RecordingsInventorySection() {
                   — at that rate the disk fills in about <strong>{Math.round(stats.daysLeft)} days</strong>
                 </>
               )}
-              . Oldest: {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. The daily sweep deletes
-              anything older than {inv.retentionDays} days (set above).
+              . Oldest: {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. Every hour the sweep
+              deletes practice clips older than {inv.practiceRetentionDays} days and match videos older than{' '}
+              {inv.retentionDays} (set above).
+              {inv.space === 'low' && ' Practice clips are paused: the disk is under its free-space floor.'}
+              {inv.space === 'critical' && ' Nothing is being recorded: the disk is nearly full.'}
               {live?.activeMatchId && ' A match is being recorded right now.'}
             </Typography>
 

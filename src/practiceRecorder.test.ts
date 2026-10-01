@@ -68,6 +68,8 @@ describe('PracticeRecorder', () => {
   let store: PracticeStore;
   let metadata: SessionMetadataCollector;
   const events: ProcessedScoreEvent[] = [];
+  /** Why clips are paused, as index.ts would say (matches being run, disk). */
+  let pause: string | undefined;
 
   beforeAll(() => {
     // 40 s of test pattern with a tone, 1 s GOP, so segments are 1 s each.
@@ -116,6 +118,7 @@ describe('PracticeRecorder', () => {
       metadata,
       getTeamForStation: teamFor,
       isAvailable: () => true,
+      pauseReason: () => pause,
       // Play the file at real time, forever, as a live source would.
       inputPrefixArgs: ['-re', '-stream_loop', '-1'],
     });
@@ -304,6 +307,49 @@ describe('PracticeRecorder', () => {
     // 3 pad + 2 enabled + ~5.2 stopped + 2 enabled + 3 pad.
     expect(run.recordings[0].durationSeconds).toBeGreaterThanOrEqual(13);
     expect(run.recordings[0].durationSeconds).toBeLessThanOrEqual(19);
+  }, 60_000);
+
+  test('a pause ends the clip in progress and keeps it, and no new clip starts until it lifts', async () => {
+    for (let i = 0; i < 3; i++) {
+      await sleep(1000);
+      recorder.onTelemetry(telemetry(false));
+    }
+    const before = store.getRuns().length;
+    recorder.onTelemetry(telemetry(true));
+    for (let i = 0; i < 3; i++) {
+      await sleep(1000);
+      recorder.onTelemetry(telemetry(true));
+    }
+    expect(recorder.getState().activeRuns.map(r => r.teamNumber)).toEqual([5940]);
+
+    // A match is set up on the field while the robot is still enabled.
+    pause = 'Matches are being run, so practice clips are off.';
+    const pausedAt = Date.now();
+    const deadline = Date.now() + 30_000;
+    while (store.getRuns().length === before && Date.now() < deadline) {
+      await sleep(500);
+      recorder.onTelemetry(telemetry(true));
+    }
+    const runs = store.getRuns();
+    expect(runs.length).toBe(before + 1);
+    // Cut where the pause began (within a tick), not at some later disable.
+    expect(runs[runs.length - 1].endedAt).toBeLessThanOrEqual(pausedAt + 1500);
+    expect(runs[runs.length - 1].recordings[0].status).toBe('ok');
+    expect(recorder.getState().pausedReason).toBe(pause);
+    expect(recorder.getState().activeRuns).toEqual([]);
+
+    // A fresh enable while paused records nothing, and the buffer is off.
+    recorder.onTelemetry(telemetry(false));
+    recorder.onTelemetry(telemetry(true));
+    await sleep(2500);
+    expect(recorder.getState().activeRuns).toEqual([]);
+    expect(recorder.getState().buffering).toBe(false);
+    recorder.onTelemetry(telemetry(false));
+    expect(store.getRuns().length).toBe(before + 1);
+
+    pause = undefined;
+    await sleep(1500);
+    expect(recorder.getState().pausedReason).toBeUndefined();
   }, 60_000);
 
   test('the buffer stops when no opted-in robot has been heard from', async () => {

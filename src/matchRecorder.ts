@@ -47,6 +47,7 @@ import type {
   RecordingInventoryEntry,
   RecordingInventoryFile,
   RecordingsInventory,
+  RecordingSpace,
   RecordingStreamConfig,
   RecordingStreamTestResult,
 } from './types.js';
@@ -76,8 +77,19 @@ const STOP_GRACE_MS = 10_000;
 const RECONNECT_DELAY_MS = 1000;
 const MAX_PARTS = 30;
 const STATUS_INTERVAL_MS = 2000;
-const SWEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** Hourly, so a recording outlives its retention by an hour at most. */
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+const DISK_CHECK_INTERVAL_MS = 60_000;
 const DEFAULT_RETENTION_DAYS = 30;
+/** Teams' practice clips: a week to download them. */
+export const DEFAULT_PRACTICE_RETENTION_DAYS = 7;
+/** Free space below which practice clips pause. */
+export const DEFAULT_MIN_FREE_GB = 25;
+/** Free space below which nothing is recorded at all. Match history,
+ *  settings and logs live on the same volume; a full disk breaks more than
+ *  video, so recording stops well before that. Not configurable. */
+export const CRITICAL_FREE_BYTES = 2 * 1024 ** 3;
+const GB = 1024 ** 3;
 const STDERR_KEEP_LINES = 12;
 
 export const DEFAULT_RECORDINGS_DIR = 'recordings';
@@ -88,7 +100,14 @@ export interface MatchRecorderOptions {
   ffmpegPath?: string;
   ffprobePath?: string;
   getStreams: () => RecordingStreamConfig[];
+  /** Days to keep match recordings. */
   getRetentionDays: () => number | undefined;
+  /** Days to keep `practice-*` runs. */
+  getPracticeRetentionDays?: () => number | undefined;
+  /** Free-space floor for practice clips, in GB. */
+  getMinFreeGb?: () => number | undefined;
+  /** Free bytes on the recordings volume; injectable for tests. */
+  freeBytes?: () => Promise<number>;
 }
 
 /** A match whose videos are finalized: one entry per stream that recorded. */
@@ -193,6 +212,11 @@ export class MatchRecorder {
   private unavailableReason?: string;
   private statusTimer: NodeJS.Timeout | null = null;
   private sweepTimer: NodeJS.Timeout | null = null;
+  private diskTimer: NodeJS.Timeout | null = null;
+  private readonly getPracticeRetentionDays: () => number | undefined;
+  private readonly getMinFreeGb: () => number | undefined;
+  private readonly freeBytes?: () => Promise<number>;
+  private lastSpace: RecordingSpace = 'ok';
   private diskFreeBytes?: number;
   private usedBytes?: number;
   /** Thumbnail generations in flight, keyed by the image path. */
@@ -206,6 +230,9 @@ export class MatchRecorder {
     this.ffprobe = opts.ffprobePath ?? process.env.FFPROBE_PATH ?? 'ffprobe';
     this.getStreams = opts.getStreams;
     this.getRetentionDays = opts.getRetentionDays;
+    this.getPracticeRetentionDays = opts.getPracticeRetentionDays ?? (() => undefined);
+    this.getMinFreeGb = opts.getMinFreeGb ?? (() => undefined);
+    this.freeBytes = opts.freeBytes;
   }
 
   /** Verify ffmpeg, run the first retention sweep, and start listening to matches. */
@@ -222,7 +249,8 @@ export class MatchRecorder {
 
     this.sweep();
     this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
-    void this.refreshDiskStats();
+    this.diskTimer = setInterval(() => void this.refreshDiskStats(), DISK_CHECK_INTERVAL_MS);
+    await this.refreshDiskStats();
 
     matchEngine.addStateListener(state => this.onMatchState(state));
     console.log(
@@ -280,9 +308,31 @@ export class MatchRecorder {
     return this.available;
   }
 
-  /** Days recordings are kept (configured, or the default). */
+  /** Days match recordings are kept (configured, or the default). */
   effectiveRetentionDays(): number {
     return this.retentionDays();
+  }
+
+  /** Days teams' practice clips are kept (configured, or the default). */
+  effectivePracticeRetentionDays(): number {
+    return this.practiceRetentionDays();
+  }
+
+  /** Free space below which practice clips pause, in bytes. */
+  minFreeBytes(): number {
+    const gb = this.getMinFreeGb();
+    return (gb && gb > 0 ? gb : DEFAULT_MIN_FREE_GB) * GB;
+  }
+
+  /**
+   * How short of space the recordings volume is. Unknown free space counts
+   * as `ok`: a volume that cannot be measured must not stop recording.
+   */
+  space(): RecordingSpace {
+    const free = this.diskFreeBytes;
+    if (free === undefined) return 'ok';
+    if (free < CRITICAL_FREE_BYTES) return 'critical';
+    return free < this.minFreeBytes() ? 'low' : 'ok';
   }
 
   getState(): MatchRecordingState {
@@ -317,7 +367,10 @@ export class MatchRecorder {
       activeMatchId: this.session?.matchId ?? undefined,
       streams,
       retentionDays: this.retentionDays(),
+      practiceRetentionDays: this.practiceRetentionDays(),
       diskFreeBytes: this.diskFreeBytes,
+      minFreeBytes: this.minFreeBytes(),
+      space: this.space(),
       usedBytes: this.usedBytes,
       directory: this.directory,
     };
@@ -562,6 +615,15 @@ export class MatchRecorder {
 
   private startSession(state: MatchState, matchId: string | null): void {
     if (!this.available) return;
+    if (this.space() === 'critical') {
+      // Said once per match, not once per state update.
+      if (matchId) {
+        console.warn(
+          `Match recorder: not recording ${matchId} — only ${formatGb(this.diskFreeBytes)} free on the recordings volume`,
+        );
+      }
+      return;
+    }
     const streams = this.getStreams().filter(s => s.enabled);
     if (streams.length === 0) return;
     const dir = matchId ? this.matchDirectory(matchId) : join(this.directory, `pending-${Date.now()}`);
@@ -936,6 +998,9 @@ export class MatchRecorder {
       usedBytes: this.usedBytes,
       diskFreeBytes: this.diskFreeBytes,
       retentionDays: this.retentionDays(),
+      practiceRetentionDays: this.practiceRetentionDays(),
+      minFreeBytes: this.minFreeBytes(),
+      space: this.space(),
       directory: this.directory,
       scannedAt: Date.now(),
     };
@@ -1007,11 +1072,24 @@ export class MatchRecorder {
     return d && d > 0 ? d : DEFAULT_RETENTION_DAYS;
   }
 
-  /** Delete match directories older than the retention window. */
+  private practiceRetentionDays(): number {
+    const d = this.getPracticeRetentionDays();
+    return d && d > 0 ? d : DEFAULT_PRACTICE_RETENTION_DAYS;
+  }
+
+  /**
+   * Delete recordings past their retention. Teams' practice clips
+   * (`practice-*`) and match videos have separate windows: clips are many,
+   * big, and the team's to take home within the week; matches are the
+   * field's record and stay about a month.
+   */
   sweep(): void {
     if (!existsSync(this.directory)) return;
-    const cutoff = Date.now() - this.retentionDays() * 24 * 60 * 60 * 1000;
+    const day = 24 * 60 * 60 * 1000;
+    const matchCutoff = Date.now() - this.retentionDays() * day;
+    const practiceCutoff = Date.now() - this.practiceRetentionDays() * day;
     let removed = 0;
+    let removedPractice = 0;
     for (const name of readdirSync(this.directory)) {
       const dir = join(this.directory, name);
       if (this.session?.dir === dir) continue;
@@ -1023,9 +1101,11 @@ export class MatchRecorder {
         const age = manifest?.endedAt ?? manifest?.startedAt ?? statSync(dir).mtimeMs;
         // A pre-roll left behind by a crash is junk after an hour.
         const stalePreroll = name.startsWith('pending-') && Date.now() - age > 60 * 60 * 1000;
-        if (age < cutoff || stalePreroll) {
+        const practice = name.startsWith('practice-');
+        if (age < (practice ? practiceCutoff : matchCutoff) || stalePreroll) {
           rmSync(dir, { recursive: true, force: true });
-          removed++;
+          if (practice) removedPractice++;
+          else removed++;
         }
       } catch (err) {
         console.warn(`Match recorder sweep: ${dir}: ${(err as Error).message}`);
@@ -1033,6 +1113,10 @@ export class MatchRecorder {
     }
     if (removed > 0)
       console.log(`Match recorder: removed ${removed} recording(s) older than ${this.retentionDays()} days`);
+    if (removedPractice > 0)
+      console.log(
+        `Match recorder: removed ${removedPractice} practice clip(s) older than ${this.practiceRetentionDays()} days`,
+      );
     void this.refreshDiskStats();
     for (const fn of this.sweepListeners) {
       try {
@@ -1043,13 +1127,37 @@ export class MatchRecorder {
     }
   }
 
+  /** Re-read free space now and say where that leaves the volume. */
+  async checkSpace(): Promise<RecordingSpace> {
+    await this.refreshDiskStats();
+    return this.space();
+  }
+
   private async refreshDiskStats(): Promise<void> {
     try {
       mkdirSync(this.directory, { recursive: true });
-      const s = await statfs(this.directory);
-      this.diskFreeBytes = Number(s.bavail) * Number(s.bsize);
+      if (this.freeBytes) {
+        this.diskFreeBytes = await this.freeBytes();
+      } else {
+        const s = await statfs(this.directory);
+        this.diskFreeBytes = Number(s.bavail) * Number(s.bsize);
+      }
     } catch {
       this.diskFreeBytes = undefined;
+    }
+    // Say so once when the volume crosses a floor, either way, and tell the
+    // pages straight away rather than at the next status tick.
+    const space = this.space();
+    if (space !== this.lastSpace) {
+      const free = formatGb(this.diskFreeBytes);
+      if (space === 'ok') console.log(`Match recorder: recordings volume has room again (${free} free)`);
+      else if (space === 'low')
+        console.warn(
+          `Match recorder: ${free} free, under the ${formatGb(this.minFreeBytes())} floor — practice clips are paused`,
+        );
+      else console.error(`Match recorder: only ${free} free — nothing will be recorded until space is made`);
+      this.lastSpace = space;
+      this.emit();
     }
     try {
       let total = 0;
@@ -1123,6 +1231,11 @@ function listFiles(recordings: MatchRecording[] | undefined, sizes: Map<string, 
     .filter(isRecordingFileName)
     .sort()
     .map(file => ({ name: file.replace(/\.mp4$/, ''), file, bytes: sizes.get(file) ?? 0, status: 'ok' as const }));
+}
+
+/** "12.3 GB", for log lines. */
+function formatGb(bytes: number | undefined): string {
+  return bytes === undefined ? 'unknown' : `${(bytes / GB).toFixed(1)} GB`;
 }
 
 /** Run a command to completion, resolving with stdout. Rejects on non-zero

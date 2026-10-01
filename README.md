@@ -25,7 +25,9 @@ and provides:
   "record while enabled" on its station page): every enable outside a match
   becomes a clip (3 s either side), with the
   balls scored and the robot's telemetry alongside; a per-day link (and zip)
-  for taking home, posted to the team's mentors on Slack
+  for taking home, posted to the team's mentors on Slack. Clips are kept a
+  week (match videos a month), pause while matches are being run, and pause
+  if the disk runs short
   ([details](docs/match-system.md#record-while-enabled-practice-runs))
 - **Match video** — every match recorded from the field's video streams,
   downloadable by each drive team right after the match

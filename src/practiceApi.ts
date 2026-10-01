@@ -230,6 +230,7 @@ function summarizeDay(
     day,
     dayLabel: practiceDayLabel(day),
     retentionDays: deps.recorder.effectiveRetentionDays(),
+    practiceRetentionDays: deps.recorder.effectivePracticeRetentionDays(),
     zipUrl: `${base}/zip`,
     zipBytes: zipSizeEstimate(zipEntries(deps, teamNumber, day, items).map(e => ({ name: e.name, size: e.size }))),
     items: out,

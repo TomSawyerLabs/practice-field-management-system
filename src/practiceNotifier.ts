@@ -32,7 +32,9 @@ export interface PracticeNotifierDeps {
   countItems: (teamNumber: number, day: string) => number;
   /** Absolute base URL of the field, when configured. */
   publicUrl: () => string | undefined;
+  /** Days match videos are kept, and days practice clips are. */
   retentionDays: () => number;
+  practiceRetentionDays: () => number;
   now?: () => number;
 }
 
@@ -113,13 +115,16 @@ export class PracticeNotifier {
 
   message(teamNumber: number, day: string, count: number, token: string): string {
     const link = this.linkFor(token);
-    const keep = this.deps.retentionDays();
+    const keepMatches = this.deps.retentionDays();
+    const keepClips = this.deps.practiceRetentionDays();
+    const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
     return (
       `📹 *Team ${teamNumber} — practice videos for ${practiceDayLabel(day)}*\n` +
       `${count} recording${count === 1 ? '' : 's'} (matches and practice runs), each with the balls scored and ` +
       `battery/telemetry alongside: ${link}\n` +
       `Download them one at a time or all at once as a zip. Anything recorded later today shows up on the same link. ` +
-      `Videos are kept for ${keep} days. You got this because your Slack name includes ${teamNumber}.`
+      `Practice clips are kept for ${days(keepClips)} and match videos for ${days(keepMatches)}, so download what you want to keep. ` +
+      `You got this because your Slack name includes ${teamNumber}.`
     );
   }
 

@@ -586,6 +586,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     getRetentionDays: () =>
       setupConfigStore.get().settings.recordingRetentionDays ??
       (Number(process.env.MATCH_RECORDING_RETENTION_DAYS) || undefined),
+    getPracticeRetentionDays: () => setupConfigStore.get().settings.practiceRetentionDays,
+    getMinFreeGb: () => setupConfigStore.get().settings.recordingMinFreeGb,
   });
 
   // Initialize field usage tracker (tracks robot connection hours per team)
@@ -622,6 +624,20 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     metadata: sessionMetadata,
     getTeamForStation: teamForStation,
     isAvailable: () => matchRecorder.isAvailable(),
+    // No clips while matches are being run — a match is set up on the field,
+    // or the queue is in use — since every match is recorded; and none while
+    // the recordings volume is short of space.
+    pauseReason: () => {
+      if (matchRecorder.space() !== 'ok') return 'The field is short of disk space, so practice clips are paused.';
+      const queue = matchQueue.getState();
+      const queueInUse =
+        queue.settings.lineOpen ||
+        queue.entries.some(e => e.status === 'queued' || e.status === 'onDeck' || e.status === 'playing');
+      if (matchEngine.getState().phase !== 'idle' || queueInUse) {
+        return 'Matches are being run, so practice clips are off — every match is recorded instead.';
+      }
+      return undefined;
+    },
   });
   matchEngine.addStateListener(state => practiceRecorder.onMatchState(state));
   matchRecorder.addSweepListener(() => {
@@ -678,6 +694,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
     publicUrl,
     retentionDays: () => matchRecorder.effectiveRetentionDays(),
+    practiceRetentionDays: () => matchRecorder.effectivePracticeRetentionDays(),
   });
 
   // How each team wants to hear about the queue (Slack DM, web push), and

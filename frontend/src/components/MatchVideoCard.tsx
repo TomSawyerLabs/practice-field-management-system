@@ -192,13 +192,15 @@ export function MatchVideoCard({
 
   const status = !canRecord
     ? (practice?.unavailableReason ?? 'Recording is not set up on this field')
-    : runInProgress
-      ? 'Recording now — the clip ends 3 s after you disable, and coming back within 6 s keeps it one video.'
-      : optedIn
-        ? practice?.buffering
-          ? 'Ready: enabling your robot starts a clip (with 3 s before and after).'
-          : 'Recording starts as soon as your Driver Station connects and you enable.'
-        : 'Recording is off for your team. Tick to get a video of every time you enable your robot outside a match.';
+    : optedIn && practice?.pausedReason && !runInProgress
+      ? practice.pausedReason
+      : runInProgress
+        ? 'Recording now — the clip ends 3 s after you disable, and coming back within 6 s keeps it one video.'
+        : optedIn
+          ? practice?.buffering
+            ? 'Ready: enabling your robot starts a clip (with 3 s before and after).'
+            : 'Recording starts as soon as your Driver Station connects and you enable.'
+          : 'Recording is off for your team. Tick to get a video of every time you enable your robot outside a match.';
 
   return (
     <Card sx={{ mb: 2 }}>

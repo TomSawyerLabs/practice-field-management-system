@@ -234,6 +234,12 @@ export interface SetupSettings {
   recordingStreams?: RecordingStreamConfig[];
   /** Days to keep match recordings before the sweep deletes them. */
   recordingRetentionDays?: number;
+  /** Days to keep teams' practice clips ("record while enabled"). Shorter
+   *  than matches: there are far more of them and they are the team's to
+   *  download, not the field's record. */
+  practiceRetentionDays?: number;
+  /** Free space, in GB, below which no new practice clips are recorded. */
+  recordingMinFreeGb?: number;
   /** Whether robots NOT in a match can be enabled from their own Driver
    *  Station (pFMS sends a "not in match" release so the DS keeps local
    *  control). Absent/true = on; set false via the admin switch to hold
@@ -760,6 +766,8 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   deploymentMode: v => v === 'systemd' || v === 'docker',
   recordingStreams: v => Array.isArray(v) && v.length <= 8 && v.every(isRecordingStreamConfig),
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
+  practiceRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
+  recordingMinFreeGb: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10000,
   outOfMatchControl: v => typeof v === 'boolean',
   holdRadioChanges: v => typeof v === 'boolean',
   robotWifiInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
@@ -3641,6 +3649,10 @@ export interface MatchRecording {
   error?: string;
 }
 
+/** `ok`; `low` — under the configured floor, practice clips are paused;
+ *  `critical` — nearly full, match recording is refused as well. */
+export type RecordingSpace = 'ok' | 'low' | 'critical';
+
 /** Live status of the match recorder, broadcast to internal clients. */
 export interface MatchRecordingState {
   type: 'matchRecordingState';
@@ -3651,9 +3663,17 @@ export interface MatchRecordingState {
   /** Match currently being recorded, if any. */
   activeMatchId?: string;
   streams: MatchRecordingStreamStatus[];
+  /** Days match videos are kept. */
   retentionDays: number;
+  /** Days teams' practice clips are kept. */
+  practiceRetentionDays: number;
   /** Free space on the recordings volume, when readable. */
   diskFreeBytes?: number;
+  /** Free space below which practice clips stop being recorded. */
+  minFreeBytes: number;
+  /** How short of space the volume is: `low` pauses practice clips,
+   *  `critical` refuses match recording too. */
+  space: RecordingSpace;
   /** Total size of everything under the recordings directory. */
   usedBytes?: number;
   directory: string;
@@ -3872,6 +3892,10 @@ export interface PracticeRecordingState {
   activeRuns: { station: StationName; teamNumber: number; startedAt: number }[];
   /** Why practice recording can't work, when it can't (no streams, no ffmpeg). */
   unavailableReason?: string;
+  /** Why clips are not being recorded right now though they could be:
+   *  matches are being run (every match is recorded instead), or the disk is
+   *  nearly full. */
+  pausedReason?: string;
   /** Recent runs, newest last. */
   runs: PracticeRunEntry[];
 }
@@ -3935,8 +3959,10 @@ export interface PublicPracticeDay {
   day: string;
   /** Human label for the day in the field's local time, e.g. "Fri, Sep 18". */
   dayLabel: string;
-  /** Days recordings are kept before the sweep deletes them. */
+  /** Days match videos are kept before the sweep deletes them. */
   retentionDays: number;
+  /** Days practice clips are kept — shorter than matches. */
+  practiceRetentionDays: number;
   /** Everything in one zip (videos + metadata). */
   zipUrl: string;
   /** Rough size of that zip (sum of the files). */
@@ -4036,6 +4062,9 @@ export interface RecordingsInventory {
   usedBytes?: number;
   diskFreeBytes?: number;
   retentionDays: number;
+  practiceRetentionDays: number;
+  minFreeBytes: number;
+  space: RecordingSpace;
   directory: string;
   scannedAt: number;
 }

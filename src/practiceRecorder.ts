@@ -26,6 +26,12 @@
  *
  * Matches are the MatchRecorder's job — the buffer stops as soon as a match
  * leaves the idle/created phases and runs in progress are closed then.
+ *
+ * Clips can also be paused from outside (`pauseReason`): while matches are
+ * being run on the field — a match is set up, or the queue is in use — every
+ * match is recorded and a clip of each pit-side enable is just noise; and
+ * while the recordings volume is short of space. A run in progress when a
+ * pause begins is closed there and kept; nothing new starts until it lifts.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -80,6 +86,9 @@ export interface PracticeRecorderOptions {
   getTeamForStation: (station: StationName) => number | undefined;
   /** ffmpeg works on this host (the match recorder checked at startup). */
   isAvailable: () => boolean;
+  /** Why clips must not be recorded right now, in words a team can read;
+   *  undefined when they may. Asked every tick and on every enable. */
+  pauseReason?: () => string | undefined;
   /** Input options placed before `-i` (tests use `-re -stream_loop -1` on a file). */
   inputPrefixArgs?: string[];
   now?: () => number;
@@ -137,6 +146,8 @@ export class PracticeRecorder {
   private tickTimer: NodeJS.Timeout | null = null;
   private listeners: ((state: PracticeRecordingState) => void)[] = [];
   private stopping = false;
+  /** The pause reason last broadcast, so a change is told to the pages. */
+  private lastPause: string | undefined;
 
   constructor(opts: PracticeRecorderOptions) {
     this.opts = opts;
@@ -187,6 +198,7 @@ export class PracticeRecorder {
         startedAt: r.startedAt,
       })),
       unavailableReason: this.unavailableReason(),
+      pausedReason: this.pauseReason(),
       runs: runs.slice(-RUNS_IN_STATE),
     };
   }
@@ -235,6 +247,7 @@ export class PracticeRecorder {
     const team = this.opts.getTeamForStation(station);
     if (team === undefined || !this.opts.store.isOptedIn(team)) return;
     if (!isPracticePhase(this.matchPhase)) return;
+    if (this.pauseReason() !== undefined) return;
     if (!this.jobs) {
       // The robot was enabled before the buffer had a chance to start (first
       // telemetry and the enable arrived together). Start now; the pre-roll
@@ -293,6 +306,20 @@ export class PracticeRecorder {
       }
     }
 
+    // Paused (matches being run, disk short of space): what is being
+    // recorded ends here and is kept; nothing new starts.
+    const paused = this.pauseReason();
+    if (paused !== this.lastPause) {
+      this.lastPause = paused;
+      if (paused !== undefined) {
+        for (const run of [...this.runs.values()]) this.closeRun(run, Math.min(now, run.disabledAt ?? now), 'paused');
+        console.log(`Practice recording paused: ${paused}`);
+      } else {
+        console.log('Practice recording resumed');
+      }
+      this.emit();
+    }
+
     for (const run of [...this.runs.values()]) {
       if (!this.opts.store.isOptedIn(run.teamNumber)) {
         // The team unticked the box mid-run: drop it, nothing is kept.
@@ -314,6 +341,7 @@ export class PracticeRecorder {
 
     const shouldBuffer =
       this.unavailableReason() === undefined &&
+      paused === undefined &&
       isPracticePhase(this.matchPhase) &&
       (this.runs.size > 0 || this.presentOptedInStations(now).length > 0);
     if (shouldBuffer && !this.jobs) this.startBuffer();
@@ -330,6 +358,10 @@ export class PracticeRecorder {
       if (team !== undefined && this.opts.store.isOptedIn(team)) out.push(station);
     }
     return out;
+  }
+
+  private pauseReason(): string | undefined {
+    return this.opts.pauseReason?.();
   }
 
   private unavailableReason(): string | undefined {

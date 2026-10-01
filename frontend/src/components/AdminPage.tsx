@@ -1149,6 +1149,8 @@ function MatchRecordingSection() {
   const saved = setupConfig?.config.settings.recordingStreams;
   const [streams, setStreams] = useState<RecordingStreamConfig[]>([]);
   const [retention, setRetention] = useState<string>('');
+  const [clipRetention, setClipRetention] = useState<string>('');
+  const [minFree, setMinFree] = useState<string>('');
   const [dirty, setDirty] = useState(false);
   const [testing, setTesting] = useState<Record<string, RecordingStreamTestResult | 'pending'>>({});
 
@@ -1157,6 +1159,15 @@ function MatchRecordingSection() {
     if (dirty) return;
     setStreams(saved ?? recording?.streams.map(s => ({ name: s.name, url: s.url, enabled: s.enabled })) ?? []);
     setRetention(String(setupConfig?.config.settings.recordingRetentionDays ?? recording?.retentionDays ?? 30));
+    setClipRetention(
+      String(setupConfig?.config.settings.practiceRetentionDays ?? recording?.practiceRetentionDays ?? 7),
+    );
+    setMinFree(
+      String(
+        setupConfig?.config.settings.recordingMinFreeGb ??
+          (recording ? Math.round(recording.minFreeBytes / 1024 ** 3) : 25),
+      ),
+    );
   }, [saved, recording, setupConfig, dirty]);
 
   const edit = (i: number, patch: Partial<RecordingStreamConfig>) => {
@@ -1173,9 +1184,14 @@ function MatchRecordingSection() {
   };
   const save = () => {
     const days = Number.parseInt(retention, 10);
+    const clipDays = Number.parseInt(clipRetention, 10);
+    const freeGb = Number.parseInt(minFree, 10);
+    const within = (n: number, max: number) => (Number.isInteger(n) && n >= 1 && n <= max ? n : undefined);
     sendUpdateSetupSettings({
       recordingStreams: streams.map(s => ({ ...s, name: s.name.trim(), url: s.url.trim() })),
-      recordingRetentionDays: Number.isInteger(days) && days >= 1 && days <= 365 ? days : undefined,
+      recordingRetentionDays: within(days, 365),
+      practiceRetentionDays: within(clipDays, 365),
+      recordingMinFreeGb: within(freeGb, 10000),
     });
     setDirty(false);
   };
@@ -1206,10 +1222,29 @@ function MatchRecordingSection() {
             <>
               {' '}
               Files live in <code>{recording.directory}</code>: {formatRecordingBytes(recording.usedBytes)} used,{' '}
-              {formatRecordingBytes(recording.diskFreeBytes)} free, kept {recording.retentionDays} days.
+              {formatRecordingBytes(recording.diskFreeBytes)} free. Match videos are kept {recording.retentionDays} days
+              and teams&apos; practice clips {recording.practiceRetentionDays}; the timelapse keeps its own, longer
+              schedule (Field Timelapse, below).
             </>
           )}
         </Typography>
+        {recording && recording.space !== 'ok' && (
+          <Alert severity={recording.space === 'critical' ? 'error' : 'warning'} sx={{ mb: 2 }}>
+            {recording.space === 'critical' ? (
+              <>
+                Only {formatRecordingBytes(recording.diskFreeBytes)} free — <strong>nothing is being recorded</strong>,
+                matches included, until space is made (Recordings on Disk, below).
+              </>
+            ) : (
+              <>
+                {formatRecordingBytes(recording.diskFreeBytes)} free, under the{' '}
+                {formatRecordingBytes(recording.minFreeBytes)} floor — <strong>practice clips are paused</strong>.
+                Matches are still recorded. Clips resume by themselves as old ones pass their{' '}
+                {recording.practiceRetentionDays} days, or delete some now (Recordings on Disk, below).
+              </>
+            )}
+          </Alert>
+        )}
 
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {streams.map((s, i) => {
@@ -1289,13 +1324,33 @@ function MatchRecordingSection() {
             </Button>
             <TextField
               size="small"
-              label="Keep recordings (days)"
+              label="Keep match videos (days)"
               value={retention}
               onChange={e => {
                 setDirty(true);
                 setRetention(e.target.value.replace(/[^0-9]/g, ''));
               }}
               sx={{ width: 190 }}
+            />
+            <TextField
+              size="small"
+              label="Keep practice clips (days)"
+              value={clipRetention}
+              onChange={e => {
+                setDirty(true);
+                setClipRetention(e.target.value.replace(/[^0-9]/g, ''));
+              }}
+              sx={{ width: 200 }}
+            />
+            <TextField
+              size="small"
+              label="Pause clips below (GB free)"
+              value={minFree}
+              onChange={e => {
+                setDirty(true);
+                setMinFree(e.target.value.replace(/[^0-9]/g, ''));
+              }}
+              sx={{ width: 210 }}
             />
             <Button size="small" variant="contained" onClick={save} disabled={!dirty || invalid}>
               Save
