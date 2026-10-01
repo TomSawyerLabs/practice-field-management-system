@@ -427,6 +427,45 @@ the slot later rather than weakening the presence rule.
 
 Four full-resolution frames a day is about 12 MB/day, ~4.4 GB/year.
 
+## Lights left on after the 13:00 frame (2026-10-01)
+
+Cameron reported the lights came on for the 13:00 picture and never went
+back, and suspected his recent change of the automation's step-6 timeout from
+10 s to 30 s. The timeout is not involved — the run never got that far.
+
+What the Home Assistant trace shows (run `0f2748ef2fee37971dae4e5fa77b73b9`):
+
+- 13:00:09.93 `scene.create` snapshot — fine.
+- 13:00:09.94 `light.turn_on light.all_lights` — every fixture that was off
+  reported on within 3 s, but the call itself raised
+  `Failed to send request: device did not respond` at 13:00:31, 21 s later.
+- The run stopped there (`script_execution: error`). No call back to pFMS, no
+  wait, **no restore**.
+
+pFMS's side agrees: `timelapse.json` has 13:00 as `lights: failed`, "Home
+Assistant did not confirm the lights within 20s". The frame was still taken.
+The previous four runs (including 09:00 today, after the timeout edit)
+finished normally in 10–17 s.
+
+So this is the 2026-09-22 trap again from a different door: any action that
+raises aborts the run, and the restore is an ordinary later step. That fix
+only protected the call back to pFMS (via `script.turn_on`); `light.turn_on`
+itself was left bare. The same device error also hit `script.cycle_lights` on
+2026-09-30 15:16, so one fixture is intermittently not answering — which one
+is not known (every fixture reported on, so state does not identify it).
+
+State afterwards: a batch of fixtures was switched off by hand at 13:58:44–51.
+Seven that were off before the frame are still on: `bay_34_north_{1,3,4}`,
+`bay_23_south_{1,3,4}`, `bay_45_north_2`. Three that were on before are now
+off: `bay_34_south_{1,3,4}`. `scene.pfms_timelapse_restore` still holds the
+12:59 state, until the next run (17:00) overwrites it.
+
+Proposed fix, not applied (needs Cameron's yes — it is a Home Assistant
+change): `continue_on_error: true` on the `light.turn_on` and on the final
+`scene.turn_on`. This error is an ordinary `HomeAssistantError`, which
+`continue_on_error` does cover (unlike the missing-service case). Then make
+the admin page's YAML generator emit the same.
+
 ## Progress log
 
 - [x] 2026-09-20 Measured the real stream: 3686×3290 @30 fps, 12.3 Mbit/s.
@@ -458,6 +497,12 @@ Four full-resolution frames a day is about 12 MB/day, ~4.4 GB/year.
       `lights: ran`, unattended.
 - [ ] Check the first 21:00 frame — the slot most likely to find the shop
       still occupied.
+- [x] 2026-10-01 Diagnosed the 13:00 lights-left-on: `light.turn_on` raised
+      and aborted the run before the restore (section above).
+- [ ] Make `light.turn_on` and the restore `continue_on_error` in the HA
+      automation, and in the YAML the admin page generates. Waiting on
+      Cameron's go-ahead.
+- [ ] Find the fixture that intermittently does not respond.
 - [ ] Track the automation and script in ops (`homeassistant/ha-tsl`).
 - [ ] Deploy to steamboat and switch it on.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
