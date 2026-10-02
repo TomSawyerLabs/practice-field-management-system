@@ -38,6 +38,15 @@ export class SlackBridge {
     | ((threadTs: string, senderName: string, text: string, files?: { url: string; mimetype: string }[]) => void)
     | null = null;
 
+  /**
+   * Called for every top-level message a person posts in the support
+   * channel (not threads, edits or bots). Used for requests made of the bot
+   * in the open, such as a field snapshot.
+   */
+  onChannelMessage: ((msg: { user: string; text: string; ts: string }) => void) | null = null;
+  /** The bot's own user id, for spotting a mention of it. */
+  private botUserId: string | undefined;
+
   constructor(configFilePath?: string) {
     this.configFilePath = configFilePath ?? process.env.SLACK_CONFIG_FILE ?? DEFAULT_CONFIG_FILE;
     this.loadConfig();
@@ -106,6 +115,12 @@ export class SlackBridge {
 
     try {
       this.web = new WebClient(this.config.botToken);
+      // Who we are, so a mention of the bot can be recognised. Not needed
+      // for anything else, so a failure here is not a failed connection.
+      this.web.auth
+        .test()
+        .then(r => (this.botUserId = r.user_id))
+        .catch(() => undefined);
 
       // Start Socket Mode for receiving messages
       this.socketMode = new SocketModeClient({
@@ -237,6 +252,40 @@ export class SlackBridge {
       return true;
     } catch (err) {
       console.warn('Slack postToChannel failed:', (err as Error).message);
+      return false;
+    }
+  }
+
+  getBotUserId(): string | undefined {
+    return this.botUserId;
+  }
+
+  /** Reply under a message in the support channel. */
+  async replyInThread(threadTs: string, text: string): Promise<boolean> {
+    if (!this.web || !this.config) return false;
+    try {
+      await this.web.chat.postMessage({ channel: this.config.channelId, thread_ts: threadTs, text });
+      return true;
+    } catch (err) {
+      console.warn('Slack replyInThread failed:', (err as Error).message);
+      return false;
+    }
+  }
+
+  /** Post an image to the support channel, top-level, with a comment. */
+  async uploadImageToChannel(image: Buffer, filename: string, title: string, comment: string): Promise<boolean> {
+    if (!this.web || !this.config) return false;
+    try {
+      await this.web.filesUploadV2({
+        channel_id: this.config.channelId,
+        file: image,
+        filename,
+        title,
+        initial_comment: comment,
+      });
+      return true;
+    } catch (err) {
+      console.warn('Slack image upload failed:', (err as Error).message);
       return false;
     }
   }
@@ -442,7 +491,13 @@ export class SlackBridge {
     // Only handle messages in our channel that are threaded replies
     if (!this.config) return;
     if (event.channel !== this.config.channelId) return;
-    if (!event.thread_ts) return; // Only threaded replies
+    if (!event.thread_ts || event.thread_ts === event.ts) {
+      // Top-level in the channel: something asked of the bot in the open.
+      if (!event.bot_id && !event.subtype && event.user && event.text && event.ts) {
+        this.onChannelMessage?.({ user: event.user, text: event.text, ts: event.ts });
+      }
+      return;
+    }
     if (event.bot_id) return; // Ignore our own bot messages
     if (event.subtype === 'bot_message') return;
 

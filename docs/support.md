@@ -53,6 +53,37 @@ grouped as What's new, Fixes and Docs (see `src/deployAnnouncer.ts` — this is
 why commit subjects are written as user-facing prose). Internal changes such as
 plans, tests and tooling are only listed when a deploy has nothing else.
 
+### Field snapshots on request
+
+**Off by default.** Switched on under Slack Integration, which only allows
+it once Slack is connected and a camera stream is enabled (the same streams
+as match recording). Then anyone in the support channel can ask for a live
+picture of the field and it is posted there, top-level, for everyone, with
+who asked:
+
+- mention the bot with a word for a picture — "@pFMS snapshot", "@pFMS can
+  we get a photo?" (`snapshot`, `snap`, `photo`, `picture`, `pic`) — or
+- post a message that is nothing but the request: `!snapshot`, `snapshot`,
+  `field snapshot`, `!photo`, optionally with "please".
+
+Only top-level messages in that one channel count. Threads belong to the
+support chat, and DMs and other channels are ignored, so every request and
+every picture is in the open. There is **one snapshot a minute** for the
+whole channel; asking sooner gets a threaded reply saying when to try
+again, as does a camera that will not answer (which does not use up the
+minute). The picture is one frame off the first enabled stream, scaled to
+1920 wide (`src/slackSnapshots.ts`).
+
+It is on request rather than on a schedule on purpose: an hourly post is
+two dozen pictures a day of a mostly empty shop in a channel meant for
+support, and a person asking is a person choosing to take a picture that
+may have people in it.
+
+No change to the Slack app is needed. A mention of the bot in a channel it
+is in arrives as an ordinary channel message (`message.channels`, already
+subscribed), and the upload uses the `files:write` scope the support chat's
+screenshots already need.
+
 ## Security model — read this before opening a field
 
 pFMS assumes **everyone who can reach it on the network is trusted**. It is

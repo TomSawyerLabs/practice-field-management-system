@@ -73,6 +73,7 @@ import { PracticeStore } from './practiceStore.js';
 import { PracticeRecorder } from './practiceRecorder.js';
 import { FieldTimelapse } from './fieldTimelapse.js';
 import { FieldActivityLog } from './fieldActivityLog.js';
+import { captureSnapshot, SlackSnapshots } from './slackSnapshots.js';
 import { handleTimelapseRequest } from './timelapseApi.js';
 import { createDiagReportHandler } from './diagReportApi.js';
 import { findAssetDir } from './staticServer.js';
@@ -616,6 +617,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   matchRecorder.addSpaceListener(change => {
     void slackBridge.postToChannel(describeSpaceChange(change));
   });
+  // A live picture of the field for whoever asks in the support channel.
+  // Off until an admin switches it on.
+  const slackSnapshots = new SlackSnapshots({
+    isEnabled: () => setupConfigStore.get().settings.slackSnapshots === true,
+    getStreams: () => setupConfigStore.get().settings.recordingStreams ?? envRecordingStreams,
+    isAvailable: () => matchRecorder.isAvailable(),
+    capture: url => captureSnapshot(matchRecorder.ffmpegPath, url),
+    slack: slackBridge,
+  });
+  slackBridge.onChannelMessage = msg => void slackSnapshots.onChannelMessage(msg);
   // Announce version changes to the support channel (commit subjects since last deploy)
   announceDeploy(text => slackBridge.postToChannel(text)).catch(err => {
     console.warn('Deploy announcement failed:', (err as Error).message);

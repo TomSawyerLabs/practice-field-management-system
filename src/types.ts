@@ -240,6 +240,9 @@ export interface SetupSettings {
   practiceRetentionDays?: number;
   /** Free space, in GB, below which no new practice clips are recorded. */
   recordingMinFreeGb?: number;
+  /** Answer a request in the Slack support channel with a live picture of
+   *  the field. Off unless switched on. */
+  slackSnapshots?: boolean;
   /** Whether robots NOT in a match can be enabled from their own Driver
    *  Station (pFMS sends a "not in match" release so the DS keeps local
    *  control). Absent/true = on; set false via the admin switch to hold
@@ -773,6 +776,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   practiceRetentionDays: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 365,
   recordingMinFreeGb: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10000,
+  slackSnapshots: v => typeof v === 'boolean',
   outOfMatchControl: v => typeof v === 'boolean',
   holdRadioChanges: v => typeof v === 'boolean',
   holdRadioChangesForMatch: v => typeof v === 'boolean',

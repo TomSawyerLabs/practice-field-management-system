@@ -1480,6 +1480,17 @@ function AudioDeviceSection() {
 
 function SlackConfigSection() {
   const slackConfig = useSlackConfigState();
+  const setupConfig = useSetupConfig();
+  const recording = useMatchRecordingState();
+  const snapshotsOn = setupConfig?.config.settings.slackSnapshots === true;
+  // Only offerable with Slack connected and a camera to take the picture.
+  const snapshotBlocked = !slackConfig?.connected
+    ? 'Connect Slack first.'
+    : !recording?.available
+      ? 'ffmpeg is not available on this host.'
+      : !recording.streams.some(s => s.enabled)
+        ? 'Add and enable a camera stream under Match Video Recording first.'
+        : null;
   const [botToken, setBotToken] = useState('');
   const [appToken, setAppToken] = useState('');
   const [channelId, setChannelId] = useState('');
@@ -1530,6 +1541,30 @@ function SlackConfigSection() {
           Connect to a Slack channel to receive support issue reports and enable real-time chat. Uses Socket Mode — no
           public URL or HTTPS required.
         </Typography>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 1.5 }}>
+          <Box sx={{ minWidth: 260, flex: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Typography variant="subtitle1">Field snapshots on request</Typography>
+              <Chip size="small" color={snapshotsOn ? 'success' : 'default'} label={snapshotsOn ? 'On' : 'Off'} />
+            </Box>
+            <Typography variant="body2" color="text.secondary">
+              Anyone in the support channel can ask for a live picture of the field — mention the bot with
+              &quot;snapshot&quot; or &quot;photo&quot;, or post just <code>!snapshot</code> — and it is posted there
+              for everyone, at most one a minute. Requests in threads, DMs and other channels are ignored.
+              {snapshotBlocked && !snapshotsOn && ` ${snapshotBlocked}`}
+              {snapshotBlocked && snapshotsOn && ` It cannot answer right now: ${snapshotBlocked}`}
+            </Typography>
+          </Box>
+          <Button
+            variant="outlined"
+            color={snapshotsOn ? 'warning' : 'success'}
+            disabled={!snapshotsOn && snapshotBlocked !== null}
+            onClick={() => sendUpdateSetupSettings({ slackSnapshots: !snapshotsOn })}
+          >
+            {snapshotsOn ? 'Turn off' : 'Turn on'}
+          </Button>
+        </Box>
 
         <Accordion
           disableGutters
