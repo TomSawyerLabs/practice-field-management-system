@@ -70,6 +70,12 @@ function robotsEnabledPhase(phase: MatchPhase): boolean {
  *  stuck in match mode until someone clicks "clear". E-stop endings are exempt —
  *  those require a human to clear. */
 const POST_MATCH_AUTO_CLEAR_MS = 2 * 60_000;
+/** How long a set-up match may sit with no team joined before it cancels
+ *  itself. A match that exists holds every team's Wi-Fi request, so one that
+ *  was set up and walked away from locks arriving teams off the field (team
+ *  840 on 2026-10-01: three requests held by a match set up eight minutes
+ *  earlier and never touched again). */
+export const SETUP_AUTO_CANCEL_MS = 10 * 60_000;
 
 // Official 2026 REBUILT match timing (fixed — not user-adjustable)
 // Teleop = transition (10s) + 4 shifts (25s each) + endgame (30s) = 140s
@@ -132,6 +138,9 @@ export class MatchEngine {
   private totalMatchTime = 0;
   private tickTimer: NodeJS.Timeout | null = null;
   private autoClearTimer: NodeJS.Timeout | null = null;
+  private setupAutoCancelTimer: NodeJS.Timeout | null = null;
+  /** Epoch ms when the set-up match cancels itself, while that clock runs. */
+  private setupExpiresAt: number | null = null;
   private lastTickTime = 0;
   private prePausePhase: MatchPhase | null = null;
   /** Epoch ms when a pending resume completes, or null when not resuming. */
@@ -462,6 +471,39 @@ export class MatchEngine {
     this.phase = 'idle';
     console.log('Match cancelled');
     this.broadcast();
+  }
+
+  /** Run the abandoned-setup clock exactly while a match is set up with no
+   *  team joined: a join stops it, the last team leaving starts it afresh.
+   *  Staff activity does not reset it — staff pages heartbeat, so a page
+   *  left open would keep an abandoned match alive forever. */
+  private syncSetupAutoCancel() {
+    if (this.phase === 'created' && this.getJoinedCount() === 0) {
+      if (this.setupAutoCancelTimer) return;
+      this.setupExpiresAt = Date.now() + SETUP_AUTO_CANCEL_MS;
+      this.setupAutoCancelTimer = setTimeout(() => this.cancelAbandonedSetup(), SETUP_AUTO_CANCEL_MS);
+      this.setupAutoCancelTimer.unref();
+      return;
+    }
+    if (this.setupAutoCancelTimer) clearTimeout(this.setupAutoCancelTimer);
+    this.setupAutoCancelTimer = null;
+    this.setupExpiresAt = null;
+  }
+
+  private cancelAbandonedSetup() {
+    this.setupAutoCancelTimer = null;
+    if (this.phase !== 'created' || this.getJoinedCount() > 0) return;
+    console.log(`Set-up match abandoned: no team joined in ${SETUP_AUTO_CANCEL_MS / 60_000} minutes`);
+    this.cancelMatch();
+    this.abandonedSetupHook?.();
+  }
+
+  /** Runs after a set-up match nobody joined has cancelled itself, so the
+   *  join requests it was holding can go through with nobody at the match
+   *  page to apply them. */
+  private abandonedSetupHook?: () => void;
+  setAbandonedSetupHook(fn: () => void) {
+    this.abandonedSetupHook = fn;
   }
 
   /** Swap a station to the opposite alliance (controller only, pre-match). */
@@ -1691,6 +1733,7 @@ export class MatchEngine {
       resumeAt: this.resumeAt ?? undefined,
       restartCooldown:
         this.restartCooldown && Date.now() < this.restartCooldown.until ? this.restartCooldown : undefined,
+      setupExpiresAt: this.setupExpiresAt ?? undefined,
       readyRequested: this.readyRequested,
       staffStates,
       challenge: isChallengeConfig(this.config ?? this.pendingConfig)
@@ -2078,6 +2121,7 @@ export class MatchEngine {
   }
 
   private broadcast() {
+    this.syncSetupAutoCancel();
     const state = this.getState();
     for (const listener of this.listeners) {
       try {

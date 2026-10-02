@@ -54,9 +54,11 @@ A frontend client sends a WebSocket message with
 
 2. **Wait, defer, or commit** — the server decides when the radio changes:
    - **Waits** on the pending list (`staged-config.json`, an ordered list
-     of enable/release changes named by robot) while a match exists in any
-     phase (created through post-match), the admin "Hold Wi-Fi changes"
-     box is ticked, or other changes are already waiting. Adding a change
+     of enable/release changes named by robot) while a match is running,
+     while one is set up or just over (unless `holdRadioChangesForMatch`
+     is off — the match page's switch, `matchHoldWifi`), the admin "Hold
+     Wi-Fi changes" box is ticked, or other changes are already waiting.
+     Adding a change
      simplifies the list: a later change about the same robot overrides an
      earlier one, and release-then-enable cancels out. The list reaches
      the radio only when staff press **Apply now** on the match or admin
@@ -64,7 +66,9 @@ A frontend client sends a WebSocket message with
      enables are placed on free stations, and one commit follows. When a
      match ends a release is queued for every robot on the field; joining
      the next match or asking again withdraws it (`releaseAfterMatch`
-     setting).
+     setting). A set-up match nobody joins cancels itself after 10 minutes
+     (`SETUP_AUTO_CANCEL_MS`) and then applies the waiting enables only
+     (`applyPendingJoins()`); releases keep waiting for staff.
    - **Deferred** while any robot is enabled: the change is applied to the
      active config straight away, but `commitConfiguration()` waits and
      re-runs as soon as the last robot is disabled.

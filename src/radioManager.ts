@@ -671,7 +671,7 @@ class RadioManager {
    * it is unresolved and keeps waiting. `resolved` maps each applied change
    * to the station it touches.
    */
-  private computeTarget(): {
+  private computeTarget(changes: PendingChange[] = this.changes): {
     target: Partial<Record<StationName, StationConfig>>;
     resolved: Map<string, StationName>;
     unresolved: Set<string>;
@@ -680,7 +680,7 @@ class RadioManager {
     const resolved = new Map<string, StationName>();
     const unresolved = new Set<string>();
     const where = (ssid: string) => StationNameList.find(s => target[s]?.ssid === ssid);
-    for (const change of this.changes) {
+    for (const change of changes) {
       if (change.kind === 'release') {
         const station = where(change.ssid);
         if (station) {
@@ -820,9 +820,15 @@ class RadioManager {
    * with nothing in the way. It ignores the hold, but the commit still
    * waits while robots are enabled. Enables that find no free station stay
    * on the list.
+   *
+   * `only` narrows it to part of the list (see applyPendingJoins()); the
+   * rest keeps waiting.
    */
-  applyPendingChanges(): Promise<void> {
-    const { target, unresolved } = this.computeTarget();
+  applyPendingChanges(only?: (change: PendingChange) => boolean): Promise<void> {
+    const selected = only ? this.changes.filter(only) : this.changes;
+    const { target, unresolved } = this.computeTarget(selected);
+    // Nothing of the narrowed part can go through: leave the radio alone.
+    if (only && selected.every(c => unresolved.has(c.id))) return Promise.resolve();
     const mutations: string[] = [];
     for (const station of StationNameList) {
       const before = this.activeConfig[station];
@@ -841,8 +847,8 @@ class RadioManager {
         this.lastLinked.delete(station);
       }
     }
-    const applied = this.changes.filter(c => !unresolved.has(c.id));
-    this.changes = this.changes.filter(c => unresolved.has(c.id));
+    const applied = selected.filter(c => !unresolved.has(c.id));
+    this.changes = this.changes.filter(c => !applied.includes(c));
     if (applied.length > 0) {
       console.log(
         `Applying ${applied.length} pending Wi-Fi change(s) as ${mutations.length} station change(s)` +
@@ -857,6 +863,16 @@ class RadioManager {
       this.notifyLastLinkedListeners();
     }
     return this.commitConfiguration();
+  }
+
+  /**
+   * Apply only the robots waiting to join; releases stay on the list for
+   * staff. For when nobody is at the match page to press Apply now (a set-up
+   * match was abandoned): a team that asked for Wi-Fi gets it, and no robot
+   * leaves the field without staff saying so.
+   */
+  applyPendingJoins(): Promise<void> {
+    return this.applyPendingChanges(c => c.kind === 'enable');
   }
 
   commitConfiguration(): Promise<void> {

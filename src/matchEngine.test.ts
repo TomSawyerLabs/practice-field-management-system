@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MatchEngine, RESTART_COOLDOWN_MS } from './matchEngine.js';
+import { MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { ScoringEngine } from './scoringEngine.js';
 import {
@@ -512,6 +512,46 @@ describe('a driver station that drops off the field mid-match', () => {
     expect(engine.getState().stationStates.slot1?.disabledBy).toBe('admin');
     engine.stopMatch();
   }, 10_000);
+});
+
+describe('a set-up match nobody joins', () => {
+  /** Fire the abandoned-setup timer now instead of waiting ten minutes. */
+  function expire(engine: MatchEngine) {
+    (engine as unknown as { cancelAbandonedSetup(): void }).cancelAbandonedSetup();
+  }
+
+  test('says when it will cancel itself, and does', () => {
+    const engine = created();
+    let abandoned = 0;
+    engine.setAbandonedSetupHook(() => abandoned++);
+    expect(engine.getState().setupExpiresAt).toBeGreaterThan(Date.now() + SETUP_AUTO_CANCEL_MS - 1000);
+
+    expire(engine);
+    expect(engine.getState().phase).toBe('idle');
+    expect(engine.getState().setupExpiresAt).toBeUndefined();
+    expect(abandoned).toBe(1);
+  });
+
+  test('a team joining stops the clock, and the last one leaving restarts it', () => {
+    const engine = created();
+    engine.joinStationAlliance('slot1', 'red');
+    expect(engine.getState().setupExpiresAt).toBeUndefined();
+    expire(engine); // a timer that fires anyway changes nothing
+    expect(engine.getState().phase).toBe('created');
+
+    engine.leaveStation('slot1');
+    expect(engine.getState().setupExpiresAt).toBeDefined();
+  });
+
+  test('staff cancelling it by hand is not an abandoned match', () => {
+    const engine = created();
+    let abandoned = 0;
+    engine.setAbandonedSetupHook(() => abandoned++);
+    engine.cancelMatch();
+    expect(engine.getState().setupExpiresAt).toBeUndefined();
+    expire(engine);
+    expect(abandoned).toBe(0);
+  });
 });
 
 describe('a manual relay', () => {

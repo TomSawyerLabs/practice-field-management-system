@@ -910,12 +910,13 @@ function RobotWifiScanSection() {
   );
 }
 
-/** Admin hold on Wi-Fi changes: teams' requests are parked instead of
- *  applied, exactly as while a match exists, until staff apply them. The
+/** Holds on Wi-Fi changes: teams' requests are parked instead of applied
+ *  until staff apply them — always, or only around a match. The
  *  pending panel underneath is the same one the match page shows. */
 function WifiChangesSection() {
   const setupConfig = useSetupConfig();
   const hold = setupConfig?.config.settings.holdRadioChanges === true;
+  const holdForMatch = setupConfig?.config.settings.holdRadioChangesForMatch !== false;
   const releaseAfterMatch = setupConfig?.config.settings.releaseAfterMatch !== false;
   return (
     <>
@@ -934,7 +935,21 @@ function WifiChangesSection() {
           <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
             {hold
               ? 'Teams can still press Enable Robot, but nothing reaches the radio until you press Apply now below.'
-              : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled — unless something is already waiting, in which case they join that batch. They are held automatically while a match exists; tick this to hold them at other times too, e.g. a busy scrimmage day. Waiting changes only go out when you press Apply now.'}
+              : 'Teams’ Wi-Fi requests apply as they come — as soon as every robot is disabled — unless something is already waiting, in which case they join that batch. Tick this to hold them all the time, e.g. a busy scrimmage day. Waiting changes only go out when you press Apply now.'}
+          </Typography>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={holdForMatch}
+                onChange={e => sendUpdateSetupSettings({ holdRadioChangesForMatch: e.target.checked })}
+              />
+            }
+            label="Hold Wi-Fi changes while a match is set up"
+          />
+          <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+            {holdForMatch
+              ? 'While a match is set up or just over, requests wait for Apply now. The match page has this same switch. A set-up match that no team joins cancels itself after 10 minutes and lets waiting robots join.'
+              : 'Requests apply as they come even while a match is set up or just over. They are still held while a match is running.'}
           </Typography>
           <FormControlLabel
             control={

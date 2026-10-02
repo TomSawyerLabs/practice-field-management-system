@@ -249,6 +249,11 @@ export interface SetupSettings {
    *  match existing. Staff apply them from the match or admin page. Absent /
    *  false = requests apply as they come (once robots are disabled). */
   holdRadioChanges?: boolean;
+  /** Hold teams' Wi-Fi requests while a match is set up or just over (the
+   *  `created` and `postMatch` phases). Absent / true = hold; false = they
+   *  apply as they come in those phases. A running match always holds them.
+   *  Flipped from the match page (`matchHoldWifi`) or the admin page. */
+  holdRadioChangesForMatch?: boolean;
   /** Wireless interface pFMS may use to listen for robots' 2.4 GHz networks
    *  and check their passphrases (see robotWifiScan.ts). Absent / empty = the
    *  robot Wi-Fi scan is off. The interface is dedicated to this: pFMS runs
@@ -770,6 +775,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingMinFreeGb: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10000,
   outOfMatchControl: v => typeof v === 'boolean',
   holdRadioChanges: v => typeof v === 'boolean',
+  holdRadioChangesForMatch: v => typeof v === 'boolean',
   robotWifiInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
   releaseAfterMatch: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
@@ -1356,6 +1362,9 @@ export type MatchState = {
    *  `cancelledBy` is the station whose team backed out, or null when the
    *  match page cancelled it (start button let go, or Abort Countdown). */
   restartCooldown?: { until: number; cancelledBy: StationName | null };
+  /** Epoch ms (server clock) when this set-up match cancels itself because
+   *  no team has joined it. Present only in `created` with nobody joined. */
+  setupExpiresAt?: number;
   /** True once the host has opened the ready check. Until then, no station or
    *  staff role may ready up. Reset whenever the roster changes. */
   readyRequested: boolean;
@@ -1557,6 +1566,15 @@ export type MatchCancel = { type: 'matchCancel' };
 export function isMatchCancel(msg: unknown): msg is MatchCancel {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as MatchCancel).type === 'matchCancel';
+}
+
+/** The match page's switch: hold teams' Wi-Fi requests while a match is set
+ *  up or just over (setting `holdRadioChangesForMatch`). */
+export type MatchHoldWifi = { type: 'matchHoldWifi'; hold: boolean };
+export function isMatchHoldWifi(msg: unknown): msg is MatchHoldWifi {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as MatchHoldWifi;
+  return m.type === 'matchHoldWifi' && typeof m.hold === 'boolean';
 }
 
 export type MatchAbortCountdown = { type: 'matchAbortCountdown' };
@@ -1959,8 +1977,9 @@ export function isRoutePreferenceState(msg: unknown): msg is RoutePreferenceStat
 
 // ── Pending Commit Types ────────────────────────────────────────────
 
-/** Why Wi-Fi changes are waiting rather than applied: a match exists
- *  (created, running, or post-match), an admin switched the hold on, or
+/** Why Wi-Fi changes are waiting rather than applied: a match is running,
+ *  or one is set up or just over and the match hold is on, an admin
+ *  switched the hold on, or
  *  other changes are already waiting for staff to apply and a new one
  *  joins that batch instead of reconfiguring the radio on its own. */
 export type RadioHoldReason = 'match' | 'admin' | 'pending';

@@ -42,6 +42,7 @@ import {
   isRoutePreferenceMsg,
   isDriveAction,
   isApplyConfig,
+  isMatchHoldWifi,
   isRunTeamChecks,
   isFirmwareUpdateRequest,
   isStopCast,
@@ -1190,6 +1191,13 @@ export function setupWebSocket(
           appError('Error applying config: ' + err.message);
           ws.send(JSON.stringify({ error: 'Failed to apply configuration', details: err.message }));
         });
+      } else if (isMatchHoldWifi(data)) {
+        // Match-page trust, like Apply now above — which is the stronger
+        // power. Whatever is already waiting still needs Apply now.
+        console.log(
+          `Match page: Wi-Fi changes ${data.hold ? 'held' : 'not held'} while a match is set up (${clientIp})`,
+        );
+        setup?.configStore.updateSettings({ holdRadioChangesForMatch: data.hold });
       } else if (isRunTeamChecks(data)) {
         onRunTeamChecks?.(data.station);
       } else if (isFirmwareUpdateRequest(data)) {

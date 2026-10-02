@@ -1482,6 +1482,12 @@ export function sendApplyConfig() {
   ws?.send(JSON.stringify({ type: 'applyConfig' }));
 }
 
+/** The match page's switch: hold teams' Wi-Fi requests while a match is set
+ *  up or just over. A running match holds them either way. */
+export function sendMatchHoldWifi(hold: boolean) {
+  ws?.send(JSON.stringify({ type: 'matchHoldWifi', hold }));
+}
+
 // ── Team Checks ─────────────────────────────────────────────────────
 
 export function useTeamCheckResults(station: StationName): TeamCheckResults | null {

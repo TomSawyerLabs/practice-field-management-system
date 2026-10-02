@@ -30,7 +30,11 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
 ## Match Flow
 
 1. **Create** — the match controller creates a match from `/match`. Teams
-   can now join from their station pages.
+   can now join from their station pages. A set-up match that no team
+   joins **cancels itself after 10 minutes** (the match page says when):
+   a match that exists holds teams' Wi-Fi requests, so one that was set up
+   and walked away from would lock arriving teams off the field. The clock
+   stops when a team joins and starts again if the last one leaves.
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
    each) from their station page. Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
@@ -246,6 +250,18 @@ the team — decides when that happens:
   page opens a dialog saying the match admin has to apply it, and they can
   cancel it. Waiting changes reach the radio only when staff press **Apply
   now**; the hold lifting does not send them by itself.
+
+The match page has a switch, **Hold teams' Wi-Fi requests while a match is
+set up** (also on the admin page; setting `holdRadioChangesForMatch`, on by
+default). Turned off, a request made while a match is set up or just over
+applies as it comes, exactly as with no match. A running match holds
+requests whatever the switch says. Turning it off does not send what is
+already waiting — press Apply now.
+
+One exception to "only staff apply": when a set-up match cancels itself
+because nobody joined, the robots waiting to **join** go through, since
+nobody is at the match page to apply them. Robots queued to **leave** stay
+on the list for staff, and nothing goes through while the admin hold is on.
 
 The pending list is a list of changes, not a slot table. A new change
 overrides anything earlier about the same robot: a release followed by an

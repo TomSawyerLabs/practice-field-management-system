@@ -6,6 +6,8 @@ import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DangerousIcon from '@mui/icons-material/Dangerous';
@@ -61,6 +63,8 @@ import {
   usePublicUrl,
   matchSummaryUrl,
   serverToBrowserTime,
+  useSetupConfig,
+  sendMatchHoldWifi,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { QueueNextUp } from './QueueNextUp';
@@ -500,6 +504,7 @@ export function MatchControlPage() {
         {/* Teams' Wi-Fi requests wait while a match exists; this is where the
             match manager sees them and applies them between matches. */}
         <PendingRadioChangesPanel />
+        <WifiHoldSwitch />
 
         {/* The queue's next match, with "Set up next match" (Wi-Fi batch +
             create + join). Nothing when the queue is not in use. */}
@@ -516,6 +521,33 @@ export function MatchControlPage() {
         {showHistory && <MatchHistorySection matches={matchHistory.matches} />}
       </Container>
     </Box>
+  );
+}
+
+// ── Wi-Fi hold switch ───────────────────────────────────────────────
+
+/** Whether teams' Wi-Fi requests wait for Apply now while a match is set up
+ *  or just over. Lives here, not only in admin, because the person running
+ *  matches is the one who knows whether a robot may join right now — and has
+ *  no admin login. A running match holds requests whatever this says. */
+function WifiHoldSwitch() {
+  const setupConfig = useSetupConfig();
+  if (!setupConfig) return null;
+  const hold = setupConfig.config.settings.holdRadioChangesForMatch !== false;
+  return (
+    <Card sx={{ mb: 2 }}>
+      <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+        <FormControlLabel
+          control={<Switch checked={hold} onChange={e => sendMatchHoldWifi(e.target.checked)} />}
+          label="Hold teams' Wi-Fi requests while a match is set up"
+        />
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          {hold
+            ? 'A team asking for Wi-Fi while a match is set up or just over waits for you to press Apply now, so every change goes out together between matches.'
+            : 'A team asking for Wi-Fi while a match is set up or just over gets it straight away. The radio reconfigures for about 30 seconds and drops every robot’s Wi-Fi while it does. Requests still wait while a match is running.'}
+        </Typography>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -614,6 +646,11 @@ function CreatedView({
           {joinedStations.length === 0 ? (
             <Typography variant="body2" color="text.secondary">
               Waiting for teams to join from their control pages...
+              {matchState.setupExpiresAt !== undefined &&
+                ` If nobody has joined by ${new Date(serverToBrowserTime(matchState.setupExpiresAt)).toLocaleTimeString(
+                  [],
+                  { hour: 'numeric', minute: '2-digit' },
+                )}, this match cancels itself so it does not keep holding teams' Wi-Fi requests.`}
             </Typography>
           ) : (
             <Box sx={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>

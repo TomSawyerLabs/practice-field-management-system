@@ -341,6 +341,33 @@ describe('applying reconciles the list with the field', () => {
   });
 });
 
+describe('when a set-up match is abandoned', () => {
+  test('robots waiting to join go through, and robots queued to leave stay for staff', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.stageReleaseAll('postMatch');
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot2', other);
+
+    await rm.applyPendingJoins();
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'postMatch' },
+    ]);
+  });
+
+  test('with no robot waiting to join, nothing changes', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    rm.stageReleaseAll('postMatch');
+
+    await rm.applyPendingJoins();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState().changes).toHaveLength(1);
+  });
+});
+
 describe('after a match', () => {
   test('every robot on the field is queued to leave, and nothing leaves until staff apply', async () => {
     const rm = manager();

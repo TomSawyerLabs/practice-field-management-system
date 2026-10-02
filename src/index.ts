@@ -374,14 +374,28 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
 
   // Teams' Wi-Fi requests wait — parked on the pending list, not applied —
-  // while a match exists in any phase (created through post-match), while an
-  // admin holds them from the admin page, or while other changes are already
-  // waiting. Waiting changes only reach the radio when staff press "Apply
-  // now" on the match or admin page. Read live.
+  // while a match is running, while one is set up or just over (unless the
+  // match page's hold switch is off), while an admin holds them from the
+  // admin page, or while other changes are already waiting. Waiting changes
+  // only reach the radio when staff press "Apply now" on the match or admin
+  // page. Read live.
   radioManager.setShouldHold(() => {
-    if (matchEngine.getState().phase !== 'idle') return 'match';
-    if (setupConfigStore.get().settings.holdRadioChanges) return 'admin';
+    const settings = setupConfigStore.get().settings;
+    // A running match always holds: applying rewrites which team a station
+    // holds, under a match that is using it.
+    if (matchEngine.isMatchActive()) return 'match';
+    if (matchEngine.getState().phase !== 'idle' && settings.holdRadioChangesForMatch !== false) return 'match';
+    if (settings.holdRadioChanges) return 'admin';
     return null;
+  });
+  // A set-up match nobody joined has cancelled itself: nobody is at the
+  // match page, so the joins it was holding go through. Releases still wait
+  // for staff, and the admin hold still holds everything.
+  matchEngine.setAbandonedSetupHook(() => {
+    if (setupConfigStore.get().settings.holdRadioChanges) return;
+    radioManager.applyPendingJoins().catch(err => {
+      console.error('Error applying Wi-Fi joins after an abandoned match setup:', err);
+    });
   });
   matchEngine.addStateListener(() => radioManager.retryHeldChanges());
   setupConfigStore.addListener(() => radioManager.retryHeldChanges());
