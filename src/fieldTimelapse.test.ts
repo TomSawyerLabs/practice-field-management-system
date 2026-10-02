@@ -746,6 +746,27 @@ describe('FieldTimelapse', () => {
     expect(timelapse.filePath('scrub', chunk.scrub!.file)).toBeTruthy();
     // Only the sheet is served from there.
     expect(timelapse.filePath('scrub', session.file)).toBeUndefined();
+
+    // The scrub copy: the same number of frames, every one a keyframe.
+    expect(chunk.proxy).toMatch(/\.scrub\.m4v$/);
+    const proxy = timelapse.filePath('proxy', chunk.proxy!)!;
+    expect(proxy).toBeTruthy();
+    const frames = execFileSync(
+      ffprobe,
+      ['-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=flags', '-of', 'csv=p=0', proxy],
+      { encoding: 'utf8' },
+    )
+      .trim()
+      .split(/\s+/);
+    expect(frames).toHaveLength(Math.round(chunk.mediaSeconds * 30));
+    expect(frames.every(f => f.startsWith('K'))).toBe(true);
+    // It is not listed as a chunk in its own right.
+    expect(
+      timelapse
+        .listing()
+        .days.flatMap(d => d.practice)
+        .some(f => f.file.includes('scrub')),
+    ).toBe(false);
   }, 30_000);
 
   test('a match recording becomes a chunk at the same settings, so the film runs through the match', async () => {
@@ -767,6 +788,7 @@ describe('FieldTimelapse', () => {
     // 20 s with a 2 s GOP, keyframes only: 10 frames, a third of a second of film.
     expect(made!.mediaSeconds).toBeCloseTo(10 / 30, 5);
     expect(made!.scrub?.count).toBe(1);
+    expect(made!.proxy).toBeTruthy();
     const probe = execFileSync(
       ffprobe,
       [

@@ -41,6 +41,7 @@ export interface ChunkInfo {
   capturing?: boolean;
   estimated?: boolean;
   scrub?: TimelapseScrub;
+  proxy?: string;
   matchId?: string;
 }
 
@@ -65,6 +66,7 @@ export function placeSegments(chunks: ChunkInfo[]): TimelapseSegment[] {
       ...(c.capturing ? { capturing: true } : {}),
       ...(c.estimated ? { estimated: true } : {}),
       ...(c.scrub ? { scrub: c.scrub } : {}),
+      ...(c.proxy ? { proxy: c.proxy } : {}),
       ...(c.matchId ? { matchId: c.matchId } : {}),
     });
     covered = Math.max(covered, c.end);

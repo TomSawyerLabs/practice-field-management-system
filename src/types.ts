@@ -4335,6 +4335,11 @@ export interface TimelapseSegment {
    *  finalized yet); it can be off by a few seconds of field time. */
   estimated?: boolean;
   scrub?: TimelapseScrub;
+  /** Path under `/api/timelapse/proxy/` of the chunk's scrub copy: the same
+   *  frames at the same times, smaller and with every frame a keyframe, so
+   *  a seek decodes one frame instead of up to thirty. Dragged on; the full
+   *  chunk takes over when the drag ends. */
+  proxy?: string;
   matchId?: string;
 }
 

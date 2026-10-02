@@ -795,15 +795,24 @@ behind one switch:
   minutes of film, about 60 MB. "Every second" instead gives 30× and
   smoother motion for roughly the same disk, at most of a CPU core.
 
-Every chunk is **finalized** once it closes, for the viewer: a sidecar
-(`<chunk>.json`) records the wall-clock span it covers and its length as
-film, which is what places it on the timeline; the chunk is remuxed to a
-faststart MP4 so a browser can seek anywhere in it at once (it is captured
-fragmented, so a crash still leaves a playable file); and a sheet of small
-frames (`<chunk>.scrub.jpg`, one 160 px tile per 20 s of field time) is cut
-from it for instant scrub previews. That costs a couple of seconds of CPU
-per half-hour chunk, runs one at a time and never during a match, and
-chunks from before it existed are finalized in the background at startup.
+Every chunk is **finalized** once it closes, for the viewer:
+
+- a sidecar (`<chunk>.json`) records the wall-clock span it covers and its
+  length as film, which is what places it on the timeline;
+- the chunk is remuxed to a faststart MP4, so a browser can seek anywhere in
+  it at once (it is captured fragmented, so a crash still leaves a playable
+  file);
+- a sheet of small frames (`<chunk>.scrub.jpg`, one 160 px tile per 20 s of
+  field time) is cut from it, for the hover preview and the filmstrip;
+- a **scrub copy** (`<chunk>.scrub.m4v`) is encoded: the same frames at the
+  same times, 960 px wide, with every frame a keyframe. This is what a drag
+  runs on — see below. It is about the size of the chunk itself, so the
+  timelapse costs roughly twice the disk it did (~40 MB per hour on the
+  field instead of ~20).
+
+That is under two seconds of CPU per half-hour chunk on a desktop, runs one
+at a time and never during a match, and chunks from before any of it existed
+are brought up to date in the background at startup.
 
 Alongside, a **field activity log** (`activity/<day>.jsonl`,
 `src/fieldActivityLog.ts`) records what the timeline draws: when each
@@ -842,21 +851,42 @@ pixels merge into one bar, shaded by how much of it was actually busy and
 labelled with how many it holds (`×12`); hovering says how many enables and
 how long, and double-clicking zooms to it, where they come apart again.
 
-Scrubbing is built to keep up with a dragged mouse: each chunk is a
-faststart MP4 with a keyframe every second of film, only one seek per video
-is ever in flight (newer targets queue behind it, latest wins), and the
-chunk's scrub sheet paints the frame under the pointer instantly while the
-video catches up. Hovering the timeline shows the same picture above it.
-Measured in Chrome on a real event day: 61 pointer moves across the day
-produced 47 landed seeks.
+Scrubbing is built to keep up with a dragged mouse. Landing on a frame
+in a chunk means decoding from its last keyframe — up to thirty 1920×1714
+frames, about 52 ms measured in Chrome, so dragging on the chunk itself
+updates at under 20 frames a second. A drag therefore never touches the
+chunk: it seeks the chunk's scrub copy, laid over the film, where every
+frame is a keyframe and a seek takes about 2.4 ms. When the drag ends the
+chunk seeks once to that frame and the copy is taken away, so the picture
+sharpens in place. Only one seek per video is ever in flight (newer targets
+queue behind it, latest wins). Measured in Chrome on a real event day: 151
+pointer moves in 2.6 s landed 132 frames, with no seek of the full chunk
+until the release. Until a scrub copy has loaded — or for the chunk still
+being written, which has none — the scrub sheet's tile stands in.
+
+| Encoding of a half-hour chunk               | Size  | Seek, median | p90   |
+| ------------------------------------------- | ----- | ------------ | ----- |
+| The chunk: 1920 wide, keyframe every 30     | 16 MB | 52 ms        | 77 ms |
+| 1920 wide, keyframe every 5                 | 59 MB | 23 ms        | 29 ms |
+| 960 wide, keyframe every 5                  | 17 MB | 5 ms         | 8 ms  |
+| **Scrub copy: 960 wide, every frame a key** | 24 MB | 2.4 ms       | 4 ms  |
+| 640 wide, every frame a key                 | 12 MB | 1.7 ms       | 3 ms  |
+
+The timeline is **continuous across days**: pan or zoom straight over a
+04:00 boundary (a labelled divider) and the next day's data is fetched
+around the view, a day to spare either side. It zooms out to three days.
+The day picker, the previous/next-day buttons (labelled with the day they
+go to; `[` and `]`) and playback running off the end of a day into the next
+one with footage are all jumps along that one timeline.
 
 Controls: drag on the timeline to scrub, wheel to zoom around the pointer,
 drag the time axis (or Shift-drag) to pan, double-click to zoom to a match
 or cluster; Space plays and pauses, ←/→ steps a frame (2 s of field time),
 Shift ←/→ a minute, `,` and `.` jump to the previous/next match or enable,
-F fits the day's activity. The speed menu runs from 15× to 960× real time.
+`[` and `]` go to the previous/next day with footage, F fits the day's
+activity. The speed menu runs from 15× to 960× real time.
 The address bar follows the playhead (`/timelapse?day=…&t=…`), so a link
-opens on the same moment. A day still in progress refreshes every 20 s.
+opens on the same moment. A view that includes now refreshes every 20 s.
 
 The page reads `GET /api/timelapse/timeline?from=&to=` (the day assembled
 server-side by `src/timelapseApi.ts` and `src/timelapseTimeline.ts`) and

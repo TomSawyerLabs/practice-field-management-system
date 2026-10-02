@@ -34,8 +34,13 @@
  * timing goes in a sidecar (`<chunk>.json`: wall-clock start/end and its
  * playback length, which is what places it on the timeline), it is remuxed
  * to a faststart MP4 so a browser can seek anywhere without reading the whole
- * file, and a sheet of small frames (`<chunk>.scrub.jpg`) is cut from it so
- * scrubbing can show a picture instantly. Chunks from before this existed
+ * file, a sheet of small frames (`<chunk>.scrub.jpg`) is cut from it so a
+ * hover can show a picture instantly, and a scrub copy
+ * (`<chunk>.scrub.m4v`) is encoded: the same frames at 960 px with every
+ * frame a keyframe. A seek in the chunk itself decodes up to 30 frames of
+ * 1920×1714 (~52 ms measured in Chrome); in the scrub copy it decodes one
+ * small one (~2.4 ms), which is what lets a drag show a real frame for every
+ * pointer move. Chunks from before this existed
  * are finalized in the background, one at a time, never during a match.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -101,6 +106,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SCRUB_EVERY_FRAMES = 10;
 const SCRUB_TILE_WIDTH = 160;
 const SCRUB_COLS = 10;
+/** The scrub copy: wide enough to read the field while dragging, and
+ *  all-intra. About 1.5× the chunk's own size at these settings. */
+const PROXY_WIDTH = 960;
+const PROXY_CRF = 30;
 const FINALIZE_TIMEOUT_MS = 10 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 
@@ -122,6 +131,8 @@ interface ChunkMeta {
   /** Remuxed with the index up front, so seeking is instant. */
   faststart: boolean;
   scrub?: Omit<TimelapseScrub, 'file'> & { name: string };
+  /** File name of the all-intra scrub copy beside the chunk. */
+  proxy?: string;
   error?: string;
 }
 
@@ -952,7 +963,25 @@ export class FieldTimelapse {
         const m = CHUNK_NAME.exec(name);
         if (!m) continue;
         const file = join(dir, name);
-        if (writing.has(file) || existsSync(metaPathOf(file))) continue;
+        if (writing.has(file)) continue;
+        const done = this.readMeta(file);
+        if (done) {
+          // Finalized before scrub copies existed: go round again for one.
+          // Its timing is already measured; the file is not remuxed twice.
+          if (done.proxy || done.frames === 0) continue;
+          this.enqueueFinalize({
+            file,
+            day,
+            stream: done.stream,
+            source: done.source,
+            ...(done.matchId ? { matchId: done.matchId } : {}),
+            startedAt: done.startedAt,
+            endedAt: done.endedAt,
+            remux: !done.faststart,
+          });
+          queued++;
+          continue;
+        }
         const logged = this.persisted.sessions.find(s => s.file === `${day}/${name}`);
         let endedAt: number;
         try {
@@ -1040,9 +1069,12 @@ export class FieldTimelapse {
     const tileWidth = Math.min(SCRUB_TILE_WIDTH, probe.width - (probe.width % 2));
     const tileHeight = Math.max(2, 2 * Math.round((tileWidth * probe.height) / probe.width / 2));
     const sheet = scrubPathOf(job.file);
+    const proxy = proxyPathOf(job.file);
+    const proxyPart = `${proxy}.part`;
     const remuxed = `${job.file}.remux`;
-    // One read of the chunk for both: the stream copy costs nothing, and the
-    // sheet only keeps what it needs.
+    // One read of the chunk for all three outputs: the stream copy costs
+    // nothing, the sheet only keeps what it needs, and the scrub copy is the
+    // one real encode — small frames, intra only.
     const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '2', '-i', job.file];
     if (job.remux) args.push('-map', '0:v', '-c', 'copy', '-movflags', '+faststart', '-f', 'mp4', '-y', remuxed);
     args.push(
@@ -1056,9 +1088,34 @@ export class FieldTimelapse {
       '5',
       '-y',
       sheet,
+      '-map',
+      '0:v',
+      '-vf',
+      // Quoted min(…): a source already narrower than the copy is not blown up.
+      `scale='min(${PROXY_WIDTH},iw)':-2`,
+      '-an',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      String(PROXY_CRF),
+      // Every frame a keyframe: that is the whole point of the copy.
+      '-g',
+      '1',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      '-f',
+      'mp4',
+      '-y',
+      proxyPart,
     );
     try {
       await runCommand(this.opts.ffmpegPath, args, FINALIZE_TIMEOUT_MS);
+      renameSync(proxyPart, proxy);
+      meta.proxy = proxy.split(/[\\/]/).pop()!;
       if (existsSync(sheet)) {
         meta.scrub = {
           name: sheet.split(/[\\/]/).pop()!,
@@ -1079,6 +1136,7 @@ export class FieldTimelapse {
       console.warn(`Field timelapse: finalizing ${job.file} failed: ${meta.error}`);
     } finally {
       rmSync(remuxed, { force: true });
+      rmSync(proxyPart, { force: true });
     }
     this.writeMeta(job.file, meta);
   }
@@ -1318,6 +1376,7 @@ export class FieldTimelapse {
         end: meta.endedAt,
         mediaSeconds: meta.mediaSeconds,
         ...(meta.matchId ? { matchId: meta.matchId } : {}),
+        ...(meta.proxy ? { proxy: `${day}/${meta.proxy}` } : {}),
         ...(meta.scrub
           ? {
               scrub: {
@@ -1681,7 +1740,7 @@ export class FieldTimelapse {
 
   /** Absolute path of a stored file, or undefined if the name is not one of
    *  ours. Paths from clients never reach the filesystem unchecked. */
-  filePath(kind: 'frame' | 'active' | 'scrub' | 'render', path: string): string | undefined {
+  filePath(kind: 'frame' | 'active' | 'scrub' | 'proxy' | 'render', path: string): string | undefined {
     if (kind === 'render') {
       if (!/^[A-Za-z0-9._-]{1,120}\.mp4$/.test(path) || path.includes('..')) return undefined;
       const full = join(this.rendersRoot, path);
@@ -1693,6 +1752,7 @@ export class FieldTimelapse {
     if (kind === 'frame' && !name.endsWith('.jpg')) return undefined;
     if (kind === 'active' && !name.endsWith('.mp4')) return undefined;
     if (kind === 'scrub' && !name.endsWith('.scrub.jpg')) return undefined;
+    if (kind === 'proxy' && !name.endsWith('.scrub.m4v')) return undefined;
     const full = join(kind === 'frame' ? this.framesRoot : this.activeRoot, day, name);
     return existsSync(full) ? full : undefined;
   }
@@ -1897,6 +1957,9 @@ export function stampTime(day: string, stamp: string): number {
 const metaPathOf = (chunk: string) => chunk.replace(/\.mp4$/, '.json');
 /** Scrub sheet of a chunk: `<chunk minus .mp4>.scrub.jpg`. */
 const scrubPathOf = (chunk: string) => chunk.replace(/\.mp4$/, '.scrub.jpg');
+/** Scrub copy of a chunk: `<chunk minus .mp4>.scrub.m4v`. Not `.mp4`, so
+ *  nothing that lists a day's chunks mistakes it for one. */
+const proxyPathOf = (chunk: string) => chunk.replace(/\.mp4$/, '.scrub.m4v');
 
 /** Epoch ms of "HH:MM" on the local day of `now`. Built from local calendar
  *  fields so it lands on the right wall-clock time across a DST change. */

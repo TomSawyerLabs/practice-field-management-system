@@ -35,6 +35,9 @@ const MAX_RANGE_MS = 8 * 24 * 60 * 60 * 1000;
  *   GET /api/timelapse/days?stream=            practice days with footage
  *   GET /api/timelapse/scrub/<day>/<name>.scrub.jpg
  *                                              a chunk's scrub sheet
+ *   GET /api/timelapse/proxy/<day>/<name>.scrub.m4v
+ *                                              a chunk's scrub copy (small,
+ *                                              every frame a keyframe)
  *   POST /api/timelapse/lights-ready           Home Assistant saying the
  *                                              lights are on (see below)
  *
@@ -109,7 +112,7 @@ export function handleTimelapseRequest(
     return true;
   }
 
-  const m = /^\/api\/timelapse\/(frame|active|scrub|render)\/(.+)$/.exec(path);
+  const m = /^\/api\/timelapse\/(frame|active|scrub|proxy|render)\/(.+)$/.exec(path);
   if (!m) {
     json(res, 404, { error: 'Unknown timelapse route' });
     return true;
@@ -119,7 +122,7 @@ export function handleTimelapseRequest(
     return true;
   }
 
-  const kind = m[1] as 'frame' | 'active' | 'scrub' | 'render';
+  const kind = m[1] as 'frame' | 'active' | 'scrub' | 'proxy' | 'render';
   const rel = decodeURIComponent(m[2]);
   const file = timelapse.filePath(kind, rel);
   if (!file) {

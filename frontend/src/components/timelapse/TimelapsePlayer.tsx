@@ -34,6 +34,9 @@ interface Props {
    *  after seeks. */
   onTime: (t: number) => void;
   onPlayingChange: (playing: boolean) => void;
+  /** Playback ran out of film in what is loaded (the page may know of a
+   *  later day to carry on into). */
+  onEnd?: () => void;
 }
 
 /** One `<video>` per chunk in use, kept around so going back is instant. */
@@ -47,7 +50,18 @@ interface Entry {
   lastUsed: number;
 }
 
+/** The scrub copy of a chunk: same frames, 960 px, every frame a keyframe.
+ *  Only ever seeked, never played. */
+interface Proxy {
+  file: string;
+  el: HTMLVideoElement;
+  ready: boolean;
+  pending: number | null;
+  lastUsed: number;
+}
+
 const POOL_SIZE = 4;
+const PROXY_POOL_SIZE = 3;
 const FILM_FPS = 30;
 /** After the last scrub move, swap a gap's thumbnail for the full frame. */
 const STILL_SETTLE_MS = 250;
@@ -61,17 +75,25 @@ const provisional = (seg: TimelapseSegment) => !!(seg.capturing || seg.estimated
  *
  * Everything here is imperative on purpose. A scrub is dozens of seeks a
  * second; routing each through React state would re-render the page per
- * pointer move. Instead each chunk has its own `<video>` (a small pool),
- * only one seek is ever in flight per element with the newest target
- * queued behind it, and the chunk's scrub sheet paints the right frame into
- * an overlay the instant the pointer moves — the video replaces it once it
- * has landed.
+ * pointer move. Instead each chunk has its own `<video>` (a small pool) and
+ * only one seek is ever in flight per element, with the newest target queued
+ * behind it.
+ *
+ * A drag never seeks the chunk itself. Landing on a frame there means
+ * decoding up to thirty 1920×1714 frames from the last keyframe — about
+ * 52 ms measured, so a drag would update at under 20 fps. It seeks the
+ * chunk's scrub copy instead (960 px, every frame a keyframe, ~2.4 ms), laid
+ * over the film; when the drag ends the chunk seeks once to that frame and
+ * the copy is taken away, so the picture sharpens in place. Until a scrub
+ * copy has loaded (or for a chunk too new to have one) the scrub sheet's
+ * tile stands in.
  */
 export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function TimelapsePlayer(
-  { segments, frames, generation, onTime, onPlayingChange },
+  { segments, frames, generation, onTime, onPlayingChange, onEnd },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const proxyHostRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const stillRef = useRef<HTMLImageElement>(null);
   const gapRef = useRef<HTMLDivElement>(null);
@@ -82,11 +104,18 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
   const generationRef = useRef(generation);
   const onTimeRef = useRef(onTime);
   const onPlayingRef = useRef(onPlayingChange);
+  const onEndRef = useRef(onEnd);
   onTimeRef.current = onTime;
   onPlayingRef.current = onPlayingChange;
+  onEndRef.current = onEnd;
 
   const state = useRef({
     pool: new Map<string, Entry>(),
+    proxies: new Map<string, Proxy>(),
+    /** Between the first scrub seek and the exact one that ends the drag. */
+    dragging: false,
+    /** The scrub copy a drag is showing, if any. */
+    scrubbing: null as Proxy | null,
     current: null as Entry | null,
     lastT: 0,
     playing: false,
@@ -185,13 +214,97 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
     entry.el.currentTime = target;
   };
 
-  /** The video has the frame: take the scrub tile away. */
+  // ── scrub copies ────────────────────────────────────────────────────
+
+  const proxyFor = (file: string): Proxy => {
+    let proxy = state.proxies.get(file);
+    if (proxy) {
+      proxy.lastUsed = performance.now();
+      return proxy;
+    }
+    const el = document.createElement('video');
+    el.muted = true;
+    el.playsInline = true;
+    el.preload = 'auto';
+    el.disablePictureInPicture = true;
+    Object.assign(el.style, {
+      position: 'absolute',
+      inset: '0',
+      width: '100%',
+      height: '100%',
+      objectFit: 'contain',
+      visibility: 'hidden',
+    });
+    el.src = `/api/timelapse/proxy/${file}`;
+    const created: Proxy = { file, el, ready: false, pending: null, lastUsed: performance.now() };
+    const next = () => {
+      if (created.pending !== null) {
+        const p = created.pending;
+        created.pending = null;
+        seekProxy(created, p);
+      } else if (state.scrubbing === created) {
+        // The copy has the frame: show it, and drop the stand-in tile.
+        el.style.visibility = 'visible';
+        hideOverlay();
+      }
+    };
+    el.addEventListener('loadeddata', () => {
+      created.ready = true;
+      next();
+    });
+    el.addEventListener('seeked', next);
+    proxyHostRef.current?.appendChild(el);
+    state.proxies.set(file, created);
+    const victims = [...state.proxies.values()]
+      .filter(v => v !== created && v !== state.scrubbing)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
+    while (state.proxies.size > PROXY_POOL_SIZE && victims.length > 0) {
+      const v = victims.shift()!;
+      v.el.removeAttribute('src');
+      v.el.load();
+      v.el.remove();
+      state.proxies.delete(v.file);
+    }
+    return created;
+  };
+
+  const seekProxy = (proxy: Proxy, media: number) => {
+    if (!proxy.ready || proxy.el.seeking) {
+      proxy.pending = media;
+      return;
+    }
+    const d = proxy.el.duration;
+    const target = Math.max(0, Number.isFinite(d) ? Math.min(media, d - 0.5 / FILM_FPS) : media);
+    if (Math.abs(proxy.el.currentTime - target) < 0.25 / FILM_FPS) {
+      if (state.scrubbing === proxy) {
+        proxy.el.style.visibility = 'visible';
+        hideOverlay();
+      }
+      return;
+    }
+    proxy.el.currentTime = target;
+  };
+
+  /** Take the scrub copies off the film. */
+  const hideProxies = () => {
+    state.scrubbing = null;
+    for (const p of state.proxies.values()) {
+      p.el.style.visibility = 'hidden';
+      p.pending = null;
+    }
+  };
+
+  /** The video has the frame: take the scrub copy and the tile away. */
   const settled = (entry: Entry) => {
     const el = entry.el as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
     };
     const hide = () => {
-      if (state.current === entry && entry.pending === null && !entry.el.seeking) hideOverlay();
+      if (state.current === entry && entry.pending === null && !entry.el.seeking) {
+        hideOverlay();
+        // A drag still in progress keeps its copy up; this was an older seek.
+        if (!state.dragging) hideProxies();
+      }
     };
     // Wait for the frame to be composited, where the browser can say so.
     if (el.requestVideoFrameCallback && !el.paused) el.requestVideoFrameCallback(hide);
@@ -289,6 +402,7 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
       gap.dataset.still = still ? '1' : '0';
     }
     hideOverlay();
+    hideProxies();
   };
 
   // ── transport ───────────────────────────────────────────────────────
@@ -317,7 +431,22 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
     }
     showOnly(entry);
     const media = wallToMedia(seg, t);
-    // The tile first — it is already decoded — then the real frame.
+    state.dragging = mode === 'scrub';
+    if (mode === 'scrub' && seg.proxy) {
+      // Drag on the scrub copy; the chunk itself is not touched until the
+      // drag ends. Media time is the same in both — same frames, same rate.
+      const proxy = proxyFor(seg.proxy);
+      if (state.scrubbing && state.scrubbing !== proxy) state.scrubbing.el.style.visibility = 'hidden';
+      state.scrubbing = proxy;
+      // Not loaded yet: the sheet's tile stands in until it is.
+      if (!proxy.ready || proxy.el.style.visibility !== 'visible') drawOverlay(seg, t);
+      seekProxy(proxy, media);
+      onTimeRef.current(t);
+      return;
+    }
+    // No scrub copy (a chunk too new to have one), or the drag is over: the
+    // tile first — it is already decoded — then the real frame. A scrub copy
+    // still on screen stays until the chunk has landed on the same frame.
     if (mode === 'scrub' || !entry.ready) drawOverlay(seg, t);
     seekEntry(entry, media);
     onTimeRef.current(t);
@@ -350,9 +479,10 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
       if (atEnd) {
         const next = i >= 0 ? segs[i + 1] : undefined;
         if (!next || (seg.capturing && entry.el.ended)) {
-          // The end of the day's film, or the live edge of the chunk being
-          // written right now.
+          // The end of the film that is loaded, or the live edge of the
+          // chunk being written right now.
           pause();
+          if (!seg.capturing) onEndRef.current?.();
           return;
         }
         seek(next.start, 'exact');
@@ -367,12 +497,17 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
     if (segmentAt(segs, state.lastT) < 0) {
       // In a gap: the film carries on from the next piece.
       const n = nextSegmentAfter(segs, state.lastT);
-      if (n < 0) return;
+      if (n < 0) {
+        onEndRef.current?.();
+        return;
+      }
       seek(segs[n].start, 'exact');
     }
     const entry = state.current;
     if (!entry) return;
     state.playing = true;
+    state.dragging = false;
+    hideProxies();
     entry.el.playbackRate = state.rate;
     void entry.el.play().catch(() => {
       // Autoplay refused, or the element was swapped out: stop cleanly.
@@ -450,6 +585,12 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
         e.el.remove();
       }
       state.pool.clear();
+      for (const p of state.proxies.values()) {
+        p.el.removeAttribute('src');
+        p.el.load();
+        p.el.remove();
+      }
+      state.proxies.clear();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -471,6 +612,7 @@ export const TimelapsePlayer = forwardRef<PlayerHandle, Props>(function Timelaps
         }}
       />
       <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+      <div ref={proxyHostRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
       <canvas
         ref={overlayRef}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', visibility: 'hidden' }}

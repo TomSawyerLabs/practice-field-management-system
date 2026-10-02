@@ -165,6 +165,32 @@ Cameron (2026-09-30):
 - [ ] After deploy: open `/timelapse` on a real practice night and check
       enables/robots against what happened; check the first match-derived
       chunk appears a few seconds after a match.
+- [x] 2026-10-02 **Faster scrubbing + continuous days** (Cameron: "easier
+      to scroll to previous/next day", "can we make scrubbing faster?").
+      Built, tested in Chrome, committed; **not deployed**.
+  - Measured first (`pw/seekbench.mjs`, real half-hour chunk, Chrome,
+    localhost): a seek in the chunk is 52 ms median / 77 ms p90 (decodes up
+    to 30 frames of 1920×1714); 1920 g5 → 23 ms at 3.6× the size; 960 g5 →
+    5 ms; **960 all-intra → 2.4 ms**; 640 all-intra → 1.7 ms. Fetching the
+    file into a blob first made no difference on localhost.
+  - So each chunk gets a scrub copy `<chunk>.scrub.m4v` (960 wide, `-g 1`,
+    crf 30), encoded in the finalize pass. A drag seeks only the copy; the
+    chunk seeks once on release. `.m4v`, not `.mp4`, so the admin listing
+    and the practice-film join never mistake it for a chunk.
+  - Cost on the real day: 26 copies in 51 s on the desktop, **185 MB
+    against 173 MB of chunks** — the timelapse roughly doubles on disk
+    (~40 MB per field-hour).
+  - Result in Chrome: 151 pointer moves in 2.6 s → 132 frames landed from
+    the copy, 0 full-chunk seeks until release (was 47 landed of 61 moves
+    at a quarter of the move rate).
+  - Timeline is continuous: the view pans/zooms across 04:00 boundaries
+    (max 3 days), data is fetched for the days under the view ± 1 day,
+    lanes are for the day(s) on screen. Day buttons are labelled, `[`/`]`
+    step days, playback runs off the end of a day into the next with
+    footage. Tested with a second day fabricated in the sample (three
+    09-27 chunks shifted to 09-28) — not real two-day data.
+  - On deploy: every existing chunk goes round finalize once more for its
+    copy (sidecar present, `proxy` missing).
 
 ## Open questions for the user
 

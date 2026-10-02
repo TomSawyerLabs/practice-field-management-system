@@ -9,7 +9,10 @@ import {
   clock,
   clusterSpans,
   concurrency,
+  dayLabel,
   duration,
+  practiceDayOf,
+  practiceDayRange,
   scrubTile,
   segmentAt,
   teamLanes,
@@ -25,8 +28,10 @@ export interface View {
 interface Props {
   data: TimelapseTimeline;
   view: View;
-  /** The range the view may move within (the practice day). */
+  /** The range the view may move within: everything there is footage for. */
   bounds: View;
+  /** Widest the view may zoom out to. */
+  maxSpanMs?: number;
   onViewChange: (view: View) => void;
   playhead: Playhead;
   /** A drag across the timeline: `start`, any number of `move`, `end`. */
@@ -79,7 +84,7 @@ interface Hit {
  * was actually busy and labelled with how many it holds. Zoom in and they
  * come apart.
  */
-export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onScrub }: Props) {
+export function TimelineCanvas({ data, view, bounds, maxSpanMs, onViewChange, playhead, onScrub }: Props) {
   const theme = useTheme();
   const wrapRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
@@ -93,7 +98,15 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
   const [sheetTick, setSheetTick] = useState(0);
   const drag = useRef<{ kind: 'scrub' | 'pan'; x0: number; view0: View; moved: boolean } | null>(null);
 
-  const lanes = useMemo(() => teamLanes(data.robots, data.enables), [data]);
+  // Rows for the teams of the practice day(s) on screen — not of everything
+  // loaded, which reaches a day either side — so the rows only change when
+  // the view crosses into another day.
+  const laneStart = practiceDayRange(practiceDayOf(view.start)).start;
+  const laneEnd = practiceDayRange(practiceDayOf(view.end - 1)).end;
+  const lanes = useMemo(() => {
+    const within = (s: { start: number; end: number }) => s.end > laneStart && s.start < laneEnd;
+    return teamLanes(data.robots.filter(within), data.enables.filter(within));
+  }, [data, laneStart, laneEnd]);
   const height =
     AXIS_H + VIDEO_H + SECTION_GAP + MATCH_H + SECTION_GAP + FIELD_H + SECTION_GAP + lanes.length * LANE_H + 4;
   const plotW = Math.max(1, width - GUTTER);
@@ -156,6 +169,12 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
       ctx.lineTo(x, AXIS_H);
       ctx.stroke();
     }
+    // Where one practice day ends and the next begins (04:00).
+    const dayStarts: number[] = [];
+    for (let t = practiceDayRange(practiceDayOf(view.start)).start; t <= view.end; ) {
+      if (t >= view.start) dayStarts.push(t);
+      t = practiceDayRange(practiceDayOf(t + 36 * 60 * 60_000)).start;
+    }
     ctx.textAlign = 'center';
     for (const t of ticks.major) {
       const x = Math.round(xOf(t)) + 0.5;
@@ -165,8 +184,31 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
       ctx.globalAlpha = 0.5;
       ctx.stroke();
       ctx.globalAlpha = 1;
+      // The day's name goes where its first tick label would.
+      if (dayStarts.some(d => Math.abs(xOf(d) - x) < 96 && xOf(d) <= x + 20)) continue;
       ctx.fillText(clock(t, ticks.step < 60_000), x, 8);
     }
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    for (const d of dayStarts) {
+      const x = Math.round(xOf(d)) + 0.5;
+      ctx.strokeStyle = text;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = text;
+      ctx.textAlign = 'left';
+      ctx.fillText(dayLabel(practiceDayOf(d)), x + 5, 8);
+    }
+    // And which day the left edge is in, over the row labels.
+    ctx.fillStyle = text;
+    ctx.textAlign = 'right';
+    ctx.fillText(dayLabel(practiceDayOf(view.start)).replace(/^\w+, /, ''), GUTTER - 8, 8);
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.strokeStyle = grid;
+    ctx.fillStyle = muted;
 
     // Row labels.
     const label = (y: number, h: number, s: string, color = muted) => {
@@ -455,7 +497,14 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
   const hover = (x: number, y: number) => {
     hoverX.current = x;
     drawTop();
-    drawPreview(drag.current?.kind === 'pan' ? null : x);
+    // While dragging, the film itself shows the frame under the pointer; a
+    // preview and a tooltip would only sit on top of it.
+    if (drag.current) {
+      drawPreview(null);
+      setTooltip(null);
+      return;
+    }
+    drawPreview(x);
     const hit = hits.current.find(h => x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1);
     if (!hit) {
       setTooltip(null);
@@ -530,8 +579,8 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
   // Wheel: zoom around the pointer; sideways (or with Shift) pans. Bound by
   // hand because React's wheel listener is passive and cannot stop the page
   // scrolling.
-  const wheelState = useRef({ view, bounds, tOf, plotW, onViewChange });
-  wheelState.current = { view, bounds, tOf, plotW, onViewChange };
+  const wheelState = useRef({ view, bounds, maxSpanMs, tOf, plotW, onViewChange });
+  wheelState.current = { view, bounds, maxSpanMs, tOf, plotW, onViewChange };
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -550,7 +599,8 @@ export function TimelineCanvas({ data, view, bounds, onViewChange, playhead, onS
       }
       const anchor = s.tOf(x);
       const factor = Math.exp(e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015));
-      const next = Math.max(MIN_SPAN_MS, Math.min(s.bounds.end - s.bounds.start, span * factor));
+      const widest = Math.min(s.bounds.end - s.bounds.start, s.maxSpanMs ?? Infinity);
+      const next = Math.max(MIN_SPAN_MS, Math.min(widest, span * factor));
       const f = (anchor - s.view.start) / span;
       s.onViewChange(clampView({ start: anchor - f * next, end: anchor - f * next + next }, s.bounds));
     };
