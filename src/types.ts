@@ -3877,7 +3877,8 @@ export interface PracticeDayToken {
   createdAt: number;
   /** When the link was posted to the team's Slack contact, if it was. */
   slackPostedAt?: number;
-  /** A note that nobody in Slack claims this team was posted to the support channel. */
+  /** Set by older versions, which posted a note to the support channel when
+   *  nobody in Slack claimed the team. No longer written or read. */
   noMembersNotedAt?: number;
 }
 

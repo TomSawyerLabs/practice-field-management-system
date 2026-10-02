@@ -331,3 +331,54 @@ function fakeEngine(initial: MatchState['phase']) {
     },
   };
 }
+
+describe('a line left open', () => {
+  const HOURS = 60 * 60_000;
+
+  test('closes itself after three hours with nothing happening', () => {
+    const q = queue();
+    now += 2 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+    expect(q.getSettings().lineOpen).toBe(true);
+    now += 1 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(true);
+    expect(q.getSettings().lineOpen).toBe(false);
+    // And it stays closed across a restart.
+    expect(reopen().getSettings().lineOpen).toBe(false);
+  });
+
+  test('stays open while a team is waiting in it, or a match is lined up', () => {
+    const q = queue();
+    q.joinLine(5940);
+    now += 5 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+    q.leaveLine(5940);
+    const entry = q.add({ red: [1], blue: [2] });
+    now += 5 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+    // Once that is gone the three hours start from then, not from when the
+    // line was opened.
+    q.remove(entry.id);
+    now += 2 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+    now += 1 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(true);
+  });
+
+  test('stays open while a match is on the field', () => {
+    const q = queue();
+    let phase = 'created';
+    q.attach({ addStateListener: () => () => {}, getState: () => ({ phase }) as never });
+    now += 5 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+    phase = 'idle';
+    now += 3 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(true);
+  });
+
+  test('a closed line is left alone', () => {
+    const q = reopen();
+    now += 10 * HOURS;
+    expect(q.closeLineIfIdle()).toBe(false);
+  });
+});

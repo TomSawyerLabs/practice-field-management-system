@@ -630,6 +630,12 @@ floors:
   history, settings and logs live on the same volume, and a full disk
   breaks more than video.
 
+Each crossing is posted once to the Slack support channel — clips paused,
+recording stopped, room again — saying what stopped and where to free
+space. The level last announced is remembered across restarts
+(`recordings/.space-state.json`), so a deploy while the disk is low does not
+say it again.
+
 A volume whose free space cannot be read counts as fine: a failed
 measurement must not stop recording.
 
@@ -690,7 +696,10 @@ How it works (`src/practiceRecorder.ts`):
   every match is recorded anyway, and a clip of each pit-side enable on a
   scrimmage day is noise at 5.5 GB an hour. A clip in progress when that
   begins is closed there and kept. The station page says so in place of the
-  usual hint. Clips are paused the same way when the disk is short of space
+  usual hint. A line left open by mistake would keep clips off for good, so
+  an open line with nobody in it, nothing queued and no match on the field
+  for three hours closes itself. Clips are paused the same way when the disk
+  is short of space
   ([how long things are kept](#how-long-things-are-kept-and-what-happens-when-the-disk-fills)).
 
 Runs are listed on the team's station page next to its matches, and are
@@ -755,9 +764,10 @@ any 1–5 digit number in a member's display name, real name or title
 "Christina Lee (Team 6036)"). Nothing to configure; a mentor who wants the
 links puts their team number in their Slack name. Later recordings that day
 land on the same live link; nothing is re-sent. A team nobody in Slack
-claims gets nothing, and the support channel gets one note per team per day
-saying so (the link itself is not posted there — it opens the team's
-videos). This needs only the `users:read` and `chat:write` scopes the bot
+claims gets nothing, and nothing is posted about it: with every team
+recording by default, those notes would be most of the support channel. The
+day stays unsent, so a mentor who adds their number later still gets the
+link. This needs only the `users:read` and `chat:write` scopes the bot
 already has.
 
 ## Long-Term Field Timelapse

@@ -65,7 +65,7 @@ import { TeamPrefsStore } from './teamPrefsStore.js';
 import { PushService } from './pushService.js';
 import { QueueNudger } from './queueNudger.js';
 import { handleManifestRequest } from './manifestApi.js';
-import { MatchRecorder } from './matchRecorder.js';
+import { describeSpaceChange, MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
 import { handlePublicMatchRequest } from './publicMatchApi.js';
 import { SessionMetadataCollector } from './sessionMetadata.js';
@@ -597,6 +597,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Initialize support system
   const supportStore = new SupportStore();
   const slackBridge = new SlackBridge();
+  // Short of disk space (or back from it): tell the people who run the
+  // field, once per change, where they will see it.
+  matchRecorder.addSpaceListener(change => {
+    void slackBridge.postToChannel(describeSpaceChange(change));
+  });
   // Announce version changes to the support channel (commit subjects since last deploy)
   announceDeploy(text => slackBridge.postToChannel(text)).catch(err => {
     console.warn('Deploy announcement failed:', (err as Error).message);

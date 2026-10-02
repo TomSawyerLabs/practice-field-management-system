@@ -90,6 +90,9 @@ export const DEFAULT_MIN_FREE_GB = 25;
  *  video, so recording stops well before that. Not configurable. */
 export const CRITICAL_FREE_BYTES = 2 * 1024 ** 3;
 const GB = 1024 ** 3;
+/** Remembers the space level last announced, so a restart while the disk is
+ *  low does not announce it again. */
+const SPACE_STATE_FILE = '.space-state.json';
 const STDERR_KEEP_LINES = 12;
 
 export const DEFAULT_RECORDINGS_DIR = 'recordings';
@@ -108,6 +111,35 @@ export interface MatchRecorderOptions {
   getMinFreeGb?: () => number | undefined;
   /** Free bytes on the recordings volume; injectable for tests. */
   freeBytes?: () => Promise<number>;
+}
+
+/** The recordings volume crossed a free-space floor. */
+export interface RecordingSpaceChange {
+  space: RecordingSpace;
+  previous: RecordingSpace;
+  freeBytes?: number;
+  minFreeBytes: number;
+  practiceRetentionDays: number;
+}
+
+/** What to tell the people who run the field when that happens. */
+export function describeSpaceChange(c: RecordingSpaceChange): string {
+  const free = formatGb(c.freeBytes);
+  if (c.space === 'critical') {
+    return (
+      `🛑 *The field's video disk is nearly full* (${free} free). Nothing is being recorded — matches included — ` +
+      `until space is made: Admin → Recordings on Disk.`
+    );
+  }
+  if (c.space === 'low') {
+    return c.previous === 'critical'
+      ? `⚠️ The field's video disk has ${free} free: matches are being recorded again, but teams' practice clips stay ` +
+          `paused until it is back above ${formatGb(c.minFreeBytes)}.`
+      : `⚠️ *The field's video disk is running low* (${free} free, under the ${formatGb(c.minFreeBytes)} floor). ` +
+          `Teams' practice clips are paused; matches are still recorded. Clips come back by themselves as old ones ` +
+          `pass their ${c.practiceRetentionDays} days, or free some space in Admin → Recordings on Disk.`;
+  }
+  return `✅ The field's video disk has room again (${free} free). Teams' practice clips are being recorded again.`;
 }
 
 /** A match whose videos are finalized: one entry per stream that recorded. */
@@ -217,6 +249,7 @@ export class MatchRecorder {
   private readonly getMinFreeGb: () => number | undefined;
   private readonly freeBytes?: () => Promise<number>;
   private lastSpace: RecordingSpace = 'ok';
+  private spaceListeners: ((change: RecordingSpaceChange) => void)[] = [];
   private diskFreeBytes?: number;
   private usedBytes?: number;
   /** Thumbnail generations in flight, keyed by the image path. */
@@ -233,6 +266,21 @@ export class MatchRecorder {
     this.getPracticeRetentionDays = opts.getPracticeRetentionDays ?? (() => undefined);
     this.getMinFreeGb = opts.getMinFreeGb ?? (() => undefined);
     this.freeBytes = opts.freeBytes;
+    try {
+      const saved = JSON.parse(readFileSync(join(this.directory, SPACE_STATE_FILE), 'utf-8')) as { space?: unknown };
+      if (saved.space === 'low' || saved.space === 'critical') this.lastSpace = saved.space;
+    } catch {
+      // No file: the volume was fine when last looked at.
+    }
+  }
+
+  /** Called once each time the volume crosses a free-space floor, either way. */
+  addSpaceListener(fn: (change: RecordingSpaceChange) => void): () => void {
+    this.spaceListeners.push(fn);
+    return () => {
+      const i = this.spaceListeners.indexOf(fn);
+      if (i >= 0) this.spaceListeners.splice(i, 1);
+    };
   }
 
   /** Verify ffmpeg, run the first retention sweep, and start listening to matches. */
@@ -1156,8 +1204,27 @@ export class MatchRecorder {
           `Match recorder: ${free} free, under the ${formatGb(this.minFreeBytes())} floor — practice clips are paused`,
         );
       else console.error(`Match recorder: only ${free} free — nothing will be recorded until space is made`);
+      const change: RecordingSpaceChange = {
+        space,
+        previous: this.lastSpace,
+        freeBytes: this.diskFreeBytes,
+        minFreeBytes: this.minFreeBytes(),
+        practiceRetentionDays: this.practiceRetentionDays(),
+      };
       this.lastSpace = space;
+      try {
+        writeFileSync(join(this.directory, SPACE_STATE_FILE), JSON.stringify({ space }));
+      } catch {
+        // Worst case it is announced again after a restart.
+      }
       this.emit();
+      for (const fn of this.spaceListeners) {
+        try {
+          fn(change);
+        } catch (err) {
+          console.error('Error in MatchRecorder space listener:', err);
+        }
+      }
     }
     try {
       let total = 0;

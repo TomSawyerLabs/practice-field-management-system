@@ -176,7 +176,8 @@ Cameron (2026-09-30):
    (practice-recording plan item 19). Recommendation: a free-space floor
    that stops _new_ practice clips (deletes nothing) and warns on the admin
    page, until the eviction policy is decided.
-2. With everyone on, the "nobody in Slack claims team N" note goes to the
+2. _(Resolved 2026-10-01: the notes are dropped.)_ With everyone on, the
+   "nobody in Slack claims team N" note goes to the
    support channel once per team per day for every unclaimed team.
    Recommendation: fold those into one daily note.
 

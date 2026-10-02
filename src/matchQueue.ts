@@ -22,6 +22,13 @@ const DEFAULT_SETTINGS: QueueSettings = {
   allowShort: true,
 };
 
+/** An open line with nothing lined up, nobody in it and no match on the
+ *  field for this long was left open by mistake: it is closed. It matters
+ *  because an open line means "matches are being run", which turns teams'
+ *  practice clips off. */
+export const LINE_IDLE_CLOSE_MS = 3 * 60 * 60_000;
+const IDLE_CHECK_MS = 60_000;
+
 type MatchEngineLike = {
   addStateListener(fn: (state: MatchState) => void): () => void;
   getState(): MatchState;
@@ -43,6 +50,10 @@ export class MatchQueue {
   private settings: QueueSettings = { ...DEFAULT_SETTINGS, shape: { ...DEFAULT_SETTINGS.shape } };
   private listeners: ((state: QueueState) => void)[] = [];
   private noShowTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleTimer: ReturnType<typeof setInterval> | null = null;
+  /** Last time anything happened to the queue or a match was on the field. */
+  private lastBusyAt: number;
+  private matchOnField: () => boolean = () => false;
   private readonly now: () => number;
   /** Is this team's robot on the field (or on its way), or joined? Injected. */
   private present: (team: number) => boolean = () => false;
@@ -53,6 +64,8 @@ export class MatchQueue {
   ) {
     this.now = deps.now ?? (() => Date.now());
     this.load();
+    // A restart starts the clock again rather than closing a line at once.
+    this.lastBusyAt = this.now();
   }
 
   /** Tell the queue how to know a team has shown up (robot on the field or
@@ -86,6 +99,7 @@ export class MatchQueue {
   }
 
   private changed(): void {
+    this.lastBusyAt = this.now();
     this.persist();
     const state = this.getState();
     for (const fn of this.listeners) {
@@ -378,6 +392,29 @@ export class MatchQueue {
     this.changed();
   }
 
+  /**
+   * Close a line that was left open: open, but with nobody in it, nothing
+   * queued and no match on the field for LINE_IDLE_CLOSE_MS. Returns true
+   * when it closed it. Checked every minute once attached.
+   */
+  closeLineIfIdle(): boolean {
+    if (!this.settings.lineOpen) return false;
+    const busy =
+      this.line.length > 0 ||
+      this.matchOnField() ||
+      this.entries.some(e => e.status === 'queued' || e.status === 'onDeck' || e.status === 'playing');
+    if (busy) {
+      this.lastBusyAt = this.now();
+      return false;
+    }
+    if (this.now() - this.lastBusyAt < LINE_IDLE_CLOSE_MS) return false;
+    console.log(
+      `Match queue: the line was open with nothing happening for ${Math.round(LINE_IDLE_CLOSE_MS / 3_600_000)} h — closed`,
+    );
+    this.updateSettings({ lineOpen: false });
+    return true;
+  }
+
   // ── No-shows ─────────────────────────────────────────────────────
 
   /** Teams of the on-deck match that have not shown once its clock ran out. */
@@ -414,6 +451,11 @@ export class MatchQueue {
   attach(engine: MatchEngineLike): () => void {
     let lastPhase = engine.getState().phase;
     const active = (p: MatchState['phase']) => p !== 'idle' && p !== 'created' && p !== 'postMatch';
+    this.matchOnField = () => engine.getState().phase !== 'idle';
+    if (!this.idleTimer) {
+      this.idleTimer = setInterval(() => this.closeLineIfIdle(), IDLE_CHECK_MS);
+      this.idleTimer.unref?.();
+    }
     return engine.addStateListener(state => {
       const phase = state.phase;
       if (phase === lastPhase) return;

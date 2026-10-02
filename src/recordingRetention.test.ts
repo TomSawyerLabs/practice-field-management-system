@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CRITICAL_FREE_BYTES, MatchRecorder } from './matchRecorder.js';
+import { CRITICAL_FREE_BYTES, describeSpaceChange, MatchRecorder } from './matchRecorder.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const GB = 1024 ** 3;
@@ -94,6 +94,43 @@ describe('recording retention and free space', () => {
     settings.minFreeGb = 50;
     expect(await rec.checkSpace()).toBe('low');
     expect(rec.inventory()).toMatchObject({ space: 'low', minFreeBytes: 50 * GB, practiceRetentionDays: 7 });
+  });
+
+  test('crossing a floor is announced once, and not again after a restart', async () => {
+    const said: string[] = [];
+    const listen = (rec: MatchRecorder) => rec.addSpaceListener(c => said.push(`${c.previous}→${c.space}`));
+    const rec = recorder();
+    listen(rec);
+    free = 10 * GB;
+    await rec.checkSpace();
+    await rec.checkSpace();
+    expect(said).toEqual(['ok→low']);
+
+    // pFMS restarts while still low: nothing new to say.
+    const again = recorder();
+    listen(again);
+    await again.checkSpace();
+    expect(said).toEqual(['ok→low']);
+
+    free = 1 * GB;
+    await again.checkSpace();
+    free = 100 * GB;
+    await again.checkSpace();
+    expect(said).toEqual(['ok→low', 'low→critical', 'critical→ok']);
+  });
+
+  test('the announcement says what stopped and what to do', () => {
+    const change = { freeBytes: 10 * GB, minFreeBytes: 25 * GB, practiceRetentionDays: 7 };
+    const low = describeSpaceChange({ ...change, space: 'low', previous: 'ok' });
+    expect(low).toContain('10.0 GB free');
+    expect(low).toContain('practice clips are paused');
+    expect(low).toContain('matches are still recorded');
+    expect(describeSpaceChange({ ...change, space: 'critical', previous: 'low', freeBytes: GB })).toContain(
+      'Nothing is being recorded',
+    );
+    expect(describeSpaceChange({ ...change, space: 'ok', previous: 'low', freeBytes: 60 * GB })).toContain(
+      'room again',
+    );
   });
 
   test('a volume that cannot be measured does not stop recording', async () => {

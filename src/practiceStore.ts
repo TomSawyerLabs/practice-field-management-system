@@ -139,13 +139,6 @@ export class PracticeStore {
     this.persist();
   }
 
-  markNoMembersNoted(token: string, at = Date.now()): void {
-    const entry = this.findByToken(token);
-    if (!entry) return;
-    entry.noMembersNotedAt = at;
-    this.persist();
-  }
-
   // ── listeners / persistence ────────────────────────────────────────
 
   addListener(fn: () => void): () => void {

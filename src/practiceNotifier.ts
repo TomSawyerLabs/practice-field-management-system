@@ -87,17 +87,11 @@ export class PracticeNotifier {
     if (!entry) return false;
     if (!this.deps.slack.isConnected()) return false;
     const members = await this.deps.slack.findTeamMembers(teamNumber);
-    if (members.length === 0) {
-      if (!entry.noMembersNotedAt) {
-        const ok = await this.deps.slack.postToChannel(
-          `📹 Team ${teamNumber} recorded ${count} video${count === 1 ? '' : 's'} on ${practiceDayLabel(day)}, ` +
-            `but nobody in this Slack has ${teamNumber} in their name, so their practice link had no one to go to. ` +
-            `Mentors: put your team number in your Slack display name (e.g. "Pat Lee (${teamNumber})") to get these automatically.`,
-        );
-        if (ok) store.markNoMembersNoted(token);
-      }
-      return false;
-    }
+    // Nobody in Slack claims the team: nothing is sent, and nothing is said
+    // about it. With every team recording by default the "no one to send
+    // this to" notes would be most of the support channel. The day stays
+    // unsent, so a mentor who adds their number later still gets the link.
+    if (members.length === 0) return false;
     const text = this.message(teamNumber, day, count, token);
     let delivered = 0;
     for (const m of members) {

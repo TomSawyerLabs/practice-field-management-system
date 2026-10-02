@@ -63,24 +63,37 @@ every team (`plans/timelapse-viewer.md`, open question 1):
 - [ ] Not seen in a browser: the admin fields/warning and the station-card
       pause text are typechecked only.
 - [x] Deployed 2026-10-01 16:04 PDT (`5425f4c`), 387 GB free at the time.
-- [ ] steamboat's stored `recordingRetentionDays` is 360 — Cameron sets it
-      to 30 on the admin page after deploy (or says to leave it).
+- [x] Low-space Slack note, unclaimed-team notes dropped, forgotten queue
+      line auto-closes — built and tested 2026-10-01; not deployed yet.
+- [ ] steamboat's stored `recordingRetentionDays` is 360 — to become 90.
+
+## Decisions from the walk-through (2026-10-01)
+
+- **Match videos on steamboat: 90 days** ("90 days is fine"). The oldest
+  recording there is 18 days old, so nothing is deleted by the change.
+- **Low space is posted to the support channel, once per change.** Cameron
+  said "#pfms-support or DM to admin"; the channel is what
+  `slackBridge.postToChannel` reaches.
+- **The "nobody in Slack claims team N" notes are dropped**, not batched.
+- **A forgotten queue line closes itself** after 3 h open with nobody in it,
+  nothing queued and no match on the field.
 
 ## Open questions for the user
 
-1. steamboat keeps match videos 360 days today (a saved setting). The new
-   default is 30 but a saved value wins. Change it to 30 on the admin page
-   after deploy?
+1. Setting steamboat's saved `recordingRetentionDays` from 360 to 90: on the
+   admin page (Match Video Recording → Keep match videos), or by me editing
+   `setup-config.json` on the box at the next deploy?
 
 ## Findings / gotchas
 
 - A robot that is already enabled when a pause lifts is not recorded until
   its next enable: the recorder acts on enable edges. Accepted — a pause
   lifting mid-enable is rare (queue closed while someone is driving).
-- **The queue line left open means no clips at all**, by the chosen rule.
-  The station card says why, but nobody is told the line was forgotten.
-- Low space is only visible on the admin page, the station cards and the
-  log. Nothing is posted to Slack and `/health/site` does not report it.
+- The queue line left open used to mean no clips at all, by the chosen
+  rule. Fixed: it closes itself after 3 idle hours
+  (`MatchQueue.closeLineIfIdle`). A restart restarts that clock.
+- Low space is posted to Slack once per crossing; `/health/site` still does
+  not report it.
 
 ## Things not to do
 
