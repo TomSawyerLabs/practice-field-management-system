@@ -83,16 +83,21 @@ Two changes so this does not repeat:
 - [x] Steps 1–7, 2026-10-01. `MatchState` field ended up named
       `setupExpiresAt`. `docs/configuration.md` needed nothing (it does not
       list these settings). Typecheck clean, 763 tests pass.
-- [ ] The two pages were not looked at in a browser: the backend needs
-      Linux netlink, so the dev server does not run on the Windows machine.
-      Check the switch card on `/match` and the new admin checkbox after the
-      next deploy.
-- [ ] Not deployed. Steamboat still runs the old build, and the match set
-      up at 19:25 on 2026-10-01 was still parked in `created` at 20:40.
+- [x] Deployed 2026-10-02 13:12 with `update.sh`: steamboat runs `b566f37`
+      (contains `934d850`), service active, no errors in the first minutes,
+      the switch text is in the served `match-*.js` bundle. The field was
+      already idle before the deploy, so the parked match is gone.
+- [ ] The two pages have still not been looked at in a browser: the dev
+      server does not run on the Windows machine (the backend needs Linux
+      netlink) and the T3 preview browser could not load `pfms.tsl`
+      (`chrome-error://chromewebdata/`). Someone on the field network should
+      glance at the switch card on `/match` and the new admin checkbox.
 
 ## Open questions for the user
 
-None.
+1. When an abandoned set-up match cancels itself, robots waiting to join
+   are applied without staff. Keep that, or go back to the strict "only
+   Apply now" rule? Recommendation: keep it.
 
 ## Things not to do
 
