@@ -167,7 +167,15 @@ Cameron (2026-09-30):
       chunk appears a few seconds after a match.
 - [x] 2026-10-02 **Faster scrubbing + continuous days** (Cameron: "easier
       to scroll to previous/next day", "can we make scrubbing faster?").
-      Built, tested in Chrome, committed; **not deployed**.
+      Built, tested in Chrome, committed; **deployed 2026-10-01 21:19 PDT
+      (`0e908b4`)**: all 30 chunks got scrub copies (278 MB against 229 MB of
+      chunks), served as `video/mp4`.
+  - First real night on the new build (2026-10-01, team 6036): 6 pieces,
+    134 min of field time, **58 enables and 14 robot spans logged**, and 21
+    practice clips recorded (default-on works). No matches that night, so
+    no match-derived chunk has been seen on the real field yet. 14 robot
+    spans for one team in ~2.5 h is more than expected — link drops over
+    30 s, or the DS going quiet; not looked into.
   - Measured first (`pw/seekbench.mjs`, real half-hour chunk, Chrome,
     localhost): a seek in the chunk is 52 ms median / 77 ms p90 (decodes up
     to 30 frames of 1920×1714); 1920 g5 → 23 ms at 3.6× the size; 960 g5 →

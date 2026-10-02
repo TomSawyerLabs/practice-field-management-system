@@ -64,7 +64,8 @@ every team (`plans/timelapse-viewer.md`, open question 1):
       pause text are typechecked only.
 - [x] Deployed 2026-10-01 16:04 PDT (`5425f4c`), 387 GB free at the time.
 - [x] Low-space Slack note, unclaimed-team notes dropped, forgotten queue
-      line auto-closes — built and tested 2026-10-01; not deployed yet.
+      line auto-closes — built and tested 2026-10-01; deployed 21:19 PDT
+      (`0e908b4`).
 - [ ] steamboat's stored `recordingRetentionDays` is 360 — to become 90.
 
 ## Decisions from the walk-through (2026-10-01)
