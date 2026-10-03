@@ -58,7 +58,10 @@ available and Slack is configured.
       mention arriving as a plain `message` event, and `filesUploadV2` with
       `initial_comment` posting top-level, are from Slack's documented
       behaviour, not observed here. The admin switch is typechecked only.
-- [ ] Deploy and try it in the real channel (needs Cameron).
+- [x] Deployed to steamboat 2026-10-02 17:49 PDT (`e1f6b3f`); started
+      cleanly, Slack Socket Mode connected. Ships switched off.
+- [ ] Turn it on (admin page → Slack Integration) and try it in the real
+      channel (needs Cameron).
 
 ## Open questions for the user
 
