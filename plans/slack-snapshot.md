@@ -65,7 +65,8 @@ available and Slack is configured.
       cleanly, Slack Socket Mode connected. Ships switched off.
 - [x] Reply in the requester's thread, and one every 5 minutes
       (Cameron's change after the first deploy).
-- [ ] Deploy the thread-reply / 5-minute change.
+- [x] Thread-reply / 5-minute change deployed 2026-10-02 22:39 PDT
+      (`8be1a79`); started cleanly, Slack connected.
 - [ ] Turn it on (admin page → Slack Integration) and try it in the real
       channel (needs Cameron).
 
