@@ -67,13 +67,14 @@ available and Slack is configured.
       (Cameron's change after the first deploy).
 - [x] Thread-reply / 5-minute change deployed 2026-10-02 22:39 PDT
       (`8be1a79`); started cleanly, Slack connected.
-- [ ] Turn it on (admin page → Slack Integration) and try it in the real
-      channel (needs Cameron).
+- [x] Turned on and tried in the real channel on the first build
+      (`e1f6b3f`): it worked (Cameron, 2026-10-02).
+- [ ] Try the thread-reply build (`8be1a79`) in the channel (Cameron).
 
 ## Open questions for the user
 
-1. Should it refuse at certain times (overnight, or during matches)? Built
-   without any such rule.
+1. _(Resolved 2026-10-02: **no** — Cameron.)_ Should it refuse at certain
+   times (overnight, or during matches)? It has no such rule.
 
 ## Things not to do
 
