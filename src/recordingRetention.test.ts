@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CRITICAL_FREE_BYTES, describeSpaceChange, MatchRecorder } from './matchRecorder.js';
@@ -97,6 +97,41 @@ describe('recording retention and free space', () => {
         ],
       },
     ]);
+  });
+
+  test('storage is measured by kind, however deep the files are', async () => {
+    recording('match-a', 1); // 1 byte of video + its manifest
+    recording('practice-20260925-190000-bbbb', 1);
+    mkdirSync(join(dir, '.practice-buffer', 'all-field'), { recursive: true });
+    writeFileSync(join(dir, '.practice-buffer', 'all-field', 'seg-000001.ts'), 'x'.repeat(100));
+    mkdirSync(join(dir, '.timelapse', 'active', '2026-09-27'), { recursive: true });
+    writeFileSync(join(dir, '.timelapse', 'active', '2026-09-27', 'all-field-120000.mp4'), 'x'.repeat(1000));
+    writeFileSync(join(dir, '.timelapse', 'old-frame.jpg'), 'x'.repeat(500));
+    utimesSync(
+      join(dir, '.timelapse', 'old-frame.jpg'),
+      new Date(Date.now() - 30 * DAY),
+      new Date(Date.now() - 30 * DAY),
+    );
+    mkdirSync(join(dir, 'stray'));
+    writeFileSync(join(dir, 'stray', 'notes.txt'), 'x'.repeat(10));
+
+    const rec = recorder();
+    await rec.checkSpace();
+    const manifestBytes = (name: string) => statSync(join(dir, name, 'recording.json')).size;
+    expect(rec.measureStorage()).toEqual({
+      diskTotalBytes: undefined,
+      diskFreeBytes: 300 * GB,
+      matchBytes: 1 + manifestBytes('match-a'),
+      matchCount: 1,
+      clipBytes: 1 + manifestBytes('practice-20260925-190000-bbbb') + 100,
+      clipCount: 1,
+      timelapseBytes: 1500,
+      timelapseRecentBytes: 1000,
+      // The stray directory: no manifest, so not a match.
+      otherBytes: 10,
+    });
+    expect(rec.inventory().storage.timelapseBytes).toBe(1500);
+    expect(rec.getState().usedBytes).toBeGreaterThan(1500);
   });
 
   test('the timelapse store and the practice buffer are never swept as recordings', () => {

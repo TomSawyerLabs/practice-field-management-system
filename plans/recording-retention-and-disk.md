@@ -66,7 +66,23 @@ every team (`plans/timelapse-viewer.md`, open question 1):
 - [x] Low-space Slack note, unclaimed-team notes dropped, forgotten queue
       line auto-closes — built and tested 2026-10-01; deployed 21:19 PDT
       (`0e908b4`).
-- [ ] steamboat's stored `recordingRetentionDays` is 360 — to become 90.
+- [x] ~~steamboat's stored `recordingRetentionDays` is 360 — to become 90.~~
+      Superseded 2026-10-02: Cameron, asked who sets it, answered "just make
+      sure it's clear how much storage is being used, and what's left". The
+      360 stays as stored; visibility is the requirement instead.
+- [x] **Storage made clear** (2026-10-02). Admin → Recordings on Disk opens
+      with one bar for the whole disk (match videos, team clips, timelapse,
+      everything else, free, the clip floor) with every number in the
+      legend; `MatchRecorder.measureStorage()` walks every file, so the
+      timelapse (nested by day) counts now — before, the "used" figure missed
+      it and the page's total left it out. Growth per kind; days left counts
+      matches + timelapse only (clips level off at a week). Units now GiB
+      everywhere on these pages, matching the floor setting, `df -h` and
+      Slack (the floor used to show as "26.84 GB" beside a setting of 25).
+      Seen in headless Chrome, light and dark, with steamboat's du/df numbers
+      and with the sample measured for real
+      (`C:\Users\camer\pfms-timelapse-sample\harness-storage.ts`,
+      `pw\storage.mjs`).
 
 ## Decisions from the walk-through (2026-10-01)
 
@@ -81,9 +97,9 @@ every team (`plans/timelapse-viewer.md`, open question 1):
 
 ## Open questions for the user
 
-1. Setting steamboat's saved `recordingRetentionDays` from 360 to 90: on the
-   admin page (Match Video Recording → Keep match videos), or by me editing
-   `setup-config.json` on the box at the next deploy?
+1. _(Resolved 2026-10-02: leave it; make storage clear instead — see the
+   progress log.)_ Setting steamboat's saved `recordingRetentionDays` from
+   360 to 90.
 
 ## Findings / gotchas
 
@@ -95,6 +111,13 @@ every team (`plans/timelapse-viewer.md`, open question 1):
   (`MatchQueue.closeLineIfIdle`). A restart restarts that clock.
 - Low space is posted to Slack once per crossing; `/health/site` still does
   not report it.
+- The timelapse's "last 7 days" is by file mtime, so a one-off rewrite reads
+  as growth: on 2026-10-02, 619 MB of steamboat's 663 MB of timelapse was
+  "recent" because every old chunk got its scrub copy that week (and the
+  match fill-in will do the same once). It settles after a week.
+- "Everything else on the disk" includes the ~5% of blocks ext4 reserves
+  for root: on steamboat, 468 GB total − 384 GB available − 14.5 GB of
+  recordings = 69 GB, of which ~23 GB is the reserve.
 
 ## Things not to do
 

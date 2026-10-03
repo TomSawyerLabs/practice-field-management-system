@@ -601,10 +601,17 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   with `?thumb=1` returns a JPEG poster frame, and the sidecar names
   (`/api/recordings/<matchId>/metadata.json` and the two CSVs) return those
   files.
-- **Admin → Recordings on Disk** lists everything still stored (matches and
-  practice runs, with dates, teams and sizes), space used and free, the
-  last week's growth rate and the days until the volume fills at that rate,
-  and per-team totals. Every row shows a poster frame and opens into the
+- **Admin → Recordings on Disk** opens with the whole disk as one bar:
+  match videos, team clips, the timelapse (films, scrub copies, stills),
+  everything else on the disk (system, programs, reserved blocks) and what
+  is free, with a mark at the free-space floor where team clips pause. Every
+  number is in the legend beside it (`MatchRecorder.measureStorage()`, which
+  walks every file, nested timelapse days included). Sizes there are in the
+  same GB as the floor setting, `df -h` and the Slack notes (1024³ bytes).
+  Below it: the last week's growth by kind, and how long the free space
+  lasts at that rate — counting matches and timelapse only, since team clips
+  hold at a week's worth. Then everything still stored (matches and
+  practice runs, with dates, teams and sizes) and per-team totals. Every row shows a poster frame and opens into the
   recording itself: a player per stream, its download, the data recorded
   alongside it (`metadata.json`, `scores.csv`, `telemetry.csv`) and a link
   to the match's public summary page. All times shown are the local time of

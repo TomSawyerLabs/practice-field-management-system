@@ -1114,11 +1114,12 @@ export function AdminPage() {
 
 // ── Match Video Recording ───────────────────────────────────────────
 
+/** GB = 1024³ bytes, the unit of the free-space floor set on this page. */
 function formatRecordingBytes(bytes: number | undefined): string {
   if (bytes === undefined) return '—';
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
-  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
-  return `${Math.round(bytes / 1e3)} kB`;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${Math.round(bytes / 1024)} kB`;
 }
 
 /** The stream's state, separate from the Enable/Disable action: is it saved on
@@ -1236,10 +1237,12 @@ function MatchRecordingSection() {
           {recording && (
             <>
               {' '}
-              Files live in <code>{recording.directory}</code>: {formatRecordingBytes(recording.usedBytes)} used,{' '}
-              {formatRecordingBytes(recording.diskFreeBytes)} free. Match videos are kept {recording.retentionDays} days
-              and teams&apos; practice clips {recording.practiceRetentionDays}; the timelapse keeps its own, longer
-              schedule (Field Timelapse, below).
+              Recordings and timelapse use {formatRecordingBytes(recording.usedBytes)};{' '}
+              <strong>{formatRecordingBytes(recording.diskFreeBytes)} free</strong>
+              {recording.diskTotalBytes ? ` of ${formatRecordingBytes(recording.diskTotalBytes)}` : ''} (the breakdown
+              is under Recordings on Disk, below). Match videos are kept {recording.retentionDays} days and teams&apos;
+              practice clips {recording.practiceRetentionDays}; the timelapse keeps its own, longer schedule (Field
+              Timelapse, below).
             </>
           )}
         </Typography>

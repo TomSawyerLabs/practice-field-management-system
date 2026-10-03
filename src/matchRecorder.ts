@@ -32,6 +32,7 @@ import {
   statSync,
   utimesSync,
   writeFileSync,
+  type Stats,
 } from 'node:fs';
 import { statfs } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -48,6 +49,7 @@ import type {
   RecordingInventoryFile,
   RecordingsInventory,
   RecordingSpace,
+  RecordingStorage,
   RecordingStreamConfig,
   RecordingStreamTestResult,
 } from './types.js';
@@ -93,6 +95,10 @@ const GB = 1024 ** 3;
 /** Remembers the space level last announced, so a restart while the disk is
  *  low does not announce it again. */
 const SPACE_STATE_FILE = '.space-state.json';
+/** Neighbours under the recordings directory, measured by kind. */
+const TIMELAPSE_DIR = '.timelapse';
+const PRACTICE_BUFFER_DIR = '.practice-buffer';
+const DAY_MS = 24 * 60 * 60 * 1000;
 const STDERR_KEEP_LINES = 12;
 
 export const DEFAULT_RECORDINGS_DIR = 'recordings';
@@ -251,6 +257,7 @@ export class MatchRecorder {
   private lastSpace: RecordingSpace = 'ok';
   private spaceListeners: ((change: RecordingSpaceChange) => void)[] = [];
   private diskFreeBytes?: number;
+  private diskTotalBytes?: number;
   private usedBytes?: number;
   /** Thumbnail generations in flight, keyed by the image path. */
   private thumbJobs = new Map<string, Promise<string | undefined>>();
@@ -420,8 +427,60 @@ export class MatchRecorder {
       minFreeBytes: this.minFreeBytes(),
       space: this.space(),
       usedBytes: this.usedBytes,
+      diskTotalBytes: this.diskTotalBytes,
       directory: this.directory,
     };
+  }
+
+  /**
+   * Where the space under the recordings directory goes, by kind, plus the
+   * volume's size and free space from the last check. Walks every file
+   * (the timelapse is nested by day), which is milliseconds for the few
+   * thousand files a season leaves.
+   */
+  measureStorage(now = Date.now()): RecordingStorage {
+    const storage: RecordingStorage = {
+      diskTotalBytes: this.diskTotalBytes,
+      diskFreeBytes: this.diskFreeBytes,
+      matchBytes: 0,
+      matchCount: 0,
+      clipBytes: 0,
+      clipCount: 0,
+      timelapseBytes: 0,
+      timelapseRecentBytes: 0,
+      otherBytes: 0,
+    };
+    let names: string[];
+    try {
+      names = readdirSync(this.directory);
+    } catch {
+      return storage;
+    }
+    const recentSince = now - 7 * DAY_MS;
+    for (const name of names) {
+      const path = join(this.directory, name);
+      if (name === TIMELAPSE_DIR) {
+        walkFiles(path, st => {
+          storage.timelapseBytes += st.size;
+          if (st.mtimeMs >= recentSince) storage.timelapseRecentBytes += st.size;
+        });
+        continue;
+      }
+      let bytes = 0;
+      walkFiles(path, st => (bytes += st.size));
+      if (name.startsWith('practice-')) {
+        storage.clipBytes += bytes;
+        storage.clipCount++;
+      } else if (name === PRACTICE_BUFFER_DIR) {
+        storage.clipBytes += bytes;
+      } else if (!name.startsWith('.') && existsSync(join(path, 'recording.json'))) {
+        storage.matchBytes += bytes;
+        storage.matchCount++;
+      } else {
+        storage.otherBytes += bytes;
+      }
+    }
+    return storage;
   }
 
   /** Absolute directory for a match's files, or null if the id is malformed. */
@@ -1074,6 +1133,7 @@ export class MatchRecorder {
     return {
       type: 'recordingsInventory',
       entries,
+      storage: this.measureStorage(),
       usedBytes: this.usedBytes,
       diskFreeBytes: this.diskFreeBytes,
       retentionDays: this.retentionDays(),
@@ -1220,6 +1280,7 @@ export class MatchRecorder {
       } else {
         const s = await statfs(this.directory);
         this.diskFreeBytes = Number(s.bavail) * Number(s.bsize);
+        this.diskTotalBytes = Number(s.blocks) * Number(s.bsize);
       }
     } catch {
       this.diskFreeBytes = undefined;
@@ -1257,20 +1318,8 @@ export class MatchRecorder {
         }
       }
     }
-    try {
-      let total = 0;
-      for (const name of readdirSync(this.directory)) {
-        const dir = join(this.directory, name);
-        if (!statSync(dir).isDirectory()) continue;
-        for (const f of readdirSync(dir)) {
-          const st = statSync(join(dir, f));
-          if (st.isFile()) total += st.size;
-        }
-      }
-      this.usedBytes = total;
-    } catch {
-      this.usedBytes = undefined;
-    }
+    const s = this.measureStorage();
+    this.usedBytes = s.matchBytes + s.clipBytes + s.timelapseBytes + s.otherBytes;
   }
 
   private partBytes(job: StreamJob): number {
@@ -1329,6 +1378,29 @@ function listFiles(recordings: MatchRecording[] | undefined, sizes: Map<string, 
     .filter(isRecordingFileName)
     .sort()
     .map(file => ({ name: file.replace(/\.mp4$/, ''), file, bytes: sizes.get(file) ?? 0, status: 'ok' as const }));
+}
+
+/** Every file under `path` (or `path` itself, if a file), however deep.
+ *  Files that vanish mid-walk are skipped. */
+function walkFiles(path: string, onFile: (st: Stats) => void): void {
+  let st: Stats;
+  try {
+    st = statSync(path);
+  } catch {
+    return;
+  }
+  if (st.isFile()) {
+    onFile(st);
+    return;
+  }
+  if (!st.isDirectory()) return;
+  let names: string[];
+  try {
+    names = readdirSync(path);
+  } catch {
+    return;
+  }
+  for (const name of names) walkFiles(join(path, name), onFile);
 }
 
 /** "12.3 GB", for log lines. */

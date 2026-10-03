@@ -3699,7 +3699,28 @@ export interface MatchRecordingState {
   space: RecordingSpace;
   /** Total size of everything under the recordings directory. */
   usedBytes?: number;
+  /** Size of the volume the recordings are on, when readable. */
+  diskTotalBytes?: number;
   directory: string;
+}
+
+/** Where the recordings volume's space goes, by kind. Scanned on demand. */
+export interface RecordingStorage {
+  /** Size of the whole volume, and what is left on it, when readable. */
+  diskTotalBytes?: number;
+  diskFreeBytes?: number;
+  /** Match videos (directories with a match manifest). */
+  matchBytes: number;
+  matchCount: number;
+  /** Teams' practice clips, and the rolling buffer they are cut from. */
+  clipBytes: number;
+  clipCount: number;
+  /** The field timelapse: practice films, scrub copies, archival frames. */
+  timelapseBytes: number;
+  /** Timelapse files written in the last 7 days, for the fill rate. */
+  timelapseRecentBytes: number;
+  /** Anything else under the recordings directory. */
+  otherBytes: number;
 }
 
 export interface MatchRecordingStreamStatus {
@@ -4083,6 +4104,7 @@ export interface RecordingInventoryFile {
 export interface RecordingsInventory {
   type: 'recordingsInventory';
   entries: RecordingInventoryEntry[];
+  storage: RecordingStorage;
   usedBytes?: number;
   diskFreeBytes?: number;
   retentionDays: number;

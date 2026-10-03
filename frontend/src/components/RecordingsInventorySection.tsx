@@ -13,9 +13,10 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import VideocamOffIcon from '@mui/icons-material/VideocamOff';
-import type { RecordingInventoryEntry, RecordingInventoryFile } from '../../../src/types';
+import type { RecordingInventoryEntry, RecordingInventoryFile, RecordingStorage } from '../../../src/types';
 import {
   matchSummaryUrl,
   sendDeleteRecording,
@@ -25,9 +26,18 @@ import {
   usePublicUrl,
   useRecordingsInventory,
 } from '../hooks/useBackend';
-import { formatBytes, recordingSidecarUrl, recordingThumbUrl, recordingUrl } from './MatchVideoCard';
+import { recordingSidecarUrl, recordingThumbUrl, recordingUrl } from './MatchVideoCard';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Sizes in the units the free-space floor, `df -h` and the Slack notes use
+ *  (GB = 1024³ bytes), so the numbers on this page agree with them. */
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} kB`;
+  return `${bytes} B`;
+}
 
 /** Every time on this page is the local time of whoever is reading it —
  *  `toLocaleString` with no timezone override. Recordings are talked about
@@ -92,9 +102,16 @@ export function RecordingsInventorySection() {
     const entries = inv.entries;
     const total = entries.reduce((n, e) => n + e.bytes, 0);
     const now = inv.scannedAt;
-    const last7 = entries.filter(e => e.startedAt && now - e.startedAt < 7 * DAY_MS).reduce((n, e) => n + e.bytes, 0);
-    const perDay = last7 / 7;
-    const daysLeft = inv.diskFreeBytes !== undefined && perDay > 0 ? inv.diskFreeBytes / perDay : undefined;
+    const recent = entries.filter(e => e.startedAt && now - e.startedAt < 7 * DAY_MS);
+    const recentOf = (kind: RecordingInventoryEntry['kind']) =>
+      recent.filter(e => e.kind === kind).reduce((n, e) => n + e.bytes, 0) / 7;
+    const clipsPerDay = recentOf('practice');
+    const matchesPerDay = recentOf('match');
+    const timelapsePerDay = inv.storage.timelapseRecentBytes / 7;
+    const perDay = clipsPerDay + matchesPerDay + timelapsePerDay;
+    // Clips level off at a week's worth; what keeps growing is the rest.
+    const growth = matchesPerDay + timelapsePerDay;
+    const daysLeft = inv.diskFreeBytes !== undefined && growth > 0 ? inv.diskFreeBytes / growth : undefined;
     const oldest = entries.reduce<number | undefined>(
       (o, e) => (e.startedAt && (o === undefined || e.startedAt < o) ? e.startedAt : o),
       undefined,
@@ -114,6 +131,9 @@ export function RecordingsInventorySection() {
       matches: entries.filter(e => e.kind === 'match').length,
       runs: entries.filter(e => e.kind === 'practice').length,
       perDay,
+      clipsPerDay,
+      matchesPerDay,
+      timelapsePerDay,
       daysLeft,
       oldest,
       byTeam: [...byTeam.entries()].sort((a, b) => b[1].bytes - a[1].bytes),
@@ -146,25 +166,23 @@ export function RecordingsInventorySection() {
           </Typography>
         ) : (
           <>
+            <StorageBar storage={inv.storage} minFreeBytes={inv.minFreeBytes} />
+
             <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-              {stats.count} recording{stats.count === 1 ? '' : 's'} ({stats.matches} match
-              {stats.matches === 1 ? '' : 'es'}, {stats.runs} practice run{stats.runs === 1 ? '' : 's'}) using{' '}
-              <strong>{formatBytes(stats.total)}</strong> in <code>{inv.directory}</code>.{' '}
-              {inv.diskFreeBytes !== undefined && (
-                <>
-                  <strong>{formatBytes(inv.diskFreeBytes)}</strong> free on that volume.{' '}
-                </>
-              )}
-              Last 7 days added {formatBytes(stats.perDay)}/day
+              The last 7 days added <strong>{formatSize(stats.perDay)}/day</strong> (team clips{' '}
+              {formatSize(stats.clipsPerDay)}, match videos {formatSize(stats.matchesPerDay)}, timelapse{' '}
+              {formatSize(stats.timelapsePerDay)}). Team clips are deleted after {inv.practiceRetentionDays} days, so
+              they hold at about a week&apos;s worth
               {stats.daysLeft !== undefined && (
                 <>
-                  {' '}
-                  — at that rate the disk fills in about <strong>{Math.round(stats.daysLeft)} days</strong>
+                  ; the rest would fill the free space in about <strong>{formatDaysLeft(stats.daysLeft)}</strong> at
+                  that rate
                 </>
               )}
-              . Oldest: {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. Every hour the sweep
-              deletes practice clips older than {inv.practiceRetentionDays} days and match videos older than{' '}
-              {inv.retentionDays} (set above).
+              . Every hour the sweep deletes team clips older than {inv.practiceRetentionDays} days and match videos
+              older than {inv.retentionDays} days (set above). Oldest recording:{' '}
+              {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. Files live in{' '}
+              <code>{inv.directory}</code>.
               {inv.space === 'low' && ' Practice clips are paused: the disk is under its free-space floor.'}
               {inv.space === 'critical' && ' Nothing is being recorded: the disk is nearly full.'}
               {live?.activeMatchId && ' A match is being recorded right now.'}
@@ -177,7 +195,7 @@ export function RecordingsInventorySection() {
                     key={team}
                     size="small"
                     variant="outlined"
-                    label={`${team === 0 ? 'no team' : team}: ${formatBytes(v.bytes)} · ${v.count}`}
+                    label={`${team === 0 ? 'no team' : team}: ${formatSize(v.bytes)} · ${v.count}`}
                   />
                 ))}
               </Box>
@@ -204,7 +222,7 @@ export function RecordingsInventorySection() {
                       setConfirm(null);
                     }}
                   >
-                    Really delete {olderCount} ({formatBytes(olderBytes)})
+                    Really delete {olderCount} ({formatSize(olderBytes)})
                   </Button>
                   <Button size="small" onClick={() => setConfirm(null)}>
                     Cancel
@@ -218,7 +236,7 @@ export function RecordingsInventorySection() {
                   disabled={olderCutoff === null || olderCount === 0}
                   onClick={() => setConfirm('older')}
                 >
-                  Delete {olderCount} recording{olderCount === 1 ? '' : 's'} ({formatBytes(olderBytes)})
+                  Delete {olderCount} recording{olderCount === 1 ? '' : 's'} ({formatSize(olderBytes)})
                 </Button>
               )}
             </Box>
@@ -270,6 +288,154 @@ export function RecordingsInventorySection() {
   );
 }
 
+/** "3 weeks", "8 months", "4 years" — a projection, so no false precision. */
+function formatDaysLeft(days: number): string {
+  if (days < 14) return `${Math.max(1, Math.round(days))} day${Math.round(days) === 1 ? '' : 's'}`;
+  if (days < 90) return `${Math.round(days / 7)} weeks`;
+  if (days < 730) return `${Math.round(days / 30)} months`;
+  return `${Math.round(days / 365)} years`;
+}
+
+/** Categorical slots 1–3 of the validated reference palette (light / dark
+ *  steps), and a neutral for the disk's other contents. */
+const STORAGE_COLORS = {
+  match: { light: '#2a78d6', dark: '#3987e5' },
+  clips: { light: '#eb6834', dark: '#d95926' },
+  timelapse: { light: '#1baf7a', dark: '#199e70' },
+  rest: { light: '#a3a29c', dark: '#6b6a64' },
+} as const;
+
+/**
+ * The whole recordings volume as one bar: what each kind of recording takes,
+ * everything else on the disk, and what is free — with the free-space floor
+ * below which team clips pause. Every number is in the legend, so nothing
+ * hides behind a hover.
+ */
+function StorageBar({ storage: s, minFreeBytes }: { storage: RecordingStorage; minFreeBytes: number }) {
+  const mode = useTheme().palette.mode;
+  const recordings = s.matchBytes + s.clipBytes + s.timelapseBytes;
+  const total = s.diskTotalBytes;
+  const free = s.diskFreeBytes;
+  // Everything on the disk that is not a match, clip or timelapse: the OS,
+  // other programs, stray files, and the blocks reserved for the system.
+  const rest = total !== undefined && free !== undefined ? Math.max(0, total - free - recordings) : undefined;
+  const parts: { key: keyof typeof STORAGE_COLORS; label: string; bytes: number; detail: string }[] = [
+    {
+      key: 'match',
+      label: 'Match videos',
+      bytes: s.matchBytes,
+      detail: `${s.matchCount} match${s.matchCount === 1 ? '' : 'es'}`,
+    },
+    {
+      key: 'clips',
+      label: 'Team clips',
+      bytes: s.clipBytes,
+      detail: `${s.clipCount} run${s.clipCount === 1 ? '' : 's'}`,
+    },
+    { key: 'timelapse', label: 'Timelapse', bytes: s.timelapseBytes, detail: 'films, scrub copies, stills' },
+    ...(rest !== undefined
+      ? [
+          {
+            key: 'rest' as const,
+            label: 'Everything else on the disk',
+            bytes: rest,
+            detail: 'system, programs, reserved',
+          },
+        ]
+      : []),
+  ];
+  const pct = (bytes: number) => (total ? (bytes / total) * 100 : 0);
+  const floorAt = total !== undefined && minFreeBytes < total ? 100 - pct(minFreeBytes) : undefined;
+
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Typography variant="body1" sx={{ mb: 1 }}>
+        {free !== undefined && total !== undefined ? (
+          <>
+            <strong>{formatSize(free)} free</strong> of {formatSize(total)} ({Math.round(pct(free))}%). Recordings and
+            timelapse use {formatSize(recordings)}.
+          </>
+        ) : (
+          <>Recordings and timelapse use {formatSize(recordings)}. The disk&apos;s size could not be read.</>
+        )}
+      </Typography>
+
+      {total !== undefined && (
+        <Box sx={{ position: 'relative', mb: 1 }}>
+          <Box
+            role="img"
+            aria-label={`Disk: ${parts.map(p => `${p.label} ${formatSize(p.bytes)}`).join(', ')}, ${formatSize(free ?? 0)} free`}
+            sx={{
+              display: 'flex',
+              gap: '2px',
+              height: 16,
+              borderRadius: 1,
+              overflow: 'hidden',
+              bgcolor: 'action.selected',
+            }}
+          >
+            {parts
+              .filter(p => p.bytes > 0)
+              .map(p => (
+                <Box
+                  key={p.key}
+                  sx={{
+                    width: `${pct(p.bytes)}%`,
+                    minWidth: 2,
+                    bgcolor: STORAGE_COLORS[p.key][mode],
+                  }}
+                />
+              ))}
+          </Box>
+          {floorAt !== undefined && (
+            <Box
+              sx={{
+                position: 'absolute',
+                left: `${floorAt}%`,
+                top: -3,
+                bottom: -3,
+                width: 2,
+                bgcolor: 'text.primary',
+              }}
+            />
+          )}
+        </Box>
+      )}
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 2.5, rowGap: 0.5 }}>
+        {parts.map(p => (
+          <Box key={p.key} sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '2px', bgcolor: STORAGE_COLORS[p.key][mode] }} />
+            <Typography variant="body2">
+              {p.label} <strong>{formatSize(p.bytes)}</strong>
+              <Box component="span" sx={{ color: 'text.secondary' }}>
+                {' '}
+                · {p.detail}
+              </Box>
+            </Typography>
+          </Box>
+        ))}
+        {free !== undefined && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '2px', bgcolor: 'action.selected' }} />
+            <Typography variant="body2">
+              Free <strong>{formatSize(free)}</strong>
+            </Typography>
+          </Box>
+        )}
+        {floorAt !== undefined && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <Box sx={{ width: 2, height: 14, bgcolor: 'text.primary' }} />
+            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+              Team clips pause below {formatSize(minFreeBytes)} free
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 function InventoryRow({
   entry: e,
   open,
@@ -310,7 +476,7 @@ function InventoryRow({
         </TableCell>
         <TableCell>{e.teams.join(', ') || '—'}</TableCell>
         <TableCell align="right">{length}</TableCell>
-        <TableCell align="right">{formatBytes(e.bytes)}</TableCell>
+        <TableCell align="right">{formatSize(e.bytes)}</TableCell>
         <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
           {confirming ? (
             <>
@@ -411,7 +577,7 @@ function RecordingDetail({ entry: e, summaryUrl }: { entry: RecordingInventoryEn
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 0.75 }}>
               <Typography sx={{ fontWeight: 600 }}>{f.name}</Typography>
               <Typography variant="body2" color="text.secondary">
-                {formatBytes(f.bytes)}
+                {formatSize(f.bytes)}
                 {f.durationSeconds ? ` · ${formatDuration(f.durationSeconds)}` : ''}
               </Typography>
               {f.status === 'partial' && (
