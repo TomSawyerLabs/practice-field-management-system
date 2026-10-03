@@ -272,12 +272,19 @@ export class SlackBridge {
     }
   }
 
-  /** Post an image to the support channel, top-level, with a comment. */
-  async uploadImageToChannel(image: Buffer, filename: string, title: string, comment: string): Promise<boolean> {
+  /** Post an image under a message in the support channel, with a comment. */
+  async uploadImageInThread(
+    threadTs: string,
+    image: Buffer,
+    filename: string,
+    title: string,
+    comment: string,
+  ): Promise<boolean> {
     if (!this.web || !this.config) return false;
     try {
       await this.web.filesUploadV2({
         channel_id: this.config.channelId,
+        thread_ts: threadTs,
         file: image,
         filename,
         title,

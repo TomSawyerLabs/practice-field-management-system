@@ -30,9 +30,11 @@ available and Slack is configured.
 - **No Slack app change needed.** A mention of the bot in the channel
   arrives as an ordinary channel message, which the bot already gets, so
   `app_mention` is not subscribed.
-- Defaults I proposed and am building: one snapshot a minute for the whole
-  channel; a 1920-wide copy, not the 12 MP frame; posted top-level so
-  everyone sees it.
+- A 1920-wide copy, not the 12 MP frame.
+- **Cameron (2026-10-02, after the first deploy):** the picture is a
+  **reply to the message that asked** (`filesUploadV2` with `thread_ts`),
+  not a top-level post, and there is **one snapshot every 5 minutes** for
+  the whole channel (was one a minute).
 
 ## Design
 
@@ -52,14 +54,18 @@ available and Slack is configured.
 - [x] Bridge: channel-message hook, bot id (`auth.test`), image upload,
       thread reply.
 - [x] `slackSnapshots.ts` + tests (request rule, off = silent, cooldown,
-      failure does not use the minute, real ffmpeg capture scaled to 1920).
+      failure does not start the wait, real ffmpeg capture scaled to 1920).
 - [x] Setting, wiring, admin switch, docs (`docs/support.md`).
 - [ ] Not exercised against real Slack: the tests use a fake bridge. The
       mention arriving as a plain `message` event, and `filesUploadV2` with
-      `initial_comment` posting top-level, are from Slack's documented
+      `thread_ts` + `initial_comment` landing in the thread with its
+      caption, are from Slack's documented
       behaviour, not observed here. The admin switch is typechecked only.
 - [x] Deployed to steamboat 2026-10-02 17:49 PDT (`e1f6b3f`); started
       cleanly, Slack Socket Mode connected. Ships switched off.
+- [x] Reply in the requester's thread, and one every 5 minutes
+      (Cameron's change after the first deploy).
+- [ ] Deploy the thread-reply / 5-minute change.
 - [ ] Turn it on (admin page → Slack Integration) and try it in the real
       channel (needs Cameron).
 

@@ -45,7 +45,13 @@ describe('isSnapshotRequest', () => {
 
 describe('SlackSnapshots', () => {
   const setup = (over: Partial<SlackSnapshotDeps> = {}) => {
-    const state = { now: 1_000_000, enabled: true, uploads: [] as string[], replies: [] as string[], captures: 0 };
+    const state = {
+      now: 1_000_000,
+      enabled: true,
+      uploads: [] as { threadTs: string; comment: string }[],
+      replies: [] as string[],
+      captures: 0,
+    };
     const snapshots = new SlackSnapshots({
       isEnabled: () => state.enabled,
       getStreams: () => [
@@ -60,8 +66,8 @@ describe('SlackSnapshots', () => {
       },
       slack: {
         getBotUserId: () => BOT,
-        uploadImageToChannel: async (_image, _name, _title, comment) => {
-          state.uploads.push(comment);
+        uploadImageInThread: async (threadTs, _image, _name, _title, comment) => {
+          state.uploads.push({ threadTs, comment });
           return true;
         },
         replyInThread: async (_ts, text) => {
@@ -84,27 +90,33 @@ describe('SlackSnapshots', () => {
     expect(state.replies).toEqual([]);
   });
 
-  test('a request posts one picture from the first enabled camera, naming who asked', async () => {
+  test('a request gets one picture from the first enabled camera, as a reply to it', async () => {
     const { state, ask } = setup();
     expect(await ask(`<@${BOT}> photo please`)).toBe('posted');
     expect(state.uploads).toHaveLength(1);
-    expect(state.uploads[0]).toContain('<@U0ASKER>');
+    expect(state.uploads[0]!.threadTs).toBe('1.1');
+    expect(state.uploads[0]!.comment).toContain('The field at');
     expect(await ask('how is everyone')).toBe('ignored');
     expect(state.captures).toBe(1);
   });
 
-  test('one a minute for the whole channel, and it says when to try again', async () => {
+  test('one every 5 minutes for the whole channel, and it says when to try again', async () => {
     const { state, ask } = setup();
+    expect(SNAPSHOT_COOLDOWN_MS).toBe(5 * 60_000);
     expect(await ask()).toBe('posted');
-    state.now += 20_000;
+    state.now += 90_000;
     expect(await ask()).toBe('refused');
-    expect(state.replies[0]).toContain('40 s');
-    state.now += SNAPSHOT_COOLDOWN_MS;
+    expect(state.replies[0]).toContain('every 5 minutes');
+    expect(state.replies[0]).toContain('try again in 4 min');
+    state.now += SNAPSHOT_COOLDOWN_MS - 90_000 - 20_000;
+    expect(await ask()).toBe('refused');
+    expect(state.replies[1]).toContain('try again in 20 s');
+    state.now += 20_000;
     expect(await ask()).toBe('posted');
     expect(state.captures).toBe(2);
   });
 
-  test('a camera that will not answer is said so, and does not use up the minute', async () => {
+  test('a camera that will not answer is said so, and does not start the wait', async () => {
     let broken = true;
     const { state, ask } = setup({
       capture: async () => {

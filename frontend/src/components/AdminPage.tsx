@@ -1550,8 +1550,9 @@ function SlackConfigSection() {
             </Box>
             <Typography variant="body2" color="text.secondary">
               Anyone in the support channel can ask for a live picture of the field — mention the bot with
-              &quot;snapshot&quot; or &quot;photo&quot;, or post just <code>!snapshot</code> — and it is posted there
-              for everyone, at most one a minute. Requests in threads, DMs and other channels are ignored.
+              &quot;snapshot&quot; or &quot;photo&quot;, or post just <code>!snapshot</code> — and it is posted as a
+              reply to that message, at most one every 5 minutes. Requests in threads, DMs and other channels are
+              ignored.
               {snapshotBlocked && !snapshotsOn && ` ${snapshotBlocked}`}
               {snapshotBlocked && snapshotsOn && ` It cannot answer right now: ${snapshotBlocked}`}
             </Typography>

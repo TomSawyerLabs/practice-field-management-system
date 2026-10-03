@@ -58,8 +58,7 @@ plans, tests and tooling are only listed when a deploy has nothing else.
 **Off by default.** Switched on under Slack Integration, which only allows
 it once Slack is connected and a camera stream is enabled (the same streams
 as match recording). Then anyone in the support channel can ask for a live
-picture of the field and it is posted there, top-level, for everyone, with
-who asked:
+picture of the field and it is posted as a reply to their message:
 
 - mention the bot with a word for a picture — "@pFMS snapshot", "@pFMS can
   we get a photo?" (`snapshot`, `snap`, `photo`, `picture`, `pic`) — or
@@ -68,10 +67,10 @@ who asked:
 
 Only top-level messages in that one channel count. Threads belong to the
 support chat, and DMs and other channels are ignored, so every request and
-every picture is in the open. There is **one snapshot a minute** for the
-whole channel; asking sooner gets a threaded reply saying when to try
-again, as does a camera that will not answer (which does not use up the
-minute). The picture is one frame off the first enabled stream, scaled to
+every picture is in the open. There is **one snapshot every 5 minutes**
+for the whole channel; asking sooner gets a threaded reply saying when to
+try again, as does a camera that will not answer (which does not start the
+wait). The picture is one frame off the first enabled stream, scaled to
 1920 wide (`src/slackSnapshots.ts`).
 
 It is on request rather than on a schedule on purpose: an hourly post is
