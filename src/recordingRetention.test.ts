@@ -68,6 +68,37 @@ describe('recording retention and free space', () => {
     expect(rec.effectivePracticeRetentionDays()).toBe(20);
   });
 
+  test('finished matches are listed for catching up; team clips, failed videos and unfinished ones are not', () => {
+    recording('practice-20260925-190000-bbbb', 1);
+    mkdirSync(join(dir, 'match-done'));
+    writeFileSync(
+      join(dir, 'match-done', 'recording.json'),
+      JSON.stringify({
+        matchId: 'match-done',
+        startedAt: 1000,
+        endedAt: 200_000,
+        teams: [],
+        recordings: [
+          { name: 'all-field', file: 'all-field.mp4', startedAt: 1000, durationSeconds: 199, status: 'ok' },
+          { name: 'east', file: 'east.mp4', startedAt: 1000, status: 'failed' },
+        ],
+      }),
+    );
+    mkdirSync(join(dir, 'match-cut-off'));
+    writeFileSync(
+      join(dir, 'match-cut-off', 'recording.json'),
+      JSON.stringify({ matchId: 'match-cut-off', startedAt: 1000, teams: [], recordings: [] }),
+    );
+    expect(recorder().finishedMatches()).toEqual([
+      {
+        matchId: 'match-done',
+        recordings: [
+          { name: 'all-field', path: join(dir, 'match-done', 'all-field.mp4'), startedAt: 1000, durationSeconds: 199 },
+        ],
+      },
+    ]);
+  });
+
   test('the timelapse store and the practice buffer are never swept as recordings', () => {
     for (const name of ['.timelapse', '.practice-buffer']) {
       mkdirSync(join(dir, name), { recursive: true });

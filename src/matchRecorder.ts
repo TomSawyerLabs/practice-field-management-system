@@ -430,6 +430,37 @@ export class MatchRecorder {
     return join(this.directory, matchId);
   }
 
+  /** Every finished match still on disk, in the shape the finish listeners
+   *  get — for catching up on matches recorded before a listener existed. */
+  finishedMatches(): FinishedMatchRecording[] {
+    const out: FinishedMatchRecording[] = [];
+    let names: string[];
+    try {
+      names = readdirSync(this.directory);
+    } catch {
+      return out;
+    }
+    for (const name of names) {
+      if (name.startsWith('.') || name.startsWith('practice-') || this.session?.dir === join(this.directory, name)) {
+        continue;
+      }
+      const manifest = this.readManifest(name);
+      if (!manifest?.endedAt) continue;
+      out.push({
+        matchId: manifest.matchId,
+        recordings: manifest.recordings
+          .filter(r => r.status !== 'failed')
+          .map(r => ({
+            name: r.name,
+            path: join(this.directory, name, r.file),
+            startedAt: r.startedAt,
+            durationSeconds: r.durationSeconds,
+          })),
+      });
+    }
+    return out;
+  }
+
   /** The sidecar manifest for a recorded match, if present. */
   readManifest(matchId: string): RecordingManifest | null {
     const dir = this.matchDirectory(matchId);

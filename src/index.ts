@@ -900,9 +900,20 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Starts listening to match phases; verifies ffmpeg first and says so in
   // the log if recording can't work on this host.
-  matchRecorder.start(matchEngine, matchHistoryStore).catch(err => {
-    console.error('Match recorder failed to start:', err);
-  });
+  matchRecorder.start(matchEngine, matchHistoryStore).then(
+    () => {
+      // Once ffmpeg is known to work: matches recorded before the timelapse
+      // filled them in get their chunks now.
+      try {
+        fieldTimelapse.fillInPastMatches(matchRecorder.finishedMatches());
+      } catch (err) {
+        console.error('Field timelapse: could not fill in past matches:', err);
+      }
+    },
+    err => {
+      console.error('Match recorder failed to start:', err);
+    },
+  );
   practiceRecorder.start();
   practiceNotifier.start();
   queueNudger.start();

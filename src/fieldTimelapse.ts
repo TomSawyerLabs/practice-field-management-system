@@ -151,6 +151,12 @@ interface FinalizeJob {
   derive?: { input: string };
 }
 
+/** A finished match recording, as the timelapse fills it in. */
+export interface MatchForTimelapse {
+  matchId: string;
+  recordings: { name: string; path: string; startedAt: number; durationSeconds?: number }[];
+}
+
 /** `<stream slug>-HHMMSS.mp4` */
 const CHUNK_NAME = /^(.+)-(\d{6})\.mp4$/;
 
@@ -1211,15 +1217,53 @@ export class FieldTimelapse {
    * keyframe-only decode of a few minutes of file is seconds of CPU, and it
    * waits in the finalize queue until the match is over.
    */
-  onMatchRecorded(match: {
-    matchId: string;
-    recordings: { name: string; path: string; startedAt: number; durationSeconds?: number }[];
-  }): void {
+  onMatchRecorded(match: MatchForTimelapse): void {
+    this.fillFromMatch(match, false);
+  }
+
+  /**
+   * Matches recorded before this filling-in existed, or while it was off:
+   * make their chunks now. Called at startup with every match still on disk.
+   * Skips a match already filled in, one whose time the live capture already
+   * covers, and one older than the chunks are kept — the sweep would only
+   * delete it again. Returns how many chunks were queued.
+   */
+  fillInPastMatches(matches: MatchForTimelapse[]): number {
     const config = this.config();
-    if (!config.enabled || !config.captureWhileRobotsPresent || this.unavailableReason() !== undefined) return;
+    const cutoff = localDay(this.now() - config.activeRetentionDays * DAY_MS);
+    let queued = 0;
+    for (const match of matches) {
+      const first = Math.min(...match.recordings.map(r => r.startedAt));
+      if (!Number.isFinite(first) || localDay(first) < cutoff) continue;
+      queued += this.fillFromMatch(match, true);
+    }
+    if (queued > 0) console.log(`Field timelapse: filling in ${queued} chunk(s) from past match recordings`);
+    return queued;
+  }
+
+  private fillFromMatch(match: MatchForTimelapse, skipIfCovered: boolean): number {
+    const config = this.config();
+    if (!config.enabled || !config.captureWhileRobotsPresent || this.unavailableReason() !== undefined) return 0;
+    let queued = 0;
     for (const stream of this.streams()) {
       const rec = match.recordings.find(r => r.name === stream.name);
       if (!rec?.durationSeconds || !existsSync(rec.path)) continue;
+      if (skipIfCovered) {
+        const start = rec.startedAt;
+        const end = start + rec.durationSeconds * 1000;
+        // On film already if live chunks cover most of it; a few seconds is
+        // only a live chunk closing as the match started.
+        const covered =
+          [this.finalizing, ...this.finalizeQueue].some(
+            j => j?.matchId === match.matchId && j.stream === stream.name,
+          ) ||
+          this.chunkInfos(start, end).some(
+            c =>
+              c.stream === stream.name &&
+              (c.matchId === match.matchId || Math.min(c.end, end) - Math.max(c.start, start) > (end - start) / 2),
+          );
+        if (covered) continue;
+      }
       const day = localDay(rec.startedAt);
       const dir = join(this.activeRoot, day);
       const slug = slugify(stream.name);
@@ -1242,7 +1286,9 @@ export class FieldTimelapse {
         remux: false,
         derive: { input: rec.path },
       });
+      queued++;
     }
+    return queued;
   }
 
   private async encodeFromMatch(job: FinalizeJob): Promise<boolean> {

@@ -807,6 +807,34 @@ describe('FieldTimelapse', () => {
     expect(probe).toBe('320,30/1');
   }, 60_000);
 
+  test('past matches are filled in once, unless already on film or past keeping', async () => {
+    const recording = join(dir, 'match-1', 'all-field.mp4');
+    const live = timelapse.getState().recentSessions[0];
+    const rec = (startedAt: number, durationSeconds = 20) => [
+      { name: 'All field', path: recording, startedAt, durationSeconds },
+    ];
+    const twoHoursAgo = Date.now() - 2 * 60 * 60_000;
+    const queued = timelapse.fillInPastMatches([
+      // Filled in by the test above.
+      { matchId: 'match-1', recordings: rec(Date.now() - 60 * 60_000) },
+      // Recorded before filling in existed.
+      { matchId: 'match-2', recordings: rec(twoHoursAgo) },
+      // The live capture was running through most of it.
+      { matchId: 'match-3', recordings: rec(live.startedAt + 500, 4) },
+      // Older than the chunks are kept.
+      { matchId: 'match-4', recordings: rec(Date.now() - (config.activeRetentionDays + 2) * 24 * 60 * 60_000) },
+      // No usable video.
+      { matchId: 'match-5', recordings: [] },
+    ]);
+    expect(queued).toBe(1);
+    await timelapse.whenFinalized();
+    const made = timelapse.chunkInfos(twoHoursAgo - 1000, twoHoursAgo + 30_000).filter(c => c.source === 'match');
+    expect(made).toHaveLength(1);
+    expect(made[0]).toMatchObject({ matchId: 'match-2', start: twoHoursAgo });
+    // And a second pass (the next restart) finds nothing left to do.
+    expect(timelapse.fillInPastMatches([{ matchId: 'match-2', recordings: rec(twoHoursAgo) }])).toBe(0);
+  }, 60_000);
+
   test('a film is rendered from the archival frames', async () => {
     // captureFrame above left a handful of frames under today's date.
     const day = localDay(Date.now());

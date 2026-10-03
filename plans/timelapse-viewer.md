@@ -162,6 +162,14 @@ Cameron (2026-09-30):
       match history in at startup. All 24 existing chunks were finalized
       (sidecar, faststart, scrub sheet) within a minute of startup. No match-derived chunks for 09-27: only matches recorded
       from now on get one.
+- [x] 2026-10-02 **Past matches filled in at startup** (Cameron: "We had
+      matches last weekend"). Matches recorded before match-derived chunks
+      existed had none, so the feature had never run on real footage. At
+      startup `fillInPastMatches(matchRecorder.finishedMatches())` queues a
+      chunk for every finished match still on disk that has none, skipping
+      ones older than chunk retention (60 d) and ones the live capture
+      already covers for more than half the match. steamboat has ~71
+      matches from 09-13 to 09-27 (12 on 09-27), all within 60 days.
 - [ ] After deploy: open `/timelapse` on a real practice night and check
       enables/robots against what happened; check the first match-derived
       chunk appears a few seconds after a match.
@@ -174,8 +182,11 @@ Cameron (2026-09-30):
     134 min of field time, **58 enables and 14 robot spans logged**, and 21
     practice clips recorded (default-on works). No matches that night, so
     no match-derived chunk has been seen on the real field yet. 14 robot
-    spans for one team in ~2.5 h is more than expected — link drops over
-    30 s, or the DS going quiet; not looked into.
+    spans for one team in ~2.5 h looked like too many; **explained
+    2026-10-02: robot reboots.** Ten of the 13 gaps are 47–80 s
+    (17:44:30→17:45:21, 17:46:20→17:47:07, …) — a radio rebooting after a
+    power cycle or battery swap — one is ~3 min, and two are the robot off
+    (18:09→18:55, 19:07→19:15). Nothing to fix.
   - Measured first (`pw/seekbench.mjs`, real half-hour chunk, Chrome,
     localhost): a seek in the chunk is 52 ms median / 77 ms p90 (decodes up
     to 30 frames of 1920×1714); 1920 g5 → 23 ms at 3.6× the size; 960 g5 →

@@ -805,7 +805,10 @@ behind one switch:
   at full rate — and picks up again for the post-match count. Once a
   match's recording is finished, a chunk is made from it at the same
   settings (a keyframe-only decode of a few minutes of file: seconds of
-  CPU), so the film runs straight through every match. The default samples
+  CPU), so the film runs straight through every match. At startup, matches
+  still on disk that have no chunk yet (recorded before this existed, or
+  while it was off) get one too, unless they are older than the practice
+  films are kept or the live timelapse already covers most of the match. The default samples
   keyframes only, which costs about a fifth of the CPU of decoding every
   frame to keep one, and runs at 60× — a three-hour practice is three
   minutes of film, about 60 MB. "Every second" instead gives 30× and
