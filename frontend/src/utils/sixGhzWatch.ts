@@ -37,6 +37,12 @@ export function describeClashForTeam(c: SixGhzClash): { severity: 'error' | 'war
   };
 }
 
+/** Whether the watch can see other access points right now: running, and
+ *  hearing 6 GHz. */
+export function isSixGhzWatching(state: SixGhzWatchState | null | undefined): boolean {
+  return state?.status === 'running' && !state.problem;
+}
+
 /** Clashes for one team. */
 export function clashesForTeam(state: SixGhzWatchState | null, team: number): SixGhzClash[] {
   return state?.status === 'running' ? state.clashes.filter(c => c.team === team) : [];

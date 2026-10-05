@@ -49,11 +49,25 @@ export function stalledFor(st: RobotWifiStall, now: number): string {
 
 const WORSE = { error: 0, warning: 1, info: 2, success: 3 } as const;
 
+/** Whether the 6 GHz watch can see other access points right now. When it
+ *  can't, a robot that has the right name and passphrase but still won't
+ *  join gets a hint that a team's own AP may have it. */
+export interface StallContext {
+  sixGhzWatching?: boolean;
+}
+
+/** A team's own AP, left on with the field's network name, takes the robot
+ *  instead of the field. Said only when the 6 GHz watch can't see for itself. */
+const OWN_AP_HINT =
+  'If you brought your own access point or a spare radio set up with this network, switch it off — your robot ' +
+  'may have joined it instead of the field.';
+
 /** What a robot that is taking too long to join tells its team: what we
  *  can hear, and what trying the field's passphrase on it found. */
 export function describeStallForTeam(
   st: RobotWifiStall,
   now: number,
+  ctx: StallContext = {},
 ): { severity: RobotWifiSeverity; lines: string[] } {
   const b = st.broadcast;
   const waited = `Your robot hasn't joined the field after ${stalledFor(st, now)}.`;
@@ -94,6 +108,7 @@ export function describeStallForTeam(
         'The passphrase the field is using is correct. The radio may still be starting, or be too far from ' +
           'the field — power-cycling the robot radio usually helps.',
       );
+      if (!ctx.sixGhzWatching) lines.push(OWN_AP_HINT);
       break;
     case 'wrongKey':
       bump('error');
@@ -137,6 +152,7 @@ export interface RobotWifiStaffIssue {
 export function robotWifiStaffIssues(
   scan: RobotWifiScanState | null | undefined,
   now: number = Date.now(),
+  ctx: StallContext = {},
 ): RobotWifiStaffIssue[] {
   if (!scan) return [];
   const issues: RobotWifiStaffIssue[] = [];
@@ -182,7 +198,10 @@ export function robotWifiStaffIssues(
           : k === 'wrongKey'
             ? 'Re-enter the passphrase with the team; ask whether the 2.4 GHz passphrase was set separately.'
             : k === 'ok'
-              ? 'Name and passphrase are right: power-cycle the robot radio, and check it is within range of the field.'
+              ? 'Name and passphrase are right: power-cycle the robot radio, and check it is within range of the field.' +
+                (ctx.sixGhzWatching
+                  ? ''
+                  : ' Ask whether the team has its own access point or a spare radio on — the robot may have joined it.')
               : 'The team can press Test connection on their page.',
     });
   }

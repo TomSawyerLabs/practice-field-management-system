@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { SixGhzClash, SixGhzWatchState } from '../../../src/types';
-import { clashesForTeam, describeClashForTeam, sixGhzChannelLabel, sixGhzStaffIssues } from './sixGhzWatch';
+import {
+  clashesForTeam,
+  describeClashForTeam,
+  isSixGhzWatching,
+  sixGhzChannelLabel,
+  sixGhzStaffIssues,
+} from './sixGhzWatch';
 
 const other = (bssid: string, channel: number, signal = -60) => ({ bssid, frequency: 5950 + 5 * channel, signal });
 
@@ -51,6 +57,14 @@ describe('6 GHz watch wording', () => {
     expect(clashesForTeam({ ...state, status: 'error' }, 1234)).toEqual([]);
     expect(clashesForTeam(null, 1234)).toEqual([]);
   });
+});
+
+test('watching only while running and hearing 6 GHz', () => {
+  expect(isSixGhzWatching(watch())).toBe(true);
+  expect(isSixGhzWatching(watch({ status: 'off' }))).toBe(false);
+  expect(isSixGhzWatching(watch({ status: 'error' }))).toBe(false);
+  expect(isSixGhzWatching(watch({ problem: 'no 6 GHz channels' }))).toBe(false);
+  expect(isSixGhzWatching(null)).toBe(false);
 });
 
 describe('6 GHz watch issues for staff', () => {

@@ -58,6 +58,11 @@ get_capability freq`), with `non_coloc_6ghz=1` so the driver doesn't
   - SSID the field isn't serving but a team has saved: **team AP** — warn
     the team to switch it off before connecting.
   - Anything else: shown on the admin page only.
+- **Own-AP stall hint** (user, 2026-10-04: "only if the watcher is
+  disabled"): when a stalled robot's passphrase check says the field's key
+  works, the team page adds "if you brought your own access point … switch
+  it off", and the CSA fix asks after it — only while the watch isn't
+  watching (`isSixGhzWatching`: running and hearing 6 GHz).
 - **Where it shows:** team page (robot list), CSA page issues, admin card
   with the card picker and everything heard on 6 GHz (BSSID, channel,
   signal, hidden ones included) for tomorrow's tuning.
@@ -133,13 +138,15 @@ adapter. Tomorrow's checklist:
 - [x] 5 docs (`docs/robot-tester.md#6-ghz-watch`, configuration table;
       README has no per-feature entry for the Wi-Fi scans, left alone)
 - [x] 6 typecheck, prettier, full suite 823/823; committed
-- [ ] 7 deploy + verify with the adapter (2026-10-05)
+- [x] Own-AP stall hint, only while the watch isn't watching
+- [ ] Deploy (user OK 2026-10-04: "you can deploy now")
+- [ ] 7 verify with the adapter (2026-10-05)
 
 ## Open questions for the user
 
-1. Also add the cheap stall hint ("passphrase is right but the robot still
-   isn't joining — is your own AP on?") for when the watch is off or can't
-   hear the other AP? Recommendation: yes, small.
+None. (Answered 2026-10-04: the stall hint "passphrase is right but the
+robot still isn't joining — is your own AP on?" — yes, but only while the
+watch can't look: off, stopped, or hearing no 6 GHz. Built.)
 
 ## Things not to do
 

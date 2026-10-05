@@ -99,6 +99,18 @@ describe('a robot taking too long to join, for the team', () => {
     expect(lines[1]).toContain('power-cycling');
   });
 
+  test("a passphrase that works asks after the team's own AP, unless the 6 GHz watch is looking", () => {
+    expect(describeStallForTeam(stall(key('ok')), NOW).lines[2]).toContain('your own access point');
+    expect(describeStallForTeam(stall(key('ok')), NOW, { sixGhzWatching: true }).lines).toHaveLength(2);
+    // Only when the passphrase worked: otherwise there is a likelier cause
+    expect(describeStallForTeam(stall(key('wrongKey')), NOW).lines.join(' ')).not.toContain('own access point');
+
+    const staff = (watching: boolean) =>
+      robotWifiStaffIssues(scan([heard()], [stall(key('ok'))]), NOW, { sixGhzWatching: watching })[0].fix;
+    expect(staff(false)).toContain('own access point');
+    expect(staff(true)).not.toContain('own access point');
+  });
+
   test('capitals that differ from the field set-up are an error with the name to use', () => {
     const { severity, lines } = describeStallForTeam(
       stall({

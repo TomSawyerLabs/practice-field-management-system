@@ -163,8 +163,9 @@ joined, and says what pFMS hears:
 - **The name the field is set up for** (exactly, or only the capitals
   differ): pFMS tries the passphrase the field is using on the robot's
   network once, by itself, and reports **correct** (so look at the radio:
-  still starting, out of range — power-cycle it), **wrong**, or that it
-  couldn't finish. A capitals-only difference is an error on its own: the
+  still starting, out of range — power-cycle it; and, unless the
+  [6 GHz watch](#6-ghz-watch) is listening, is the team's own access point
+  on, with the robot joined to it?), **wrong**, or that it couldn't finish. A capitals-only difference is an error on its own: the
   field will never connect, and **Add as …** fixes it.
 - **Another name from the team** (e.g. set up for `1234-Comp`, hearing
   `FRC-1234`): a warning with **Add as …**, and no test until the team

@@ -51,7 +51,7 @@ import {
   stallsForTeam,
   suffixOf,
 } from '../utils/robotWifi';
-import { clashesForTeam, describeClashForTeam } from '../utils/sixGhzWatch';
+import { clashesForTeam, describeClashForTeam, isSixGhzWatching } from '../utils/sixGhzWatch';
 import { FreeplayControl, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
@@ -917,6 +917,7 @@ function RobotWifiHeard({
   onAdd: (suffix: string) => void;
 }) {
   const scan = useRobotWifiScan();
+  const sixGhzWatching = isSixGhzWatching(useSixGhzWatch());
   if (scan?.status !== 'running') return null;
   const stalls = stallsForTeam(scan, teamNumber);
   // A robot a stall already talks about isn't described twice
@@ -937,7 +938,7 @@ function RobotWifiHeard({
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
       {stalls.map(st => {
-        const { severity, lines } = describeStallForTeam(st, now);
+        const { severity, lines } = describeStallForTeam(st, now, { sixGhzWatching });
         const checking = st.keyCheck?.result === 'checking';
         return (
           <Alert key={st.station} severity={severity}>

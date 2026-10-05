@@ -30,7 +30,7 @@ import type {
 import { StationNameList } from '../../../src/types';
 import { prettyStationName, teamOfSsid } from '../../../src/utils';
 import { robotWifiStaffIssues } from './robotWifi';
-import { sixGhzStaffIssues } from './sixGhzWatch';
+import { isSixGhzWatching, sixGhzStaffIssues } from './sixGhzWatch';
 
 export type IssueSeverity = 'critical' | 'warning' | 'info';
 
@@ -855,7 +855,8 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
 
   // ── Robots heard on 2.4 GHz (robot Wi-Fi scan) ──────────────────────
   // Per team, not per station: a robot that never connects has no station.
-  for (const w of robotWifiStaffIssues(input.robotWifi, input.now)) {
+  const sixGhzWatching = isSixGhzWatching(input.sixGhzWatch);
+  for (const w of robotWifiStaffIssues(input.robotWifi, input.now, { sixGhzWatching })) {
     push({
       id: w.id,
       severity: w.severity,
