@@ -20,6 +20,8 @@ import {
   restorePreviousStations,
   cleanupOldVlanInterfaces,
   dropHairpinForwarding,
+  setEStopCut,
+  clearEStopCuts,
 } from './networkManager.js';
 import {
   onConfigChange as onRouteConfigChange,
@@ -235,6 +237,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // first deploy of it installed nothing until the next radio change).
     await dropHairpinForwarding(VlanInterface);
 
+    // No station starts e-stopped, so no e-stop cut may survive a graceful
+    // restart (KEEP_NETWORK keeps rules but not the engine state behind them).
+    await clearEStopCuts();
+
     // Size the kernel neighbor (ARP/NDP) table for what this host does: the
     // subnet scanner sweeps every configured team /24 every 10 s, and each
     // sweep parks ~250 INCOMPLETE/FAILED entries per slot for ~60 s. Ubuntu's
@@ -361,15 +367,39 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   /** Why the field holds this station's robot disabled OUTSIDE a match, or
-   *  null. A policy block (which also applies in a match) wins; otherwise
-   *  the admin switch. Callers only ask about stations that aren't joined. */
+   *  null. A policy block (which also applies in a match) wins; then an
+   *  e-stop (staff clear it); then the admin switch. Callers only ask about
+   *  stations that aren't joined. */
   function outOfMatchHoldReason(station: StationName): string | null {
     return (
       policyBlockReason(station) ??
+      (matchEngine.isEStopped(station) ? 'E-stopped. Field staff clear the e-stop.' : null) ??
       (outOfMatchControlOff() ? 'Field staff have turned off freeplay outside matches.' : null)
     );
   }
   matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
+
+  // E-stop, network layer: while a station is e-stopped, steamboat drops its
+  // Driver Station's control packets to the robot, so the robot stops within
+  // ~100 ms even if its DS isn't listening to the field (every robot out of a
+  // match). The hold loop then takes the DS under field control; the cut stays
+  // until staff clear the e-stop. Applied in order per station.
+  const eStopCut = new Map<StationName, boolean>();
+  let eStopCutChain: Promise<void> = Promise.resolve();
+  matchEngine.addStateListener(state => {
+    for (const station of StationNameList) {
+      const want = state.stationStates[station]?.eStop ?? false;
+      if (want === (eStopCut.get(station) ?? false)) continue;
+      eStopCut.set(station, want);
+      if (!VlanInterface || process.env.DRY_RUN) continue;
+      eStopCutChain = eStopCutChain
+        .then(() => setEStopCut(station, want))
+        .then(
+          () => appInfo(`${station}: e-stop ${want ? 'cut DS→robot control traffic' : 'cleared, traffic restored'}`),
+          err => console.error(`${station}: failed to ${want ? 'apply' : 'lift'} e-stop cut:`, err),
+        );
+    }
+  });
 
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
@@ -1453,20 +1483,21 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     );
 
     runFMS({
-      // Station-assignment reply (0x19/0x1f). Joined stations get their slot.
-      // A station that isn't in the match gets a status-2 "not in match" reply
-      // (makeNotInMatchReply), which hands the DS back to local control so a
-      // driver can enable for freeplay without closing and reopening the DS —
-      // in use since 2026-09-15 and confirmed working on the field (a day of
-      // misreading the admin switch's wording on 2026-09-27 briefly replaced
-      // it with silence; see plans/out-of-match-enable-check.md). A station
-      // the field holds — policy block, or freeplay switched off by staff —
-      // is assigned a slot like a joined station so the DS stays under field
-      // control, and the hold loop below keeps it disabled.
+      // Station-assignment reply (0x19/0x1f): only for a station the field is
+      // controlling. Joined stations get their slot. A station the field holds
+      // out of a match — policy block, e-stop, or freeplay switched off by
+      // staff — is assigned a slot too, so the DS stays under field control,
+      // and the hold loop below keeps it disabled. Every other DS gets NO
+      // reply and keeps its own Enable/Disable. (2026-09-15 to 10-04 a status-2
+      // "not in match" reply was sent instead; it hid Enable on every DS 26.0 —
+      // plans/csa-fms-control-status.md.) A duplicate laptop for a robot
+      // another laptop is driving gets no reply either: it is held off the
+      // robot's network anyway, and an assignment would lock it.
       // FMS_TCP_REPLY_STATIONS assigns a real slot for testing.
-      resolveTeamSlot: teamNumber => {
+      resolveTeamSlot: (teamNumber, address) => {
         const station = radioManager.getStationForTeam(teamNumber);
         if (!station) return undefined;
+        if (driveSessions.isDuplicateOn(station, address)) return undefined;
         const state = matchEngine.getState();
         const joined = state.stationStates[station]?.joined ?? false;
         if (!joined && !tcpReplyAll && !tcpReplyOptIn.has(station)) {
@@ -1474,8 +1505,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           // stays under field control; the hold loop's disabled packets are
           // what actually refuse the enable while the team is out of a match.
           if (outOfMatchHoldReason(station)) return matchEngine.slotForStation(station);
-          // Not in a match and not held: release the DS to local control.
-          return 'release';
+          // Not in a match and not held: no reply, local control.
+          return undefined;
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
         // (which side of the field it shows), not the physical-port default,
@@ -1486,30 +1517,45 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       if (!fms) return;
       matchEngine.setUdpSocket(fms.udpSocket);
 
-      // Robots the field holds out of a match — a blocked control system, or
-      // the admin out-of-match switch turned off — stay under field control:
-      // resolveTeamSlot above assigns them (so the DS cannot enable locally)
-      // and this keeps a steady stream of disabled packets going, which is
-      // what actually refuses the enable while they are out of a match. The
-      // packet's game data tells the driver why on the DS itself. In a match,
-      // matchEngine's enable gate handles policy blocks; the admin switch
-      // never applies to a joined station.
-      // A flip in held state (policy change, admin switch) re-handshakes the
-      // DS so it picks up the new answer (held vs released) straight away.
+      // Robots the field holds out of a match — a blocked control system, an
+      // e-stop, or the admin out-of-match switch turned off — stay under field
+      // control: resolveTeamSlot above assigns them (so the DS cannot enable
+      // locally) and this keeps a steady stream of disabled packets going,
+      // which is what actually refuses the enable while they are out of a
+      // match. The packet's game data tells the driver why on the DS itself.
+      // In a match, matchEngine's enable gate handles policy blocks and
+      // e-stops; the admin switch never applies to a joined station.
+      // A flip in held state re-handshakes the DS so it picks up the new
+      // answer (held vs local control) straight away.
+      //
+      // Self-heal: a DS that keeps streaming status to the field while the
+      // field isn't controlling it still believes it is under FMS control
+      // (Enable hidden). Drop its connection so it reconnects, gets no reply,
+      // and returns to local control.
       const wasHeld = new Map<StationName, boolean>();
+      const localSince = new Map<StationName, number>();
+      const lastHeal = new Map<StationName, number>();
       setInterval(() => {
         const state = matchEngine.getState();
+        const now = Date.now();
         for (const station of StationNameList) {
           const joined = state.stationStates[station]?.joined ?? false;
           const blocked = policyBlockReason(station) !== null;
-          const held = blocked || outOfMatchControlOff();
+          const eStopped = matchEngine.isEStopped(station);
+          const held = blocked || eStopped || outOfMatchControlOff();
           const dsIp = driveSessions.laptopOn(station) ?? state.connectedStations[station]?.ip;
           if (held !== (wasHeld.get(station) ?? false)) {
             wasHeld.set(station, held);
             // A joined station's answer is its slot either way — don't bounce
             // its TCP session (possibly mid-match) for nothing.
             if (dsIp && !joined) {
-              const why = blocked ? 'control system blocked' : held ? 'freeplay held by staff' : 'freeplay allowed';
+              const why = blocked
+                ? 'control system blocked'
+                : eStopped
+                  ? 'e-stopped, taking the DS under field control'
+                  : held
+                    ? 'freeplay held by staff'
+                    : 'freeplay allowed';
               appInfo(`${station}: ${why} — re-handshaking DS ${dsIp}`);
               fms.emit('disconnectDS', { address: dsIp });
             }
@@ -1517,12 +1563,30 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           if (held && !joined && dsIp) {
             // What the DS shows in its game data field. The 2027 DS reads at
             // most 8 characters, so it gets a shorter spelling.
-            const gameData = blocked
-              ? 'Blocked'
-              : matchEngine.dsProtocolFor(dsIp) === 'ds2027'
-                ? 'AdminOff'
-                : 'Admin disabled';
+            const ds2027 = matchEngine.dsProtocolFor(dsIp) === 'ds2027';
+            const gameData = blocked ? 'Blocked' : eStopped ? 'E-Stop' : ds2027 ? 'AdminOff' : 'Admin disabled';
             matchEngine.sendRawControlPacket(dsIp, station, [{ type: 'gameData', data: gameData }]);
+          }
+          const local = !joined && !held && !tcpReplyAll && !tcpReplyOptIn.has(station);
+          if (!local) {
+            localSince.delete(station);
+            continue;
+          }
+          if (!localSince.has(station)) localSince.set(station, now);
+          // Give a just-released DS time to notice its forced reconnect, then
+          // look for a steady status stream (~2/s), not one stray packet.
+          if (
+            dsIp &&
+            now - localSince.get(station)! > 6_000 &&
+            now - (lastHeal.get(station) ?? 0) > 15_000 &&
+            matchEngine.dsStatusCount(station, 3_000, now) >= 4
+          ) {
+            lastHeal.set(station, now);
+            appWarn(
+              `${station}: DS ${dsIp} still reports to the field while not in a match — ` +
+                'dropping its connection so it returns to local control',
+            );
+            fms.emit('disconnectDS', { address: dsIp });
           }
         }
       }, 500).unref();

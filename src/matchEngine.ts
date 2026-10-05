@@ -174,6 +174,9 @@ export class MatchEngine {
   private lastControlTarget = new Map<StationName, string>();
   /** Last FMS UDP status heartbeat per station — only an FMS-attached DS sends these */
   private lastDsHeartbeat = new Map<StationName, number>();
+  /** Recent DS status arrival times per station (last few), so a steady
+   *  stream can be told apart from one stray packet. */
+  private recentDsHeartbeats = new Map<StationName, number[]>();
   /** When the FMS last enabled each station — gates the DS-disable re-latch grace */
   private lastFmsEnable = new Map<StationName, number>();
   /** Whether the DS has reported itself enabled since the last FMS enable.
@@ -368,6 +371,12 @@ export class MatchEngine {
   isDsAttached(station: StationName): boolean {
     const last = this.lastDsHeartbeat.get(station);
     return last !== undefined && Date.now() - last < DS_ATTACHED_TIMEOUT_MS;
+  }
+
+  /** How many DS status packets arrived for this station in the last
+   *  `windowMs`. A DS under FMS control sends about two a second. */
+  dsStatusCount(station: StationName, windowMs: number, now = Date.now()): number {
+    return (this.recentDsHeartbeats.get(station) ?? []).filter(t => now - t <= windowMs).length;
   }
 
   /** The alliance match slot to advertise to a station's DS — this is the byte
@@ -1550,6 +1559,10 @@ export class MatchEngine {
     // the flip so ready gates update promptly when a DS attaches.
     const wasAttached = this.isDsAttached(station);
     this.lastDsHeartbeat.set(station, Date.now());
+    const recent = this.recentDsHeartbeats.get(station) ?? [];
+    recent.push(Date.now());
+    if (recent.length > 16) recent.shift();
+    this.recentDsHeartbeats.set(station, recent);
     if (!wasAttached) {
       const ip = this.dsConnections.get(station)?.ip;
       console.log(`DS attached to FMS: ${station}${ip ? ` (${ip}, ${this.endpointFor(ip).protocol})` : ''}`);
@@ -1629,6 +1642,12 @@ export class MatchEngine {
       console.log('All E-Stops cleared');
     }
     this.broadcast();
+  }
+
+  /** Whether this station is e-stopped (field or its own DS). Cheap — safe to
+   *  call from the hold resolvers that getState() itself consults. */
+  isEStopped(station: StationName): boolean {
+    return this.stationStates.get(station)!.eStop;
   }
 
   isMatchActive(): boolean {

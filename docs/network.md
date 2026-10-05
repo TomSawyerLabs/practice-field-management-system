@@ -98,16 +98,23 @@ Seen between a 2027 DS and a SystemCore robot on the field: UDP 1110 in
 both directions (the robot replies to the DS's source port, so NAT works
 without extra forwarding), UDP 1150, and TCP 1250, 1740 and 5810.
 
-The station-assignment reply puts the DS in FMS-controlled mode. Joined
-stations get their alliance slot. A DS that isn't in the match is sent a
-status-2 "not in match" reply (`makeNotInMatchReply`, what Cheesy Arena
-sends for this case), which hands it back to local control so a driver can
-enable for freeplay without restarting the Driver Station. In use since
-2026-09-15 and confirmed on the field. (Before that, freeplay DSes got no
-reply at all, which also left local control alone but meant a DS that had
-been in a match stayed locked until closed and reopened. On 2026-09-27 a
-misreading of the admin switch's wording — "Enabled"/"Disabled" on a switch
-about robots — briefly brought silence back; `plans/out-of-match-enable-check.md`.)
+The station-assignment reply puts the DS in FMS-controlled mode: its Enable
+button disappears. pFMS only sends it for a station the field is
+controlling: one joined to a match, or one held out of a match (below). Every
+other DS gets **no reply**, keeps its own Enable/Disable, and retries the TCP
+connection every ~8 s. Leaving a match drops the DS's connection, so it
+reconnects, gets no reply and is back in local control within seconds.
+
+From 2026-09-15 to 2026-10-04 a DS out of a match got a status-2 "not in
+match" reply instead (what Cheesy Arena sends). Every DS 26.0 takes that as
+"connected, waiting" and hides Enable. It went unnoticed because the DS's
+`[ ] \` enable key combo still enables with the button hidden
+(`plans/csa-fms-control-status.md`). If a DS out of a match keeps streaming
+status to the field (it still thinks it is under FMS control), pFMS drops its
+connection again and logs it.
+
+A second laptop for a robot another laptop is driving gets no reply either:
+it is held off the robot's network anyway, and an assignment would lock it.
 
 When staff set "Freeplay outside matches" to **Held**, an unjoined DS is
 instead assigned a slot (FMS-controlled) and held with a stream of disabled
@@ -115,6 +122,17 @@ packets whose game data reads `Admin disabled` (`AdminOff` on the 2027 DS,
 which shows at most 8 characters), the same mechanism that holds a
 policy-blocked control system (`Blocked`). Flipping the switch re-handshakes
 every unjoined DS so it takes effect at once. Joining a match lifts the hold.
+
+**E-stop** reaches robots out of a match too. While a station is e-stopped
+(E-STOP ALL, the station's e-stop, or its DS's own), pFMS drops every DS→robot
+control packet (UDP 1110) going into that station's bridge
+(`FORWARD -o br-slotN -p udp --dport 1110 -j DROP`, comment
+`pfms-estop-slotN`). A robot disables its outputs ~100 ms after its control
+packets stop, whatever its DS thinks. Robot→DS traffic still flows, so the
+field keeps seeing the robot. An unjoined DS is also taken under field control
+like a held one (game data `E-Stop`). Both last until staff clear the e-stop
+(admin page "Clear all e-stops", or per station on the match page). Startup
+removes any leftover cut, since no station starts e-stopped.
 
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy

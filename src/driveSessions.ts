@@ -242,6 +242,15 @@ export class DriveSessions {
     return robot ? this.sessions.get(robot) : undefined;
   }
 
+  /** Whether `dsIp` is a duplicate on `station`: another laptop is actively
+   *  driving that robot, so this one will be held off it (the same test as
+   *  claiming a robot). A duplicate must not be handed a station by the FMS
+   *  handshake either — it would lock that laptop under field control. */
+  isDuplicateOn(station: StationName, dsIp: string): boolean {
+    const holder = this.laptopOn(station);
+    return holder !== undefined && holder !== dsIp && !this.isStale(holder);
+  }
+
   /** The station of the robot this laptop drives, if it is of `team`. Used
    *  to tell apart two robots of one team. */
   stationDrivenBy(dsIp: string, team: number): StationName | undefined {

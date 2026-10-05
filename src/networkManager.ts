@@ -366,6 +366,36 @@ export async function dropHairpinForwarding(physicalInterface: string): Promise<
   });
 }
 
+/** UDP port a Driver Station sends its control packets to on the robot (the
+ *  legacy NI DS and the 2027 DS alike). */
+const DS_TO_ROBOT_CONTROL_PORT = 1110;
+
+/**
+ * Field e-stop, network layer: drop every Driver Station → robot control
+ * packet going into a station's bridge. A robot disables its outputs about
+ * 100 ms after its control packets stop, whatever its Driver Station thinks —
+ * so this stops a robot even when its DS is not listening to the field (any
+ * robot out of a match). Robot → DS traffic is untouched, so the field still
+ * sees the robot's status. Idempotent both ways.
+ */
+export async function setEStopCut(station: StationName, on: boolean): Promise<void> {
+  await net.iptables({
+    action: on ? '-I' : '-D',
+    chain: 'FORWARD',
+    outInterface: bridgeName(station),
+    protocol: 'udp',
+    destinationPort: DS_TO_ROBOT_CONTROL_PORT,
+    jump: 'DROP',
+    comment: `${commentPrefix}estop-${station}`,
+  });
+}
+
+/** Remove every e-stop cut — at startup, where no station is e-stopped yet
+ *  (a graceful restart keeps rules, but not the e-stop state behind them). */
+export async function clearEStopCuts(): Promise<void> {
+  await net.flushRulesByComment(`${commentPrefix}estop-`);
+}
+
 export async function configureNetwork(stations: Stations, interfaceName: string, practiceMode = false) {
   console.log('configureNetwork');
   await dropHairpinForwarding(interfaceName);

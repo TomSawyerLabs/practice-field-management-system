@@ -339,3 +339,21 @@ describe('after a graceful restart', () => {
     expect(f.blocks.size).toBe(0);
   });
 });
+
+describe('a second laptop for a driven robot is a duplicate', () => {
+  test('only while the first laptop is actively driving', () => {
+    const f = field({ slot1: '840' });
+    f.ds.heard(LAPTOP_840, 840);
+    const second = '10.55.14.73';
+    expect(f.ds.isDuplicateOn('slot1', second)).toBe(true);
+    expect(f.ds.isDuplicateOn('slot1', LAPTOP_840)).toBe(false);
+    // The driver's laptop goes quiet: the second one may take over.
+    f.advance(DS_STALE_TIMEOUT_MS + 1);
+    expect(f.ds.isDuplicateOn('slot1', second)).toBe(false);
+  });
+
+  test('nobody is a duplicate on a station nobody drives', () => {
+    const f = field({ slot1: '840' });
+    expect(f.ds.isDuplicateOn('slot1', LAPTOP_840)).toBe(false);
+  });
+});

@@ -57,6 +57,7 @@ import {
   useSlackTestResult,
   sendAdminStopMatch,
   sendAdminGlobalEStop,
+  sendAdminClearEStop,
   sendAdminClearAllStations,
   sendAdminRestart,
   sendMatchKickStation,
@@ -115,17 +116,58 @@ const phaseColors: Record<MatchPhase, string> = {
 
 // ── Global E-Stop ───────────────────────────────────────────────────
 
+/** E-STOP ALL stops every robot on the field — in a match or not (out of a
+ *  match the field cuts its Driver Station's control traffic and takes the DS
+ *  under field control). Stopped robots stay held until staff clear it here
+ *  or per station on the match page. */
 function GlobalEStopSection() {
+  const matchState = useMatchState();
+  const stopped = StationNameList.filter(s => matchState?.stationStates[s]?.eStop);
+  const [confirmClear, setConfirmClear] = useState(false);
   return (
-    <Button
-      variant="contained"
-      color="error"
-      fullWidth
-      sx={{ fontSize: '1.5rem', py: 2.5, mb: 3, fontWeight: 'bold' }}
-      onClick={() => sendAdminGlobalEStop()}
-    >
-      E-STOP ALL
-    </Button>
+    <Box sx={{ mb: 3 }}>
+      <Button
+        variant="contained"
+        color="error"
+        fullWidth
+        sx={{ fontSize: '1.5rem', py: 2.5, fontWeight: 'bold' }}
+        onClick={() => sendAdminGlobalEStop()}
+      >
+        E-STOP ALL
+      </Button>
+      {stopped.length > 0 && (
+        <Alert
+          severity="error"
+          sx={{ mt: 1 }}
+          action={
+            confirmClear ? (
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    sendAdminClearEStop();
+                    setConfirmClear(false);
+                  }}
+                >
+                  Yes, clear
+                </Button>
+                <Button color="inherit" size="small" onClick={() => setConfirmClear(false)}>
+                  Cancel
+                </Button>
+              </Box>
+            ) : (
+              <Button color="inherit" size="small" onClick={() => setConfirmClear(true)}>
+                Clear all e-stops
+              </Button>
+            )
+          }
+        >
+          E-stopped: {stopped.map(s => prettyStationName(s)).join(', ')}. These robots stay stopped until the e-stop is
+          cleared; teams then enable again from their Driver Station.
+        </Alert>
+      )}
+    </Box>
   );
 }
 

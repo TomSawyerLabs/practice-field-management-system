@@ -84,14 +84,18 @@ describe('disconnectTeam closes the sessions of one team only', () => {
 describe('handshake reply follows the resolver', () => {
   let fms: FmsServer;
   const TCP2 = TCP + 1;
-  const answers: Record<number, 'red2' | 'release'> = { 254: 'red2', 6036: 'release' };
+  const answers: Record<number, 'red2'> = { 254: 'red2' };
+  const askedFrom: string[] = [];
 
   beforeAll(async () => {
     fms = await startFMSServer({
       address: ADDRESS,
       tcp: TCP2,
       udp: UDP + 1,
-      resolveTeamSlot: team => answers[team],
+      resolveTeamSlot: (team, address) => {
+        askedFrom.push(address);
+        return answers[team];
+      },
     });
   });
   afterAll(() => {
@@ -115,7 +119,12 @@ describe('handshake reply follows the resolver', () => {
     expect([...(await replyTo(254))]).toEqual([0x00, 0x03, 0x19, 1, 0]);
   });
 
-  test('a released team gets the status-2 "not in match" reply', async () => {
-    expect([...(await replyTo(6036))]).toEqual([0x00, 0x03, 0x19, 0, 2]);
+  test('a team the field is not controlling gets no reply (keeps its own Enable)', async () => {
+    expect((await replyTo(6036)).length).toBe(0);
+  });
+
+  test("the resolver is told the DS's address", () => {
+    expect(askedFrom.every(a => a === ADDRESS)).toBe(true);
+    expect(askedFrom.length).toBeGreaterThan(0);
   });
 });
