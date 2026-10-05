@@ -111,7 +111,7 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
    change while the list was empty).
 3. ~~Correlate 6036's enables with its FMS TCP connections.~~ Done: 6036
    uses the key combo; nothing differs.
-4. **[proposed, awaiting user go-ahead]** Recommended design:
+4. **[building — user said "go for it" 2026-10-04 ~19:35]** Recommended design:
    - Freeplay: no reply (DS-native Enable/Disable).
    - E-stop, two layers: (a) instant firewall cut of DS→robot control
      traffic to team subnets (roboRIO disables ~100 ms after control packets
@@ -146,7 +146,13 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
 - [x] Correlate 6036 enables with FMS connections: key combo, same parked
       state as team 8.
 - [x] Memory and `plans/out-of-match-enable-check.md` corrected.
-- [ ] Field-wide no-reply + duplicate fix (step 4), awaiting go-ahead.
+- [x] Field-wide no reply, self-heal, duplicate fix, e-stop cut + hold, admin
+      "Clear all e-stops": `ff74d51`, deployed 19:50 (781 tests pass). Log
+      confirms `DS at 10.55.243.129: team 6036 (no reply: local control)`.
+- [ ] Field check: Enable visible out of a match; after leaving a match.
+- [ ] Field check: E-STOP ALL stops a freeplaying robot; Clear restores.
+- [ ] Team-page per-robot Stop (firewall lever).
+- [ ] Computed trip time / loss from passive capture.
 - [ ] CSA FMS-control display.
 
 ## Open questions for the user
