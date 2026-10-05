@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { MatchState, RadioUpdate, StationControlState, StationDetails, StatusEntry } from '../../../src/types';
 import {
   detectFieldIssues,
+  fieldControlOf,
   groupIssues,
   stationLabel,
   stationOrder,
@@ -690,5 +691,80 @@ describe('robots heard on 2.4 GHz', () => {
     const issue = out.find(i => i.id === 'robotWifi-case-FRC-1234-Comp');
     expect(issue).toMatchObject({ severity: 'critical', team: 1234 });
     expect(issue?.station).toBeUndefined();
+  });
+});
+
+describe('fieldControlOf', () => {
+  /** Telemetry from the robot's own packets, `enabled` as given. */
+  const robotSays = (enabled: boolean, eStop = false) => ({
+    slot1: {
+      type: 'telemetry' as const,
+      station: 'slot1' as const,
+      timestamp: NOW - 200,
+      dsStatus: {
+        eStop,
+        aStop: false,
+        robotComms: true,
+        radioPing: true,
+        rioPing: true,
+        enabled,
+        mode: 'teleOp' as const,
+      },
+    },
+  });
+  const withState = (over: Partial<StationControlState>, extra: Partial<FieldIssueInputs> = {}) =>
+    inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ stationStates: { slot1: control(over) } }),
+      ...extra,
+    });
+
+  test('out of a match and not held: the team’s own control', () => {
+    const fc = fieldControlOf(withState({}, { telemetry: robotSays(true) }), 'slot1');
+    expect(fc.kind).toBe('team');
+    expect(fc.robot).toBe('enabled');
+    expect(fc.mismatch).toBe(false);
+  });
+
+  test('held by staff, robot disabled: held, no alarm', () => {
+    const fc = fieldControlOf(
+      withState(
+        { heldReason: 'Field staff have turned off freeplay outside matches.' },
+        { telemetry: robotSays(false) },
+      ),
+      'slot1',
+    );
+    expect(fc.kind).toBe('held');
+    expect(fc.mismatch).toBe(false);
+  });
+
+  test('e-stopped wins over everything, and an enabled robot under it is an alarm', () => {
+    const input = withState({ eStop: true, joined: true, enabled: false }, { telemetry: robotSays(true) });
+    expect(fieldControlOf(input, 'slot1').kind).toBe('estop');
+    expect(ids(input)).toContain('enabled-while-held-slot1');
+  });
+
+  test('in a match: enabled, or disabled with the reason', () => {
+    expect(fieldControlOf(withState({ joined: true, enabled: true }), 'slot1').kind).toBe('matchEnabled');
+    const off = fieldControlOf(withState({ joined: true, enabled: false, disabledBy: 'ds' }), 'slot1');
+    expect(off.kind).toBe('matchDisabled');
+    expect(off.why).toContain('Driver Station');
+  });
+
+  test('a stale robot sample says nothing about the robot', () => {
+    const tele = robotSays(true);
+    tele.slot1.timestamp = NOW - 60_000;
+    expect(fieldControlOf(withState({}, { telemetry: tele }), 'slot1').robot).toBeUndefined();
+  });
+
+  test('a DS reporting to the field while the team should have control is flagged, except just after a match', () => {
+    const stuck = withState({ dsAttached: true });
+    expect(fieldControlOf(stuck, 'slot1').dsUnderField).toBe(true);
+    expect(ids(stuck)).toContain('ds-under-field-slot1');
+    const afterMatch = inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ phase: 'postMatch', stationStates: { slot1: control({ dsAttached: true }) } }),
+    });
+    expect(fieldControlOf(afterMatch, 'slot1').dsUnderField).toBe(false);
   });
 });

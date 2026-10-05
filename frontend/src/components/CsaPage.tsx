@@ -54,12 +54,15 @@ import {
 } from '../hooks/useBackend';
 import {
   detectFieldIssues,
+  fieldControlOf,
   groupIssues,
   isMatchRunning,
   shortAge,
   stationLabel,
   stationOrder,
   worstSeverity,
+  type FieldControl,
+  type FieldControlKind,
   type FieldIssue,
   type FieldIssueInputs,
   type IssueAction,
@@ -384,6 +387,8 @@ interface StationFacts {
   enabled: boolean;
   joined: boolean;
   matchSlot: string | null;
+  /** Who decides whether the robot may drive, and what the robot says. */
+  control: FieldControl;
   /** Epoch ms this team took the station; undefined = unknown (old config). */
   connectedAt?: number;
   worst?: IssueSeverity;
@@ -418,9 +423,60 @@ function stationFacts(input: FieldIssueInputs, issues: FieldIssue[], station: St
     enabled: control?.enabled ?? false,
     joined,
     matchSlot: control?.matchSlot ?? null,
+    control: fieldControlOf(input, station),
     connectedAt: control?.connectedAt,
     worst: worstSeverity(issues.filter(i => i.station === station)),
   };
+}
+
+const CONTROL_COLOR: Record<FieldControlKind, string> = {
+  estop: 'error.main',
+  blocked: 'warning.main',
+  held: 'warning.main',
+  matchEnabled: 'success.main',
+  matchDisabled: 'text.secondary',
+  team: 'info.main',
+};
+
+const ROBOT_SAYS: Record<NonNullable<FieldControl['robot']>, string> = {
+  enabled: 'enabled',
+  disabled: 'disabled',
+  eStop: 'E-stopped',
+};
+
+/** One line on a station tile: who controls the robot, and what it says. */
+function ControlLine({ control }: { control: FieldControl }) {
+  const alarm = control.mismatch || control.dsUnderField;
+  return (
+    <Tooltip
+      title={`${control.label}${control.why ? ` — ${control.why}` : ''}${
+        control.robot ? ` Robot reports ${ROBOT_SAYS[control.robot]}.` : ''
+      }${control.dsUnderField ? ' Its Driver Station still thinks the field controls it.' : ''}`}
+      arrow
+      enterTouchDelay={0}
+    >
+      <Typography
+        variant="caption"
+        component="div"
+        sx={{
+          mt: 0.25,
+          fontSize: '0.62rem',
+          fontWeight: 700,
+          lineHeight: 1.2,
+          color: alarm ? 'error.main' : CONTROL_COLOR[control.kind],
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}
+      >
+        {control.short}
+        {control.robot
+          ? ` · robot ${control.robot === 'enabled' ? 'EN' : control.robot === 'eStop' ? 'E-STOP' : 'off'}`
+          : ''}
+        {control.dsUnderField ? ' · DS stuck' : ''}
+      </Typography>
+    </Tooltip>
+  );
 }
 
 function StationTile({ facts, now, onClick }: { facts: StationFacts; now: number; onClick: () => void }) {
@@ -457,7 +513,6 @@ function StationTile({ facts, now, onClick }: { facts: StationFacts; now: number
               }}
             >
               {facts.matchSlot}
-              {facts.enabled ? ' · EN' : ''}
             </Typography>
           )}
         </Box>
@@ -481,6 +536,7 @@ function StationTile({ facts, now, onClick }: { facts: StationFacts; now: number
           <Dot label="DS" state={facts.ds} title="Driver Station talking to the field" />
           <Dot label="Robot" state={facts.robot} title="Driver Station reports robot communication" />
         </Box>
+        {facts.ssid && <ControlLine control={facts.control} />}
       </Paper>
     </ButtonBase>
   );
@@ -543,6 +599,7 @@ function StationDialog({
   const lastLinked = input.lastLinked[station];
   const phase = input.matchState?.phase;
   const mine = issues.filter(i => i.station === station);
+  const fc = fieldControlOf(input, station);
 
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="sm" scroll="paper">
@@ -572,6 +629,29 @@ function StationDialog({
             ))}
           </Box>
         )}
+
+        <Section title="Who controls the robot">
+          <Row k="Field" v={fc.label} />
+          {fc.why && <Row k="Why" v={fc.why} />}
+          <Row
+            k="Robot says"
+            v={
+              fc.robot
+                ? `${ROBOT_SAYS[fc.robot]}${fc.mismatch ? ' — while the field holds it disabled!' : ''}`
+                : 'no recent packets from the robot'
+            }
+          />
+          <Row
+            k="Driver Station"
+            v={
+              fc.kind === 'team'
+                ? fc.dsUnderField
+                  ? 'still reporting to the field — its Enable button is probably hidden; pFMS drops its connection to free it'
+                  : 'has its own Enable/Disable'
+                : 'under field control'
+            }
+          />
+        </Section>
 
         <Section title="Robot radio (from the AP)">
           {radio ? (

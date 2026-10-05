@@ -15,6 +15,7 @@ import type {
   DriveSessionState,
   MatchPhase,
   MatchState,
+  StationControlState,
   NetworkStats,
   PendingCommitState,
   RobotWifiScanState,
@@ -237,6 +238,117 @@ export function stationLabel(input: Pick<FieldIssueInputs, 'latest' | 'matchStat
 }
 
 // ── Detector ─────────────────────────────────────────────────────────
+
+/** Who decides whether a robot may drive right now, from the field's side. */
+export type FieldControlKind =
+  | 'estop' // e-stopped: the field cuts the DS's control of the robot until staff clear it
+  | 'blocked' // field policy forbids this control system; held disabled
+  | 'held' // out of a match, held disabled (freeplay held by staff)
+  | 'matchEnabled' // joined, and the field has it enabled
+  | 'matchDisabled' // joined, and the field has it disabled
+  | 'team'; // out of a match: the team's own Driver Station Enable/Disable
+
+export interface FieldControl {
+  kind: FieldControlKind;
+  /** A few words for a station tile. */
+  short: string;
+  /** One line for the station dialog. */
+  label: string;
+  /** Why, when there is more to say. */
+  why?: string;
+  /** What the robot itself reports in its own packets (fresh only). */
+  robot?: 'enabled' | 'disabled' | 'eStop';
+  /** The robot is enabled while the field holds it disabled. */
+  mismatch: boolean;
+  /** Out of a match, but the DS still streams status to the field — it
+   *  still believes it is under field control (Enable hidden). pFMS drops its
+   *  connection when this lasts; a moment of it after leaving a match is
+   *  normal. */
+  dsUnderField: boolean;
+}
+
+const DISABLED_BY_WHY: Record<NonNullable<StationControlState['disabledBy']>, string> = {
+  ds: 'their Driver Station disabled it',
+  self: 'the team disabled it from their station page',
+  admin: 'field staff disabled it',
+  relay: 'its relay leg is over',
+};
+
+/** The field's side of "can this robot drive", plus the robot's own word for
+ *  it. Pure: everything comes from `input`. */
+export function fieldControlOf(input: FieldIssueInputs, station: StationName): FieldControl {
+  const { now, matchState } = input;
+  const control = matchState?.stationStates[station];
+  const tele = input.telemetry[station];
+  const teleFresh = tele !== undefined && now - tele.timestamp <= TELEMETRY_FRESH_MS;
+  const robot: FieldControl['robot'] =
+    teleFresh && tele.dsStatus
+      ? tele.dsStatus.eStop
+        ? 'eStop'
+        : tele.dsStatus.enabled
+          ? 'enabled'
+          : 'disabled'
+      : undefined;
+  const joined = control?.joined ?? false;
+  const phase = matchState?.phase;
+
+  let kind: FieldControlKind;
+  let short: string;
+  let label: string;
+  let why: string | undefined;
+  if (control?.eStop) {
+    kind = 'estop';
+    short = 'E-STOP';
+    label = 'E-stopped';
+    why = 'The field is cutting the Driver Station’s control of the robot until staff clear the e-stop.';
+  } else if (control?.blockedReason) {
+    kind = 'blocked';
+    short = 'Blocked';
+    label = 'Held disabled by field policy';
+    why = control.blockedReason;
+  } else if (!joined && control?.heldReason) {
+    kind = 'held';
+    short = 'Held';
+    label = 'Held disabled by the field';
+    why = control.heldReason;
+  } else if (joined && control?.enabled) {
+    kind = 'matchEnabled';
+    short = 'Match: on';
+    label = 'In a match — the field has it enabled';
+  } else if (joined) {
+    kind = 'matchDisabled';
+    short = 'Match: off';
+    label = 'In a match — the field has it disabled';
+    why = control?.aStop
+      ? 'A-Stop until teleop.'
+      : control?.disabledBy
+        ? `Because ${DISABLED_BY_WHY[control.disabledBy]}.`
+        : phase === 'created'
+          ? 'Waiting for the match to start.'
+          : phase === 'postMatch'
+            ? 'The match is over.'
+            : phase === 'paused' || phase === 'autoPause'
+              ? 'The match is paused.'
+              : undefined;
+  } else {
+    kind = 'team';
+    short = 'Team control';
+    label = 'Team’s own control — Enable/Disable on their Driver Station';
+  }
+
+  const holdsDisabled = kind === 'estop' || kind === 'blocked' || kind === 'held' || kind === 'matchDisabled';
+  return {
+    kind,
+    short,
+    label,
+    why,
+    robot,
+    mismatch: holdsDisabled && robot === 'enabled',
+    // Right after a match the released DS keeps reporting for a few seconds
+    // until its forced reconnect; don't call that stuck.
+    dsUnderField: kind === 'team' && control?.dsAttached === true && phase !== 'postMatch',
+  };
+}
 
 export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
   const issues: FieldIssue[] = [];
@@ -591,6 +703,31 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
             ? ` Only ${hostLabel(accepted, hostnames)} can control this station${session ? ` (times out in ${session.timeoutRemaining} s if it goes quiet)` : ''}.`
             : ''),
         fix: 'Two laptops open with the same team number: close one. If the accepted laptop belongs to the team that had this slot before, have them close their Driver Station; the slot frees when their session times out.',
+      });
+    }
+
+    // ── Who controls the robot ──
+    const fc = fieldControlOf(input, station);
+    if (fc.mismatch) {
+      push({
+        id: `enabled-while-held-${station}`,
+        severity: 'critical',
+        station,
+        team,
+        title: `${label} is enabled while the field holds it disabled`,
+        detail: `Field: ${fc.label.toLowerCase()}${fc.why ? ` (${fc.why})` : ''}. The robot’s own packets say it is enabled.`,
+        fix: 'E-stop it now if it is moving. Then check this station’s Driver Station is the one the field is controlling (a second laptop?).',
+      });
+    } else if (fc.dsUnderField) {
+      push({
+        id: `ds-under-field-${station}`,
+        severity: 'warning',
+        station,
+        team,
+        title: `${label}’s Driver Station still thinks the field controls it`,
+        detail:
+          'It is not in a match, so the team should have its own Enable/Disable, but the DS keeps reporting to the field (its Enable button is probably hidden).',
+        fix: 'pFMS drops its connection on its own so it comes back under the team’s control. If Enable stays hidden for more than a minute, restart the Driver Station.',
       });
     }
 
