@@ -63,6 +63,19 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
   Enable button hidden. Capture `/tmp/enable-vs-fms.pcap`: 6036's robot
   enabled 19:06:55–19:09:08 without a break while its DS reconnected every
   ~8 s and got status 2 each time. Team 8's 19:04:35 enable was a match.
+- **Requirement (user, 2026-10-04):** outside matches, unless staff hold
+  freeplay, teams NEED reliable Enable/Disable on their own DS. Staff were
+  running team 8 in temporary matches just so they could practise.
+- **Safety gap (exists today):** `globalEStop()` (`src/matchEngine.ts`) sends
+  ONE UDP e-stop packet per known DS and stops the tick. A DS not assigned a
+  station is almost certainly not listening, so field e-stop very likely does
+  not stop freeplay robots, whether the DS got status 2 or no reply.
+  Unverified on hardware.
+- DS→FMS UDP status (1160) only flows while assigned, so freeplay DSes send
+  none under status 2 or no reply. Freeplay data comes from the passive
+  capture (1150 robot→DS: battery, enabled, mode, e-stop, brownout, code;
+  1110 DS→robot: joysticks, requested enable/mode). Trip time and loss could
+  be computed from both directions' sequence numbers.
 - A blocked duplicate DS still gets a station assignment: 10.55.14.73 (team
   8's second laptop) got `assigned red1` at 19:05:44 while blocked.
 - **Both teams run DS 26.0** (user, ~19:00). Version is not the difference.
@@ -98,11 +111,21 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
    change while the list was empty).
 3. ~~Correlate 6036's enables with its FMS TCP connections.~~ Done: 6036
    uses the key combo; nothing differs.
-4. **[current, proposed, awaiting user go-ahead]** Field-wide: stop sending
-   status 2; unjoined, unheld DSes get no reply (pre-09-13). Keep Held and
-   the forced re-handshake on join/leave. Don't assign a slot to a blocked
-   duplicate DS. Field check after deploy: Enable button visible before any
-   match, and back after leaving a match without a DS restart.
+4. **[proposed, awaiting user go-ahead]** Recommended design:
+   - Freeplay: no reply (DS-native Enable/Disable).
+   - E-stop, two layers: (a) instant firewall cut of DS→robot control
+     traffic to team subnets (roboRIO disables ~100 ms after control packets
+     stop); (b) at once assign every connected DS and stream e-stop packets
+     (the Held path), lifting the cut once DSes confirm control or staff clear.
+   - Data: passive capture plus computed trip time and loss.
+   - Team page: per-robot Stop (same firewall lever), NOT Enable (enabling via
+     pFMS would mean owning every DS always: no DS mode buttons, every deploy
+     disables everyone, enable from a phone away from the DS).
+     Original step 4 text: Field-wide: stop sending
+     status 2; unjoined, unheld DSes get no reply (pre-09-13). Keep Held and
+     the forced re-handshake on join/leave. Don't assign a slot to a blocked
+     duplicate DS. Field check after deploy: Enable button visible before any
+     match, and back after leaving a match without a DS restart.
 5. Build the CSA display:
    - Per-station "FMS control" line on the tile and dialog header: In match ·
      enabled / disabled (+ why: phase, disabledBy, blocked), Held by staff /
@@ -133,7 +156,7 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
 2. ~~With team 8 on the no-reply list, does Enable stay?~~ Dropped.
 3. ~~DS versions?~~ Both 26.0.
 4. ~~6036's DS?~~ Key combo.
-5. Go ahead with step 4 (field-wide no reply) and step 5 (CSA display)?
+5. Go ahead with the step 4 design (e-stop first) and step 5 (CSA display)?
 
 ## Things not to do
 
