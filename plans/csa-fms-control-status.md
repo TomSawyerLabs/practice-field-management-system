@@ -58,6 +58,13 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
   6036 has used the field since July from the same laptop, under both no
   reply (to 09-12) and status 2 (09-16 on). So 6036 proves nothing about how
   team 8's DS takes silence.
+- **Root cause (2026-10-04 ~19:15): status 2 parks every DS 26.0.** 6036 was
+  pressing the DS's `[ ] \` enable key combo, which enables even with the
+  Enable button hidden. Capture `/tmp/enable-vs-fms.pcap`: 6036's robot
+  enabled 19:06:55–19:09:08 without a break while its DS reconnected every
+  ~8 s and got status 2 each time. Team 8's 19:04:35 enable was a match.
+- A blocked duplicate DS still gets a station assignment: 10.55.14.73 (team
+  8's second laptop) got `assigned red1` at 19:05:44 while blocked.
 - **Both teams run DS 26.0** (user, ~19:00). Version is not the difference.
 - 6036 enabled out of match today at 18:20:31 (10 s), 18:21:48 (19 s) and
   18:37:37 (30 s), all while its DS was in the same ~8 s reconnect / status-2
@@ -89,9 +96,14 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
    Commit `1a5a599`, deployed to steamboat 18:57 2026-10-04.~~ Rejected (no
    per-team modes); reverted in `b080f84`, not yet deployed (no behaviour
    change while the list was empty).
-3. **[current]** Correlate 6036's enables with its FMS TCP connections
-   (`/tmp/enable-vs-fms.pcap`) to find what actually differs from team 8.
-4. Build the CSA display:
+3. ~~Correlate 6036's enables with its FMS TCP connections.~~ Done: 6036
+   uses the key combo; nothing differs.
+4. **[current, proposed, awaiting user go-ahead]** Field-wide: stop sending
+   status 2; unjoined, unheld DSes get no reply (pre-09-13). Keep Held and
+   the forced re-handshake on join/leave. Don't assign a slot to a blocked
+   duplicate DS. Field check after deploy: Enable button visible before any
+   match, and back after leaving a match without a DS restart.
+5. Build the CSA display:
    - Per-station "FMS control" line on the tile and dialog header: In match ·
      enabled / disabled (+ why: phase, disabledBy, blocked), Held by staff /
      policy (FMS holding disabled), Released to team (freeplay), No DS.
@@ -108,7 +120,10 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
 - [x] No-reply list built, tested (779 tests pass), deployed (`1a5a599`).
 - [x] ~~Field test with team 8 on the list~~ dropped: no per-team modes.
 - [x] Revert committed (`b080f84`), not deployed.
-- [ ] Correlate 6036 enables with FMS connections (step 3).
+- [x] Correlate 6036 enables with FMS connections: key combo, same parked
+      state as team 8.
+- [x] Memory and `plans/out-of-match-enable-check.md` corrected.
+- [ ] Field-wide no-reply + duplicate fix (step 4), awaiting go-ahead.
 - [ ] CSA FMS-control display.
 
 ## Open questions for the user
@@ -117,14 +132,13 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
    Briefly, then no.
 2. ~~With team 8 on the no-reply list, does Enable stay?~~ Dropped.
 3. ~~DS versions?~~ Both 26.0.
-4. On 6036's DS right now: is the FMS Connected light on, and is Enable
-   visible the whole time or does it come and go?
+4. ~~6036's DS?~~ Key combo.
+5. Go ahead with step 4 (field-wide no reply) and step 5 (CSA display)?
 
 ## Things not to do
 
 - Don't build per-team or per-DS special modes. Every team gets the same
   field behaviour.
 - Don't conclude from the DS→robot 0x08 bit that a DS isn't FMS-locked.
-- Don't change field behaviour for all DSes on one team's report. Status 2 is
-  confirmed working for most legacy DSes (see the out-of-match-enable-check
-  plan).
+- Don't trust a robot enable as proof the DS UI allows enabling: the
+  `[ ] \` key combo enables with the button hidden.

@@ -114,7 +114,14 @@ to touch (ops repo / UniFi).
 4. Report which DS version each result came from; the TCP behaviour above
    suggests versions differ in how they take status 2.
 
-## Resolution (2026-09-28): it was never broken
+## Superseded (2026-10-04): status 2 DOES park DS 26.0
+
+The 09-28 resolution below is wrong. On 2026-10-04 team 8 and 6036 (both DS
+26.0) got identical status-2 replies and both DSes hid the Enable button;
+6036 only enabled by pressing the DS's `[ ] \` key combo, which enables even
+with the button hidden. See `plans/csa-fms-control-status.md`.
+
+## Resolution (2026-09-28): it was never broken (WRONG — see above)
 
 User, next day: "It was just a language issue. It was working the whole
 time. Your wording in the admin made me think the inverse was correct."
@@ -194,8 +201,8 @@ time. Your wording in the admin made me think the inverse was correct."
 
 ## Things not to do
 
-- Do not "fix" the status-2 release reply again. It works; the 2026-09-27
-  scare was the admin card's wording.
+- ~~Do not "fix" the status-2 release reply again.~~ Superseded 2026-10-04:
+  status 2 parks DS 26.0; see `plans/csa-fms-control-status.md`.
 - Do not label robot-related switches "Enabled"/"Disabled"; on this field
   those words mean robot state.
 
