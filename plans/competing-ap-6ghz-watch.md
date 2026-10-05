@@ -87,8 +87,8 @@ get_capability freq`), with `non_coloc_6ghz=1` so the driver doesn't
 6. Checks (typecheck, prettier, tests), commit.
 7. 2026-10-05: plug in the adapter, deploy, pick it on /admin, verify.
 
-Current step: **7** — built and committed 2026-10-04; waiting for the
-adapter. Tomorrow's checklist:
+Current step: **7** — built, committed and deployed 2026-10-04 (`cc59c00`);
+waiting for the adapter. Tomorrow's checklist:
 
 1. Plug the adapter into steamboat; `ls /sys/class/net` for its name
    (likely `wlx…`), `dmesg | tail` for the driver loading (mt7921u etc.).
@@ -139,7 +139,11 @@ adapter. Tomorrow's checklist:
       README has no per-feature entry for the Wi-Fi scans, left alone)
 - [x] 6 typecheck, prettier, full suite 823/823; committed
 - [x] Own-AP stall hint, only while the watch isn't watching
-- [ ] Deploy (user OK 2026-10-04: "you can deploy now")
+- [x] Deployed `cc59c00` 2026-10-04 22:55 (user: "you can deploy now"). Robot
+      scan restarted fine on its new per-card config
+      (`/run/pfms-wifi/wpa_supplicant-wlp0s20f3.conf`; the old shared
+      `wpa_supplicant.conf` is a harmless leftover in /run). Watch off,
+      regdomain still `00`.
 - [ ] 7 verify with the adapter (2026-10-05)
 
 ## Open questions for the user
