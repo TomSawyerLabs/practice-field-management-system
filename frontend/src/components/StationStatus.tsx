@@ -39,7 +39,7 @@ import {
   sendStationTestModeStop,
   sendStationRadioConfigureRequest,
 } from '../hooks/useBackend';
-import { MatchPanel } from './MatchPanel';
+import { FreeplayControl, MatchPanel } from './MatchPanel';
 import { StationNetworkCard } from './NetworkPage';
 import { useSavedWiFiSettings } from '../hooks/useSavedWiFiSettings';
 import { useBackendStagedChanges } from '../hooks/useBackend';
@@ -228,6 +228,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
 
   return (
     <>
+      {full && <FreeplayControl station={station} />}
       {full && <MatchPanel station={station} />}
       <RoutePreferenceBanner station={station} />
       {/* Drive session info: DS IP, blocked DSes, timeout countdown */}

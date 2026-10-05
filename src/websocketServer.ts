@@ -81,6 +81,7 @@ import {
   isStationSelfDisable,
   isStationSelfUndisable,
   isStationSelfEStop,
+  isStationTeamStop,
   isStationSelfAStop,
   isStationClearAStop,
   isAdminStationEnable,
@@ -1182,6 +1183,8 @@ export function setupWebSocket(
         matchEngine.undisable(data.station, false);
       } else if (isStationSelfEStop(data)) {
         matchEngine.stationEStop(data.station);
+      } else if (isStationTeamStop(data)) {
+        matchEngine.teamStop(data.station, data.stop);
       } else if (isStationSelfAStop(data)) {
         matchEngine.stationAStop(data.station);
       } else if (isStationClearAStop(data)) {

@@ -134,6 +134,13 @@ like a held one (game data `E-Stop`). Both last until staff clear the e-stop
 (admin page "Clear all e-stops", or per station on the match page). Startup
 removes any leftover cut, since no station starts e-stopped.
 
+The team's pages offer the same cut out of a match: **Stop robot** (a team
+can stop its robot even when its Driver Station doesn't respond) and **Let it
+drive again**. A team Stop doesn't take the DS under field control. The DS
+just loses the robot, drops to disabled, and the team enables from it again
+once they let the robot drive. Joining a match clears a team Stop; in a match
+the team's console has Disable and E-Stop instead.
+
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
 Arena `field/driver_station_connection.go`.

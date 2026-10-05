@@ -20,6 +20,7 @@ import {
   sendStationSelfEStop,
   sendStationSelfAStop,
   sendStationClearAStop,
+  sendStationTeamStop,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { phaseLabel } from '../utils/matchFormat';
@@ -231,6 +232,80 @@ function SelfServiceControls({
   );
 }
 
+/**
+ * Driving outside a match: says who controls the robot right now and gives
+ * the team a Stop that works whatever their Driver Station is doing (the
+ * field cuts the DS's control traffic to the robot). Shown on the team's
+ * pages whenever the station is not in a match, match or no match — the match
+ * panel's own console takes over once they join.
+ */
+export function FreeplayControl({ station }: { station: StationName }) {
+  const matchState = useMatchState();
+  const myState = matchState?.stationStates[station];
+  if (!myState?.teamNumber || myState.joined) return null;
+
+  // Keyboard-synthesized clicks (Space/Enter aimed at the Driver Station) must
+  // never reach a robot-stopping or -starting button; a real tap still fires.
+  const tapOnly = (fn: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.blur();
+    if (e.detail === 0) return;
+    fn();
+  };
+
+  if (myState.eStop) {
+    return (
+      <Alert severity="error" sx={{ mb: 2 }}>
+        Your robot is e-stopped. Field staff clear the e-stop; then enable again from your Driver Station.
+      </Alert>
+    );
+  }
+  if (myState.teamStopped) {
+    return (
+      <Alert
+        severity="error"
+        sx={{ mb: 2, alignItems: 'center' }}
+        action={
+          <Button color="inherit" variant="outlined" onClick={tapOnly(() => sendStationTeamStop(station, false))}>
+            Let it drive again
+          </Button>
+        }
+      >
+        Stopped from this page. The field is blocking your Driver Station’s control of the robot. When you let it drive
+        again, enable from your Driver Station.
+      </Alert>
+    );
+  }
+  if (myState.blockedReason) {
+    return (
+      <Alert severity="error" sx={{ mb: 2 }}>
+        {myState.blockedReason} The field will not enable this robot — see field staff.
+      </Alert>
+    );
+  }
+  if (myState.heldReason) {
+    return (
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        {myState.heldReason} Your robot can only be enabled in a match right now. Your Driver Station shows "Admin
+        disabled" — join a match, or ask field staff.
+      </Alert>
+    );
+  }
+  return (
+    <Alert
+      severity="info"
+      sx={{ mb: 2, alignItems: 'center' }}
+      action={
+        <Button color="error" variant="contained" onClick={tapOnly(() => sendStationTeamStop(station, true))}>
+          Stop robot
+        </Button>
+      }
+    >
+      Outside matches your Driver Station’s Enable/Disable controls your robot. Stop works from here too, even if the
+      Driver Station doesn’t respond.
+    </Alert>
+  );
+}
+
 export function MatchPanel({ station }: { station?: StationName }) {
   const matchState = useMatchState();
   if (!matchState) return null;
@@ -267,15 +342,10 @@ export function MatchPanel({ station }: { station?: StationName }) {
 
   return (
     <Card sx={{ mb: 2 }}>
-      {myState?.blockedReason && (
+      {/* Out of a match, FreeplayControl says why a robot is held. */}
+      {joined && myState?.blockedReason && (
         <Alert severity="error" sx={{ borderRadius: 0 }}>
           {myState.blockedReason} The field will not enable this robot — see field staff.
-        </Alert>
-      )}
-      {myState?.heldReason && (
-        <Alert severity="warning" sx={{ borderRadius: 0 }}>
-          {myState.heldReason} Your robot can only be enabled in a match right now. Your Driver Station shows "Admin
-          disabled" — join a match, or ask field staff.
         </Alert>
       )}
       <CardContent>

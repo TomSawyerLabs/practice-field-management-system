@@ -818,6 +818,8 @@ export class MatchEngine {
     // radio may still carry the previous team. Kept until the station leaves.
     state.teamNumber = this.projectedTeamResolver(station);
     state.joined = true;
+    // A team Stop is for driving outside matches; match control takes over.
+    state.teamStopped = false;
     state.ready = false;
     state.alliance = alliance;
     state.matchSlot = null;
@@ -1383,6 +1385,21 @@ export class MatchEngine {
       this.sendDSPacket(station);
     }
     console.log('Global E-Stop triggered');
+    this.broadcast();
+  }
+
+  /** Stop (or release) a robot that is NOT in a match, from the team's page.
+   *  The field then cuts its Driver Station's control traffic (index.ts). A
+   *  joined station is left to match control: its console has Disable. */
+  teamStop(station: StationName, stop: boolean) {
+    const state = this.stationStates.get(station)!;
+    if (state.joined) {
+      appWarn(`Ignoring team ${stop ? 'Stop' : 'Resume'} for ${station}: it is in a match`);
+      return;
+    }
+    if ((state.teamStopped ?? false) === stop) return;
+    state.teamStopped = stop;
+    console.log(`${stop ? 'Stopped' : 'Released'} from the team page: ${station}`);
     this.broadcast();
   }
 

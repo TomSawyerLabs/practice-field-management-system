@@ -379,24 +379,29 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
   matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
 
-  // E-stop, network layer: while a station is e-stopped, steamboat drops its
-  // Driver Station's control packets to the robot, so the robot stops within
-  // ~100 ms even if its DS isn't listening to the field (every robot out of a
-  // match). The hold loop then takes the DS under field control; the cut stays
-  // until staff clear the e-stop. Applied in order per station.
+  // Stopping a robot, network layer: while a station is e-stopped, or
+  // stopped from its team's page out of a match, steamboat drops its Driver
+  // Station's control packets to the robot, so the robot stops within ~100 ms
+  // even if its DS isn't listening to the field (every robot out of a match).
+  // For an e-stop the hold loop also takes the DS under field control, and
+  // the cut stays until staff clear it; a team Stop lasts until the team lets
+  // the robot drive again. Applied in order per station.
   const eStopCut = new Map<StationName, boolean>();
   let eStopCutChain: Promise<void> = Promise.resolve();
   matchEngine.addStateListener(state => {
     for (const station of StationNameList) {
-      const want = state.stationStates[station]?.eStop ?? false;
+      const st = state.stationStates[station];
+      // E-stop, or a team Stop on a robot out of a match.
+      const want = (st?.eStop ?? false) || (!st?.joined && (st?.teamStopped ?? false));
       if (want === (eStopCut.get(station) ?? false)) continue;
       eStopCut.set(station, want);
       if (!VlanInterface || process.env.DRY_RUN) continue;
       eStopCutChain = eStopCutChain
         .then(() => setEStopCut(station, want))
         .then(
-          () => appInfo(`${station}: e-stop ${want ? 'cut DS→robot control traffic' : 'cleared, traffic restored'}`),
-          err => console.error(`${station}: failed to ${want ? 'apply' : 'lift'} e-stop cut:`, err),
+          () =>
+            appInfo(`${station}: ${want ? 'cut DS→robot control traffic (stop)' : 'stop cleared, traffic restored'}`),
+          err => console.error(`${station}: failed to ${want ? 'apply' : 'lift'} the stop cut:`, err),
         );
     }
   });

@@ -1248,6 +1248,11 @@ export type StationControlState = {
    *  "Admin disabled" in its game data. Joining a match clears it: in a match
    *  the robot enables normally. */
   heldReason?: string;
+  /** Out of a match, someone pressed Stop on the team's page: the field cuts
+   *  the Driver Station's control traffic to the robot (it disables within
+   *  ~100 ms; the DS drops to disabled when it loses the robot) until the
+   *  team lets it drive again. Joining a match clears it. */
+  teamStopped?: boolean;
   /** Epoch ms when this team took this station — when its SSID became the
    *  station's active radio config. Unlike the DS/radio heartbeats this is a
    *  connect *time*, so it survives a robot dropping and coming back, which
@@ -1708,6 +1713,15 @@ export function isStationSelfAStop(msg: unknown): msg is StationSelfAStop {
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as StationSelfAStop;
   return m.type === 'stationSelfAStop' && StationNameRegex.test(m.station);
+}
+
+/** Out of a match: stop this robot from the team's page (`stop: true`), or
+ *  let it drive again. In a match the console's Disable/E-Stop apply. */
+export type StationTeamStop = { type: 'stationTeamStop'; station: StationName; stop: boolean };
+export function isStationTeamStop(msg: unknown): msg is StationTeamStop {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as StationTeamStop;
+  return m.type === 'stationTeamStop' && StationNameRegex.test(m.station) && typeof m.stop === 'boolean';
 }
 
 /** Team-side recovery from an accidental mid-match disable (DS Enter key or

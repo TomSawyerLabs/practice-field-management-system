@@ -431,6 +431,7 @@ function stationFacts(input: FieldIssueInputs, issues: FieldIssue[], station: St
 
 const CONTROL_COLOR: Record<FieldControlKind, string> = {
   estop: 'error.main',
+  stopped: 'error.main',
   blocked: 'warning.main',
   held: 'warning.main',
   matchEnabled: 'success.main',

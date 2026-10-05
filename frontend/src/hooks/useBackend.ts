@@ -1343,6 +1343,11 @@ export function sendStationSelfDisable(station: StationName) {
   ws?.send(JSON.stringify({ type: 'stationSelfDisable', station }));
 }
 
+/** Out of a match: stop the robot from the team's page, or let it drive again. */
+export function sendStationTeamStop(station: StationName, stop: boolean) {
+  ws?.send(JSON.stringify({ type: 'stationTeamStop', station, stop }));
+}
+
 export function sendStationSelfUndisable(station: StationName) {
   ws?.send(JSON.stringify({ type: 'stationSelfUndisable', station }));
 }

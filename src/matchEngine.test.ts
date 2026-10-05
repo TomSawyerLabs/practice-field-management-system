@@ -783,3 +783,32 @@ describe('a cancelled countdown cools down before the next start', () => {
     expect(state.restartCooldown?.cancelledBy).toBe('slot1');
   });
 });
+
+describe('a team Stop out of a match', () => {
+  test('latches until the team lets the robot drive again', () => {
+    const engine = new MatchEngine(() => 8);
+    engine.teamStop('slot1', true);
+    expect(engine.getState().stationStates.slot1?.teamStopped).toBe(true);
+    engine.teamStop('slot1', false);
+    expect(engine.getState().stationStates.slot1?.teamStopped).toBe(false);
+  });
+
+  test('is ignored for a station in a match, and joining clears it', () => {
+    const engine = new MatchEngine(() => 8);
+    engine.teamStop('slot1', true);
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'red');
+    expect(engine.getState().stationStates.slot1?.teamStopped).toBe(false);
+    engine.teamStop('slot1', true);
+    expect(engine.getState().stationStates.slot1?.teamStopped).toBe(false);
+  });
+
+  test('e-stop is visible cheaply to the hold resolvers', () => {
+    const engine = new MatchEngine(() => 8);
+    expect(engine.isEStopped('slot1')).toBe(false);
+    engine.globalEStop();
+    expect(engine.isEStopped('slot1')).toBe(true);
+    engine.clearEStop();
+    expect(engine.isEStopped('slot1')).toBe(false);
+  });
+});

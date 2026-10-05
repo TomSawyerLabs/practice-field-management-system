@@ -242,6 +242,7 @@ export function stationLabel(input: Pick<FieldIssueInputs, 'latest' | 'matchStat
 /** Who decides whether a robot may drive right now, from the field's side. */
 export type FieldControlKind =
   | 'estop' // e-stopped: the field cuts the DS's control of the robot until staff clear it
+  | 'stopped' // out of a match, stopped from the team's page: the field cuts the DS's control
   | 'blocked' // field policy forbids this control system; held disabled
   | 'held' // out of a match, held disabled (freeplay held by staff)
   | 'matchEnabled' // joined, and the field has it enabled
@@ -301,6 +302,11 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
     short = 'E-STOP';
     label = 'E-stopped';
     why = 'The field is cutting the Driver Station’s control of the robot until staff clear the e-stop.';
+  } else if (!joined && control?.teamStopped) {
+    kind = 'stopped';
+    short = 'Stopped';
+    label = 'Stopped from the team’s page';
+    why = 'The field is cutting the Driver Station’s control of the robot until the team lets it drive again.';
   } else if (control?.blockedReason) {
     kind = 'blocked';
     short = 'Blocked';
@@ -336,7 +342,8 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
     label = 'Team’s own control — Enable/Disable on their Driver Station';
   }
 
-  const holdsDisabled = kind === 'estop' || kind === 'blocked' || kind === 'held' || kind === 'matchDisabled';
+  const holdsDisabled =
+    kind === 'estop' || kind === 'stopped' || kind === 'blocked' || kind === 'held' || kind === 'matchDisabled';
   return {
     kind,
     short,

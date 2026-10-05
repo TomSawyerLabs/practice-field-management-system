@@ -50,7 +50,7 @@ import {
   stallsForTeam,
   suffixOf,
 } from '../utils/robotWifi';
-import { MatchPanelForControl } from './MatchPanel';
+import { FreeplayControl, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
@@ -367,6 +367,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       {selectedStation && (
         <>
           <StationAlerts station={selectedStation} />
+          <FreeplayControl station={selectedStation} />
           <MatchPanelForControl station={selectedStation} ssid={currentSsid} />
         </>
       )}
