@@ -109,6 +109,16 @@ been in a match stayed locked until closed and reopened. On 2026-09-27 a
 misreading of the admin switch's wording — "Enabled"/"Disabled" on a switch
 about robots — briefly brought silence back; `plans/out-of-match-enable-check.md`.)
 
+Not every DS takes status 2 that way. On 2026-10-04 team 8's legacy NI DS
+hid its Enable button after every status-2 reply, showing it only while it had
+no FMS connection at all, while 6036's DS, sent the same bytes, was released.
+The two looked identical from the field (both reconnecting every ~8 s, no
+UDP status to 1160, FMS bit clear in their packets to the robot), so pFMS
+cannot tell them apart. Staff list such teams under "Driver Stations that
+hide Enable outside matches" on the admin page (setting `silentReleaseTeams`):
+their DS gets no reply at all while not in a match. Adding or removing a
+team re-handshakes its DS at once. `plans/csa-fms-control-status.md`.
+
 When staff set "Freeplay outside matches" to **Held**, an unjoined DS is
 instead assigned a slot (FMS-controlled) and held with a stream of disabled
 packets whose game data reads `Admin disabled` (`AdminOff` on the 2027 DS,

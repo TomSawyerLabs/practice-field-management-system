@@ -248,6 +248,12 @@ export interface SetupSettings {
    *  control). Absent/true = on; set false via the admin switch to hold
    *  not-in-match robots disabled. */
   outOfMatchControl?: boolean;
+  /** Teams whose Driver Station gets NO handshake reply while not in a
+   *  match, instead of the status-2 "not in match" release. Some DSes take
+   *  status 2 as "under FMS control, waiting" and hide Enable (team 8's,
+   *  2026-10-04) while others are released by it (6036's). Silence is the
+   *  pre-2026-09-13 behaviour. Joined and held stations are unaffected. */
+  silentReleaseTeams?: number[];
   /** Hold teams' Wi-Fi requests instead of applying them — same effect as a
    *  match existing. Staff apply them from the match or admin page. Absent /
    *  false = requests apply as they come (once robots are disabled). */
@@ -778,6 +784,8 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   recordingMinFreeGb: v => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 10000,
   slackSnapshots: v => typeof v === 'boolean',
   outOfMatchControl: v => typeof v === 'boolean',
+  silentReleaseTeams: v =>
+    Array.isArray(v) && v.length <= 200 && v.every(t => Number.isInteger(t) && t >= 1 && t <= 25599),
   holdRadioChanges: v => typeof v === 'boolean',
   holdRadioChangesForMatch: v => typeof v === 'boolean',
   robotWifiInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),

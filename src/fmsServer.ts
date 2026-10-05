@@ -459,8 +459,10 @@ export async function startFMSServer({
    *  Return undefined to send NO reply: answering the handshake flips the DS into
    *  FMS-controlled mode (local enable locked out), so only resolve teams whose
    *  station has joined a match — or is opted in via FMS_TCP_REPLY_STATIONS to
-   *  test that lockout hypothesis on a single robot. */
-  resolveTeamSlot?: (teamNumber: number) => MatchSlot | 'release' | undefined;
+   *  test that lockout hypothesis on a single robot. 'release' sends the
+   *  status-2 "not in match" reply; 'silent' is a known team out of a match
+   *  that staff listed for no reply (its DS parks on status 2). */
+  resolveTeamSlot?: (teamNumber: number) => MatchSlot | 'release' | 'silent' | undefined;
 } = {}) {
   return new Promise<FmsServer>((resolve, reject) => {
     let udpServer: Socket;
@@ -537,7 +539,7 @@ export async function startFMSServer({
             // is restarted. On by default; an admin can turn it off (the
             // gating lives in index.ts's resolver).
             socket.write(makeNotInMatchReply(obj));
-          } else if (resolved) {
+          } else if (resolved && resolved !== 'silent') {
             socket.write(makeStationAssignment(obj, resolved));
           }
           const key = `${obj.teamNumber}|${obj.type}|${resolved ?? ''}`;
@@ -547,9 +549,11 @@ export async function startFMSServer({
             const reply =
               resolved === 'release'
                 ? ` → not in match (release reply 0x${obj.type === 0x1e ? '1f' : '19'} status 2)`
-                : resolved
-                  ? ` → assigned ${resolved} (reply 0x${obj.type === 0x1e ? '1f' : '19'})`
-                  : ' (no reply: not joined)';
+                : resolved === 'silent'
+                  ? ' → not in match (no reply: team is on the no-reply list)'
+                  : resolved
+                    ? ` → assigned ${resolved} (reply 0x${obj.type === 0x1e ? '1f' : '19'})`
+                    : ' (no reply: not joined)';
             console.log(`DS at ${addr}: team ${obj.teamNumber}${gen}${reply}`);
           }
         } else if (process.env.FMS_LOG_DS_MESSAGES) {

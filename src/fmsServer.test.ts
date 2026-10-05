@@ -80,3 +80,46 @@ describe('disconnectTeam closes the sessions of one team only', () => {
     expect(ds.destroyed).toBe(true);
   });
 });
+
+describe('handshake reply follows the resolver', () => {
+  let fms: FmsServer;
+  const TCP2 = TCP + 1;
+  const answers: Record<number, 'red2' | 'release' | 'silent'> = { 254: 'red2', 8: 'silent', 6036: 'release' };
+
+  beforeAll(async () => {
+    fms = await startFMSServer({
+      address: ADDRESS,
+      tcp: TCP2,
+      udp: UDP + 1,
+      resolveTeamSlot: team => answers[team],
+    });
+  });
+  afterAll(() => {
+    fms.udpSocket.close();
+  });
+
+  /** Handshake as `team` and collect whatever the server sends back. */
+  async function replyTo(team: number): Promise<Buffer> {
+    const socket = await new Promise<net.Socket>((resolve, reject) => {
+      const s = net.connect(TCP2, ADDRESS, () => s.write(handshake(team), err => (err ? reject(err) : resolve(s))));
+      s.on('error', reject);
+    });
+    const chunks: Buffer[] = [];
+    socket.on('data', c => chunks.push(c));
+    await settle();
+    socket.destroy();
+    return Buffer.concat(chunks);
+  }
+
+  test('a joined station gets its slot', async () => {
+    expect([...(await replyTo(254))]).toEqual([0x00, 0x03, 0x19, 1, 0]);
+  });
+
+  test('a released team gets the status-2 "not in match" reply', async () => {
+    expect([...(await replyTo(6036))]).toEqual([0x00, 0x03, 0x19, 0, 2]);
+  });
+
+  test('a team on the no-reply list gets nothing', async () => {
+    expect((await replyTo(8)).length).toBe(0);
+  });
+});

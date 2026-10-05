@@ -526,8 +526,88 @@ function OutOfMatchControlSection() {
         >
           {allowed ? 'Hold robots' : 'Allow freeplay'}
         </Button>
+        {allowed && <NoReplyTeams list={setupConfig?.config.settings.silentReleaseTeams ?? []} />}
       </CardContent>
     </Card>
+  );
+}
+
+/** Teams whose Driver Station hides Enable on the field's "not in match"
+ *  reply: listed here, they get no reply at all outside matches (setting
+ *  `silentReleaseTeams`). Quick-add chips for teams on the field now. */
+function NoReplyTeams({ list }: { list: number[] }) {
+  const matchState = useMatchState();
+  const [draft, setDraft] = useState('');
+  const save = (next: number[]) =>
+    sendUpdateSetupSettings({ silentReleaseTeams: [...new Set(next)].sort((a, b) => a - b) });
+  const draftTeam = /^\d{1,5}$/.test(draft.trim()) ? Number(draft.trim()) : null;
+  const onField = [
+    ...new Set(
+      Object.values(matchState?.stationStates ?? {})
+        .map(s => s?.teamNumber)
+        .filter((t): t is number => typeof t === 'number' && !list.includes(t)),
+    ),
+  ].sort((a, b) => a - b);
+
+  return (
+    <Box sx={{ flexBasis: '100%', borderTop: 1, borderColor: 'divider', pt: 1.5 }}>
+      <Typography variant="subtitle2">Driver Stations that hide Enable outside matches</Typography>
+      <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+        Some Driver Stations treat the field's "not in match" reply as being under FMS control and hide their Enable
+        button. Add the team here and the field won't reply to their Driver Station at all until they join a match.
+      </Typography>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75 }}>
+        {list.length === 0 && (
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            No teams listed.
+          </Typography>
+        )}
+        {list.map(team => (
+          <Chip key={team} label={team} color="info" onDelete={() => save(list.filter(t => t !== team))} />
+        ))}
+        <TextField
+          size="small"
+          label="Team"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && draftTeam) {
+              save([...list, draftTeam]);
+              setDraft('');
+            }
+          }}
+          sx={{ width: 100 }}
+          slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+        />
+        <Button
+          size="small"
+          disabled={!draftTeam}
+          onClick={() => {
+            if (!draftTeam) return;
+            save([...list, draftTeam]);
+            setDraft('');
+          }}
+        >
+          Add
+        </Button>
+      </Box>
+      {onField.length > 0 && (
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.75, mt: 1 }}>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            On the field:
+          </Typography>
+          {onField.map(team => (
+            <Chip
+              key={team}
+              size="small"
+              variant="outlined"
+              label={`+ ${team}`}
+              onClick={() => save([...list, team])}
+            />
+          ))}
+        </Box>
+      )}
+    </Box>
   );
 }
 

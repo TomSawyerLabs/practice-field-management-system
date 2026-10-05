@@ -371,6 +371,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
   matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
 
+  /** Staff listed this team for no handshake reply outside a match (its DS
+   *  parks on the status-2 release instead of freeing up). Read live. */
+  function silentReleaseFor(team: number | null | undefined): boolean {
+    return team != null && (setupConfigStore.get().settings.silentReleaseTeams ?? []).includes(team);
+  }
+
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));
 
@@ -1474,7 +1480,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           // stays under field control; the hold loop's disabled packets are
           // what actually refuse the enable while the team is out of a match.
           if (outOfMatchHoldReason(station)) return matchEngine.slotForStation(station);
-          // Not in a match and not held: release the DS to local control.
+          // Not in a match and not held: release the DS to local control —
+          // by saying nothing, for a DS staff listed as parking on status 2.
+          if (silentReleaseFor(teamNumber)) return 'silent';
           return 'release';
         }
         // Alliance-aware slot so a blue-alliance DS is assigned a blue station
@@ -1494,22 +1502,31 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // packet's game data tells the driver why on the DS itself. In a match,
       // matchEngine's enable gate handles policy blocks; the admin switch
       // never applies to a joined station.
-      // A flip in held state (policy change, admin switch) re-handshakes the
-      // DS so it picks up the new answer (held vs released) straight away.
-      const wasHeld = new Map<StationName, boolean>();
+      // A change in the answer an unjoined DS gets (policy change, admin
+      // switch, no-reply list) re-handshakes the DS so it picks up the new
+      // answer (held, status-2 release, or silence) straight away.
+      const lastAnswer = new Map<StationName, 'held' | 'release' | 'silent'>();
       setInterval(() => {
         const state = matchEngine.getState();
         for (const station of StationNameList) {
           const joined = state.stationStates[station]?.joined ?? false;
           const blocked = policyBlockReason(station) !== null;
           const held = blocked || outOfMatchControlOff();
+          const silent = silentReleaseFor(state.stationStates[station]?.teamNumber);
+          const answer = held ? 'held' : silent ? 'silent' : 'release';
           const dsIp = driveSessions.laptopOn(station) ?? state.connectedStations[station]?.ip;
-          if (held !== (wasHeld.get(station) ?? false)) {
-            wasHeld.set(station, held);
+          if (answer !== (lastAnswer.get(station) ?? 'release')) {
+            lastAnswer.set(station, answer);
             // A joined station's answer is its slot either way — don't bounce
             // its TCP session (possibly mid-match) for nothing.
             if (dsIp && !joined) {
-              const why = blocked ? 'control system blocked' : held ? 'freeplay held by staff' : 'freeplay allowed';
+              const why = blocked
+                ? 'control system blocked'
+                : held
+                  ? 'freeplay held by staff'
+                  : silent
+                    ? 'freeplay allowed, no reply (no-reply list)'
+                    : 'freeplay allowed';
               appInfo(`${station}: ${why} — re-handshaking DS ${dsIp}`);
               fms.emit('disconnectDS', { address: dsIp });
             }
