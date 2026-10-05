@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { countDsJoysticks } from './robotPacketCapture.js';
+import { countDsJoysticks, RobotLinkTimer } from './robotPacketCapture.js';
 
 /** DS→robot header: sequence, comm version, control, request, station. */
 const HEADER = [0x12, 0x34, 0x01, 0x04, 0x00, 0x00];
@@ -48,5 +48,50 @@ describe('countDsJoysticks', () => {
   test('rejects a tag that runs past the end of the packet', () => {
     const truncated = packet(joystickTag(6, 10, 1)).subarray(0, HEADER.length + 5);
     expect(countDsJoysticks(truncated)).toBeNull();
+  });
+});
+
+describe('RobotLinkTimer', () => {
+  /** 50 Hz control packets from t=0, each answered `rtt` ms later unless `drop` says not. */
+  function run(timer: RobotLinkTimer, packets: number, rtt: number, drop: (i: number) => boolean = () => false) {
+    for (let i = 0; i < packets; i++) {
+      const t = i * 20;
+      timer.sent(i, t);
+      timer.sent(i, t + 0.05); // the forwarded copy
+      if (!drop(i)) {
+        timer.reply(i, t + rtt);
+        timer.reply(i, t + rtt + 0.05); // only the first reply counts
+      }
+    }
+    return packets * 20;
+  }
+
+  test('nothing to say before any packet has had time to be answered', () => {
+    const timer = new RobotLinkTimer();
+    timer.sent(1, 0);
+    expect(timer.stats(10)).toBeUndefined();
+  });
+
+  test('median round trip from the forwarded copy, and no loss on a clean link', () => {
+    const timer = new RobotLinkTimer();
+    const end = run(timer, 200, 2);
+    const stats = timer.stats(end + 1_500)!;
+    expect(stats.lossPct).toBe(0);
+    // Timed from the later (forwarded) copy: 2 ms - 0.05 ms.
+    expect(stats.rttMs).toBeCloseTo(2, 0);
+  });
+
+  test('unanswered control packets count as lost', () => {
+    const timer = new RobotLinkTimer();
+    const end = run(timer, 200, 3, i => i % 4 === 0);
+    expect(timer.stats(end + 1_500)!.lossPct).toBeCloseTo(25, 0);
+  });
+
+  test('a stopped robot (no replies at all) reads as 100% unanswered with no round trip', () => {
+    const timer = new RobotLinkTimer();
+    const end = run(timer, 100, 3, () => true);
+    const stats = timer.stats(end + 1_500)!;
+    expect(stats.lossPct).toBe(100);
+    expect(stats.rttMs).toBeUndefined();
   });
 });

@@ -175,6 +175,8 @@ const RIO_MISSING_MS = 60_000;
 const BANDWIDTH_WARN_MBPS = 3.5;
 /** DS↔robot round trip; the DS itself flags trip time above ~20 ms. */
 const RTT_WARN_MS = 50;
+/** Share of control packets the robot leaves unanswered before it is worth a look. */
+const LINK_LOSS_WARN_PCT = 10;
 /** ARP table fill: warn / critical, matching the /network gauge. */
 const ARP_WARN_PCT = 70;
 const ARP_CRIT_PCT = 90;
@@ -780,6 +782,38 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
           title: `${label} is browning out`,
           detail: `Battery ${tele.batteryVoltage?.toFixed(1) ?? '?'} V. A deep brownout reboots the radio and drops the robot off the field.`,
           fix: 'Fresh battery.',
+        });
+      }
+    }
+
+    // ── Robot link, timed by pFMS from the DS's control packets and the
+    //    robot's replies (works out of a match, unlike the DS's own report) ──
+    const cutByField = fc.kind === 'estop' || fc.kind === 'stopped';
+    if (teleFresh && !cutByField) {
+      if (tele.robotLinkLossPct !== undefined && tele.robotLinkLossPct >= LINK_LOSS_WARN_PCT) {
+        push({
+          id: `robot-link-loss-${station}`,
+          severity: tele.robotLinkLossPct >= 50 ? 'critical' : 'warning',
+          station,
+          team,
+          title: `${label} is missing ${Math.round(tele.robotLinkLossPct)}% of its Driver Station’s control packets`,
+          detail:
+            'Measured by the field: control packets that reached the robot’s network but got no reply within 1 s.',
+          fix: 'Weak signal or a bandwidth hog (see other issues for this robot)? A robot that is rebooting or has lost robot code also stops answering.',
+        });
+      } else if (
+        tele.robotLinkRttMs !== undefined &&
+        tele.robotLinkRttMs > RTT_WARN_MS &&
+        !(dsAttached && tele.rttMs !== undefined)
+      ) {
+        push({
+          id: `robot-link-rtt-${station}`,
+          severity: 'warning',
+          station,
+          team,
+          title: `${label}: ${Math.round(tele.robotLinkRttMs)} ms round trip from the field to the robot`,
+          detail: 'Measured by the field on the robot’s Wi-Fi leg. Normal is a few ms.',
+          fix: 'Weak signal or a bandwidth hog (see other issues for this robot)?',
         });
       }
     }

@@ -642,6 +642,17 @@ function StationDialog({
                 : 'no recent packets from the robot'
             }
           />
+          {tele && (tele.robotLinkRttMs !== undefined || tele.robotLinkLossPct !== undefined) && (
+            <Row
+              k="Robot link"
+              v={[
+                tele.robotLinkRttMs !== undefined ? `${tele.robotLinkRttMs} ms field↔robot` : null,
+                tele.robotLinkLossPct !== undefined ? `${tele.robotLinkLossPct}% unanswered` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            />
+          )}
           <Row
             k="Driver Station"
             v={

@@ -143,11 +143,19 @@ utilization, brownout/e-stop/enabled flags, robot-code status) is parsed
 from the FMS DS status messages (`src/telemetryManager.ts`) and broadcast
 to frontend clients, throttled per station.
 
-In addition, `src/robotPacketCapture.ts` runs `tcpdump` on UDP port 1150
-(the RIO→DS reply port) and parses the robot→DS payloads directly. This
-recovers battery voltage and robot status straight from the robot's own
-packets, and feeds the same telemetry pipeline. It restarts automatically
-if `tcpdump` exits.
+In addition, `src/robotPacketCapture.ts` runs `tcpdump` on UDP ports 1150
+(the RIO→DS reply port) and 1110 (DS→RIO control) and parses the payloads
+directly. This recovers battery voltage and robot status straight from the
+robot's own packets, counts the DS's joysticks, and feeds the same telemetry
+pipeline. It restarts automatically if `tcpdump` exits.
+
+The DS's own status (trip time, lost packets, CPU) only arrives while the DS
+is under FMS control, so the capture also times the robot's link itself
+(`RobotLinkTimer`): the roboRIO answers each control packet with the same
+sequence number, so pairing them gives the field→robot→field round trip
+(`robotLinkRttMs`, median over ~2 s) and the share of control packets left
+unanswered within 1 s (`robotLinkLossPct`, over ~5 s). It covers the robot's
+Wi-Fi leg, not the laptop's, and works out of a match.
 
 ## Usage Tracking
 

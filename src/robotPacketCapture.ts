@@ -19,6 +19,8 @@ export class RobotPacketCapture {
   private buf = Buffer.alloc(0);
   private headerParsed = false;
   private debuggedTeams = new Set<number>();
+  /** Per station: pairs the DS's control packets with the robot's replies. */
+  private linkTimers = new Map<StationName, RobotLinkTimer>();
 
   constructor(
     private readonly interfaceName: string,
@@ -109,15 +111,17 @@ export class RobotPacketCapture {
       const totalLen = 16 + inclLen;
       if (this.buf.length < totalLen) break;
 
+      // Capture time (ms, µs resolution) — what the link round trip is timed by.
+      const capturedAt = this.buf.readUInt32LE(0) * 1000 + this.buf.readUInt32LE(4) / 1000;
       const packetData = this.buf.subarray(16, totalLen);
       this.buf = this.buf.subarray(totalLen);
 
-      this.parsePacket(packetData);
+      this.parsePacket(packetData, capturedAt);
     }
   }
 
   /** Parse a single captured packet (Ethernet + [VLAN] + IP + UDP + payload). */
-  private parsePacket(data: Buffer): void {
+  private parsePacket(data: Buffer, capturedAt: number): void {
     // Ethernet header: 14 bytes (dst[6] + src[6] + etherType[2])
     if (data.length < 14) return;
     let etherType = data.readUInt16BE(12);
@@ -146,7 +150,7 @@ export class RobotPacketCapture {
 
     if (dstPort === DS_TO_ROBOT_PORT) {
       const dstIp = `${data[ipOffset + 16]}.${data[ipOffset + 17]}.${data[ipOffset + 18]}.${data[ipOffset + 19]}`;
-      this.parseDsToRobot(data.subarray(payloadOffset), dstIp, vlanId);
+      this.parseDsToRobot(data.subarray(payloadOffset), dstIp, vlanId, capturedAt);
       return;
     }
     if (data.length < payloadOffset + 6) return; // Need at least 6 bytes of robot payload
@@ -193,12 +197,17 @@ export class RobotPacketCapture {
     // Trace byte: bit5=robotCode, bit4=isRoboRIO
     const hasRobotCode = Boolean(traceByte & 0x20);
 
+    const timer = this.linkTimer(station);
+    timer.reply(data.readUInt16BE(payloadOffset), capturedAt);
+    const link = timer.stats(capturedAt);
+
     const update: TelemetryUpdate = {
       type: 'telemetry',
       station,
       timestamp: now,
       batteryVoltage,
       brownout,
+      ...(link && { robotLinkRttMs: link.rttMs, robotLinkLossPct: link.lossPct }),
       dsStatus: {
         eStop,
         aStop: false, // A-Stop is a DS-side state; not present in the robot→FMS status byte
@@ -221,15 +230,23 @@ export class RobotPacketCapture {
     this.onTelemetry(update);
   }
 
-  /** DS→robot control packet: report how many joysticks it carries. */
-  private parseDsToRobot(payload: Buffer, dstIp: string, vlanId: number | undefined): void {
-    if (!this.onJoysticks) return;
+  /** DS→robot control packet: time it for the link round trip, and report
+   *  how many joysticks it carries. */
+  private parseDsToRobot(payload: Buffer, dstIp: string, vlanId: number | undefined, capturedAt: number): void {
     const team = teamFromIp(dstIp);
     if (!team) return;
     const count = countDsJoysticks(payload);
     if (count === null) return;
     const station = this.resolveStation(team, vlanId);
-    if (station) this.onJoysticks(station, count);
+    if (!station) return;
+    this.linkTimer(station).sent(payload.readUInt16BE(0), capturedAt);
+    this.onJoysticks?.(station, count);
+  }
+
+  private linkTimer(station: StationName): RobotLinkTimer {
+    let t = this.linkTimers.get(station);
+    if (!t) this.linkTimers.set(station, (t = new RobotLinkTimer()));
+    return t;
   }
 
   /** Resolve team to station. When a team is duplicated across stations,
@@ -241,6 +258,64 @@ export class RobotPacketCapture {
       if (vlanStation) return vlanStation;
     }
     return this.getTeamMappings()[team];
+  }
+}
+
+/**
+ * Times the robot's link from the field's side. The roboRIO answers each
+ * Driver Station control packet (UDP 1110) with a status packet (UDP 1150)
+ * carrying the same sequence number, and both cross pFMS — the robot's
+ * gateway — so pairing them gives the round trip field → robot → field and
+ * the share of control packets the robot never answered. It covers the
+ * robot's Wi-Fi leg, not the DS laptop's, and works whether or not the DS is
+ * under FMS control (the DS's own trip-time report only arrives when it is).
+ *
+ * Each packet is captured twice (arriving, and forwarded on); the later copy
+ * of a control packet is the one nearer the robot, and only the first reply
+ * counts.
+ */
+export class RobotLinkTimer {
+  /** Control packets awaiting a reply: sequence → capture time (ms). */
+  private pending = new Map<number, number>();
+  private answered = new Set<number>();
+  private rtts: { at: number; ms: number }[] = [];
+  private outcomes: { at: number; answered: boolean }[] = [];
+
+  /** A reply later than this counts as unanswered. */
+  static readonly REPLY_TIMEOUT_MS = 1_000;
+  /** Round trips are the median over this window… */
+  static readonly RTT_WINDOW_MS = 2_000;
+  /** …and loss is counted over this one. */
+  static readonly LOSS_WINDOW_MS = 5_000;
+
+  sent(seq: number, at: number): void {
+    if (this.answered.has(seq)) return;
+    this.pending.set(seq, at);
+  }
+
+  reply(seq: number, at: number): void {
+    const sentAt = this.pending.get(seq);
+    if (sentAt === undefined || this.answered.has(seq)) return;
+    this.answered.add(seq);
+    this.rtts.push({ at, ms: Math.max(0, at - sentAt) });
+  }
+
+  /** Median round trip and percent unanswered, or undefined before there is
+   *  anything to say. */
+  stats(now: number): { rttMs?: number; lossPct: number } | undefined {
+    for (const [seq, sentAt] of this.pending) {
+      if (now - sentAt < RobotLinkTimer.REPLY_TIMEOUT_MS) continue;
+      this.outcomes.push({ at: sentAt, answered: this.answered.has(seq) });
+      this.pending.delete(seq);
+      this.answered.delete(seq);
+    }
+    this.rtts = this.rtts.filter(r => now - r.at <= RobotLinkTimer.RTT_WINDOW_MS);
+    this.outcomes = this.outcomes.filter(o => now - o.at <= RobotLinkTimer.LOSS_WINDOW_MS);
+    if (this.outcomes.length === 0) return undefined;
+    const lost = this.outcomes.filter(o => !o.answered).length;
+    const sorted = this.rtts.map(r => r.ms).sort((a, b) => a - b);
+    const rttMs = sorted.length > 0 ? Math.round(sorted[Math.floor(sorted.length / 2)] * 10) / 10 : undefined;
+    return { rttMs, lossPct: Math.round((lost / this.outcomes.length) * 1000) / 10 };
   }
 }
 

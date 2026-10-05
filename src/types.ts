@@ -1764,8 +1764,17 @@ export interface TelemetryUpdate {
    *  coalescing window's envelope so battery charts can still show them.
    *  Omitted when it equals batteryVoltage. */
   batteryVoltageMin?: number;
+  /** Trip time the Driver Station reports (ms). Only while the DS is under
+   *  FMS control — it reports to the field only then. */
   rttMs?: number;
   lostPackets?: number;
+  /** Round trip field → robot → field for the DS's control packets, timed by
+   *  pFMS from the packets crossing it (ms, median over ~2 s). The robot's
+   *  Wi-Fi leg only, not the laptop's; works out of a match too. */
+  robotLinkRttMs?: number;
+  /** Percent of the DS's control packets the robot did not answer within 1 s,
+   *  over ~5 s. */
+  robotLinkLossPct?: number;
   canUtil?: number;
   dsCpuPercent?: number;
   brownout?: boolean;

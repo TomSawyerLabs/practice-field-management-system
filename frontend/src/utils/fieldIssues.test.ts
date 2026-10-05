@@ -768,3 +768,51 @@ describe('fieldControlOf', () => {
     expect(fieldControlOf(afterMatch, 'slot1').dsUnderField).toBe(false);
   });
 });
+
+describe('robot link timed by the field', () => {
+  const linkTele = (lossPct: number, rttMs = 3) => ({
+    slot1: {
+      type: 'telemetry' as const,
+      station: 'slot1' as const,
+      timestamp: NOW - 200,
+      robotLinkLossPct: lossPct,
+      robotLinkRttMs: rttMs,
+      dsStatus: {
+        eStop: false,
+        aStop: false,
+        robotComms: true,
+        radioPing: true,
+        rioPing: true,
+        enabled: false,
+        mode: 'teleOp' as const,
+      },
+    },
+  });
+
+  test('a lossy link out of a match is reported', () => {
+    const input = inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ stationStates: { slot1: control() } }),
+      telemetry: linkTele(30),
+    });
+    expect(ids(input)).toContain('robot-link-loss-slot1');
+  });
+
+  test('not while the field itself is cutting the robot off', () => {
+    const input = inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ stationStates: { slot1: control({ teamStopped: true }) } }),
+      telemetry: linkTele(100),
+    });
+    expect(ids(input)).not.toContain('robot-link-loss-slot1');
+  });
+
+  test('a slow field-to-robot round trip is reported when the DS gives no trip time', () => {
+    const input = inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ stationStates: { slot1: control() } }),
+      telemetry: linkTele(0, 80),
+    });
+    expect(ids(input)).toContain('robot-link-rtt-slot1');
+  });
+});
