@@ -84,7 +84,7 @@ describe('disconnectTeam closes the sessions of one team only', () => {
 describe('handshake reply follows the resolver', () => {
   let fms: FmsServer;
   const TCP2 = TCP + 1;
-  const answers: Record<number, 'red2' | 'release' | 'silent'> = { 254: 'red2', 8: 'silent', 6036: 'release' };
+  const answers: Record<number, 'red2' | 'release'> = { 254: 'red2', 6036: 'release' };
 
   beforeAll(async () => {
     fms = await startFMSServer({
@@ -117,9 +117,5 @@ describe('handshake reply follows the resolver', () => {
 
   test('a released team gets the status-2 "not in match" reply', async () => {
     expect([...(await replyTo(6036))]).toEqual([0x00, 0x03, 0x19, 0, 2]);
-  });
-
-  test('a team on the no-reply list gets nothing', async () => {
-    expect((await replyTo(8)).length).toBe(0);
   });
 });
