@@ -74,6 +74,8 @@ import {
   HostnamesState,
   isRobotWifiScanState,
   RobotWifiScanState,
+  isSixGhzWatchState,
+  SixGhzWatchState,
   isWifiCardsState,
   WifiCardsState,
   RobotWifiTest,
@@ -818,6 +820,12 @@ function receiveMessage(detail: Message) {
   if (isRobotWifiScanState(detail)) {
     currentRobotWifiScan = detail;
     events.dispatchEvent(new CustomEvent('robotWifiScan', { detail }));
+    return;
+  }
+
+  if (isSixGhzWatchState(detail)) {
+    currentSixGhzWatch = detail;
+    events.dispatchEvent(new CustomEvent('sixGhzWatch', { detail }));
     return;
   }
 
@@ -2004,6 +2012,26 @@ export function useRobotWifiScan(): RobotWifiScanState | null {
  *  its robot's network (rate-limited on the server). */
 export function sendRobotWifiTest(station: StationName) {
   ws?.send(JSON.stringify({ type: 'robotWifiTest', station } satisfies RobotWifiTest));
+}
+
+// ── 6 GHz watch ─────────────────────────────────────────────────────
+
+let currentSixGhzWatch: SixGhzWatchState | null = null;
+
+/** Access points heard on 6 GHz, and the ones using a team's network name
+ *  that aren't the field. Null until the server says (older servers never
+ *  do). */
+export function useSixGhzWatch(): SixGhzWatchState | null {
+  const [state, setState] = useState(currentSixGhzWatch);
+
+  useEffect(() => {
+    setState(currentSixGhzWatch);
+    const handler = (e: Event) => setState((e as CustomEvent<SixGhzWatchState>).detail);
+    events.addEventListener('sixGhzWatch', handler);
+    return () => events.removeEventListener('sixGhzWatch', handler);
+  }, []);
+
+  return state;
 }
 
 // ── Wireless cards (admin) ──────────────────────────────────────────

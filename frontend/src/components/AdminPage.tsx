@@ -42,6 +42,8 @@ import type { ApiKeyCreated, ExternalAccessTokenCreated, PendingDevice } from '.
 import type {
   RobotWifiKeyCheck,
   RobotWifiScanState,
+  SixGhzNetwork,
+  SixGhzWatchState,
   WifiCardInfo,
   WifiSecurity,
   WifiTestJoinResult,
@@ -88,6 +90,7 @@ import {
   sendRefreshAudioDevices,
   useSetupConfig,
   useRobotWifiScan,
+  useSixGhzWatch,
   useWifiCards,
   sendWifiTestJoin,
   useMatchRecordingState,
@@ -587,6 +590,7 @@ const CARD_USE: Record<
 > = {
   free: { label: 'Free', color: 'success' },
   robotScan: { label: 'Robot scan', color: 'info' },
+  sixGhzWatch: { label: '6 GHz watch', color: 'info' },
   test: { label: 'Testing', color: 'info' },
   host: { label: 'In use by host', color: 'warning' },
   blocked: { label: 'Blocked', color: 'error' },
@@ -649,9 +653,9 @@ function WifiCardsSection() {
       <CardContent>
         <Typography variant="h6">Wireless cards</Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          Wi-Fi cards on the pFMS host. One can listen for robots (below). Any card the host isn&apos;t using can
-          test-join a network: pFMS joins it, says whether that worked, and leaves — it never takes an address, so the
-          host&apos;s own networking is untouched.
+          Wi-Fi cards on the pFMS host. One can listen for robots, another on 6 GHz for other access points (below). Any
+          card the host isn&apos;t using can test-join a network: pFMS joins it, says whether that worked, and leaves —
+          it never takes an address, so the host&apos;s own networking is untouched.
         </Typography>
         {cards.length === 0 ? (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
@@ -952,6 +956,170 @@ function RobotWifiScanSection() {
   );
 }
 
+const SIX_GHZ_KIND: Record<
+  SixGhzNetwork['kind'],
+  { label: string; color: 'default' | 'success' | 'warning' | 'error' }
+> = {
+  competing: { label: 'Competing with the field', color: 'error' },
+  teamAp: { label: "Team's own AP?", color: 'warning' },
+  field: { label: 'Field', color: 'success' },
+  other: { label: 'Other', color: 'default' },
+};
+
+/** 6 GHz watch: which wireless card pFMS may use to listen on 6 GHz for
+ *  other access points using a team's network name, the Wi-Fi country it
+ *  needs, and everything it hears. Scan only — the card never joins. */
+function SixGhzWatchSection() {
+  const setupConfig = useSetupConfig();
+  const watch = useSixGhzWatch();
+  const cards = useWifiCards()?.cards ?? [];
+  const settings = setupConfig?.config.settings;
+  const chosen = settings?.sixGhzWatchInterface ?? '';
+  const [country, setCountry] = useState<string | null>(null);
+  const savedCountry = settings?.wifiCountry ?? '';
+  const countryDraft = country ?? savedCountry;
+  const countryOk = countryDraft === '' || /^[A-Z]{2}$/.test(countryDraft);
+  const commitCountry = () => {
+    if (country === null) return;
+    if (countryOk && country !== savedCountry) sendUpdateSetupSettings({ wifiCountry: country || undefined });
+    setCountry(null);
+  };
+  const statusChip: Record<
+    SixGhzWatchState['status'],
+    { label: string; color: 'default' | 'success' | 'info' | 'error' }
+  > = {
+    off: { label: 'Off', color: 'default' },
+    starting: { label: 'Starting', color: 'info' },
+    running: { label: 'Listening', color: 'success' },
+    error: { label: 'Stopped', color: 'error' },
+  };
+  const status = statusChip[watch?.status ?? 'off'];
+  const ifaces = [...new Set([...cards.map(c => c.iface), ...(chosen ? [chosen] : [])])];
+  const facts =
+    watch?.status === 'running'
+      ? [
+          `${watch.channels} channel${watch.channels === 1 ? '' : 's'}`,
+          watch.country && `country ${watch.country}`,
+          watch.field && `field on 6 GHz ch ${watch.field.channel} (${watch.field.bandwidthMHz} MHz)`,
+          watch.lastScanAt ? `last scan ${new Date(watch.lastScanAt).toLocaleTimeString()}` : 'first scan running',
+        ].filter(Boolean)
+      : [];
+
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
+          <Typography variant="h6">6 GHz watch</Typography>
+          <Chip size="small" color={status.color} label={status.label} />
+        </Box>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          Listens on 6 GHz for other access points using a team&apos;s network name — usually a team&apos;s own AP or
+          spare radio left on, which their robot may join instead of the field. Warns the team and the CSA page. Needs a
+          6 GHz-capable card that nothing else uses (not the robot scan&apos;s); it only listens, never joins. Sets the
+          host&apos;s Wi-Fi country, which 6 GHz needs.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <FormControl size="small" sx={{ minWidth: 220 }}>
+            <InputLabel id="six-ghz-iface">Wireless card</InputLabel>
+            <Select
+              labelId="six-ghz-iface"
+              label="Wireless card"
+              value={chosen}
+              onChange={e => sendUpdateSetupSettings({ sixGhzWatchInterface: String(e.target.value) })}
+            >
+              <MenuItem value="">Off</MenuItem>
+              {ifaces.map(i => {
+                const card = cards.find(c => c.iface === i);
+                return (
+                  // A card in use elsewhere can't be picked (it stays listed,
+                  // and selectable once chosen, so it can be switched off).
+                  <MenuItem key={i} value={i} disabled={card ? !card.canSixGhzWatch && i !== chosen : false}>
+                    <Box>
+                      <Box sx={{ fontFamily: 'monospace' }}>{i}</Box>
+                      <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                        {card ? [card.driver, card.detail].filter(Boolean).join(' · ') : 'not found on this host'}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                );
+              })}
+            </Select>
+          </FormControl>
+          <TextField
+            size="small"
+            label="Wi-Fi country"
+            placeholder="US"
+            value={countryDraft}
+            onChange={e => setCountry(e.target.value.toUpperCase().slice(0, 2))}
+            onBlur={commitCountry}
+            onKeyDown={e => e.key === 'Enter' && commitCountry()}
+            error={!countryOk}
+            helperText={countryOk ? 'Two letters; empty = US' : 'Two letters, e.g. US'}
+            sx={{ width: 140 }}
+          />
+        </Box>
+        {watch?.status === 'error' && watch.error && (
+          <Alert severity="error" sx={{ mt: 1.5 }}>
+            {watch.error}
+          </Alert>
+        )}
+        {watch?.problem && (
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            {watch.problem}
+          </Alert>
+        )}
+
+        {watch?.status === 'running' && (
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+              {facts.join(' · ')}
+            </Typography>
+            {watch.networks.length === 0 ? (
+              <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                Nothing heard on 6 GHz{watch.lastScanAt ? '' : ' yet'}.
+              </Typography>
+            ) : (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Network</TableCell>
+                    <TableCell>Access point</TableCell>
+                    <TableCell>Channel</TableCell>
+                    <TableCell>Signal</TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {watch.networks.map(n => {
+                    const kind = SIX_GHZ_KIND[n.kind];
+                    return (
+                      <TableRow key={n.bssid}>
+                        <TableCell sx={{ fontFamily: 'monospace' }}>
+                          {n.ssid || (
+                            <Typography component="span" variant="body2" sx={{ color: 'text.disabled' }}>
+                              (hidden)
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ fontFamily: 'monospace' }}>{n.bssid}</TableCell>
+                        <TableCell>{wifiChannel(n.frequency)}</TableCell>
+                        <TableCell>{n.signal} dBm</TableCell>
+                        <TableCell>
+                          <Chip size="small" variant="outlined" color={kind.color} label={kind.label} />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </Box>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Holds on Wi-Fi changes: teams' requests are parked instead of applied
  *  until staff apply them — always, or only around a match. The
  *  pending panel underneath is the same one the match page shows. */
@@ -1138,6 +1306,7 @@ export function AdminPage() {
       <FieldResetSection />
       <WifiCardsSection />
       <RobotWifiScanSection />
+      <SixGhzWatchSection />
       <OutOfMatchControlSection />
       <ControllerPolicySection />
       <ScoringSection />

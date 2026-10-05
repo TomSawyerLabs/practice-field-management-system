@@ -19,6 +19,7 @@ import type {
   NetworkStats,
   PendingCommitState,
   RobotWifiScanState,
+  SixGhzWatchState,
   RoutePreferenceState,
   StationName,
   StatusEntry,
@@ -29,6 +30,7 @@ import type {
 import { StationNameList } from '../../../src/types';
 import { prettyStationName, teamOfSsid } from '../../../src/utils';
 import { robotWifiStaffIssues } from './robotWifi';
+import { sixGhzStaffIssues } from './sixGhzWatch';
 
 export type IssueSeverity = 'critical' | 'warning' | 'info';
 
@@ -157,6 +159,9 @@ export interface FieldIssueInputs {
   hostnames: Record<string, string>;
   /** Robots' 2.4 GHz networks heard nearby, when the scan is set up. */
   robotWifi?: RobotWifiScanState | null;
+  /** Other access points using teams' network names on 6 GHz, when the
+   *  watch is set up. */
+  sixGhzWatch?: SixGhzWatchState | null;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -855,6 +860,19 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
       id: w.id,
       severity: w.severity,
       team: w.team || undefined,
+      title: w.title,
+      detail: w.detail,
+      fix: w.fix,
+    });
+  }
+
+  // ── Other access points with a team's network name (6 GHz watch) ────
+  for (const w of sixGhzStaffIssues(input.sixGhzWatch)) {
+    push({
+      id: w.id,
+      severity: w.severity,
+      ...(w.station && { station: w.station }),
+      team: w.team,
       title: w.title,
       detail: w.detail,
       fix: w.fix,

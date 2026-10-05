@@ -36,6 +36,7 @@ import {
   sendPortBridge,
   useRobotWifiScan,
   sendRobotWifiTest,
+  useSixGhzWatch,
   getServerTime,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
@@ -50,6 +51,7 @@ import {
   stallsForTeam,
   suffixOf,
 } from '../utils/robotWifi';
+import { clashesForTeam, describeClashForTeam } from '../utils/sixGhzWatch';
 import { FreeplayControl, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
@@ -587,6 +589,8 @@ function RobotList({
           }}
         />
 
+        <SixGhzClashAlerts teamNumber={teamNumber} />
+
         {showAddForm && (
           <AddRobotForm
             key={addSuffix}
@@ -967,6 +971,29 @@ function RobotWifiHeard({
                 </Button>
               </Box>
             )}
+          </Alert>
+        );
+      })}
+    </Box>
+  );
+}
+
+/**
+ * Another access point broadcasting one of the team's network names on
+ * 6 GHz — usually their own AP or spare radio left on, which the robot may
+ * join instead of the field. Renders nothing unless the 6 GHz watch is on
+ * and hears one.
+ */
+function SixGhzClashAlerts({ teamNumber }: { teamNumber: number }) {
+  const clashes = clashesForTeam(useSixGhzWatch(), teamNumber);
+  if (clashes.length === 0) return null;
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>
+      {clashes.map(c => {
+        const { severity, text } = describeClashForTeam(c);
+        return (
+          <Alert key={c.ssid} severity={severity}>
+            <Typography variant="body2">{text}</Typography>
           </Alert>
         );
       })}

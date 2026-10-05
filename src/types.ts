@@ -262,6 +262,14 @@ export interface SetupSettings {
    *  robot Wi-Fi scan is off. The interface is dedicated to this: pFMS runs
    *  its own wpa_supplicant on it. */
   robotWifiInterface?: string;
+  /** Wireless interface pFMS may use to listen on 6 GHz for other access
+   *  points using a team's network name — a team's own AP left on, which
+   *  the robot may join instead of the field (see sixGhzWatch.ts). Needs a
+   *  6 GHz-capable card, not the robot scan's. Absent / empty = off. */
+  sixGhzWatchInterface?: string;
+  /** Two-letter country for pFMS's Wi-Fi cards' regulatory domain (the 6 GHz
+   *  watch sets it; the kernel keeps one for the whole host). Absent = `US`. */
+  wifiCountry?: string;
   /** When a match ends, queue every robot on the field to leave unless it
    *  plays on (joins the next match, or its team presses Keep). Nothing
    *  leaves until staff apply. Absent / true = on. */
@@ -781,6 +789,8 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   holdRadioChanges: v => typeof v === 'boolean',
   holdRadioChangesForMatch: v => typeof v === 'boolean',
   robotWifiInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
+  sixGhzWatchInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
+  wifiCountry: v => typeof v === 'string' && /^[A-Z]{2}$/.test(v),
   releaseAfterMatch: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
@@ -2284,6 +2294,62 @@ export function isRobotWifiTest(msg: unknown): msg is RobotWifiTest {
   return m.type === 'robotWifiTest' && typeof m.station === 'string' && StationNameRegex.test(m.station);
 }
 
+// ── 6 GHz watch ─────────────────────────────────────────────────────
+
+/** An access point heard on 6 GHz.
+ *  - `field`: the field AP, serving this name for a station (presumed: the
+ *    one on the field's channel).
+ *  - `competing`: another AP with a name the field is serving — the robot
+ *    may join it instead of the field.
+ *  - `teamAp`: an AP with a team's saved robot name while the field isn't
+ *    serving it — most likely the team's own, left on.
+ *  - `other`: anything else (admin page only). */
+export interface SixGhzNetwork {
+  /** Empty for a hidden network */
+  ssid: string;
+  bssid: string;
+  frequency: number;
+  signal: number;
+  lastSeen: number;
+  kind: 'field' | 'competing' | 'teamAp' | 'other';
+}
+
+/** A team's network name on the air from an AP that isn't the field. */
+export interface SixGhzClash {
+  ssid: string;
+  team: number;
+  /** `competing`: the field is serving this name too (on `station`), so the
+   *  robot may join either. `teamAp`: the field isn't serving it (yet). */
+  kind: 'competing' | 'teamAp';
+  station?: StationName;
+  /** The access points that aren't the field, strongest first */
+  others: { bssid: string; frequency: number; signal: number }[];
+}
+
+/** Server → clients: what the 6 GHz watch hears. */
+export interface SixGhzWatchState {
+  type: 'sixGhzWatch';
+  status: 'off' | 'starting' | 'running' | 'error';
+  iface?: string;
+  error?: string;
+  /** Something keeps it from hearing 6 GHz although it runs (no channels) */
+  problem?: string;
+  country?: string;
+  /** 6 GHz channels the card may scan */
+  channels: number;
+  lastScanAt?: number;
+  /** The field AP's channel and width, as it reports them */
+  field?: { channel: number; bandwidthMHz: number };
+  /** Everything heard on 6 GHz: clashes first, then the field, then others */
+  networks: SixGhzNetwork[];
+  clashes: SixGhzClash[];
+}
+
+export function isSixGhzWatchState(msg: unknown): msg is SixGhzWatchState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as SixGhzWatchState).type === 'sixGhzWatch';
+}
+
 // ── Wireless cards (admin) ──────────────────────────────────────────
 
 /** How a network is secured, as far as joining it goes. */
@@ -2299,16 +2365,18 @@ export interface WifiCardInfo {
   operstate?: string;
   /** Addresses on the card other than link-local ones */
   addresses: string[];
-  /** robotScan: pFMS's robot Wi-Fi scan owns it. test: pFMS is running a
-   *  test join on it. host: something else on the host uses it. blocked:
-   *  rfkill. free: nothing does. */
-  use: 'robotScan' | 'test' | 'host' | 'blocked' | 'free';
+  /** robotScan: pFMS's robot Wi-Fi scan owns it. sixGhzWatch: pFMS's 6 GHz
+   *  watch owns it. test: pFMS is running a test join on it. host: something
+   *  else on the host uses it. blocked: rfkill. free: nothing does. */
+  use: 'robotScan' | 'sixGhzWatch' | 'test' | 'host' | 'blocked' | 'free';
   /** One line on what the card is doing, or why it can't be used */
   detail: string;
   /** Staff can have pFMS test-join a network on it */
   canTestJoin: boolean;
   /** It may be picked for the robot Wi-Fi scan */
   canRobotScan: boolean;
+  /** It may be picked for the 6 GHz watch */
+  canSixGhzWatch: boolean;
 }
 
 /** One staff test join: pFMS joined a network briefly on a card to see

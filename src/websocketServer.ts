@@ -25,6 +25,7 @@ import {
   isRobotWifiTest,
   isWifiTestJoin,
   RobotWifiScanState,
+  SixGhzWatchState,
   WifiCardsState,
   isAdminGlobalEStop,
   isAdminStationEStop,
@@ -280,6 +281,9 @@ export function setupWebSocket(
       /** "Test connection" for a stalled station (rate-limited in the scanner) */
       test: (station: StationName) => void;
     };
+    /** Other access points using teams' network names on 6 GHz
+     *  (src/sixGhzWatch.ts). */
+    sixGhzWatch?: { getState: () => SixGhzWatchState };
     /** Wireless cards on the host and staff test joins (src/wifiCards.ts). */
     wifiCards?: {
       getState: () => WifiCardsState;
@@ -886,6 +890,10 @@ export function setupWebSocket(
     // Robots' 2.4 GHz networks heard nearby
     if (setup?.robotWifi) {
       ws.send(JSON.stringify(setup.robotWifi.getState()));
+    }
+    // Other access points using teams' network names on 6 GHz
+    if (setup?.sixGhzWatch) {
+      ws.send(JSON.stringify(setup.sixGhzWatch.getState()));
     }
     // Wireless cards on the host (admin page)
     if (setup?.wifiCards) {

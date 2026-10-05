@@ -1,9 +1,9 @@
 /**
  * Wireless cards on the pFMS host, for the admin page: what each is doing —
- * pFMS's robot Wi-Fi scan, something else on the host, or nothing — and a
- * staff "test join" on the ones pFMS may use. A test join only associates
- * (no DHCP, no address, no routes) and then leaves, so it cannot disturb the
- * host's networking. See plans/admin-wifi-cards.md.
+ * pFMS's robot Wi-Fi scan or 6 GHz watch, something else on the host, or
+ * nothing — and a staff "test join" on the ones pFMS may use. A test join
+ * only associates (no DHCP, no address, no routes) and then leaves, so it
+ * cannot disturb the host's networking. See plans/admin-wifi-cards.md.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { networkInterfaces, platform } from 'node:os';
@@ -112,6 +112,8 @@ export function readWifiCardFacts(
 export interface PfmsWifiUse {
   /** The robot scan's card, and whether it is running */
   robotScan?: { iface: string; status: 'off' | 'starting' | 'running' | 'error'; error?: string };
+  /** The 6 GHz watch's card, and whether it is running */
+  sixGhzWatch?: { iface: string; status: 'off' | 'starting' | 'running' | 'error'; error?: string };
   /** The card a test join is running on */
   testIface?: string;
 }
@@ -125,7 +127,14 @@ export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo 
     addresses: f.addresses,
   };
   if (pfms.testIface === f.iface) {
-    return { ...base, use: 'test', detail: 'Running a test join', canTestJoin: false, canRobotScan: false };
+    return {
+      ...base,
+      use: 'test',
+      detail: 'Running a test join',
+      canTestJoin: false,
+      canRobotScan: false,
+      canSixGhzWatch: false,
+    };
   }
 
   // Someone else's card: never touch it. (pFMS's own wpa_supplicant keeps its
@@ -136,15 +145,18 @@ export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo 
     ...(f.defaultRoute ? ['the host routes through it'] : []),
   ];
   const scan = pfms.robotScan?.iface === f.iface ? pfms.robotScan : undefined;
+  const watch = pfms.sixGhzWatch?.iface === f.iface ? pfms.sixGhzWatch : undefined;
+  // Keep an existing choice selectable, so it can be turned off.
+  const kept = { canRobotScan: !!scan, canSixGhzWatch: !!watch };
   if (hostReasons.length) {
     const detail = `In use by the host: ${hostReasons.join('; ')}`;
-    // Keep an existing robot-scan choice selectable, so it can be turned off.
-    return { ...base, use: 'host', detail, canTestJoin: false, canRobotScan: !!scan };
+    return { ...base, use: 'host', detail, canTestJoin: false, ...kept };
   }
   if (f.rfkill) {
     const detail = `Radio blocked by rfkill (${f.rfkill === 'hard' ? 'hardware switch' : 'software'})`;
-    return { ...base, use: 'blocked', detail, canTestJoin: false, canRobotScan: !!scan };
+    return { ...base, use: 'blocked', detail, canTestJoin: false, ...kept };
   }
+  // One job per card: a card one of them owns can't be picked for the other.
   if (scan) {
     const detail =
       scan.status === 'running'
@@ -152,10 +164,27 @@ export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo 
         : scan.status === 'starting'
           ? 'Robot Wi-Fi scan starting'
           : `Robot Wi-Fi scan stopped${scan.error ? `: ${scan.error}` : ''}`;
-    return { ...base, use: 'robotScan', detail, canTestJoin: scan.status === 'running', canRobotScan: true };
+    return {
+      ...base,
+      use: 'robotScan',
+      detail,
+      canTestJoin: scan.status === 'running',
+      canRobotScan: true,
+      canSixGhzWatch: false,
+    };
+  }
+  if (watch) {
+    const detail =
+      watch.status === 'running'
+        ? 'Listening on 6 GHz for other access points (6 GHz watch)'
+        : watch.status === 'starting'
+          ? '6 GHz watch starting'
+          : `6 GHz watch stopped${watch.error ? `: ${watch.error}` : ''}`;
+    // Scan only: its wpa_supplicant never joins, so no test joins here.
+    return { ...base, use: 'sixGhzWatch', detail, canTestJoin: false, canRobotScan: false, canSixGhzWatch: true };
   }
   const detail = f.operstate === 'up' ? 'Free (up, not connected)' : 'Free (switched off)';
-  return { ...base, use: 'free', detail, canTestJoin: true, canRobotScan: true };
+  return { ...base, use: 'free', detail, canTestJoin: true, canRobotScan: true, canSixGhzWatch: true };
 }
 
 // ── The manager ─────────────────────────────────────────────────────
@@ -170,6 +199,8 @@ export interface WifiCardsOptions {
         testJoin: (request: { ssid: string; passphrase?: string }, opts: TestOpts) => Promise<TestResult>;
       })
     | null;
+  /** What pFMS's 6 GHz watch is doing */
+  sixGhzWatch?: () => PfmsWifiUse['sixGhzWatch'] | null;
   /** True while a match is running — no test joins then */
   matchRunning: () => boolean;
   readFacts?: () => WifiCardFacts[];
@@ -189,8 +220,8 @@ interface TestOpts {
 const TEST_HISTORY = 10;
 
 export class WifiCards {
-  private readonly o: Required<Omit<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning'>> &
-    Pick<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning'>;
+  private readonly o: Required<Omit<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning' | 'sixGhzWatch'>> &
+    Pick<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning' | 'sixGhzWatch'>;
   private tests: WifiTestJoinResult[] = [];
   private testIface: string | undefined;
   private nextId = 1;
@@ -209,8 +240,10 @@ export class WifiCards {
 
   getState(): WifiCardsState {
     const scan = this.o.robotScan();
+    const watch = this.o.sixGhzWatch?.();
     const pfms: PfmsWifiUse = {
       ...(scan && { robotScan: { iface: scan.iface, status: scan.status, ...(scan.error && { error: scan.error }) } }),
+      ...(watch && { sixGhzWatch: watch }),
       ...(this.testIface && { testIface: this.testIface }),
     };
     return {

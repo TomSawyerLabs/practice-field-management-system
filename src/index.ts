@@ -49,6 +49,7 @@ import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
 import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
+import { SixGhzWatch, type FieldRadio } from './sixGhzWatch.js';
 import { WifiCards } from './wifiCards.js';
 import { ApiKeyStore } from './apiKeyStore.js';
 import { PortBridgeManager, parseFieldPorts } from './portBridgeManager.js';
@@ -94,6 +95,8 @@ import {
   isRecordingStreamConfig,
   RobotController,
   RobotWifiScanState,
+  RadioUpdate,
+  SixGhzWatchState,
   WifiCardsState,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -465,6 +468,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Off unless an admin picks the interface; switching it restarts the scan.
   let robotWifi: RobotWifiScanner | null = null;
   let broadcastRobotWifi: (state: RobotWifiScanState) => void = () => {};
+  // The 6 GHz watch (below), declared here because the card list asks after it.
+  let sixGhzWatch: SixGhzWatch | null = null;
+  /** Why the chosen 6 GHz watch card can't be used, when it can't */
+  let sixGhzWatchRefused: { iface: string; error: string } | null = null;
   // Every wireless card on the host, for the admin page: what each is doing
   // (the robot scan, the host, nothing) and staff test joins on the ones
   // pFMS may use. Test joins only associate — no address, no routes.
@@ -476,6 +483,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       if (!scanner) return null;
       const { status, error } = scanner.getState();
       return { iface: scanner.iface, status, ...(error && { error }), testJoin: (r, o) => scanner.testJoin(r, o) };
+    },
+    sixGhzWatch: () => {
+      if (sixGhzWatchRefused)
+        return { iface: sixGhzWatchRefused.iface, status: 'error', error: sixGhzWatchRefused.error };
+      if (!sixGhzWatch) return null;
+      const { status, error } = sixGhzWatch.getState();
+      return { iface: sixGhzWatch.iface, status, ...(error && { error }) };
     },
     matchRunning: () => matchEngine.isMatchActive(),
   });
@@ -541,6 +555,73 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // A robot saved or changed: re-match what is on the air.
   savedTeamStore.addListener(() => broadcastRobotWifi(robotWifiState()));
   process.on('exit', () => robotWifi?.stop());
+
+  // 6 GHz watch: listen on a 6 GHz-capable card for other access points
+  // using a team's network name — a team's own AP left on, which their robot
+  // may join instead of the field. Scan only; never joins. Off unless an
+  // admin picks the card; it can't be the robot scan's.
+  let broadcastSixGhzWatch: (state: SixGhzWatchState) => void = () => {};
+  let lastRadioUpdate: RadioUpdate | undefined;
+  radioManager.addStatusListener(entry => {
+    lastRadioUpdate = entry.radioUpdate; // none while the AP is unreachable
+  });
+  const fieldRadio = (): FieldRadio | null => {
+    const u = lastRadioUpdate;
+    if (!u) return null;
+    return {
+      channel: u.channel,
+      bandwidthMHz: parseInt(u.channelBandwidth, 10) || 20,
+      serving: StationNameList.flatMap(station => {
+        const ssid = u.stationStatuses[station]?.ssid;
+        return ssid ? [{ ssid, station }] : [];
+      }),
+    };
+  };
+  const sixGhzWatchState = (): SixGhzWatchState =>
+    sixGhzWatch?.getState() ?? {
+      type: 'sixGhzWatch',
+      status: sixGhzWatchRefused ? 'error' : 'off',
+      ...(sixGhzWatchRefused && { iface: sixGhzWatchRefused.iface, error: sixGhzWatchRefused.error }),
+      channels: 0,
+      networks: [],
+      clashes: [],
+    };
+  const applySixGhzWatchSetting = () => {
+    const iface = setupConfigStore.resolveSetting('sixGhzWatchInterface', 'SIX_GHZ_WATCH_INTERFACE').value || undefined;
+    const country = setupConfigStore.resolveSetting('wifiCountry', 'WIFI_COUNTRY').value || 'US';
+    const refused = iface && iface === robotWifi?.iface ? `${iface} is the robot Wi-Fi scan's card` : null;
+    if (
+      (sixGhzWatch?.iface ?? sixGhzWatchRefused?.iface) === iface &&
+      (sixGhzWatch?.country ?? country) === country &&
+      (sixGhzWatchRefused?.error ?? null) === refused
+    )
+      return;
+    sixGhzWatch?.stop();
+    sixGhzWatch = null;
+    sixGhzWatchRefused = iface && refused ? { iface, error: refused } : null;
+    if (iface && !refused) {
+      appInfo(`6 GHz watch starting on ${iface} (country ${country})`);
+      sixGhzWatch = new SixGhzWatch({
+        iface,
+        country,
+        runner: new WpaSupplicantRunner(iface, { country }),
+        field: fieldRadio,
+        savedSsids: () => savedTeamStore.getTeams().map(t => t.ssid),
+        onChange: () => {
+          broadcastSixGhzWatch(sixGhzWatchState());
+          wifiCards.refresh();
+        },
+      });
+      void sixGhzWatch.start();
+    }
+    broadcastSixGhzWatch(sixGhzWatchState());
+    wifiCards.refresh();
+  };
+  applySixGhzWatchSetting();
+  setupConfigStore.addListener(applySixGhzWatchSetting);
+  // A robot saved or changed: re-sort what is on the air.
+  savedTeamStore.addListener(() => broadcastSixGhzWatch(sixGhzWatchState()));
+  process.on('exit', () => sixGhzWatch?.stop());
 
   // A stream server saved in the setup UI wins over the environment, and is
   // read per-request so it applies without a restart.
@@ -898,6 +979,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       publicUrl,
       queue: { store: matchQueue, setupNext },
       robotWifi: { getState: robotWifiState, test: station => robotWifi?.test(station) },
+      sixGhzWatch: { getState: sixGhzWatchState },
       wifiCards,
       teamPrefs: {
         store: teamPrefsStore,
@@ -931,6 +1013,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   );
   setBroadcast(broadcast);
   broadcastRobotWifi = broadcast;
+  broadcastSixGhzWatch = broadcast;
   broadcastWifiCards = broadcast;
 
   // Starts listening to match phases; verifies ffmpeg first and says so in

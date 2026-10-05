@@ -196,12 +196,13 @@ its driver and MAC, and what it is doing:
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Free           | Nothing uses it. It can be picked for the robot scan, or test-join a network.                                                                                    |
 | Robot scan     | The robot Wi-Fi scan owns it. Test joins go through the scan's own `wpa_supplicant` (the scan pauses for them).                                                  |
+| 6 GHz watch    | The [6 GHz watch](#6-ghz-watch) owns it. It only scans, so no test joins.                                                                                        |
 | Testing        | A test join is running on it.                                                                                                                                    |
 | In use by host | Another `wpa_supplicant` or `hostapd` controls it, it has an address (other than link-local), or the host's default route goes through it. pFMS leaves it alone. |
 | Blocked        | rfkill (software or the hardware switch) has its radio off.                                                                                                      |
 
-The robot-scan picker shows the same status per card and won't let you
-pick one the host is using (a card already picked stays selectable, so it
+The robot-scan and 6 GHz watch pickers show the same status per card and
+won't let you pick one the host or the other job is using (a card already picked stays selectable, so it
 can be switched off). The list refreshes every 10 seconds.
 
 **Test join** (Free or Robot scan cards, admins only, not during a match,
@@ -225,6 +226,47 @@ The passphrase is used for that one test and never stored, logged or sent
 to any page. It reaches `wpa_cli` as the derived WPA2 key in hex, and the
 SSID as hex, so no name or passphrase can break the command. WPA3 (SAE)
 needs the passphrase itself, so there it cannot contain `"` or `\`.
+
+## 6 GHz watch
+
+Teams sometimes bring their own access point — a home VH-113, or a spare
+radio — as a backup, and leave it on. Set up with the same network name and
+passphrase as the field, it competes with the field for the robot: the
+robot radio joins whichever it finds first, and when that is the team's
+own, the robot never shows up on the field. The field announces team
+networks only on 6 GHz, so this needs a card that can hear 6 GHz (the
+robot scan's card may not; an Intel AC 9560 can't).
+
+**Setup:** on `/admin` → _6 GHz watch_, pick a 6 GHz-capable wireless card
+(or set `SIX_GHZ_WATCH_INTERFACE`) — not the robot scan's; one card does one
+job. pFMS runs its own `wpa_supplicant` on it and only ever scans: it never
+joins anything. Every 30 seconds it scans every 6 GHz channel the card
+allows (including channels with no 2.4/5 GHz access point pointing at
+them). 6 GHz needs a Wi-Fi country: the watch sets the host's regulatory
+domain from _Wi-Fi country_ (`wifiCountry`, `WIFI_COUNTRY`, default `US`).
+The kernel keeps one for the whole host, so it applies to every card, and
+it stays set after the watch is switched off. Linux only.
+
+**What it looks for** — names match exactly, capitals included, as the
+robot radio's do:
+
+- **Competing** — a network name the field is serving right now, from an
+  access point that isn't the field. An access point outside the field's
+  channel (the AP's own channel and width) is never the field; on the
+  field's channel the strongest is taken to be the field and any more
+  compete with it. The team's page shows an error ("Another access point is
+  broadcasting your robot's network … switch it off"), and `/csa` shows a
+  critical issue on that team's station.
+- **Team's own AP** — a team's saved robot name while the field isn't
+  serving it. Most likely the team's own access point, before they take a
+  station: a warning on their page and on `/csa`, to switch it off before
+  connecting.
+
+`/admin` lists everything heard on 6 GHz — name (or _hidden_), access
+point, channel, signal, and what pFMS made of it — plus how many channels
+the card can scan and the field's channel. A card that offers no 6 GHz
+channels (it doesn't do 6 GHz, or the country doesn't allow it) is reported
+there and on `/csa`. Access points not heard for two minutes drop off.
 
 ## Factory Default Radio Detection
 

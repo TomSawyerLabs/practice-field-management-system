@@ -692,6 +692,33 @@ describe('robots heard on 2.4 GHz', () => {
     expect(issue).toMatchObject({ severity: 'critical', team: 1234 });
     expect(issue?.station).toBeUndefined();
   });
+
+  test("another access point with a name the field is serving is critical, on that team's station", () => {
+    const out = detectFieldIssues(
+      inputs({
+        sixGhzWatch: {
+          type: 'sixGhzWatch',
+          status: 'running',
+          channels: 59,
+          networks: [],
+          clashes: [
+            {
+              ssid: '1234-Robot',
+              team: 1234,
+              kind: 'competing',
+              station: 'slot2',
+              others: [{ bssid: 'aa:00:00:00:00:01', frequency: 6135, signal: -60 }],
+            },
+          ],
+        },
+      }),
+    );
+    expect(out.find(i => i.id === 'sixGhzWatch-competing-1234-Robot')).toMatchObject({
+      severity: 'critical',
+      team: 1234,
+      station: 'slot2',
+    });
+  });
 });
 
 describe('fieldControlOf', () => {

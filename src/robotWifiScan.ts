@@ -44,15 +44,15 @@ export interface ScanRow {
 
 /** Parse `wpa_cli scan_results`: a header line, then tab-separated rows of
  *  bssid, frequency, signal level, flags, ssid. Hidden networks have an
- *  empty SSID and are dropped. */
-export function parseScanResults(text: string): ScanRow[] {
+ *  empty SSID and are dropped unless asked for. */
+export function parseScanResults(text: string, opts: { keepHidden?: boolean } = {}): ScanRow[] {
   const rows: ScanRow[] = [];
   for (const line of text.split(/\r?\n/)) {
     const parts = line.split('\t');
     if (parts.length < 5 || !/^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(parts[0])) continue;
     const [bssid, freq, signal, flags, ...rest] = parts;
     const ssid = rest.join('\t');
-    if (!ssid) continue;
+    if (!ssid && !opts.keepHidden) continue;
     rows.push({ bssid, frequency: Number(freq), signal: Number(signal), flags, ssid });
   }
   return rows;
@@ -319,12 +319,17 @@ export interface WifiRunner {
 const CTRL_DIR = '/run/pfms-wifi';
 
 /** The real thing: a private wpa_supplicant in the foreground, its output
- *  line-buffered (glibc block-buffers a pipe otherwise), plus wpa_cli. */
+ *  line-buffered (glibc block-buffers a pipe otherwise), plus wpa_cli.
+ *  `country` sets the regulatory domain — for the whole host, as the kernel
+ *  keeps one — which 6 GHz needs (the world default allows none of it). */
 export class WpaSupplicantRunner implements WifiRunner {
   private child: ChildProcess | null = null;
   private restoreIpv6: (() => void) | null = null;
 
-  constructor(private readonly iface: string) {}
+  constructor(
+    private readonly iface: string,
+    private readonly opts: { country?: string } = {},
+  ) {}
 
   async start(onLine: (line: string) => void, onExit: (why: string) => void): Promise<void> {
     if (platform() !== 'linux') throw new Error('the robot Wi-Fi scan needs Linux (wpa_supplicant)');
@@ -334,11 +339,13 @@ export class WpaSupplicantRunner implements WifiRunner {
     this.restoreIpv6 ??= holdIpv6Autoconf(this.iface);
     // A socket left by a previous run (crash, kill -9) stops wpa_supplicant starting.
     rmSync(join(CTRL_DIR, this.iface), { force: true });
-    const conf = join(CTRL_DIR, 'wpa_supplicant.conf');
+    // One file per card: two cards can run at once (robot scan, 6 GHz watch).
+    const conf = join(CTRL_DIR, `wpa_supplicant-${this.iface}.conf`);
     // Forget networks not seen in two scans, so a robot that leaves drops out.
     writeFileSync(
       conf,
-      `ctrl_interface=${CTRL_DIR}\nupdate_config=0\nbss_expiration_age=60\nbss_expiration_scan_count=2\n`,
+      `ctrl_interface=${CTRL_DIR}\nupdate_config=0\nbss_expiration_age=60\nbss_expiration_scan_count=2\n` +
+        (this.opts.country ? `country=${this.opts.country}\n` : ''),
     );
     const child = spawn('stdbuf', ['-oL', '-eL', 'wpa_supplicant', '-i', this.iface, '-D', 'nl80211', '-c', conf], {
       stdio: ['ignore', 'pipe', 'pipe'],

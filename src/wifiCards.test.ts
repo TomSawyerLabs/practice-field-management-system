@@ -134,6 +134,21 @@ describe('classifying a card', () => {
     expect(c).toMatchObject({ use: 'host', canRobotScan: true, canTestJoin: false });
   });
 
+  test('one job per card: the robot scan card is not offered to the 6 GHz watch, nor the other way', () => {
+    expect(classifyCard(card(), { robotScan: { iface: 'wlp0s20f3', status: 'running' } })).toMatchObject({
+      canSixGhzWatch: false,
+    });
+    const watch = classifyCard(card(), { sixGhzWatch: { iface: 'wlp0s20f3', status: 'running' } });
+    expect(watch).toMatchObject({
+      use: 'sixGhzWatch',
+      canSixGhzWatch: true,
+      canRobotScan: false,
+      canTestJoin: false, // the watch never joins
+      detail: 'Listening on 6 GHz for other access points (6 GHz watch)',
+    });
+    expect(classifyCard(card(), {})).toMatchObject({ canSixGhzWatch: true });
+  });
+
   test('a card under test is busy', () => {
     expect(classifyCard(card(), { testIface: 'wlp0s20f3' })).toMatchObject({ use: 'test', canTestJoin: false });
   });
