@@ -111,7 +111,14 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
    change while the list was empty).
 3. ~~Correlate 6036's enables with its FMS TCP connections.~~ Done: 6036
    uses the key combo; nothing differs.
-4. **[building — user said "go for it" 2026-10-04 ~19:35]** Recommended design:
+4. **[current] Field checks at a DS (next field session; team 8 had left,
+   6036 was busy):** (a) E-STOP ALL stops a freeplaying robot, DS shows
+   E-Stop, "Clear all e-stops" lets the team enable again; (b) DS shows its
+   Enable button out of a match and Enable/Disable works; (c) after a short
+   match and leaving, Enable returns without a DS restart; (d) team-page Stop
+   / Let it drive again; (e) CSA tile and dialog read correctly with a live
+   robot (link ms / % unanswered).
+5. **Built and deployed (2026-10-04 20:23, `9d84464`).** Design:
    - Freeplay: no reply (DS-native Enable/Disable).
    - E-stop, two layers: (a) instant firewall cut of DS→robot control
      traffic to team subnets (roboRIO disables ~100 ms after control packets
@@ -126,7 +133,7 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
      the forced re-handshake on join/leave. Don't assign a slot to a blocked
      duplicate DS. Field check after deploy: Enable button visible before any
      match, and back after leaving a match without a DS restart.
-5. Build the CSA display:
+6. ~~Build the CSA display~~ done (`86df58f`). Original notes:
    - Per-station "FMS control" line on the tile and dialog header: In match ·
      enabled / disabled (+ why: phase, disabledBy, blocked), Held by staff /
      policy (FMS holding disabled), Released to team (freeplay), No DS.
@@ -151,8 +158,18 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
       confirms `DS at 10.55.243.129: team 6036 (no reply: local control)`.
 - [ ] Field check: Enable visible out of a match; after leaving a match.
 - [ ] Field check: E-STOP ALL stops a freeplaying robot; Clear restores.
-- [ ] Team-page per-robot Stop (firewall lever).
-- [ ] Computed trip time / loss from passive capture.
+- [x] CSA "who controls the robot" display (`86df58f`): tile line + dialog
+      section + issues (robot enabled while held; DS still under field).
+- [x] Team-page Stop out of a match (`535f015`): "Stop robot" / "Let it drive
+      again" on the team control page and station page; same firewall cut;
+      the panel also shows held/blocked/e-stopped (the old held notice lived
+      in the match panel, which is hidden when no match exists).
+- [x] Field-timed robot link (`9d84464`): roboRIO echoes the DS sequence
+      number (verified on the 18:22 capture: DS 5358 → robot 5358 ~2 ms
+      later); RobotLinkTimer gives robotLinkRttMs / robotLinkLossPct.
+- [x] All deployed to steamboat 2026-10-04 20:23 (`9d84464`), 797 tests pass.
+      CSA and team page checked visually against the live backend before
+      deploy (Vite dev server tunnelled to steamboat :9005).
 - [ ] CSA FMS-control display.
 
 ## Open questions for the user
@@ -162,7 +179,7 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
 2. ~~With team 8 on the no-reply list, does Enable stay?~~ Dropped.
 3. ~~DS versions?~~ Both 26.0.
 4. ~~6036's DS?~~ Key combo.
-5. Go ahead with the step 4 design (e-stop first) and step 5 (CSA display)?
+5. ~~Go ahead with the step 4 design?~~ Yes ("go for it"); built.
 
 ## Things not to do
 
