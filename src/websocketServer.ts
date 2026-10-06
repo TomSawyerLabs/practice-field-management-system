@@ -159,6 +159,7 @@ import type { PracticeRecorder } from './practiceRecorder.js';
 import type { PracticeStore } from './practiceStore.js';
 import { practiceDayOf } from './practiceStore.js';
 import { createStaticHandler, findAssetDir } from './staticServer.js';
+import { redactForLog } from './logRedact.js';
 import { join } from 'node:path';
 import {
   setRoutePreference,
@@ -925,10 +926,8 @@ export function setupWebSocket(
         return;
       }
 
-      // Log the configuration to be sent for debugging (with passphrase redacted)
-      const sanitizedConfig = { ...(data as Record<string, unknown>) };
-      if ('wpaKey' in sanitizedConfig) sanitizedConfig.wpaKey = '***';
-      console.log('Received message:', sanitizedConfig);
+      // Log what arrived for debugging, without passphrases, tokens or keys.
+      console.log('Received message:', redactForLog(data));
 
       if (isStationUpdate(data)) {
         if (matchEngine.isMatchActive()) {
@@ -1792,7 +1791,7 @@ export function setupWebSocket(
           ws.send(JSON.stringify(reply));
         }
       } else {
-        appWarn('Unknown message type from client: ' + JSON.stringify(sanitizedConfig));
+        appWarn('Unknown message type from client: ' + JSON.stringify(redactForLog(data)));
       }
     });
   });
