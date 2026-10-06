@@ -69,7 +69,7 @@ function playable(entry: RecordingInventoryEntry): RecordingInventoryFile[] {
 }
 
 /**
- * Admin → Recordings on disk: every match and practice run that is still
+ * Recordings → Recordings on disk: every match and practice run that is still
  * stored, how much space they take, how much is left, and a way to watch or
  * evict them. The retention sweep is the automatic policy (Match Video
  * Recording section); this is the eyes and the manual lever while that

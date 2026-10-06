@@ -388,7 +388,7 @@ export function TimelapsePage() {
           There is no timelapse footage yet.{' '}
           {status && !status.enabled ? (
             <>
-              The timelapse is off — switch it on in <Link href="/admin">Admin → Field Timelapse</Link>.
+              The timelapse is off — switch it on in <Link href="/recordings">Recordings → Field Timelapse</Link>.
             </>
           ) : (
             'It is captured whenever robots are on the field, so it will appear here after the next practice.'

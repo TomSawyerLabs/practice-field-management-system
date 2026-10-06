@@ -574,7 +574,7 @@ packet capture before concluding anything from an absence.
 ## Match Video Recording
 
 pFMS can keep a full video of every match, independent of the score-review
-integration. In **Admin → Match Video Recording**, list one or more stream
+integration. In **Recordings → Match Video Recording** (`/recordings`), list one or more stream
 URLs (anything ffmpeg can pull — for the field's stitchd/MediaMTX that is
 `rtsp://<host>:8554/<stream>`), enable the ones to record, and **Test** each
 before saving. Use the stream server's IPv4 address: on the reference field
@@ -601,7 +601,7 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   with `?thumb=1` returns a JPEG poster frame, and the sidecar names
   (`/api/recordings/<matchId>/metadata.json` and the two CSVs) return those
   files.
-- **Admin → Recordings on Disk** opens with the whole disk as one bar:
+- **Recordings → Recordings on Disk** opens with the whole disk as one bar:
   match videos, team clips, the timelapse (films, scrub copies, stills),
   everything else on the disk (system, programs, reserved blocks) and what
   is free, with a mark at the free-space floor where team clips pause. Every
@@ -626,11 +626,11 @@ IPv6 while stitchd listens on IPv4. From the next match on:
 
 Three kinds of video, three lifetimes, each its own setting:
 
-| What                               | Kept              | Set in                        |
-| ---------------------------------- | ----------------- | ----------------------------- |
-| Match videos                       | 30 days           | Admin → Match Video Recording |
-| Teams' practice clips              | 7 days            | Admin → Match Video Recording |
-| Timelapse chunks / archival frames | 60 days / forever | Admin → Field Timelapse       |
+| What                               | Kept              | Set in                             |
+| ---------------------------------- | ----------------- | ---------------------------------- |
+| Match videos                       | 30 days           | Recordings → Match Video Recording |
+| Teams' practice clips              | 7 days            | Recordings → Match Video Recording |
+| Timelapse chunks / archival frames | 60 days / forever | Recordings → Field Timelapse       |
 
 An hourly sweep deletes what is past its window (`MatchRecorder.sweep()`:
 `practice-*` directories by the clip window, every other one by the match
@@ -795,7 +795,7 @@ already has.
 
 ## Long-Term Field Timelapse
 
-**Admin → Field Timelapse** (off until switched on) keeps a record of the
+**Recordings → Field Timelapse** (off until switched on) keeps a record of the
 field over a season, using the same streams as match recording. Two things
 behind one switch:
 
@@ -858,7 +858,7 @@ days).
 
 ### Watching it, and taking it away
 
-**`/timelapse`** (admin passphrase, like `/admin`; also linked from the
+**`/timelapse`** (admin passphrase, like `/admin`; also linked from the Field Timelapse
 section) is the place to watch it: one practice day (04:00–04:00) as **one
 logical film**, not a list of files. Every chunk of the day — live capture
 and the ones made from matches — is placed on the wall clock and played back

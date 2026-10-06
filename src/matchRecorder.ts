@@ -134,7 +134,7 @@ export function describeSpaceChange(c: RecordingSpaceChange): string {
   if (c.space === 'critical') {
     return (
       `🛑 *The field's video disk is nearly full* (${free} free). Nothing is being recorded — matches included — ` +
-      `until space is made: Admin → Recordings on Disk.`
+      `until space is made: Recordings → Recordings on Disk (/recordings).`
     );
   }
   if (c.space === 'low') {
@@ -143,7 +143,7 @@ export function describeSpaceChange(c: RecordingSpaceChange): string {
           `paused until it is back above ${formatGb(c.minFreeBytes)}.`
       : `⚠️ *The field's video disk is running low* (${free} free, under the ${formatGb(c.minFreeBytes)} floor). ` +
           `Teams' practice clips are paused; matches are still recorded. Clips come back by themselves as old ones ` +
-          `pass their ${c.practiceRetentionDays} days, or free some space in Admin → Recordings on Disk.`;
+          `pass their ${c.practiceRetentionDays} days, or free some space in Recordings → Recordings on Disk (/recordings).`;
   }
   return `✅ The field's video disk has room again (${free} free). Teams' practice clips are being recorded again.`;
 }

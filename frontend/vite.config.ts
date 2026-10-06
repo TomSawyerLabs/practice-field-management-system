@@ -107,6 +107,9 @@ function stationRoutes(): Plugin {
         if (url === '/timelapse') {
           req.url = '/timelapse.html';
         }
+        if (url === '/recordings') {
+          req.url = '/recordings.html';
+        }
         if (url === '/setup') {
           req.url = '/setup.html';
         }
@@ -207,6 +210,7 @@ export default defineConfig({
         overview: 'overview.html',
         usage: 'usage.html',
         timelapse: 'timelapse.html',
+        recordings: 'recordings.html',
         setup: 'setup.html',
         notfound: '404.html',
       },
