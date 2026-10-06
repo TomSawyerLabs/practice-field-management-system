@@ -88,7 +88,8 @@ get_capability freq`), with `non_coloc_6ghz=1` so the driver doesn't
 7. 2026-10-05: plug in the adapter, deploy, pick it on /admin, verify.
 
 Current step: **spare-radio test** — watch live on steamboat since
-2026-10-05 (`9ecc139`). Tomorrow's checklist:
+2026-10-05 (`9ecc139`). Bring-up checklist (steps 1–4 done 2026-10-05; 5
+is the spare-radio test):
 
 1. Plug the adapter into steamboat; `ls /sys/class/net` for its name
    (likely `wlx…`), `dmesg | tail` for the driver loading (mt7921u etc.).
