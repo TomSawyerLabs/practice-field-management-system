@@ -136,7 +136,7 @@ Round 2 (after the first deploy, same day):
    locally with headless Chromium (`harness/e2e.ts`: 20/20; and
    `harness/reconnect.ts`: delete accepted after a real backend restart,
    log shows `token: '***'`). 841 tests pass.
-7. **(current)** Deploy round 2 — waiting on Cameron's go-ahead.
+7. ~~Deploy round 2~~ — `4a4b57d` deployed 2026-10-06 16:42. Fresh browser on pfms.tsl: /recordings opens without login (25 rows, no Delete, no settings), /timelapse opens, /admin still asks for the passphrase. Journal shows `token: '***'`.
 
 ## Progress log
 
@@ -155,11 +155,11 @@ Round 2 (after the first deploy, same day):
 - [x] /admin tabs, match status removed, Force stop beside E-STOP;
       video settings only in Admin → Video; /recordings and /timelapse
       open to anyone, admin controls only for admins (`574aa3e`)
-- [ ] Deploy round 2 (needs go-ahead)
+- [x] Deployed round 2 (`4a4b57d`), verified on pfms.tsl
 
 ## Open questions for the user
 
-1. Deploy round 2 to steamboat? (Recommended: yes.)
+1. ~~Deploy round 2~~ — done.
 2. steamboat's journal (last 30 days) holds 3 admin login / set-passphrase
    messages **with the passphrase in plain text**, and every admin
    reconnect logged its session token. Recommended: change the admin
