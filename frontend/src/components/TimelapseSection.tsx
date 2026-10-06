@@ -602,11 +602,15 @@ export function TimelapseSection() {
   };
 
   // Show the most recent days as soon as the section is open, and again when
-  // a capture or a build changes what is on disk.
+  // a new frame, a finished chunk or capture starting/stopping changes what
+  // is on disk. Not on sessionBytes: that grows on every 15 s tick while
+  // robots are here, and re-listing (and re-rendering a month of thumbnails)
+  // that often only updated the size of the chunk still being written.
+  const newestChunk = state?.recentSessions[0];
   useEffect(() => {
     void loadListing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.frameCount, state?.sessionBytes]);
+  }, [state?.frameCount, state?.capturing, newestChunk?.file, newestChunk?.endedAt]);
 
   // Follow the server until the operator starts editing.
   useEffect(() => {
