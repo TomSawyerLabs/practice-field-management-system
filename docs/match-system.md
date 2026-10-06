@@ -210,7 +210,11 @@ reported` has been logged from one — but nobody is known to have pressed
 ### Admin Overrides
 
 The `/admin` page provides safety overrides independent of the
-self-service system: global e-stop and force-stop match. Per-team rows
+self-service system: **E-STOP ALL** sits above the page's tabs (Match,
+Wi-Fi, Video, Scoring & integrations, Access; each has its own URL, e.g.
+`/admin#video`), and next to it, while a match runs, **Force stop match**
+ends it early without e-stopping anyone. The match itself is run and watched
+on `/match`. Per-team rows
 manage the slot, not the robot: **Release** takes the robot off the field
 (same path as the team's own Release), **Kick** drops a team from the match
 being set up, and **Forget** releases it and deletes its saved passphrase.
@@ -574,7 +578,7 @@ packet capture before concluding anything from an absence.
 ## Match Video Recording
 
 pFMS can keep a full video of every match, independent of the score-review
-integration. In **Recordings → Match Video Recording** (`/recordings`), list one or more stream
+integration. In **Admin → Video → Match Video Recording** (`/admin#video`), list one or more stream
 URLs (anything ffmpeg can pull — for the field's stitchd/MediaMTX that is
 `rtsp://<host>:8554/<stream>`), enable the ones to record, and **Test** each
 before saving. Use the stream server's IPv4 address: on the reference field
@@ -601,7 +605,13 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   with `?thumb=1` returns a JPEG poster frame, and the sidecar names
   (`/api/recordings/<matchId>/metadata.json` and the two CSVs) return those
   files.
-- **Recordings → Recordings on Disk** opens with the whole disk as one bar:
+- **`/recordings`** is open to anyone, no login: every match and practice
+  run still kept, each opening into its videos, and the field timelapse
+  archive below. It changes no settings (those are in Admin → Video). A
+  browser logged in as admin (the token stored by `/admin`) also sees the
+  disk view and the delete and build-a-film controls; the server checks
+  admin again for every delete or build, whoever sends it.
+- For an admin, **Recordings on Disk** opens with the whole disk as one bar:
   match videos, team clips, the timelapse (films, scrub copies, stills),
   everything else on the disk (system, programs, reserved blocks) and what
   is free, with a mark at the free-space floor where team clips pause. Every
@@ -620,8 +630,8 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   five minutes for new practice clips; one at a time, never while a match is
   being recorded — and cached beside the video, so the list normally opens
   instantly. A row shown before its frame is ready gets one made on the spot
-  (two at a time at most, ahead of the background queue). Any recording
-  can be deleted there, or everything older than N days at once; deleted
+  (two at a time at most, ahead of the background queue). An admin can
+  delete any recording there, or everything older than N days at once; deleted
   matches keep their history entry but lose their download buttons.
 - Each match directory carries a `recording.json` sidecar.
 
@@ -629,11 +639,11 @@ IPv6 while stitchd listens on IPv4. From the next match on:
 
 Three kinds of video, three lifetimes, each its own setting:
 
-| What                               | Kept              | Set in                             |
-| ---------------------------------- | ----------------- | ---------------------------------- |
-| Match videos                       | 30 days           | Recordings → Match Video Recording |
-| Teams' practice clips              | 7 days            | Recordings → Match Video Recording |
-| Timelapse chunks / archival frames | 60 days / forever | Recordings → Field Timelapse       |
+| What                               | Kept              | Set in        |
+| ---------------------------------- | ----------------- | ------------- |
+| Match videos                       | 30 days           | Admin → Video |
+| Teams' practice clips              | 7 days            | Admin → Video |
+| Timelapse chunks / archival frames | 60 days / forever | Admin → Video |
 
 An hourly sweep deletes what is past its window (`MatchRecorder.sweep()`:
 `practice-*` directories by the clip window, every other one by the match
@@ -798,7 +808,7 @@ already has.
 
 ## Long-Term Field Timelapse
 
-**Recordings → Field Timelapse** (off until switched on) keeps a record of the
+**Admin → Video → Field Timelapse** (off until switched on) keeps a record of the
 field over a season, using the same streams as match recording. Two things
 behind one switch:
 
@@ -861,8 +871,7 @@ days).
 
 ### Watching it, and taking it away
 
-**`/timelapse`** (admin passphrase, like `/admin`; also linked from the Field Timelapse
-section) is the place to watch it: one practice day (04:00–04:00) as **one
+**`/timelapse`** (open to anyone, like `/recordings`; also linked from both) is the place to watch it: one practice day (04:00–04:00) as **one
 logical film**, not a list of files. Every chunk of the day — live capture
 and the ones made from matches — is placed on the wall clock and played back
 to back, skipping the quiet gaps between them; in a gap the archival still

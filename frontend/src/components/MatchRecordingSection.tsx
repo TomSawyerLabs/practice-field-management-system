@@ -5,6 +5,7 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
+import Link from '@mui/material/Link';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import type { MatchRecordingStreamStatus, RecordingStreamConfig, RecordingStreamTestResult } from '../../../src/types';
@@ -141,9 +142,9 @@ export function MatchRecordingSection() {
               Recordings and timelapse use {formatRecordingBytes(recording.usedBytes)};{' '}
               <strong>{formatRecordingBytes(recording.diskFreeBytes)} free</strong>
               {recording.diskTotalBytes ? ` of ${formatRecordingBytes(recording.diskTotalBytes)}` : ''} (the breakdown
-              is under Recordings on Disk, below). Match videos are kept {recording.retentionDays} days and teams&apos;
-              practice clips {recording.practiceRetentionDays}; the timelapse keeps its own, longer schedule (Field
-              Timelapse, below).
+              is on the <Link href="/recordings">Recordings page</Link>). Match videos are kept{' '}
+              {recording.retentionDays} days and teams&apos; practice clips {recording.practiceRetentionDays}; the
+              timelapse keeps its own, longer schedule (Field Timelapse, below).
             </>
           )}
         </Typography>
@@ -152,14 +153,15 @@ export function MatchRecordingSection() {
             {recording.space === 'critical' ? (
               <>
                 Only {formatRecordingBytes(recording.diskFreeBytes)} free — <strong>nothing is being recorded</strong>,
-                matches included, until space is made (Recordings on Disk, below).
+                matches included, until space is made (on the <Link href="/recordings">Recordings page</Link>).
               </>
             ) : (
               <>
                 {formatRecordingBytes(recording.diskFreeBytes)} free, under the{' '}
                 {formatRecordingBytes(recording.minFreeBytes)} floor — <strong>practice clips are paused</strong>.
                 Matches are still recorded. Clips resume by themselves as old ones pass their{' '}
-                {recording.practiceRetentionDays} days, or delete some now (Recordings on Disk, below).
+                {recording.practiceRetentionDays} days, or delete some now (on the{' '}
+                <Link href="/recordings">Recordings page</Link>).
               </>
             )}
           </Alert>

@@ -1683,13 +1683,11 @@ export function setupWebSocket(
           setup.practice.recorder.onOptInChanged();
         }
       } else if (isRequestRecordingsInventory(data)) {
-        // Admin only: lists every recording on disk (all teams).
+        // Anyone: /recordings is open for watching (the videos themselves
+        // were already served to anyone with the link). Deleting, below,
+        // stays admin-only.
         if (setup?.matchRecorder) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-          } else {
-            ws.send(JSON.stringify(setup.matchRecorder.inventory()));
-          }
+          ws.send(JSON.stringify(setup.matchRecorder.inventory()));
         }
       } else if (isDeleteRecording(data) || isDeleteRecordingsBefore(data)) {
         if (setup?.matchRecorder) {

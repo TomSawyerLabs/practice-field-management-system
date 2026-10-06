@@ -572,7 +572,12 @@ function HomeAssistantEditor({
  * frames a day (optionally with the shop lights driven to a known level), and
  * a fast timelapse of every stretch when robots are on the field.
  */
-export function TimelapseSection() {
+/**
+ * Admin → Video: whether the field timelapse runs, when its archival frames
+ * are taken, the lights around them, and how practice is filmed. Watching
+ * and browsing what it captured is on /recordings (TimelapseArchiveSection).
+ */
+export function TimelapseSettingsSection() {
   const setupConfig = useSetupConfig();
   const state = useTimelapseState();
   const saved = setupConfig?.config.settings.timelapse;
@@ -582,35 +587,6 @@ export function TimelapseSection() {
   /** Bumped whenever the draft is replaced wholesale, to remount the action
    *  editors on top of their new values. */
   const [resetKey, setResetKey] = useState(0);
-  const [build, setBuild] = useState<{
-    source: TimelapseSource;
-    from: string;
-    to: string;
-    fps: string;
-    height: string;
-  }>({ source: 'frames', from: '', to: '', fps: '12', height: '1080' });
-  /** What the player is showing: a built film, a practice clip, or one frame. */
-  const [playing, setPlaying] = useState<{ kind: 'video' | 'image'; url: string; label: string } | null>(null);
-  const [range, setRange] = useState({ from: '', to: '' });
-  const [listing, setListing] = useState<TimelapseListing | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const loadListing = async () => {
-    setLoading(true);
-    setListing(await fetchTimelapseListing(range.from || undefined, range.to || undefined));
-    setLoading(false);
-  };
-
-  // Show the most recent days as soon as the section is open, and again when
-  // a new frame, a finished chunk or capture starting/stopping changes what
-  // is on disk. Not on sessionBytes: that grows on every 15 s tick while
-  // robots are here, and re-listing (and re-rendering a month of thumbnails)
-  // that often only updated the size of the chunk still being written.
-  const newestChunk = state?.recentSessions[0];
-  useEffect(() => {
-    void loadListing();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.frameCount, state?.capturing, newestChunk?.file, newestChunk?.endedAt]);
 
   // Follow the server until the operator starts editing.
   useEffect(() => {
@@ -651,6 +627,9 @@ export function TimelapseSection() {
           {state?.robotsPresent && !state.capturing && <Chip size="small" color="info" label="Robots here" />}
           {state?.unavailableReason && <Chip size="small" color="error" label={state.unavailableReason} />}
           <Box sx={{ flex: 1 }} />
+          <Button size="small" href="/recordings#timelapse">
+            Browse the archive
+          </Button>
           <Button variant="contained" size="small" href="/timelapse">
             Watch the timelapse
           </Button>
@@ -880,16 +859,77 @@ export function TimelapseSection() {
           {dirty && <Chip size="small" color="warning" variant="outlined" label="Unsaved changes" />}
         </Box>
 
-        {/* ── watch what is there ─────────────────────────────────── */}
         {state && (
-          <>
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              {state.frameCount} archival frame{state.frameCount === 1 ? '' : 's'} ({formatBytes(state.frameBytes)}),{' '}
-              {formatBytes(state.sessionBytes)} of practice film, {formatBytes(state.renderBytes)} of built films, in{' '}
-              <code>{state.directory}</code>.
-            </Typography>
+          <Typography variant="body2" sx={{ color: 'text.secondary', mt: 2 }}>
+            {state.frameCount} archival frame{state.frameCount === 1 ? '' : 's'} ({formatBytes(state.frameBytes)}),{' '}
+            {formatBytes(state.sessionBytes)} of practice film, {formatBytes(state.renderBytes)} of built films, in{' '}
+            <code>{state.directory}</code>.
+          </Typography>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
+/**
+ * /recordings: what the field timelapse has captured — the daily archival
+ * frames and practice films by day, and the films built from them. Anyone
+ * may browse and watch; building and deleting films is for a logged-in
+ * admin (and the server checks again).
+ */
+export function TimelapseArchiveSection({ isAdmin }: { isAdmin: boolean }) {
+  const state = useTimelapseState();
+  const [build, setBuild] = useState<{
+    source: TimelapseSource;
+    from: string;
+    to: string;
+    fps: string;
+    height: string;
+  }>({ source: 'frames', from: '', to: '', fps: '12', height: '1080' });
+  /** What the player is showing: a built film, a practice clip, or one frame. */
+  const [playing, setPlaying] = useState<{ kind: 'video' | 'image'; url: string; label: string } | null>(null);
+  const [range, setRange] = useState({ from: '', to: '' });
+  const [listing, setListing] = useState<TimelapseListing | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const loadListing = async () => {
+    setLoading(true);
+    setListing(await fetchTimelapseListing(range.from || undefined, range.to || undefined));
+    setLoading(false);
+  };
+
+  // Show the most recent days as soon as the section is open, and again when
+  // a new frame, a finished chunk or capture starting/stopping changes what
+  // is on disk. Not on sessionBytes: that grows on every 15 s tick while
+  // robots are here, and re-listing (and re-rendering a month of thumbnails)
+  // that often only updated the size of the chunk still being written.
+  const newestChunk = state?.recentSessions[0];
+  useEffect(() => {
+    void loadListing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.frameCount, state?.capturing, newestChunk?.file, newestChunk?.endedAt]);
+
+  return (
+    <Card id="timelapse" sx={{ mt: 2, scrollMarginTop: 16 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
+          <Typography variant="h5">Field Timelapse</Typography>
+          {state?.capturing && <Chip size="small" color="error" label="● Capturing" />}
+          <Box sx={{ flex: 1 }} />
+          <Button variant="contained" size="small" href="/timelapse">
+            Watch a day as one film
+          </Button>
+        </Box>
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+          A few full-resolution frames of the field every day, and a fast timelapse of every stretch when robots are
+          here. Tap a frame to see it full size, or a practice film to play it.
+        </Typography>
+        {!state ? (
+          <Typography variant="body2" color="text.secondary">
+            Loading…
+          </Typography>
+        ) : (
+          <>
             {playing && (
               <Box sx={{ mt: 1.5 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
@@ -946,17 +986,19 @@ export function TimelapseSection() {
                     <Link href={`/api/timelapse/render/${r.file}?download=1`} download variant="body2">
                       Download
                     </Link>
-                    <Button
-                      size="small"
-                      color="inherit"
-                      sx={{ opacity: 0.6 }}
-                      onClick={() => {
-                        if (playing?.url.endsWith(r.file)) setPlaying(null);
-                        sendDeleteTimelapseRender(r.file);
-                      }}
-                    >
-                      Delete
-                    </Button>
+                    {isAdmin && (
+                      <Button
+                        size="small"
+                        color="inherit"
+                        sx={{ opacity: 0.6 }}
+                        onClick={() => {
+                          if (playing?.url.endsWith(r.file)) setPlaying(null);
+                          sendDeleteTimelapseRender(r.file);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </Box>
                 ))}
               </Box>
@@ -1070,88 +1112,92 @@ export function TimelapseSection() {
               </Box>
             ))}
 
-            {/* ── build a film ──────────────────────────────────── */}
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-              Build one film for a date range
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
-              <TextField
-                select
-                size="small"
-                label="From what"
-                value={build.source}
-                onChange={e => setBuild(b => ({ ...b, source: e.target.value as TimelapseSource }))}
-                sx={{ width: 230 }}
-              >
-                <MenuItem value="frames">Daily frames — the season film</MenuItem>
-                <MenuItem value="practice">Practice footage — joined</MenuItem>
-              </TextField>
-              <TextField
-                size="small"
-                label="From"
-                type="date"
-                value={build.from}
-                slotProps={{ inputLabel: { shrink: true } }}
-                onChange={e => setBuild(b => ({ ...b, from: e.target.value }))}
-              />
-              <TextField
-                size="small"
-                label="To"
-                type="date"
-                value={build.to}
-                slotProps={{ inputLabel: { shrink: true } }}
-                onChange={e => setBuild(b => ({ ...b, to: e.target.value }))}
-              />
-              {build.source === 'frames' && (
-                <TextField
-                  size="small"
-                  type="number"
-                  label="fps"
-                  value={build.fps}
-                  onChange={e => setBuild(b => ({ ...b, fps: e.target.value }))}
-                  sx={{ width: 90 }}
-                />
-              )}
-              <TextField
-                size="small"
-                type="number"
-                label="Height"
-                value={build.height}
-                onChange={e => setBuild(b => ({ ...b, height: e.target.value }))}
-                sx={{ width: 110 }}
-              />
-              <Button
-                variant="outlined"
-                disabled={state.render?.status === 'running'}
-                onClick={() =>
-                  sendRenderTimelapse({
-                    source: build.source,
-                    from: build.from || undefined,
-                    to: build.to || undefined,
-                    fps: Math.max(1, Math.min(60, Number(build.fps) || 12)),
-                    height: Math.max(240, Math.min(2160, Number(build.height) || 1080)),
-                  })
-                }
-              >
-                {state.render?.status === 'running' ? 'Building…' : 'Build'}
-              </Button>
-            </Box>
-            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
-              {build.source === 'frames'
-                ? 'The archival stills, one after another — a year of three a day at 12 fps is about 90 seconds.'
-                : 'Every practice film in the range, joined end to end. Copied as-is, so this is quick.'}{' '}
-              Finished films appear under “Films built” above, and can be played or downloaded there.
-            </Typography>
-            {state.render?.status === 'failed' && (
-              <Typography variant="body2" sx={{ color: 'error.main', mt: 0.5 }}>
-                Failed: {state.render.error}
-              </Typography>
-            )}
-            {state.render?.status === 'running' && (
-              <Typography variant="body2" sx={{ mt: 0.5 }}>
-                Building from {state.render.frames} {state.render.source === 'frames' ? 'frames' : 'clips'}…
-              </Typography>
+            {/* ── build a film (admin: minutes of ffmpeg on the server) ── */}
+            {isAdmin && (
+              <>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                  Build one film for a date range
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <TextField
+                    select
+                    size="small"
+                    label="From what"
+                    value={build.source}
+                    onChange={e => setBuild(b => ({ ...b, source: e.target.value as TimelapseSource }))}
+                    sx={{ width: 230 }}
+                  >
+                    <MenuItem value="frames">Daily frames — the season film</MenuItem>
+                    <MenuItem value="practice">Practice footage — joined</MenuItem>
+                  </TextField>
+                  <TextField
+                    size="small"
+                    label="From"
+                    type="date"
+                    value={build.from}
+                    slotProps={{ inputLabel: { shrink: true } }}
+                    onChange={e => setBuild(b => ({ ...b, from: e.target.value }))}
+                  />
+                  <TextField
+                    size="small"
+                    label="To"
+                    type="date"
+                    value={build.to}
+                    slotProps={{ inputLabel: { shrink: true } }}
+                    onChange={e => setBuild(b => ({ ...b, to: e.target.value }))}
+                  />
+                  {build.source === 'frames' && (
+                    <TextField
+                      size="small"
+                      type="number"
+                      label="fps"
+                      value={build.fps}
+                      onChange={e => setBuild(b => ({ ...b, fps: e.target.value }))}
+                      sx={{ width: 90 }}
+                    />
+                  )}
+                  <TextField
+                    size="small"
+                    type="number"
+                    label="Height"
+                    value={build.height}
+                    onChange={e => setBuild(b => ({ ...b, height: e.target.value }))}
+                    sx={{ width: 110 }}
+                  />
+                  <Button
+                    variant="outlined"
+                    disabled={state.render?.status === 'running'}
+                    onClick={() =>
+                      sendRenderTimelapse({
+                        source: build.source,
+                        from: build.from || undefined,
+                        to: build.to || undefined,
+                        fps: Math.max(1, Math.min(60, Number(build.fps) || 12)),
+                        height: Math.max(240, Math.min(2160, Number(build.height) || 1080)),
+                      })
+                    }
+                  >
+                    {state.render?.status === 'running' ? 'Building…' : 'Build'}
+                  </Button>
+                </Box>
+                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                  {build.source === 'frames'
+                    ? 'The archival stills, one after another — a year of three a day at 12 fps is about 90 seconds.'
+                    : 'Every practice film in the range, joined end to end. Copied as-is, so this is quick.'}{' '}
+                  Finished films appear under “Films built” above, and can be played or downloaded there.
+                </Typography>
+                {state.render?.status === 'failed' && (
+                  <Typography variant="body2" sx={{ color: 'error.main', mt: 0.5 }}>
+                    Failed: {state.render.error}
+                  </Typography>
+                )}
+                {state.render?.status === 'running' && (
+                  <Typography variant="body2" sx={{ mt: 0.5 }}>
+                    Building from {state.render.frames} {state.render.source === 'frames' ? 'frames' : 'clips'}…
+                  </Typography>
+                )}
+              </>
             )}
           </>
         )}

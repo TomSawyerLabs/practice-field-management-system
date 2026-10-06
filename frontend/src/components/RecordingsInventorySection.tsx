@@ -69,17 +69,17 @@ function playable(entry: RecordingInventoryEntry): RecordingInventoryFile[] {
 }
 
 /**
- * Recordings → Recordings on disk: every match and practice run that is still
- * stored, how much space they take, how much is left, and a way to watch or
- * evict them. The retention sweep is the automatic policy (Match Video
- * Recording section); this is the eyes and the manual lever while that
- * policy is being worked out.
+ * /recordings → Recordings on disk: every match and practice run that is
+ * still stored, how much space they take and how much is left. Anyone may
+ * watch them; a logged-in admin also gets the delete buttons (the server
+ * refuses everyone else's). The retention sweep is the automatic policy
+ * (Admin → Video); this is the eyes and the manual lever.
  *
  * Every row opens into the videos themselves, because deciding whether a
  * directory is worth keeping — or noticing a stream that has been pointed at
  * the wrong camera all evening — takes seeing it, not just its size.
  */
-export function RecordingsInventorySection() {
+export function RecordingsInventorySection({ isAdmin }: { isAdmin: boolean }) {
   const [inv, refresh] = useRecordingsInventory();
   const live = useMatchRecordingState();
   const history = useMatchHistory();
@@ -154,7 +154,9 @@ export function RecordingsInventorySection() {
     <Card sx={{ mt: 2 }}>
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-          <Typography variant="h5">Recordings on Disk</Typography>
+          {/* Disk management is the admin's view; everyone else came to watch. */}
+          <Typography variant="h5">{isAdmin ? 'Recordings on Disk' : 'Videos'}</Typography>
+          {live?.activeMatchId && <Chip size="small" color="error" label="● Recording a match" />}
           <Button size="small" onClick={refresh}>
             Refresh
           </Button>
@@ -166,80 +168,91 @@ export function RecordingsInventorySection() {
           </Typography>
         ) : (
           <>
-            <StorageBar storage={inv.storage} minFreeBytes={inv.minFreeBytes} />
+            {!isAdmin && (
+              <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+                Every match and practice run still kept: match videos for {inv.retentionDays} days, practice runs for{' '}
+                {inv.practiceRetentionDays}.
+              </Typography>
+            )}
+            {isAdmin && (
+              <>
+                <StorageBar storage={inv.storage} minFreeBytes={inv.minFreeBytes} />
 
-            <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-              The last 7 days added <strong>{formatSize(stats.perDay)}/day</strong> (team clips{' '}
-              {formatSize(stats.clipsPerDay)}, match videos {formatSize(stats.matchesPerDay)}, timelapse{' '}
-              {formatSize(stats.timelapsePerDay)}). Team clips are deleted after {inv.practiceRetentionDays} days, so
-              they hold at about a week&apos;s worth
-              {stats.daysLeft !== undefined && (
-                <>
-                  ; the rest would fill the free space in about <strong>{formatDaysLeft(stats.daysLeft)}</strong> at
-                  that rate
-                </>
-              )}
-              . Every hour the sweep deletes team clips older than {inv.practiceRetentionDays} days and match videos
-              older than {inv.retentionDays} days (set above). Oldest recording:{' '}
-              {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. Files live in{' '}
-              <code>{inv.directory}</code>.
-              {inv.space === 'low' && ' Practice clips are paused: the disk is under its free-space floor.'}
-              {inv.space === 'critical' && ' Nothing is being recorded: the disk is nearly full.'}
-              {live?.activeMatchId && ' A match is being recorded right now.'}
-            </Typography>
+                <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+                  The last 7 days added <strong>{formatSize(stats.perDay)}/day</strong> (team clips{' '}
+                  {formatSize(stats.clipsPerDay)}, match videos {formatSize(stats.matchesPerDay)}, timelapse{' '}
+                  {formatSize(stats.timelapsePerDay)}). Team clips are deleted after {inv.practiceRetentionDays} days,
+                  so they hold at about a week&apos;s worth
+                  {stats.daysLeft !== undefined && (
+                    <>
+                      ; the rest would fill the free space in about <strong>{formatDaysLeft(stats.daysLeft)}</strong> at
+                      that rate
+                    </>
+                  )}
+                  . Every hour the sweep deletes team clips older than {inv.practiceRetentionDays} days and match videos
+                  older than {inv.retentionDays} days (set in Admin → Video). Oldest recording:{' '}
+                  {stats.oldest ? new Date(stats.oldest).toLocaleDateString() : 'none'}. Files live in{' '}
+                  <code>{inv.directory}</code>.
+                  {inv.space === 'low' && ' Practice clips are paused: the disk is under its free-space floor.'}
+                  {inv.space === 'critical' && ' Nothing is being recorded: the disk is nearly full.'}
+                </Typography>
 
-            {stats.byTeam.length > 0 && (
-              <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2 }}>
-                {stats.byTeam.map(([team, v]) => (
-                  <Chip
-                    key={team}
-                    size="small"
-                    variant="outlined"
-                    label={`${team === 0 ? 'no team' : team}: ${formatSize(v.bytes)} · ${v.count}`}
-                  />
-                ))}
-              </Box>
+                {stats.byTeam.length > 0 && (
+                  <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', mb: 2 }}>
+                    {stats.byTeam.map(([team, v]) => (
+                      <Chip
+                        key={team}
+                        size="small"
+                        variant="outlined"
+                        label={`${team === 0 ? 'no team' : team}: ${formatSize(v.bytes)} · ${v.count}`}
+                      />
+                    ))}
+                  </Box>
+                )}
+              </>
             )}
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 2 }}>
-              <TextField
-                size="small"
-                label="Older than (days)"
-                value={olderThanDays}
-                onChange={e => setOlderThanDays(e.target.value.replace(/\D/g, ''))}
-                sx={{ width: 150 }}
-                slotProps={{ htmlInput: { inputMode: 'numeric' } }}
-              />
-              {confirm === 'older' ? (
-                <>
+            {isAdmin && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+                <TextField
+                  size="small"
+                  label="Older than (days)"
+                  value={olderThanDays}
+                  onChange={e => setOlderThanDays(e.target.value.replace(/\D/g, ''))}
+                  sx={{ width: 150 }}
+                  slotProps={{ htmlInput: { inputMode: 'numeric' } }}
+                />
+                {confirm === 'older' ? (
+                  <>
+                    <Button
+                      size="small"
+                      color="error"
+                      variant="contained"
+                      disabled={olderCutoff === null}
+                      onClick={() => {
+                        if (olderCutoff !== null) sendDeleteRecordingsBefore(olderCutoff);
+                        setConfirm(null);
+                      }}
+                    >
+                      Really delete {olderCount} ({formatSize(olderBytes)})
+                    </Button>
+                    <Button size="small" onClick={() => setConfirm(null)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
                   <Button
                     size="small"
                     color="error"
-                    variant="contained"
-                    disabled={olderCutoff === null}
-                    onClick={() => {
-                      if (olderCutoff !== null) sendDeleteRecordingsBefore(olderCutoff);
-                      setConfirm(null);
-                    }}
+                    variant="outlined"
+                    disabled={olderCutoff === null || olderCount === 0}
+                    onClick={() => setConfirm('older')}
                   >
-                    Really delete {olderCount} ({formatSize(olderBytes)})
+                    Delete {olderCount} recording{olderCount === 1 ? '' : 's'} ({formatSize(olderBytes)})
                   </Button>
-                  <Button size="small" onClick={() => setConfirm(null)}>
-                    Cancel
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  size="small"
-                  color="error"
-                  variant="outlined"
-                  disabled={olderCutoff === null || olderCount === 0}
-                  onClick={() => setConfirm('older')}
-                >
-                  Delete {olderCount} recording{olderCount === 1 ? '' : 's'} ({formatSize(olderBytes)})
-                </Button>
-              )}
-            </Box>
+                )}
+              </Box>
+            )}
 
             <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
               Tap a recording to watch it here. Times are this device&apos;s local time.
@@ -265,6 +278,7 @@ export function RecordingsInventorySection() {
                     open={open === e.id}
                     onToggle={() => setOpen(cur => (cur === e.id ? null : e.id))}
                     summaryUrl={shareTokens.has(e.id) ? matchSummaryUrl(publicUrl, shareTokens.get(e.id)!) : undefined}
+                    canDelete={isAdmin}
                     confirming={confirm === e.id}
                     onConfirm={() => setConfirm(e.id)}
                     onCancel={() => setConfirm(null)}
@@ -441,6 +455,7 @@ function InventoryRow({
   open,
   onToggle,
   summaryUrl,
+  canDelete,
   confirming,
   onConfirm,
   onCancel,
@@ -450,6 +465,8 @@ function InventoryRow({
   open: boolean;
   onToggle: () => void;
   summaryUrl?: string;
+  /** Logged in as admin; the server refuses anyone else's delete anyway. */
+  canDelete: boolean;
   confirming: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -492,9 +509,11 @@ function InventoryRow({
               <Button size="small" onClick={onToggle} disabled={videos.length === 0}>
                 {open ? 'Close' : 'Watch'}
               </Button>
-              <Button size="small" color="error" onClick={onConfirm}>
-                Delete
-              </Button>
+              {canDelete && (
+                <Button size="small" color="error" onClick={onConfirm}>
+                  Delete
+                </Button>
+              )}
             </>
           )}
         </TableCell>

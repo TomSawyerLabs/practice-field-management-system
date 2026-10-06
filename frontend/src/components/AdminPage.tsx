@@ -5,8 +5,10 @@ import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
-import { MatchTimeline } from './MatchTimeline';
-import { phaseLabel } from '../utils/matchFormat';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
+import { MatchRecordingSection } from './MatchRecordingSection';
+import { TimelapseSettingsSection } from './TimelapseSection';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
@@ -18,7 +20,7 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 
-import type { MatchPhase, StationName, StationControlState, ControllerPolicy } from '../../../src/types';
+import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
 import { prettyStationName } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
@@ -101,18 +103,6 @@ import InputLabel from '@mui/material/InputLabel';
 import Autocomplete from '@mui/material/Autocomplete';
 import CircularProgress from '@mui/material/CircularProgress';
 
-const phaseColors: Record<MatchPhase, string> = {
-  idle: 'text.secondary',
-  created: 'info.main',
-  countdown: 'warning.main',
-  auto: 'info.main',
-  autoPause: 'text.disabled',
-  paused: 'warning.main',
-  teleop: 'success.main',
-  endgame: 'warning.main',
-  postMatch: 'text.secondary',
-};
-
 // ── Global E-Stop ───────────────────────────────────────────────────
 
 /** E-STOP ALL stops every robot on the field — in a match or not (out of a
@@ -123,17 +113,33 @@ function GlobalEStopSection() {
   const matchState = useMatchState();
   const stopped = StationNameList.filter(s => matchState?.stationStates[s]?.eStop);
   const [confirmClear, setConfirmClear] = useState(false);
+  const phase = matchState?.phase;
+  const matchRunning = phase !== undefined && phase !== 'idle' && phase !== 'postMatch';
   return (
-    <Box sx={{ mb: 3 }}>
-      <Button
-        variant="contained"
-        color="error"
-        fullWidth
-        sx={{ fontSize: '1.5rem', py: 2.5, fontWeight: 'bold' }}
-        onClick={() => sendAdminGlobalEStop()}
-      >
-        E-STOP ALL
-      </Button>
+    <Box sx={{ mb: 2 }}>
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Button
+          variant="contained"
+          color="error"
+          fullWidth
+          sx={{ fontSize: '1.5rem', py: 2.5, fontWeight: 'bold' }}
+          onClick={() => sendAdminGlobalEStop()}
+        >
+          E-STOP ALL
+        </Button>
+        {/* The one way to end a running match early without e-stopping
+            anyone: /match only aborts a countdown. */}
+        {matchRunning && (
+          <Button
+            variant="outlined"
+            color="error"
+            sx={{ fontWeight: 'bold', flexShrink: 0, px: 3 }}
+            onClick={sendAdminStopMatch}
+          >
+            Force stop match
+          </Button>
+        )}
+      </Box>
       {stopped.length > 0 && (
         <Alert
           severity="error"
@@ -444,92 +450,6 @@ function StationControlSection() {
               </TableBody>
             </Table>
           </Box>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Match Timer ─────────────────────────────────────────────────────
-
-function MatchTimer({ remainingTime, phase }: { remainingTime: number; phase: MatchPhase }) {
-  const display = Math.ceil(Math.max(0, remainingTime));
-  const minutes = Math.floor(display / 60);
-  const seconds = display % 60;
-  const text = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-
-  return (
-    <Typography
-      variant="h1"
-      sx={{
-        fontFamily: 'monospace',
-        fontSize: '6rem',
-        textAlign: 'center',
-        color: phaseColors[phase],
-        lineHeight: 1,
-      }}
-    >
-      {text}
-    </Typography>
-  );
-}
-
-// ── Match Status (read-only, admin can force-stop) ───────────────────
-
-function MatchStatusSection() {
-  const matchState = useMatchState();
-  if (!matchState) return null;
-
-  const { phase, remainingTime, totalMatchTime, config } = matchState;
-  const isActive = phase !== 'idle' && phase !== 'postMatch';
-
-  const countdownDuration = 3;
-  const barTotal = config.autoDuration + config.pauseDuration + config.teleopDuration;
-  const elapsed = Math.max(0, totalMatchTime - countdownDuration);
-  const skipOffset = config.skipAuto ? config.autoDuration + config.pauseDuration : 0;
-  const progress = barTotal > 0 ? Math.min(1, (skipOffset + elapsed) / barTotal) : 0;
-
-  return (
-    <Card sx={{ mb: 3 }}>
-      <CardContent>
-        <Box sx={{ textAlign: 'center', mb: 2 }}>
-          <Chip
-            label={phaseLabel(phase, matchState.config)}
-            sx={{
-              fontSize: '1.2rem',
-              py: 2.5,
-              px: 2,
-              fontWeight: 'bold',
-              color: phaseColors[phase],
-              borderColor: phaseColors[phase],
-            }}
-            variant="outlined"
-          />
-        </Box>
-
-        <MatchTimer remainingTime={remainingTime} phase={phase} />
-
-        <Box sx={{ my: 2 }}>
-          <MatchTimeline
-            config={config}
-            progress={progress}
-            autoWinnerAlliance={matchState.autoWinnerAlliance}
-            phase={matchState.phase}
-            remainingTime={matchState.remainingTime}
-          />
-        </Box>
-
-        {isActive && (
-          <Button
-            variant="contained"
-            color="error"
-            size="large"
-            fullWidth
-            sx={{ fontWeight: 'bold', fontSize: '1.1rem' }}
-            onClick={sendAdminStopMatch}
-          >
-            Force Stop Match
-          </Button>
         )}
       </CardContent>
     </Card>
@@ -1287,11 +1207,10 @@ function ControllerPolicySection() {
   );
 }
 
-// ── Recordings (its own page) ───────────────────────────────────────
+// ── Recordings (watched on their own page) ──────────────────────────
 
-/** Match video recording, the field timelapse and the recordings disk live
- *  on /recordings; this keeps them one click away, with the one number worth
- *  seeing from here. */
+/** Everything filmed is watched — and deleted — on /recordings, which anyone
+ *  may open; this tab only holds the settings. */
 function RecordingsLinkSection() {
   const recording = useMatchRecordingState();
   return (
@@ -1308,16 +1227,96 @@ function RecordingsLinkSection() {
         )}
         <Box sx={{ flex: 1 }} />
         <Button variant="contained" size="small" href="/recordings">
-          Match video, timelapse &amp; disk
+          Watch &amp; manage recordings
         </Button>
       </CardContent>
     </Card>
   );
 }
 
+// ── Tabs ────────────────────────────────────────────────────────────
+
+const ADMIN_TABS = [
+  { id: 'match', label: 'Match' },
+  { id: 'wifi', label: 'Wi-Fi' },
+  { id: 'video', label: 'Video' },
+  { id: 'scoring', label: 'Scoring & integrations' },
+  { id: 'access', label: 'Access' },
+] as const;
+type AdminTab = (typeof ADMIN_TABS)[number]['id'];
+
+function adminTabFromHash(): AdminTab {
+  const hash = window.location.hash.slice(1);
+  return ADMIN_TABS.find(t => t.id === hash)?.id ?? 'match';
+}
+
+/** The sections on each tab, in page order. Only the open tab is mounted:
+ *  the page stays light, and nothing on a hidden tab polls or ticks. */
+function AdminTabContent({ tab }: { tab: AdminTab }) {
+  switch (tab) {
+    case 'match':
+      return (
+        <>
+          <FieldResetSection />
+          <OutOfMatchControlSection />
+          <ControllerPolicySection />
+          <StationControlSection />
+        </>
+      );
+    case 'wifi':
+      return (
+        <>
+          <WifiChangesSection />
+          <WifiCardsSection />
+          <RobotWifiScanSection />
+          <SixGhzWatchSection />
+          <FirmwareSection />
+        </>
+      );
+    case 'video':
+      return (
+        <>
+          <RecordingsLinkSection />
+          <MatchRecordingSection />
+          <TimelapseSettingsSection />
+        </>
+      );
+    case 'scoring':
+      return (
+        <>
+          <ScoringSection />
+          <ApiKeySection />
+          <SlackConfigSection />
+          <AudioDeviceSection />
+        </>
+      );
+    case 'access':
+      return <ExternalAccessSection />;
+  }
+}
+
 // ── Admin Page ──────────────────────────────────────────────────────
 
+/**
+ * /admin#<tab>. E-STOP ALL (and Force stop while a match runs) sits above
+ * the tabs, so it is on screen whichever tab is open. The match itself is
+ * run and watched on /match.
+ */
 export function AdminPage() {
+  const [tab, setTab] = useState<AdminTab>(adminTabFromHash);
+
+  // Back/forward and links like /admin#video switch tabs too.
+  useEffect(() => {
+    const onHash = () => setTab(adminTabFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  const selectTab = (next: AdminTab) => {
+    setTab(next);
+    window.history.replaceState(null, '', `#${next}`);
+  };
+
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Typography variant="h3" gutterBottom>
@@ -1325,22 +1324,20 @@ export function AdminPage() {
       </Typography>
 
       <GlobalEStopSection />
-      <MatchStatusSection />
-      <WifiChangesSection />
-      <FieldResetSection />
-      <WifiCardsSection />
-      <RobotWifiScanSection />
-      <SixGhzWatchSection />
-      <OutOfMatchControlSection />
-      <ControllerPolicySection />
-      <ScoringSection />
-      <ApiKeySection />
-      <ExternalAccessSection />
-      <StationControlSection />
-      <AudioDeviceSection />
-      <SlackConfigSection />
-      <RecordingsLinkSection />
-      <FirmwareSection />
+
+      <Tabs
+        value={tab}
+        onChange={(_, v: AdminTab) => selectTab(v)}
+        variant="scrollable"
+        allowScrollButtonsMobile
+        sx={{ mb: 1, borderBottom: 1, borderColor: 'divider' }}
+      >
+        {ADMIN_TABS.map(t => (
+          <Tab key={t.id} value={t.id} label={t.label} />
+        ))}
+      </Tabs>
+
+      <AdminTabContent tab={tab} />
     </Container>
   );
 }

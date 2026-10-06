@@ -2,20 +2,25 @@ import Box from '@mui/material/Box';
 import Container from '@mui/material/Container';
 import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
-import { MatchRecordingSection } from './MatchRecordingSection';
+import { useIsAdmin } from '../hooks/useBackend';
 import { RecordingsInventorySection } from './RecordingsInventorySection';
-import { TimelapseSection } from './TimelapseSection';
+import { TimelapseArchiveSection } from './TimelapseSection';
 
 /**
- * /recordings — everything pFMS films: which streams every match is recorded
- * from, the long-term field timelapse, and what is on the recordings disk.
+ * /recordings — everything pFMS has filmed, for anyone to watch: every match
+ * and practice run still on disk, and the field timelapse archive.
  *
- * Its own page rather than more of /admin: these sections load dozens of
+ * No login: watching is open. Nothing here changes a setting — the streams,
+ * retention and timelapse configuration live in Admin → Video. A browser
+ * logged in as admin also gets the delete and build-a-film controls; the
+ * server checks those again whoever sends them.
+ *
+ * Its own page rather than part of /admin: these sections load dozens of
  * thumbnails and stills, and on plain-HTTP pfms.tsl the browser fetches only
- * six things at a time per host, so sharing a page with the e-stop and match
- * controls made those wait behind the pictures.
+ * six things at a time per host.
  */
 export function RecordingsPage() {
+  const isAdmin = useIsAdmin();
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2, flexWrap: 'wrap' }}>
@@ -26,14 +31,15 @@ export function RecordingsPage() {
         <Link href="/timelapse" underline="hover" variant="body2">
           Timelapse viewer
         </Link>
-        <Link href="/admin" underline="hover" variant="body2">
-          Field Admin
-        </Link>
+        {isAdmin && (
+          <Link href="/admin#video" underline="hover" variant="body2">
+            Video settings
+          </Link>
+        )}
       </Box>
 
-      <MatchRecordingSection />
-      <TimelapseSection />
-      <RecordingsInventorySection />
+      <RecordingsInventorySection isAdmin={isAdmin} />
+      <TimelapseArchiveSection isAdmin={isAdmin} />
     </Container>
   );
 }
