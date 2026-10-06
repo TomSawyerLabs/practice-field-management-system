@@ -93,9 +93,10 @@ Cameron (2026-10-06):
 3. ~~Perf fixes~~ — timelapse listing refetch `3e6349f`; thumbnail warm-up
    and cap `4559638`.
 4. ~~Typecheck, tests (836 pass), production build~~ — done.
-5. **(current)** Deploy to steamboat — waiting on Cameron's go-ahead.
-   After deploy, check that the log shows `making N missing thumbnail(s)`
-   about a minute after start, and that `/recordings` loads.
+5. ~~Deploy to steamboat~~ — `42fddcd` deployed 2026-10-06 15:38. The log
+   showed `making 54 missing thumbnail(s) in the background` at 15:39:17
+   (one minute after start); thumbnails went from 90 to 144 of 144 mp4s
+   with no failures. `http://pfms.tsl/recordings` → 200, title Recordings.
 
 ## Progress log
 
@@ -108,12 +109,11 @@ Cameron (2026-10-06):
       headless before/after measurement
 - [x] Logged the 122 kB `matchHistoryState`-on-connect issue in ISSUES.md
       (bigger fix, out of scope)
-- [ ] Deploy (needs go-ahead)
+- [x] Deployed `42fddcd` to steamboat; warm-up filled all 144 thumbnails
 
 ## Open questions for the user
 
-1. Deploy to steamboat now? (Recommended: yes. Nothing on the server side
-   needs settings or Caddy changes.)
+(none)
 
 ## Things not to do
 
