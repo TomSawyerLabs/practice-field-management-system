@@ -10,6 +10,15 @@ Cameron (2026-10-06):
    `/admin` slow to load, `/admin` janky once loaded, videos/thumbnails slow.
    Find and fix every real cause.
 
+Round 2 (after the first deploy, same day):
+
+3. "/recordings is open to everyone. It should not allow reconfiguring of
+   video settings." → `/recordings` becomes a **no-login viewing page**;
+   all video _settings_ go back to `/admin`.
+4. "/admin needs something more… maybe tabs." → **5 tabs**, Global E-stop
+   pinned above them.
+5. "Remove the match status from admin."
+
 ## Environment / context
 
 - Pages are multi-page Vite entries: `frontend/<name>.html` →
@@ -36,8 +45,33 @@ Cameron (2026-10-06):
 - Path is `/recordings` (Cameron offered `/videos` or `/recordings`; the
   existing on-disk/API naming is "recordings").
 - Fix all perf causes found, not just one symptom.
+- `/recordings`: **anyone, no login** — browse/watch match videos, practice
+  clips and the timelapse (so `/timelapse` opens up too). Delete, bulk
+  delete, build film and delete film show only to a logged-in admin and stay
+  admin-gated on the server. Settings (streams, retention, timelapse
+  config, capture now) live only in `/admin` → Video.
+- `/admin` tabs (URL hash like the team page): **Match** (field reset,
+  out-of-match control, controller policy, Teams & Controls) · **Wi-Fi**
+  (pending radio changes, Wi-Fi cards, robot Wi-Fi scan, 6 GHz watch, radio
+  firmware) · **Video** (match recording streams, timelapse settings, link
+  to /recordings) · **Scoring & integrations** (scoring, API keys, Slack,
+  match audio) · **Access** (external access tokens). Global E-stop pinned
+  above the tabs.
+- Match status card removed from /admin. Its **Force Stop Match** button is
+  the only soft stop anywhere (/match only aborts countdowns), so it moves
+  next to the pinned E-stop, shown only while a match runs.
 
 ## Findings / gotchas
+
+- **Admin auth is per websocket** (`adminConnections.has(ws)`), and
+  `AdminAuthGate` sends its stored token once (`authCheckSent` never
+  resets). After any reconnect — every deploy restarts pFMS — an open
+  /admin still renders but the server refuses its admin actions. Fix: the
+  socket layer re-sends the stored token on every (re)connect.
+- Server already admin-gates every state change the public page could
+  reach: `deleteRecording(s)`, `renderTimelapse`, `deleteTimelapseRender`,
+  `captureTimelapseFrame`, `updateSetupSettings`. Only
+  `requestRecordingsInventory` needs opening.
 
 - `TimelapseSection` re-fetches `/api/timelapse` listing whenever
   `state.sessionBytes` changes — which is every 15 s tick while the fast
@@ -97,6 +131,12 @@ Cameron (2026-10-06):
    showed `making 54 missing thumbnail(s) in the background` at 15:39:17
    (one minute after start); thumbnails went from 90 to 144 of 144 mp4s
    with no failures. `http://pfms.tsl/recordings` → 200, title Recordings.
+6. ~~Round 2~~ — log redaction `bc5ab21`, admin re-auth on reconnect
+   `9407804`, tabs + public /recordings + /timelapse `574aa3e`. Verified
+   locally with headless Chromium (`harness/e2e.ts`: 20/20; and
+   `harness/reconnect.ts`: delete accepted after a real backend restart,
+   log shows `token: '***'`). 841 tests pass.
+7. **(current)** Deploy round 2 — waiting on Cameron's go-ahead.
 
 ## Progress log
 
@@ -110,10 +150,24 @@ Cameron (2026-10-06):
 - [x] Logged the 122 kB `matchHistoryState`-on-connect issue in ISSUES.md
       (bigger fix, out of scope)
 - [x] Deployed `42fddcd` to steamboat; warm-up filled all 144 thumbnails
+- [x] Server log no longer records passphrase / tokens (`bc5ab21`)
+- [x] Open admin pages re-authenticate after reconnect (`9407804`)
+- [x] /admin tabs, match status removed, Force stop beside E-STOP;
+      video settings only in Admin → Video; /recordings and /timelapse
+      open to anyone, admin controls only for admins (`574aa3e`)
+- [ ] Deploy round 2 (needs go-ahead)
 
 ## Open questions for the user
 
-(none)
+1. Deploy round 2 to steamboat? (Recommended: yes.)
+2. steamboat's journal (last 30 days) holds 3 admin login / set-passphrase
+   messages **with the passphrase in plain text**, and every admin
+   reconnect logged its session token. Recommended: change the admin
+   passphrase after deploying, and consider vacuuming the pFMS journal —
+   both are server changes that need an explicit yes.
+3. "Open to anyone" is on the field network only: Caddy still sends
+   external visitors to /recordings through the external-access check.
+   Opening it to the internet would be a Caddy (ops) change.
 
 ## Things not to do
 
