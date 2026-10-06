@@ -159,17 +159,20 @@ Round 2 (after the first deploy, same day):
 
 ## Open questions for the user
 
-1. ~~Deploy round 2~~ — done.
-2. steamboat's journal (last 30 days) holds 3 admin login / set-passphrase
-   messages **with the passphrase in plain text**, and every admin
-   reconnect logged its session token. Recommended: change the admin
-   passphrase after deploying, and consider vacuuming the pFMS journal —
-   both are server changes that need an explicit yes.
-3. "Open to anyone" is on the field network only: Caddy still sends
-   external visitors to /recordings through the external-access check.
-   Opening it to the internet would be a Caddy (ops) change.
+None. Closed:
+
+1. Deploy round 2 — done (`4a4b57d`).
+2. Plain-text passphrase in steamboat's journal — Cameron (2026-10-06): it
+   is a low-security passphrase, **don't change it** and **don't vacuum the
+   journal**; normal log rotation ages the old lines out. New lines are
+   redacted since `bc5ab21`.
+3. "Open to anyone" means the field network; external visitors still pass
+   Caddy's external-access check. No request to change that.
 
 ## Things not to do
 
 - Don't touch Caddy/ops — not needed, and needs per-change authorization.
 - Don't bypass the admin passphrase on steamboat to profile.
+- Don't rotate the admin passphrase or vacuum steamboat's journal — Cameron
+  declined both (2026-10-06).
+- Don't read the logged passphrase out of the journal; count matches only.
