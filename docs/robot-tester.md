@@ -252,10 +252,14 @@ it stays set after the watch is switched off. Linux only.
 robot radio's do:
 
 - **Competing** — a network name the field is serving right now, from an
-  access point that isn't the field. An access point outside the field's
-  channel (the AP's own channel and width) is never the field; on the
-  field's channel the strongest is taken to be the field and any more
-  compete with it. The team's page shows an error ("Another access point is
+  access point that isn't the field. The field AP broadcasts `no-team-1` …
+  `no-team-6` on station slots with no team, from addresses that differ only
+  in the last byte; the watch learns the field's addresses from those (and
+  keeps them, for when every slot has a team), so a copy is caught even on
+  the field's own channel and louder than the field. Until it has learned
+  them: an access point off the field's channel (the AP's own channel and
+  width) is never the field, and on it the strongest is taken to be the
+  field and any more compete with it. The team's page shows an error ("Another access point is
   broadcasting your robot's network … switch it off"), and `/csa` shows a
   critical issue on that team's station.
 - **Team's own AP** — a team's saved robot name while the field isn't

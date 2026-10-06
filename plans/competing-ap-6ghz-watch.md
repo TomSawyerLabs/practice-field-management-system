@@ -107,11 +107,28 @@ waiting for the adapter. Tomorrow's checklist:
 
 ## Findings / gotchas
 
-- Unknown until the adapter arrives: whether the field AP hides its SSIDs
-  on 6 GHz. If it does, its BSSes show with an empty SSID (admin lists
-  them as hidden) and every named BSS with a served SSID is a competitor —
-  the "presume one in-block BSS is the field" rule would then miss a
-  competitor on the field's own channel. Check tomorrow and tighten.
+- **Live on steamboat 2026-10-05 18:28** (user: "yes"): adapter is a
+  MediaTek MT7921AU (`0e8d:7961`, `mt7921u`, firmware 20241106) on USB 3,
+  `wlx90de80351083`, MAC `90:de:80:35:10:83`. Turned on by adding
+  `"sixGhzWatchInterface": "wlx90de80351083"` to `setup-config.json`
+  (backup `setup-config.json.bak-20261005-182807`) + `./update.sh force`.
+  Journal: `6 GHz watch on wlx90de80351083: 59 channels at country US`.
+  `scan non_coloc_6ghz=1 freq=…` is accepted (no scan failures).
+- **The field AP does not hide its SSIDs.** With no stations set up it
+  broadcasts `no-team-1` … `no-team-6` on ch 13 (6015 MHz), BSSIDs
+  `4a:da:35:b1:24:00`–`0f` (one per slot; all -57 dBm from steamboat).
+  The watch now learns the field's address family (first five bytes) from
+  those placeholders and keeps it, so a copy on the field's channel is
+  caught even when louder; "strongest on the field channel is the field" is
+  only the fallback before anything is learned.
+- `/sys/module/cfg80211/parameters/ieee80211_regdom` stays `00` — it is the
+  boot-time module parameter, not the current domain. The channel count
+  (from `get_capability freq`, which skips disabled channels) is the proof
+  the country took.
+- The site's UniFi APs also broadcast on 6 GHz (Tom Sawyer Labs,
+  TwillTech Secure, FRC-VH-COMPETITION on ch 37 and 53) — listed as
+  "Other".
+
 - `sixGhzWatch.scanOnce` sends `scan non_coloc_6ghz=1 freq=…`. If
   wpa_supplicant 2.10 rejects `non_coloc_6ghz` (unverified), the journal
   shows `6 GHz watch scan failed` every 30 s — drop the parameter then.

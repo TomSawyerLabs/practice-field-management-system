@@ -56,11 +56,33 @@ export type HeardBss = Omit<SixGhzNetwork, 'kind'>;
 
 const KIND_ORDER: Record<SixGhzNetwork['kind'], number> = { competing: 0, teamAp: 1, field: 2, other: 3 };
 
+/** What the field AP broadcasts on a station slot with no team: `no-team-1`
+ *  … `no-team-6` (VH-109 AP PRACTICE firmware, heard 2026-10-05). */
+const FIELD_PLACEHOLDER = /^no-team-\d+$/;
+
+/** The field AP's access points differ only in the last byte — one per
+ *  station slot (`4a:da:35:b1:24:00`–`0f` on steamboat's field). */
+export const bssidFamily = (bssid: string): string => bssid.toLowerCase().slice(0, 14);
+
+/** The field AP's address families, learned from its `no-team-<n>`
+ *  placeholders on the field's channel. */
+export function fieldFamiliesHeard(heard: readonly HeardBss[], field: FieldRadio | null): Set<string> {
+  const families = new Set<string>();
+  if (!field) return families;
+  for (const h of heard)
+    if (FIELD_PLACEHOLDER.test(h.ssid) && inFieldChannel(h.frequency, field)) families.add(bssidFamily(h.bssid));
+  return families;
+}
+
 /** Sort out what was heard. Names match exactly — a robot radio only joins
  *  the exact SSID, capitals included.
- *  - A name the field serves: its access points outside the field's channel
- *    are competing. Inside it, the strongest is taken to be the field and
- *    any more are competing (the field has one per name).
+ *  - The field AP is known by its address family, learned from its
+ *    `no-team-<n>` placeholders (`knownFieldFamilies` carries what was
+ *    learned before, for when every slot has a team).
+ *  - A name the field serves, from any access point that isn't the field, is
+ *    competing. Before the field's addresses are known: off the field's
+ *    channel is competing; on it, the strongest is taken to be the field and
+ *    any more compete (the field has one per name).
  *  - A team's saved robot name the field isn't serving: a team AP.
  *  Without the field's status nothing counts as a clash: a name the field
  *  is serving would look like a team AP. */
@@ -68,6 +90,7 @@ export function classifySixGhz(
   heard: HeardBss[],
   field: FieldRadio | null,
   savedSsids: readonly string[],
+  knownFieldFamilies: ReadonlySet<string> = new Set(),
 ): { networks: SixGhzNetwork[]; clashes: SixGhzClash[] } {
   const kinds = new Map<string, SixGhzNetwork['kind']>(); // by bssid
   const clashes: SixGhzClash[] = [];
@@ -76,16 +99,24 @@ export function classifySixGhz(
 
   if (field) {
     const saved = new Set(savedSsids);
+    const families = new Set([...knownFieldFamilies, ...fieldFamiliesHeard(heard, field)]);
+    const isField = (h: HeardBss) => inFieldChannel(h.frequency, field) && families.has(bssidFamily(h.bssid));
+    for (const h of heard) if (isField(h)) kinds.set(h.bssid, 'field');
     for (const [ssid, all] of byName) {
       const strongest = [...all].sort((a, b) => b.signal - a.signal);
       const served = field.serving.find(s => s.ssid === ssid);
       let others: HeardBss[];
       if (served) {
-        const fieldAp = strongest.find(h => inFieldChannel(h.frequency, field));
-        if (fieldAp) kinds.set(fieldAp.bssid, 'field');
-        others = strongest.filter(h => h !== fieldAp);
+        if (families.size) {
+          others = strongest.filter(h => !isField(h));
+        } else {
+          const fieldAp = strongest.find(h => inFieldChannel(h.frequency, field));
+          if (fieldAp) kinds.set(fieldAp.bssid, 'field');
+          others = strongest.filter(h => h !== fieldAp);
+        }
       } else if (saved.has(ssid)) {
-        others = strongest;
+        // The field itself, a moment ahead of its status (a station just set up)
+        others = strongest.filter(h => !isField(h));
       } else {
         continue;
       }
@@ -141,6 +172,9 @@ export class SixGhzWatch {
   private freqsAsked = false;
   private lastScanAt: number | undefined;
   private seen = new Map<string, HeardBss>(); // by bssid
+  /** The field AP's address families, kept once learned: when every station
+   *  slot has a team there are no placeholders left to learn them from. */
+  private fieldFamilies = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private scanning = false;
   private stopped = false;
@@ -257,6 +291,11 @@ export class SixGhzWatch {
       this.seen.set(r.bssid, { ssid: r.ssid, bssid: r.bssid, frequency: r.frequency, signal: r.signal, lastSeen: now });
     }
     for (const [bssid, s] of this.seen) if (now - s.lastSeen > this.o.expireMs) this.seen.delete(bssid);
+    for (const family of fieldFamiliesHeard([...this.seen.values()], this.o.field()))
+      if (!this.fieldFamilies.has(family)) {
+        this.fieldFamilies.add(family);
+        console.log(`6 GHz watch: the field AP's access points are ${family}:xx`);
+      }
     for (const key of this.clashKeys())
       if (!before.has(key)) console.log(`6 GHz watch: ${key.replace('\n', ' ')} on the air`);
     this.emit();
@@ -269,7 +308,7 @@ export class SixGhzWatch {
   }
 
   private classify() {
-    return classifySixGhz([...this.seen.values()], this.o.field(), this.o.savedSsids());
+    return classifySixGhz([...this.seen.values()], this.o.field(), this.o.savedSsids(), this.fieldFamilies);
   }
 
   getState(): SixGhzWatchState {

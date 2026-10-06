@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  bssidFamily,
   classifySixGhz,
   inFieldChannel,
   parseSixGhzFreqs,
@@ -146,6 +147,49 @@ describe('sorting out what was heard', () => {
   });
 });
 
+describe('knowing the field AP by its addresses', () => {
+  // As heard on steamboat 2026-10-05: one access point per station slot,
+  // `no-team-<n>` on slots with no team.
+  const fieldAp = (slot: number, ssid: string, signal = -57) => bss(`4a:da:35:b1:24:0${slot}`, ssid, 13, signal);
+
+  test('placeholders are the field, and teach its addresses', () => {
+    expect(bssidFamily('4A:DA:35:B1:24:0F')).toBe('4a:da:35:b1:24');
+    const r = classifySixGhz([fieldAp(1, 'no-team-2'), fieldAp(2, 'no-team-3')], field, []);
+    expect(r.networks.map(n => n.kind)).toEqual(['field', 'field']);
+    expect(r.clashes).toEqual([]);
+  });
+
+  test("a louder AP on the field's own channel with a served name is caught", () => {
+    const r = classifySixGhz(
+      [fieldAp(0, '1234-Robot', -60), fieldAp(1, 'no-team-2'), bss('aa:00:00:00:00:01', '1234-Robot', 13, -35)],
+      field,
+      [],
+    );
+    expect(r.clashes).toEqual([
+      expect.objectContaining({ kind: 'competing', others: [expect.objectContaining({ bssid: 'aa:00:00:00:00:01' })] }),
+    ]);
+    expect(r.networks.find(n => n.bssid === '4a:da:35:b1:24:00')?.kind).toBe('field');
+  });
+
+  test('addresses learned earlier still count once every slot has a team', () => {
+    const heard = [fieldAp(0, '1234-Robot', -60), bss('aa:00:00:00:00:01', '1234-Robot', 13, -35)];
+    const known = new Set(['4a:da:35:b1:24']);
+    expect(classifySixGhz(heard, field, [], known).clashes[0].others.map(o => o.bssid)).toEqual(['aa:00:00:00:00:01']);
+    // Without them, the louder one would have been taken for the field
+    expect(classifySixGhz(heard, field, []).clashes[0].others.map(o => o.bssid)).toEqual(['4a:da:35:b1:24:00']);
+  });
+
+  test('the field serving a saved name a moment before its status says so is not a team AP', () => {
+    const r = classifySixGhz([fieldAp(5, '254-Comp'), fieldAp(1, 'no-team-2')], field, ['254-Comp']);
+    expect(r.clashes).toEqual([]);
+  });
+
+  test("a placeholder off the field's channel teaches nothing", () => {
+    const r = classifySixGhz([bss('4a:da:35:b1:24:01', 'no-team-2', 37)], field, []);
+    expect(r.networks[0].kind).toBe('other');
+  });
+});
+
 // ── The watch, against a scripted wpa_supplicant ─────────────────
 
 const HEADER = 'bssid / frequency / signal level / flags / ssid';
@@ -239,6 +283,21 @@ describe('the watch', () => {
     expect(state().channels).toBe(1);
     expect(state().problem).toBeUndefined();
     expect(runner.calls).toContainEqual(['scan', 'non_coloc_6ghz=1', 'freq=6015']);
+  });
+
+  test("remembers the field AP's addresses after its placeholders go", async () => {
+    const { runner, watch, state } = setup();
+    runner.scanText = [HEADER, row('4a:da:35:b1:24:01', 13, 'no-team-2')].join('\n');
+    await watch.start();
+    await flush();
+    // Every slot taken now: no placeholders, and a louder copy on the field's channel
+    runner.scanText = [
+      HEADER,
+      row('4a:da:35:b1:24:00', 13, '1234-Robot', -60),
+      row('aa:00:00:00:00:01', 13, '1234-Robot', -35),
+    ].join('\n');
+    await watch.scanOnce();
+    expect(state().clashes[0].others.map(o => o.bssid)).toEqual(['aa:00:00:00:00:01']);
   });
 
   test('an access point switched off drops out after a while', async () => {
