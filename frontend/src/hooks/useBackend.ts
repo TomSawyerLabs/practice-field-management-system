@@ -134,6 +134,9 @@ import {
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
+/** Where an admin login's session token is kept (set by AdminAuthGate). */
+export const ADMIN_TOKEN_KEY = 'pfms-admin-token';
+
 let ws: WebSocket | null = null;
 let wsConnected = false;
 let lastMessageAt = Date.now();
@@ -182,6 +185,12 @@ function connect() {
   nws.onopen = () => {
     console.log('Connected to backend');
     lastMessageAt = Date.now();
+    // Admin rights belong to the socket, not the browser: every new socket
+    // (a reconnect after a deploy, a dropped Wi-Fi) starts without them.
+    // Re-present the stored token before anything else is sent, so an open
+    // admin page keeps working and public pages know an admin is looking.
+    const adminToken = wsPath === '/ws' ? localStorage.getItem(ADMIN_TOKEN_KEY) : null;
+    if (adminToken) nws.send(JSON.stringify({ type: 'adminCheckAuth', token: adminToken }));
     wsConnected = true;
     events.dispatchEvent(new CustomEvent('wsStatus', { detail: true }));
   };
@@ -2195,6 +2204,12 @@ export function useAdminAuth(): AdminAuthResult | null {
   }, []);
 
   return state;
+}
+
+/** Whether this socket is logged in as admin — for pages anyone may open
+ *  that show admin-only controls (the server checks again regardless). */
+export function useIsAdmin(): boolean {
+  return useAdminAuth()?.authenticated === true;
 }
 
 export function sendAdminLogin(passphrase: string) {
