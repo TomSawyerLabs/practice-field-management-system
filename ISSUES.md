@@ -109,6 +109,20 @@ A-Stop dominant through the countdown and auto. What's left:
   handlers that stop robots can misfire. Not done on purpose.
 - The station page's new layout has not been looked at on a real phone.
 
+## Every page gets the whole match history on connect
+
+Measured on pfms.tsl (2026-10-06): a fresh `/ws` connection receives ~200 kB
+before anything else, 122 kB of it a single `matchHistoryState` (the full
+`match-history.json`, up to 250 entries), then `usageState` 28 kB,
+`practiceRecordingState` 15 kB, `timelapseState` 12 kB. Every page pays this,
+including team pages on phones and the scoreboard TVs, most of which never
+show history. Reproduce: open a WebSocket to `ws://pfms.tsl/ws` and tally
+message sizes by `type` for a few seconds.
+
+**Why it matters:** slower first paint on weak devices/Wi-Fi, and it grows
+with the season. Likely fix is per-page subscriptions or a paged/summary
+history message, which touches many hooks — not a quick change.
+
 ## Unverified behaviour we depend on
 
 Each of these is asserted by our code but was never confirmed against real
