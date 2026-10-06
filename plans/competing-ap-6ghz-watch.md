@@ -87,8 +87,8 @@ get_capability freq`), with `non_coloc_6ghz=1` so the driver doesn't
 6. Checks (typecheck, prettier, tests), commit.
 7. 2026-10-05: plug in the adapter, deploy, pick it on /admin, verify.
 
-Current step: **7** — built, committed and deployed 2026-10-04 (`cc59c00`);
-waiting for the adapter. Tomorrow's checklist:
+Current step: **spare-radio test** — watch live on steamboat since
+2026-10-05 (`9ecc139`). Tomorrow's checklist:
 
 1. Plug the adapter into steamboat; `ls /sys/class/net` for its name
    (likely `wlx…`), `dmesg | tail` for the driver loading (mt7921u etc.).
@@ -121,6 +121,12 @@ waiting for the adapter. Tomorrow's checklist:
   those placeholders and keeps it, so a copy on the field's channel is
   caught even when louder; "strongest on the field channel is the field" is
   only the fallback before anything is learned.
+- **False alarm seen and fixed:** at 18:32:12 the first build logged
+  `team AP "6036-DELTA" 4a:da:35:b1:24:0f` — the field itself, broadcasting
+  a station it had just set up before its status listed it. `9ecc139`
+  (deployed 18:32) recognises the field's own addresses, so that no longer
+  counts; it logged `the field AP's access points are 4a:da:35:b1:24:xx`
+  on its first scan and no clash since, with 6036-DELTA served on red1.
 - `/sys/module/cfg80211/parameters/ieee80211_regdom` stays `00` — it is the
   boot-time module parameter, not the current domain. The channel count
   (from `get_capability freq`, which skips disabled channels) is the proof
@@ -161,7 +167,10 @@ waiting for the adapter. Tomorrow's checklist:
       (`/run/pfms-wifi/wpa_supplicant-wlp0s20f3.conf`; the old shared
       `wpa_supplicant.conf` is a harmless leftover in /run). Watch off,
       regdomain still `00`.
-- [ ] 7 verify with the adapter (2026-10-05)
+- [x] Adapter on, watch live (2026-10-05 18:28); field learned and
+      recognised; address-family fix deployed `9ecc139`
+- [ ] Spare-radio test: a team AP warning, then a competing AP on a
+      station set up for a test SSID (not a live team's)
 
 ## Open questions for the user
 
