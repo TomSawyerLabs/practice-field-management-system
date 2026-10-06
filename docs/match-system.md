@@ -615,9 +615,12 @@ IPv6 while stitchd listens on IPv4. From the next match on:
   recording itself: a player per stream, its download, the data recorded
   alongside it (`metadata.json`, `scores.csv`, `telemetry.csv`) and a link
   to the match's public summary page. All times shown are the local time of
-  the device you are reading them on. Poster frames are made by ffmpeg the
-  first time a row is shown and cached beside the video, so the first look
-  at a long list takes a moment and later ones are instant. Any recording
+  the device you are reading them on. Poster frames are made by ffmpeg in
+  the background — a minute after pFMS starts, after every match, and every
+  five minutes for new practice clips; one at a time, never while a match is
+  being recorded — and cached beside the video, so the list normally opens
+  instantly. A row shown before its frame is ready gets one made on the spot
+  (two at a time at most, ahead of the background queue). Any recording
   can be deleted there, or everything older than N days at once; deleted
   matches keep their history entry but lose their download buttons.
 - Each match directory carries a `recording.json` sidecar.

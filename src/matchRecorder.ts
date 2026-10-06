@@ -82,6 +82,14 @@ const STATUS_INTERVAL_MS = 2000;
 /** Hourly, so a recording outlives its retention by an hour at most. */
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 const DISK_CHECK_INTERVAL_MS = 60_000;
+/** How often finished recordings with no poster frame yet are looked for, so
+ *  a practice clip has one within minutes of being cut. */
+const THUMB_WARM_INTERVAL_MS = 5 * 60 * 1000;
+/** Poster frames made at once for a page that is asking for them. Each is an
+ *  ffprobe + ffmpeg (~0.75 s on steamboat), and a browser on plain HTTP has
+ *  only six connections to the host: unbounded, a table of uncached rows
+ *  starts a dozen ffmpegs and every other request on the page waits. */
+const THUMB_CONCURRENCY = 2;
 const DEFAULT_RETENTION_DAYS = 30;
 /** Teams' practice clips: a week to download them. */
 export const DEFAULT_PRACTICE_RETENTION_DAYS = 7;
@@ -263,6 +271,11 @@ export class MatchRecorder {
   private thumbJobs = new Map<string, Promise<string | undefined>>();
   /** Thumbnails that could not be made, so we stop trying. */
   private thumbFailed = new Set<string>();
+  /** Thumbnails waiting for an ffmpeg slot; urgent ones (a page is waiting)
+   *  go before the background warm-up. */
+  private thumbQueue: { out: string; urgent: boolean; start: () => void }[] = [];
+  private thumbRunning = 0;
+  private thumbTimer: NodeJS.Timeout | null = null;
 
   constructor(opts: MatchRecorderOptions) {
     this.directory = resolve(opts.directory ?? process.env.MATCH_RECORDINGS_DIR ?? DEFAULT_RECORDINGS_DIR);
@@ -305,6 +318,11 @@ export class MatchRecorder {
     this.sweep();
     this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     this.diskTimer = setInterval(() => void this.refreshDiskStats(), DISK_CHECK_INTERVAL_MS);
+    if (this.available) {
+      // A minute in, clear of the rest of startup, then every few minutes.
+      setTimeout(() => this.warmThumbnails(), 60_000).unref();
+      this.thumbTimer = setInterval(() => this.warmThumbnails(), THUMB_WARM_INTERVAL_MS);
+    }
     await this.refreshDiskStats();
 
     matchEngine.addStateListener(state => this.onMatchState(state));
@@ -536,26 +554,34 @@ export class MatchRecorder {
    * asks and cached beside the video as `<slug>.thumb.jpg`. Resolves to the
    * image's path, or undefined when there is nothing to grab a frame from.
    *
-   * Generated on demand rather than at record time: the end of a match is
-   * the busiest moment this class has, and doing it here also gives every
-   * recording made before thumbnails existed one for free.
+   * Not made at record time — the end of a match is the busiest moment this
+   * class has. Instead `warmThumbnails` makes them in the background, one at
+   * a time and never while a match is being recorded, so a page normally
+   * finds them cached; one asked for before that jumps the queue. Asking
+   * also gives every recording made before thumbnails existed one for free.
+   *
+   * `background` is the warm-up's own request: it waits behind any page.
    */
-  async thumbnail(matchId: string, file: string): Promise<string | undefined> {
+  async thumbnail(matchId: string, file: string, { background = false } = {}): Promise<string | undefined> {
     const dir = this.matchDirectory(matchId);
     if (!dir || !isRecordingFileName(file)) return undefined;
     const source = join(dir, file);
-    const out = join(dir, `${file.replace(/\.mp4$/, '')}.thumb.jpg`);
+    const out = join(dir, thumbFileName(file));
     if (existsSync(out)) return out;
     // Remember what could not be thumbnailed (no ffmpeg on this host, a
     // zero-byte capture): a table full of <img>s would otherwise spawn a
     // doomed ffmpeg per row, on every refresh.
     if (this.thumbFailed.has(out) || !existsSync(source)) return undefined;
     const running = this.thumbJobs.get(out);
-    if (running) return running;
+    if (running) {
+      // The warm-up queued it, and now a page is waiting on it too.
+      if (!background) this.promoteThumb(out);
+      return running;
+    }
     // One generation per file at a time: a table of twenty rows loads twenty
     // <img>s at once, and ffmpeg writing the same path from twenty processes
     // would be a race with a corrupt JPEG at the end of it.
-    const job = this.makeThumbnail(source, out)
+    const job = this.queueThumb(out, !background, () => this.makeThumbnail(source, out))
       .then(path => {
         if (!path) this.thumbFailed.add(out);
         return path;
@@ -563,6 +589,94 @@ export class MatchRecorder {
       .finally(() => this.thumbJobs.delete(out));
     this.thumbJobs.set(out, job);
     return job;
+  }
+
+  /**
+   * Queue every finished recording that has no poster frame yet, to be made
+   * in the background. A recording is finished once its manifest is written
+   * (match or practice); the one being recorded, orphaned pre-rolls and the
+   * practice buffer are left alone. Returns how many were queued.
+   */
+  warmThumbnails(): number {
+    let names: string[];
+    try {
+      names = readdirSync(this.directory);
+    } catch {
+      return 0;
+    }
+    let queued = 0;
+    for (const name of names) {
+      if (name.startsWith('.') || name.startsWith('pending-')) continue;
+      const dir = join(this.directory, name);
+      if (this.session?.dir === dir) continue;
+      let files: string[];
+      try {
+        files = readdirSync(dir);
+      } catch {
+        continue; // a file, or deleted underneath us
+      }
+      if (!files.includes('recording.json')) continue;
+      for (const file of files) {
+        if (!isRecordingFileName(file) || files.includes(thumbFileName(file))) continue;
+        const out = join(dir, thumbFileName(file));
+        if (this.thumbFailed.has(out) || this.thumbJobs.has(out)) continue;
+        void this.thumbnail(name, file, { background: true });
+        queued++;
+      }
+    }
+    if (queued > 0) console.log(`Match recorder: making ${queued} missing thumbnail(s) in the background`);
+    return queued;
+  }
+
+  private queueThumb(
+    out: string,
+    urgent: boolean,
+    make: () => Promise<string | undefined>,
+  ): Promise<string | undefined> {
+    return new Promise(resolve => {
+      this.thumbQueue.push({
+        out,
+        urgent,
+        start: () => {
+          this.thumbRunning++;
+          make()
+            .catch(err => {
+              console.warn(`Match recorder: no thumbnail for ${out}: ${(err as Error).message}`);
+              return undefined;
+            })
+            .then(resolve)
+            .finally(() => {
+              this.thumbRunning--;
+              this.pumpThumbs();
+            });
+        },
+      });
+      this.pumpThumbs();
+    });
+  }
+
+  private promoteThumb(out: string): void {
+    const task = this.thumbQueue.find(t => t.out === out);
+    if (task && !task.urgent) {
+      task.urgent = true;
+      this.pumpThumbs();
+    }
+  }
+
+  /** Start what the slots allow: pages' requests up to THUMB_CONCURRENCY,
+   *  the warm-up only one at a time, with nothing else running, and not
+   *  while a match is being recorded. */
+  private pumpThumbs(): void {
+    while (this.thumbQueue.length > 0) {
+      const urgent = this.thumbQueue.findIndex(t => t.urgent);
+      if (urgent >= 0) {
+        if (this.thumbRunning >= THUMB_CONCURRENCY) return;
+        this.thumbQueue.splice(urgent, 1)[0].start();
+        continue;
+      }
+      if (this.thumbRunning > 0 || this.session) return;
+      this.thumbQueue.shift()!.start();
+    }
   }
 
   private async makeThumbnail(source: string, out: string): Promise<string | undefined> {
@@ -945,6 +1059,10 @@ export class MatchRecorder {
     );
     void this.refreshDiskStats();
     this.emit();
+    // The warm-up held off while this match was recorded; this match's
+    // poster frames join whatever was already waiting.
+    if (this.available) this.warmThumbnails();
+    this.pumpThumbs();
     const finished: FinishedMatchRecording = {
       matchId,
       recordings: recordings
@@ -1356,6 +1474,11 @@ export class MatchRecorder {
  *  leaves those as the only playable files. */
 export function isRecordingFileName(file: string): boolean {
   return /^[A-Za-z0-9._-]{1,120}\.mp4$/.test(file) && !file.includes('..');
+}
+
+/** The poster frame cached beside a recorded file: `<slug>.thumb.jpg`. */
+function thumbFileName(file: string): string {
+  return `${file.replace(/\.mp4$/, '')}.thumb.jpg`;
 }
 
 /** The videos an admin can open for one recording directory. The manifest
