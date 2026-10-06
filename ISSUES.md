@@ -109,7 +109,7 @@ A-Stop dominant through the countdown and auto. What's left:
   handlers that stop robots can misfire. Not done on purpose.
 - The station page's new layout has not been looked at on a real phone.
 
-## Every page gets the whole match history on connect
+## Every page gets the whole match history on connect — in progress (master, recordings-page thread)
 
 Measured on pfms.tsl (2026-10-06): a fresh `/ws` connection receives ~200 kB
 before anything else, 122 kB of it a single `matchHistoryState` (the full
