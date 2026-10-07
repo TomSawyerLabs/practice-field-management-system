@@ -109,6 +109,20 @@ A-Stop dominant through the countdown and auto. What's left:
   handlers that stop robots can misfire. Not done on purpose.
 - The station page's new layout has not been looked at on a real phone.
 
+## Scoreboard's challenge leaderboard never has data
+
+`ScoreboardPage` (`frontend/src/components/ScoreboardPage.tsx`, ~L479 and
+~L1109) shows a `ChallengeLeaderboard` between runs from `useMatchHistory()`.
+But `/scores` uses the read-only `/ws/scores` socket, which only receives
+`PUBLIC_SAFE_TYPES` (`src/websocketServer.ts`) — never match history, and it
+takes no topic subscriptions. So the leaderboard (and its `betweenRuns`
+condition) is always empty on the TVs. Reproduce: run a challenge match,
+open `/scores` between runs — no leaderboard.
+
+**Why it matters:** a scoreboard feature that silently never shows. Fix is
+probably a small public leaderboard message (rows only) on `/ws/scores`, not
+the full history.
+
 ## Unverified behaviour we depend on
 
 Each of these is asserted by our code but was never confirmed against real
