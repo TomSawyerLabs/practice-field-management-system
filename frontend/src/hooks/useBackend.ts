@@ -48,6 +48,7 @@ import {
   AudioDeviceState,
   isMatchHistoryState,
   MatchHistoryState,
+  Topic,
   isMatchRecordingState,
   isTimelapseState,
   isTimelapseLightsProbe,
@@ -191,6 +192,8 @@ function connect() {
     // admin page keeps working and public pages know an admin is looking.
     const adminToken = wsPath === '/ws' ? localStorage.getItem(ADMIN_TOKEN_KEY) : null;
     if (adminToken) nws.send(JSON.stringify({ type: 'adminCheckAuth', token: adminToken }));
+    // Likewise subscriptions: a new socket has none until this page asks.
+    if (wsPath === '/ws') resubscribeAll(nws);
     wsConnected = true;
     events.dispatchEvent(new CustomEvent('wsStatus', { detail: true }));
   };
@@ -210,6 +213,65 @@ function connect() {
   };
 
   ws = nws;
+}
+
+// ── Topic subscriptions ─────────────────────────────────────────────
+//
+// Match history, practice runs, usage and the timelapse status are sent
+// only to pages that ask (see src/topicSubscriptions.ts). Hooks register
+// what they need while mounted; the socket's subscription per topic is the
+// union — everything if any hook wants everything, else the listed teams.
+
+/** Per topic: what each mounted hook wants (null = every team). */
+const topicWants = new Map<Topic, Map<number, readonly number[] | null>>();
+/** What the current socket was last told, per topic, to skip repeats. */
+const topicSent = new Map<Topic, string>();
+let nextWantId = 1;
+
+function subscriptionFor(topic: Topic): { type: 'subscribe' | 'unsubscribe'; topic: Topic; teams?: number[] } {
+  const wants = [...(topicWants.get(topic)?.values() ?? [])];
+  if (wants.length === 0) return { type: 'unsubscribe', topic };
+  if (wants.some(w => w === null)) return { type: 'subscribe', topic };
+  const teams = [...new Set(wants.flatMap(w => w ?? []))].sort((a, b) => a - b);
+  return { type: 'subscribe', topic, teams };
+}
+
+function syncTopic(topic: Topic, socket = ws): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return; // onopen sends it
+  // The read-only /ws/scores socket takes no subscriptions.
+  if (!new URL(socket.url).pathname.endsWith('/ws')) return;
+  const msg = subscriptionFor(topic);
+  const json = JSON.stringify(msg);
+  if (topicSent.get(topic) === json) return;
+  if (msg.type === 'unsubscribe' && !topicSent.has(topic)) return;
+  topicSent.set(topic, json);
+  socket.send(json);
+}
+
+function resubscribeAll(socket: WebSocket): void {
+  topicSent.clear();
+  for (const topic of topicWants.keys()) syncTopic(topic, socket);
+}
+
+/**
+ * Subscribe this page to a topic while the calling component is mounted.
+ * `teams` narrows it to those teams' entries; omit it for everything.
+ * Pass `enabled: false` to hold off (e.g. no team chosen yet).
+ */
+function useTopic(topic: Topic, teams?: readonly number[] | null, enabled = true): void {
+  const teamsKey = teams ? [...teams].sort((a, b) => a - b).join(',') : '*';
+  useEffect(() => {
+    if (!enabled) return;
+    const id = nextWantId++;
+    let wants = topicWants.get(topic);
+    if (!wants) topicWants.set(topic, (wants = new Map()));
+    wants.set(id, teamsKey === '*' ? null : teamsKey.split(',').map(Number));
+    syncTopic(topic);
+    return () => {
+      wants.delete(id);
+      syncTopic(topic);
+    };
+  }, [topic, teamsKey, enabled]);
 }
 
 connect();
@@ -1073,7 +1135,10 @@ export function useWsConnected(): boolean {
 
 // ── Saved Teams ─────────────────────────────────────────────────────
 
-export function useSavedTeams(): SavedTeamsState | null {
+/** One team's saved robot configs (its SSIDs), subscribed while mounted.
+ *  `null` = no team yet, nothing fetched. */
+export function useSavedTeams({ team }: { team: number | null }): SavedTeamsState | null {
+  useTopic('savedTeams', team === null ? undefined : [team], team !== null);
   const [state, setState] = useState<SavedTeamsState | null>(currentSavedTeams);
 
   useEffect(() => {
@@ -2326,6 +2391,7 @@ export function useMatchRecordingState(): MatchRecordingState | null {
 
 /** Live status of the long-term field timelapse. */
 export function useTimelapseState(): TimelapseState | null {
+  useTopic('timelapse');
   const [state, setState] = useState<TimelapseState | null>(currentTimelapseState);
 
   useEffect(() => {
@@ -2486,7 +2552,13 @@ export function sendRefreshAudioDevices() {
 
 // ── Match History ──────────────────────────────────────────────────
 
-export function useMatchHistory(): MatchHistoryState | null {
+/**
+ * Match history, subscribed while mounted. `team` narrows it to the matches
+ * that team played (a team page); `null` means no team chosen yet, so
+ * nothing is fetched; omit it for every match (/match, /recordings).
+ */
+export function useMatchHistory({ team }: { team?: number | null } = {}): MatchHistoryState | null {
+  useTopic('matchHistory', team == null ? undefined : [team], team !== null);
   const [state, setState] = useState<MatchHistoryState | null>(currentMatchHistoryState);
 
   useEffect(() => {
@@ -2506,6 +2578,7 @@ export function sendClearMatchHistory() {
 // ── Field Usage ─────────────────────────────────────────────────────
 
 export function useUsageState(): UsageState | null {
+  useTopic('usage');
   const [state, setState] = useState<UsageState | null>(currentUsageState);
 
   useEffect(() => {
@@ -2560,7 +2633,9 @@ export function practiceDayUrl(publicUrl: string, token: string): string {
 
 // ── Practice recording ("record while enabled") ─────────────────────
 
-export function usePracticeRecordingState(): PracticeRecordingState | null {
+/** Practice recording, subscribed while mounted; `team` as in useMatchHistory. */
+export function usePracticeRecordingState({ team }: { team?: number | null } = {}): PracticeRecordingState | null {
+  useTopic('practiceRecording', team == null ? undefined : [team], team !== null);
   const [state, setState] = useState<PracticeRecordingState | null>(currentPracticeRecordingState);
 
   useEffect(() => {
@@ -2607,8 +2682,9 @@ export function sendSetPracticeRecording(teamNumber: number, enabled: boolean) {
  */
 export function usePracticeDayLink(teamNumber: number | null): PracticeDayLink | null {
   const [link, setLink] = useState<PracticeDayLink | null>(null);
-  const practice = usePracticeRecordingState();
-  const history = useMatchHistory();
+  // Only this team's runs and matches move its link.
+  const practice = usePracticeRecordingState({ team: teamNumber });
+  const history = useMatchHistory({ team: teamNumber });
   const connected = useWsConnected();
   const runCount = practice?.runs.length ?? 0;
   const matchCount = history?.matches.length ?? 0;

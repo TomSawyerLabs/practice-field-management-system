@@ -149,9 +149,10 @@ export function MatchVideoCard({
   /** Shown in place of the card when there's nothing to show; omit to render nothing. */
   emptyText?: string;
 }) {
-  const history = useMatchHistory();
+  // Only this team's matches and runs: the full history is for /match.
+  const history = useMatchHistory({ team: teamNumber });
   const recording = useMatchRecordingState();
-  const practice = usePracticeRecordingState();
+  const practice = usePracticeRecordingState({ team: teamNumber });
   const dayLink = usePracticeDayLink(teamNumber);
   const publicUrl = usePublicUrl();
 

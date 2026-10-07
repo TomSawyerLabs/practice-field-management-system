@@ -171,6 +171,36 @@ keyed by SSID (`src/savedTeamStore.ts`, persisted to the
 stripped; a hash lets the UI offer a "check passphrase" flow without
 exposing the key.
 
+## WebSocket Topic Subscriptions
+
+On connect, `/ws` sends the small, page-wide state (match, scores, radio,
+setup, support, …). The big or growing states are **topics**
+(`TOPIC_MESSAGE_TYPES` in `src/types.ts`): `matchHistory`,
+`practiceRecording`, `usage`, `timelapse`, `savedTeams`. They are not sent
+on connect, and their broadcasts go only to sockets that subscribed
+(`src/topicSubscriptions.ts`, routed in `broadcast()`):
+
+```jsonc
+{ "type": "subscribe", "topic": "matchHistory", "teams": [5940] } // teams optional
+{ "type": "unsubscribe", "topic": "matchHistory" }
+```
+
+The server answers a subscribe with the current state, then sends each
+change. `teams` narrows `matchHistory`, `practiceRecording` and `savedTeams`
+to those teams' entries — a team page asks for its own. Match history goes
+over the socket without `scoreTimeline` and `periodBreakdown`; the public
+summary page (`/api/public/match/<token>`) is the only reader of those.
+
+In the frontend, the hooks (`useMatchHistory({ team })`,
+`usePracticeRecordingState({ team })`, `useSavedTeams({ team })`,
+`useUsageState()`, `useTimelapseState()`) subscribe while mounted; the
+socket's subscription per topic is the union of what mounted hooks want,
+and it is re-sent on every reconnect (as is the admin token).
+
+Measured on the 2026-10-06 data: every page got ~197 kB on connect before;
+now most get 6–8 kB, a team's Video tab ~19 kB, `/match` ~48 kB, `/usage`
+~33 kB.
+
 ## Graceful Reload
 
 `systemctl reload` preserves network state across restarts:

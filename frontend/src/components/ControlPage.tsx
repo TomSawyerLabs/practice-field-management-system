@@ -263,8 +263,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const activeStations = useStationsForTeam(teamNumber);
   const availableStation = useFindAvailableStation();
 
-  // Server-side saved team configs filtered to this team
-  const savedTeams = useSavedTeams();
+  // Server-side saved team configs: the server sends only this team's
+  const savedTeams = useSavedTeams({ team: teamNumber });
   const teamConfigs = useMemo(() => {
     if (!savedTeams) return [];
     return savedTeams.teams.filter(t => {

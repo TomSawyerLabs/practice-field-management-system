@@ -131,7 +131,11 @@ import {
   ServerInfo,
   StationName,
   StationNameList,
+  isSubscribeTopic,
+  isUnsubscribeTopic,
+  type Topic,
 } from './types.js';
+import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
 import { handleVideoProxy } from './videoProxy.js';
 import CIDRMatcher from 'cidr-matcher';
@@ -422,7 +426,50 @@ export function setupWebSocket(
     broadcast(list);
   }
 
+  /** Who wants the big states (match history, practice runs, usage,
+   *  timelapse). Those go only to subscribers, not to every page. */
+  const topicSubs = new TopicSubscriptions<WebSocket>();
+
+  /** The current state of a topic, for a new subscriber. */
+  function topicState(topic: Topic): unknown {
+    switch (topic) {
+      case 'matchHistory':
+        return matchHistoryStore?.getState();
+      case 'practiceRecording':
+        return setup?.practice?.recorder.getState();
+      case 'usage':
+        return usageTracker?.getState();
+      case 'timelapse':
+        return setup?.timelapse?.getState();
+      case 'savedTeams':
+        return savedTeamStore?.getState();
+    }
+  }
+
+  /** The recordings inventory, with each match's public summary token
+   *  joined in from match history (so /recordings can link to the summary
+   *  page without downloading the history). */
+  function recordingsInventory(recorder: MatchRecorder) {
+    const inv = recorder.inventory();
+    const tokens = new Map<string, string>();
+    for (const m of matchHistoryStore?.getState().matches ?? []) {
+      if (m.matchId && m.shareToken) tokens.set(m.matchId, m.shareToken);
+    }
+    return { ...inv, entries: inv.entries.map(e => (tokens.has(e.id) ? { ...e, shareToken: tokens.get(e.id) } : e)) };
+  }
+
   function broadcast(msg: unknown) {
+    if (topicOfMessage(msg)) {
+      for (const [client, data] of topicSubs.route(msg)) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        try {
+          client.send(data);
+        } catch {
+          // Client socket in bad state — ignore, error handler will clean up
+        }
+      }
+      return;
+    }
     const data = JSON.stringify(msg);
     const msgType = (msg as Record<string, unknown>)?.type;
     const isPublicSafe = typeof msgType === 'string' && PUBLIC_SAFE_TYPES.has(msgType);
@@ -818,10 +865,7 @@ export function setupWebSocket(
       } satisfies ServerInfo),
     );
 
-    // Send saved team configs
-    if (savedTeamStore) {
-      ws.send(JSON.stringify(savedTeamStore.getState()));
-    }
+    // Saved team configs are a topic: a team page subscribes to its own.
 
     // Send the match queue
     if (setup?.queue) {
@@ -863,29 +907,12 @@ export function setupWebSocket(
       ws.send(JSON.stringify(matchAudio.getState()));
     }
 
-    // Send match history state
-    if (matchHistoryStore) {
-      ws.send(JSON.stringify(matchHistoryStore.getState()));
-    }
+    // Match history, practice runs, usage and the timelapse are not sent
+    // here: pages that show them subscribe (see TopicSubscriptions).
 
     // Send match video recorder state
     if (setup?.matchRecorder) {
       ws.send(JSON.stringify(setup.matchRecorder.getState()));
-    }
-
-    // Practice recording ("record while enabled")
-    if (setup?.practice) {
-      ws.send(JSON.stringify(setup.practice.recorder.getState()));
-    }
-
-    // Long-term field timelapse
-    if (setup?.timelapse) {
-      ws.send(JSON.stringify(setup.timelapse.getState()));
-    }
-
-    // Send usage tracking state
-    if (usageTracker) {
-      ws.send(JSON.stringify(usageTracker.getState()));
     }
 
     // Robots' 2.4 GHz networks heard nearby
@@ -904,6 +931,7 @@ export function setupWebSocket(
     ws.on('close', () => {
       wsToIp.delete(ws);
       adminConnections.delete(ws);
+      topicSubs.drop(ws);
       wsToChatSession.delete(ws);
       setupWatchers.delete(ws);
       if (castReceivers.delete(ws)) {
@@ -1682,12 +1710,19 @@ export function setupWebSocket(
           setup.practice.store.setOptIn(data.teamNumber, data.enabled);
           setup.practice.recorder.onOptInChanged();
         }
+        // ── Topic subscriptions (the big states, only for pages using them)
+      } else if (isSubscribeTopic(data)) {
+        topicSubs.subscribe(ws, data.topic, data.teams);
+        const state = topicState(data.topic);
+        if (state) ws.send(JSON.stringify(payloadFor(data.topic, state, topicSubs.filterOf(ws, data.topic)!)));
+      } else if (isUnsubscribeTopic(data)) {
+        topicSubs.unsubscribe(ws, data.topic);
       } else if (isRequestRecordingsInventory(data)) {
         // Anyone: /recordings is open for watching (the videos themselves
         // were already served to anyone with the link). Deleting, below,
         // stays admin-only.
         if (setup?.matchRecorder) {
-          ws.send(JSON.stringify(setup.matchRecorder.inventory()));
+          ws.send(JSON.stringify(recordingsInventory(setup.matchRecorder)));
         }
       } else if (isDeleteRecording(data) || isDeleteRecordingsBefore(data)) {
         if (setup?.matchRecorder) {
@@ -1701,7 +1736,7 @@ export function setupWebSocket(
                 : 0
               : recorder.deleteRecordingsBefore(data.before);
             ws.send(JSON.stringify({ info: `Deleted ${n} recording${n === 1 ? '' : 's'}` }));
-            ws.send(JSON.stringify(recorder.inventory()));
+            ws.send(JSON.stringify(recordingsInventory(recorder)));
           }
         }
         // ── Long-term field timelapse ───────────────────────────────

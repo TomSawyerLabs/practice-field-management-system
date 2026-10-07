@@ -4176,6 +4176,9 @@ export interface RecordingInventoryEntry {
   files: RecordingInventoryFile[];
   /** Which of `metadata.json` / `scores.csv` / `telemetry.csv` are present. */
   sidecars: string[];
+  /** The match's public summary page token, when match history has one —
+   *  joined in by the server so /recordings needs no history download. */
+  shareToken?: string;
 }
 
 /** One video file inside a recording directory, as listed to an admin. */
@@ -4209,6 +4212,60 @@ export interface RecordingsInventory {
 export function isRecordingsInventory(msg: unknown): msg is RecordingsInventory {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as RecordingsInventory).type === 'recordingsInventory';
+}
+
+// ── Topic subscriptions ─────────────────────────────────────────────
+
+/**
+ * States big or growing enough that only the pages using them should get
+ * them: not sent on connect, and not broadcast to sockets that have not
+ * subscribed. Each topic names the message type it carries.
+ */
+export const TOPIC_MESSAGE_TYPES = {
+  matchHistory: 'matchHistoryState',
+  practiceRecording: 'practiceRecordingState',
+  usage: 'usageState',
+  timelapse: 'timelapseState',
+  savedTeams: 'savedTeamsState',
+} as const;
+export type Topic = keyof typeof TOPIC_MESSAGE_TYPES;
+
+/** Topics that can be narrowed to some teams' entries. */
+export const TEAM_FILTERED_TOPICS: readonly Topic[] = ['matchHistory', 'practiceRecording', 'savedTeams'];
+
+/**
+ * Start (or change) a subscription; the server answers with the current
+ * state, then sends every change. `teams` narrows a team-filtered topic to
+ * those teams' entries (a team page needs only its own matches); omitted
+ * means everything. Re-sent after every reconnect.
+ */
+export interface SubscribeTopic {
+  type: 'subscribe';
+  topic: Topic;
+  teams?: number[];
+}
+
+export function isSubscribeTopic(msg: unknown): msg is SubscribeTopic {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as SubscribeTopic;
+  return (
+    m.type === 'subscribe' &&
+    typeof m.topic === 'string' &&
+    Object.hasOwn(TOPIC_MESSAGE_TYPES, m.topic) &&
+    (m.teams === undefined ||
+      (Array.isArray(m.teams) && m.teams.length <= 32 && m.teams.every(t => Number.isInteger(t) && t > 0)))
+  );
+}
+
+export interface UnsubscribeTopic {
+  type: 'unsubscribe';
+  topic: Topic;
+}
+
+export function isUnsubscribeTopic(msg: unknown): msg is UnsubscribeTopic {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as UnsubscribeTopic;
+  return m.type === 'unsubscribe' && typeof m.topic === 'string' && Object.hasOwn(TOPIC_MESSAGE_TYPES, m.topic);
 }
 
 /** Admin asks for the inventory (it is scanned on demand, not broadcast). */

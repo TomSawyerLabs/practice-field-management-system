@@ -21,7 +21,6 @@ import {
   matchSummaryUrl,
   sendDeleteRecording,
   sendDeleteRecordingsBefore,
-  useMatchHistory,
   useMatchRecordingState,
   usePublicUrl,
   useRecordingsInventory,
@@ -82,20 +81,11 @@ function playable(entry: RecordingInventoryEntry): RecordingInventoryFile[] {
 export function RecordingsInventorySection({ isAdmin }: { isAdmin: boolean }) {
   const [inv, refresh] = useRecordingsInventory();
   const live = useMatchRecordingState();
-  const history = useMatchHistory();
   const publicUrl = usePublicUrl();
   const [showAll, setShowAll] = useState(false);
   const [olderThanDays, setOlderThanDays] = useState('30');
   const [confirm, setConfirm] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-
-  /** Share tokens for the matches we have history for, so a row can link to
-   *  the public summary page it already has. */
-  const shareTokens = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const m of history?.matches ?? []) if (m.matchId && m.shareToken) map.set(m.matchId, m.shareToken);
-    return map;
-  }, [history]);
 
   const stats = useMemo(() => {
     if (!inv) return null;
@@ -277,7 +267,8 @@ export function RecordingsInventorySection({ isAdmin }: { isAdmin: boolean }) {
                     entry={e}
                     open={open === e.id}
                     onToggle={() => setOpen(cur => (cur === e.id ? null : e.id))}
-                    summaryUrl={shareTokens.has(e.id) ? matchSummaryUrl(publicUrl, shareTokens.get(e.id)!) : undefined}
+                    // The server joins each match's summary token into the inventory.
+                    summaryUrl={e.shareToken ? matchSummaryUrl(publicUrl, e.shareToken) : undefined}
                     canDelete={isAdmin}
                     confirming={confirm === e.id}
                     onConfirm={() => setConfirm(e.id)}
