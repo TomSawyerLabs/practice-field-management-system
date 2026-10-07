@@ -49,10 +49,13 @@ same big states to every client.
    needs no history (share tokens come with the inventory).~~
 5. ~~Measure per page before (pfms.tsl) / after (local, same data).~~
 6. ~~Commit, ISSUES.md entry closed~~ — `01f9578`.
-7. **(current)** Deploy — waiting on Cameron's go-ahead. After deploy:
-   re-run the per-page measurement against pfms.tsl, and open a team with
-   real practice clips (e.g. `/6036#video`) to confirm its Video tab lists
-   them.
+7. ~~Deploy~~ — `6944f7e` deployed 2026-10-06 17:49. pfms.tsl, fresh
+   browser, bytes in first 8 s: `/` 12 kB, `/5940` 14, `/6036#video` 38
+   (its own 15 kB of practice runs + 7 kB of matches), `/match` 65,
+   `/admin` 14, `/recordings` 75 (49 kB is the inventory itself),
+   `/timelapse` 26, `/usage` 41, `/csa` 15 — every page was ~197 kB before.
+   `/6036#video` subscribed with `teams:[6036]` and lists its practice
+   runs.
 
 ## Findings / gotchas
 
@@ -87,11 +90,12 @@ same big states to every client.
 - [x] Client hooks (+ team page scoped, usePracticeDayLink fixed)
 - [x] Measure + verify (protocol checks, page renders, 852 tests)
 - [x] Commit, close issue (`01f9578`); scoreboard leaderboard bug logged
-- [ ] Deploy (needs go-ahead)
+- [x] Deployed `6944f7e`, verified on pfms.tsl
+- [x] Deleted `C:\Users\camer\pfms-ws-measure` (checked: no junctions)
 
 ## Open questions for the user
 
-1. Deploy to steamboat? (Recommended: yes.)
+None. (Deploy: done.)
 
 ## Things not to do
 
