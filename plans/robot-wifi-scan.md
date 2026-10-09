@@ -77,12 +77,23 @@ teams that capitalization matters.
     differs otherwise (other suffix) warns, and tests only on the button.
   - **Test connection** button on the team page for a stall: re-runs it,
     at most every 30 s per station. Replaces "Check again".
-  - No more testing just because a robot was heard.
+  - No more testing just because a robot was heard. **(Reversed in round 4,
+    below.)**
     One test at a time. The network is removed right after — no retries, no
     DHCP, no IP.
     Results: `ok` / `wrongKey` / `unreachable`. Wording must say the check
     used the robot's **2.4 GHz** network: a team who set a separate 2.4 GHz
     passphrase will see `wrongKey` even though the field (6 GHz) key is fine.
+- **Round 4 (user, 2026-10-08): "c. definitely just try it automatically
+  if you can. nothing hurts if the robot briefly sees a connect. we can even
+  prevent the 30s reconfigure wait".** A saved robot heard (exact or
+  capitals-only) and not on the field gets its **saved** passphrase tried
+  automatically, once per (heard SSID, saved-key hash). Same cache as the
+  stall check, so a later stall reuses the answer. Queue order: asked
+  stalls, auto stalls, then saved robots. Wrong → the row's main button is
+  **Fix passphrase** (form: name locked, **Save** = save only, then pFMS
+  checks right away via the saved-team listener; **Save and enable**), with
+  **Enable anyway** (the 2.4 GHz-own-passphrase case).
 - Never send a passphrase to clients; results are keyed by SSID only.
 - Full field: the add form's single button saves the robot ("Add robot")
   instead of a second "Save for Later" choice.
@@ -170,25 +181,23 @@ Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
       the "Passphrase verified" tooltip icon became a visible chip. Checked
       in a browser (local DRY_RUN backend + injected scan); the stall chips
       are unit-tested only.
-- [ ] Open: should pFMS check the saved passphrase for a robot heard
-      _before_ it's enabled? See Open questions 2.
+- [x] Round 4 (2026-10-08): saved passphrase tried automatically before
+      Enable (`savedRobots` option replaces `savedSsids`; `keyCheck` on
+      `RobotWifiBroadcast`); Fix passphrase / Enable anyway on the row; CSA
+      warning; admin column shows it; docs. Scanner tests 29, wording tests 25. Checked in a browser (injected scan): chips, buttons, fix form,
+      Save writes the new key. The real join on a real robot is unverified.
 - [ ] Verify against a real robot: its `FRC-<team>` network listed on
       /admin; a stalled connection warns on the team page and tests.
 
 ## Open questions for the user
 
-1. OK to turn the scanner on on steamboat after deploy? It brings up the
-   unused Intel card and briefly associates with robots' 2.4 GHz networks
-   (no IP). Recommendation: yes.
-2. (2026-10-08) Passphrase for a robot heard but not yet enabled: today it
-   is only tried once a connection stalls (round-2 decision). Options:
-   (a) leave it; (b) a **Test passphrase** button on the "Radio on" row,
-   team-pressed, rate-limited, saved key vs the 2.4 GHz network; (c) try it
-   automatically once per (heard SSID, saved-key hash). Recommendation: (b).
+None open. (Turning the scan on at steamboat: done 2026-09-29. Passphrase
+before Enable: answered (c), round 4.)
 
 ## Things not to do
 
 - Don't install `iw` or other packages on steamboat without approval.
 - Don't let the scanner touch any interface other than the chosen one.
 - Don't retry a passphrase test in a loop — robot radios may rate-limit or
-  log it; once per key is the rule.
+  log it; once per key is the rule (per heard SSID + key hash, for both the
+  field's and the saved passphrase).
