@@ -7,7 +7,7 @@
  * 2.4 GHz, which is what pFMS hears. Same name either side of `FRC-`, so a
  * difference in capitals here is a difference the field will trip on.
  */
-import type { RobotWifiBroadcast, RobotWifiScanState, RobotWifiStall } from '../../../src/types';
+import type { RobotWifiBroadcast, RobotWifiScanState, RobotWifiStall, StationName } from '../../../src/types';
 
 export type RobotWifiSeverity = 'error' | 'warning' | 'info' | 'success';
 
@@ -126,6 +126,59 @@ export function describeStallForTeam(
       break;
   }
   return { severity, lines };
+}
+
+/** What the scan says about one saved robot, for its row in the team's
+ *  robot list — so the team sees which row is the robot on the air without
+ *  comparing names. */
+export interface RobotRowWifi {
+  /** Short marks beside the robot's name */
+  chips: RobotWifiLine[];
+  /** A sentence under the name, when a mark needs one */
+  line?: RobotWifiLine;
+  /** Off the field, and its radio is on the air under exactly this name:
+   *  the one to enable. */
+  onAir: boolean;
+}
+
+const KEY_CHIP: Partial<Record<NonNullable<RobotWifiStall['keyCheck']>['result'], RobotWifiLine>> = {
+  checking: { severity: 'info', text: 'Checking passphrase…' },
+  ok: { severity: 'success', text: 'Passphrase OK' },
+  wrongKey: { severity: 'error', text: 'Passphrase wrong' },
+};
+
+/** The row marks for saved robot `ssid`, on the field at `station` (null
+ *  when it isn't). A robot already on the field isn't marked "Radio on" —
+ *  only what a stalled connection found about its passphrase. */
+export function robotRowWifi(
+  scan: RobotWifiScanState | null,
+  ssid: string,
+  station: StationName | null,
+): RobotRowWifi | null {
+  if (scan?.status !== 'running') return null;
+  const mine = scan.broadcasts.filter(b => b.match.kind !== 'unknown' && b.match.savedSsid === ssid);
+  const exact = mine.find(b => b.match.kind === 'exact');
+  const caseOnly = exact ? undefined : mine[0];
+  const stall = station ? scan.stalls?.find(st => st.station === station && st.fieldSsid === ssid) : undefined;
+
+  const chips: RobotWifiLine[] = [];
+  let line: RobotWifiLine | undefined;
+  const onAir = !!exact && !station;
+  if (onAir) {
+    chips.push({ severity: 'success', text: 'Radio on' });
+    line = { severity: 'success', text: `We can hear it as ${exact.ssid} (${exact.signal} dBm).` };
+  } else if (caseOnly) {
+    chips.push({ severity: 'error', text: 'Name differs' });
+    line = {
+      severity: 'error',
+      text:
+        `Your radio is ${caseOnly.robotSsid} (we can hear ${caseOnly.ssid}). ` +
+        `Capitals must match, so the field won't connect to this one.`,
+    };
+  }
+  const key = stall?.keyCheck && KEY_CHIP[stall.keyCheck.result];
+  if (key) chips.push(key);
+  return chips.length ? { chips, line, onAir } : null;
 }
 
 /** Stalled connections for one team. */

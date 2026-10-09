@@ -11,6 +11,8 @@ import Chip from '@mui/material/Chip';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import WifiIcon from '@mui/icons-material/Wifi';
+import { alpha } from '@mui/material/styles';
 import { TeamAvatar } from './TeamAvatar';
 import {
   useLatest,
@@ -48,6 +50,8 @@ import {
   broadcastsForTeam,
   describeNameForTeam,
   describeStallForTeam,
+  robotRowWifi,
+  type RobotRowWifi,
   stallsForTeam,
   suffixOf,
 } from '../utils/robotWifi';
@@ -499,6 +503,14 @@ function RobotList({
   const [showAddForm, setShowAddForm] = useState(false);
   const [addSuffix, setAddSuffix] = useState('');
 
+  // What the robot Wi-Fi scan hears, marked on each robot's own row. When a
+  // robot off the field is on the air, the other rows' Enable steps back.
+  const scan = useRobotWifiScan();
+  const rowWifi = new Map(
+    teamConfigs.map(c => [c.ssid, robotRowWifi(scan, c.ssid, activeStations.get(c.ssid) ?? null)]),
+  );
+  const anyOnAir = [...rowWifi.values()].some(w => w?.onAir);
+
   // Passphrase verification state
   const [showVerifyField, setShowVerifyField] = useState(false);
   const [verifyValue, setVerifyValue] = useState('');
@@ -620,6 +632,8 @@ function RobotList({
                 routePreference={routePreference}
                 isMultiRobot={isMultiRobot}
                 isVerified={config.ssid === verifiedSsid}
+                wifi={rowWifi.get(config.ssid) ?? null}
+                quietEnable={anyOnAir && !rowWifi.get(config.ssid)?.onAir}
               />
             ))}
           </Box>
@@ -643,6 +657,8 @@ function RobotRow({
   routePreference,
   isMultiRobot,
   isVerified,
+  wifi,
+  quietEnable,
 }: {
   config: SavedTeamClientConfig;
   isActive: boolean;
@@ -653,6 +669,10 @@ function RobotRow({
   routePreference: StationName | null;
   isMultiRobot: boolean;
   isVerified: boolean;
+  /** What the robot Wi-Fi scan hears of this robot */
+  wifi: RobotRowWifi | null;
+  /** Another of the team's robots is on the air and this one isn't */
+  quietEnable: boolean;
 }) {
   const [pendingDrive, setPendingDrive] = useState(false);
   const [showEnableHint, setShowEnableHint] = useState(false);
@@ -782,9 +802,13 @@ function RobotRow({
           py: 1,
           borderRadius: 1,
           cursor: 'pointer',
-          backgroundColor: isSelected ? 'action.selected' : 'transparent',
-          borderLeft: isSelected ? 3 : 0,
-          borderColor: 'primary.main',
+          backgroundColor: isSelected
+            ? 'action.selected'
+            : wifi?.onAir
+              ? theme => alpha(theme.palette.success.main, 0.08)
+              : 'transparent',
+          borderLeft: isSelected || wifi?.onAir ? 3 : 0,
+          borderColor: isSelected ? 'primary.main' : 'success.main',
           '&:hover': { backgroundColor: isSelected ? 'action.selected' : 'action.hover' },
           transition: 'background-color 0.15s',
         }}
@@ -795,10 +819,26 @@ function RobotRow({
               {suffix ?? config.ssid}
             </Typography>
             {isVerified && (
-              <Tooltip title="Passphrase verified">
-                <CheckCircleIcon sx={{ color: 'success.main', fontSize: 18 }} />
-              </Tooltip>
+              <Chip
+                icon={<CheckCircleIcon />}
+                label="Passphrase matches"
+                color="success"
+                size="small"
+                variant="outlined"
+                sx={{ height: 20, fontSize: '0.7rem' }}
+              />
             )}
+            {wifi?.chips.map(c => (
+              <Chip
+                key={c.text}
+                icon={c.text === 'Radio on' ? <WifiIcon /> : undefined}
+                label={c.text}
+                color={c.severity}
+                size="small"
+                variant={c.severity === 'error' ? 'filled' : 'outlined'}
+                sx={{ height: 20, fontSize: '0.7rem' }}
+              />
+            ))}
             {isLive && <Chip label="Active" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
             {pendingChip && (
               <Chip
@@ -826,6 +866,11 @@ function RobotRow({
           <Typography variant="caption" color="text.secondary">
             Last used {formatAge(config.lastUsedAt)}
           </Typography>
+          {wifi?.line && (
+            <Typography variant="caption" sx={{ display: 'block', color: `${wifi.line.severity}.main` }}>
+              {wifi.line.text}
+            </Typography>
+          )}
           {pendingReason && (
             <Typography variant="caption" sx={{ display: 'block', color: 'warning.main' }}>
               {pendingReason}
@@ -880,7 +925,7 @@ function RobotRow({
             // Disabled when the field is full — the alert above says what to do.
             <Button
               size="small"
-              variant="contained"
+              variant={quietEnable ? 'outlined' : 'contained'}
               disabled={configCooldown || !availableStation}
               onClick={e => handleEnable(e)}
             >
@@ -920,11 +965,13 @@ function RobotWifiHeard({
   const sixGhzWatching = isSixGhzWatching(useSixGhzWatch());
   if (scan?.status !== 'running') return null;
   const stalls = stallsForTeam(scan, teamNumber);
-  // A robot a stall already talks about isn't described twice
-  const heard = broadcastsForTeam(scan, teamNumber).filter(b => !stalls.some(st => st.broadcast.ssid === b.ssid));
+  const mine = broadcastsForTeam(scan, teamNumber);
+  // A robot a stall already talks about isn't described twice, and one that
+  // matches a saved robot is marked on that robot's row instead.
+  const heard = mine.filter(b => b.match.kind !== 'exact' && !stalls.some(st => st.broadcast.ssid === b.ssid));
   const now = getServerTime();
 
-  if (heard.length === 0 && stalls.length === 0) {
+  if (mine.length === 0 && stalls.length === 0) {
     // Only worth saying while they are still trying to get a robot on.
     if (hasRobotOnField) return null;
     return (
@@ -934,6 +981,7 @@ function RobotWifiHeard({
       </Typography>
     );
   }
+  if (heard.length === 0 && stalls.length === 0) return null;
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 2 }}>

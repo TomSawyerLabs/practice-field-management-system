@@ -4,6 +4,7 @@ import {
   broadcastsForTeam,
   describeNameForTeam,
   describeStallForTeam,
+  robotRowWifi,
   robotWifiStaffIssues,
   stallsForTeam,
   suffixOf,
@@ -131,6 +132,60 @@ describe('a robot taking too long to join, for the team', () => {
     );
     expect(lines[0]).toContain('the robot we can hear is FRC-1234');
     expect(lines[1]).toBe("Test connection tries the field's passphrase for 1234-Comp on FRC-1234.");
+  });
+});
+
+describe("on a saved robot's row", () => {
+  test('a robot off the field on the air under its saved name is the one to enable', () => {
+    const w = robotRowWifi(scan([heard()]), '1234-Comp', null);
+    expect(w?.onAir).toBe(true);
+    expect(w?.chips.map(c => c.text)).toEqual(['Radio on']);
+    expect(w?.line?.text).toContain('FRC-1234-Comp');
+  });
+
+  test("other saved robots aren't marked", () => {
+    expect(robotRowWifi(scan([heard()]), '1234-Practice', null)).toBeNull();
+  });
+
+  test('a name that differs in capitals marks the saved row, not as on the air', () => {
+    const w = robotRowWifi(
+      scan([
+        heard({ ssid: 'FRC-1234-comp', robotSsid: '1234-comp', match: { kind: 'caseOnly', savedSsid: '1234-Comp' } }),
+      ]),
+      '1234-Comp',
+      null,
+    );
+    expect(w?.onAir).toBe(false);
+    expect(w?.chips).toEqual([{ severity: 'error', text: 'Name differs' }]);
+    expect(w?.line?.text).toContain('1234-comp');
+  });
+
+  test('an exact match wins over a capitals-only one', () => {
+    const w = robotRowWifi(
+      scan([
+        heard({ ssid: 'FRC-1234-comp', robotSsid: '1234-comp', match: { kind: 'caseOnly', savedSsid: '1234-Comp' } }),
+        heard(),
+      ]),
+      '1234-Comp',
+      null,
+    );
+    expect(w?.onAir).toBe(true);
+  });
+
+  test('a robot on the field shows only what its passphrase check found', () => {
+    expect(robotRowWifi(scan([heard()]), '1234-Comp', 'slot3')).toBeNull();
+    const wrong = robotRowWifi(scan([heard()], [stall(key('wrongKey'))]), '1234-Comp', 'slot3');
+    expect(wrong?.chips).toEqual([{ severity: 'error', text: 'Passphrase wrong' }]);
+    const ok = robotRowWifi(scan([heard()], [stall(key('ok'))]), '1234-Comp', 'slot3');
+    expect(ok?.chips).toEqual([{ severity: 'success', text: 'Passphrase OK' }]);
+  });
+
+  test("another station's stall doesn't mark this row", () => {
+    expect(robotRowWifi(scan([heard()], [stall(key('wrongKey'))]), '1234-Comp', 'slot1')).toBeNull();
+  });
+
+  test('nothing while the scan is off', () => {
+    expect(robotRowWifi(scan([heard()], [], { status: 'off' }), '1234-Comp', null)).toBeNull();
   });
 });
 

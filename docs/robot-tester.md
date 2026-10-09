@@ -148,10 +148,18 @@ not be used for anything else. Linux only.
 
 **What teams see** on their page, per robot network heard for their team:
 
-- **Matches a saved robot** — a green note.
+- **Matches a saved robot** — that robot's row in the list lights up green
+  with **Radio on** and the signal heard, and the other rows' **Enable
+  Robot** buttons step back to outlined, so the one to press stands out.
+  (Not shown once that robot is on the field.)
 - **Differs only in capitals** — an error saying the field will never
-  connect, with **Add as 1234-Suffix** to save it under the right name.
+  connect, with **Add as 1234-Suffix** to save it under the right name; the
+  saved robot's row is marked **Name differs**.
 - **Not saved** — a note with the same **Add as …** button.
+
+A robot on the field whose connection stalled (below) gets **Passphrase
+OK**, **Passphrase wrong** or **Checking passphrase…** on its row once
+pFMS has tried it.
 
 **A robot taking too long to join.** When a station is set up for a team's
 robot, the radio is up, and the robot still hasn't linked after **60
