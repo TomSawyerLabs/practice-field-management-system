@@ -184,6 +184,34 @@ describe("on a saved robot's row", () => {
     expect(robotRowWifi(scan([heard()], [stall(key('wrongKey'))]), '1234-Comp', 'slot1')).toBeNull();
   });
 
+  test("a saved passphrase that doesn't open the robot says so before it is enabled", () => {
+    const w = robotRowWifi(scan([heard(key('wrongKey'))]), '1234-Comp', null);
+    expect(w?.onAir).toBe(true);
+    expect(w?.passphraseWrong).toBe(true);
+    expect(w?.chips.map(c => c.text)).toEqual(['Radio on', 'Passphrase wrong']);
+    expect(w?.line).toMatchObject({ severity: 'error' });
+    expect(w?.line?.text).toContain('2.4 GHz');
+
+    const ok = robotRowWifi(scan([heard(key('ok'))]), '1234-Comp', null);
+    expect(ok?.passphraseWrong).toBe(false);
+    expect(ok?.chips.map(c => c.text)).toEqual(['Radio on', 'Passphrase OK']);
+  });
+
+  test("once on the field, the saved check gives way to the field's", () => {
+    expect(robotRowWifi(scan([heard(key('wrongKey'))]), '1234-Comp', 'slot3')).toBeNull();
+  });
+
+  test('a capitals mismatch with a wrong passphrase keeps the name as the headline', () => {
+    const w = robotRowWifi(
+      scan([heard({ ...key('wrongKey'), match: { kind: 'caseOnly', savedSsid: '1234-comp' } })]),
+      '1234-comp',
+      null,
+    );
+    expect(w?.chips.map(c => c.text)).toEqual(['Name differs', 'Passphrase wrong']);
+    expect(w?.line?.text).toContain('Capitals');
+    expect(w?.passphraseWrong).toBe(true);
+  });
+
   test('nothing while the scan is off', () => {
     expect(robotRowWifi(scan([heard()], [], { status: 'off' }), '1234-Comp', null)).toBeNull();
   });
@@ -207,6 +235,15 @@ describe('for the CSA', () => {
       [1234, 'critical'],
       [971, 'info'],
     ]);
+  });
+
+  test('a saved passphrase that fails on the robot is a warning, unless a stall already says it', () => {
+    const issues = robotWifiStaffIssues(scan([heard(key('wrongKey'))]), NOW);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ team: 1234, severity: 'warning' });
+    expect(issues[0].title).toContain('1234-Comp');
+    expect(robotWifiStaffIssues(scan([heard(key('ok'))]), NOW)).toEqual([]);
+    expect(robotWifiStaffIssues(scan([heard(key('wrongKey'))], [stall(key('wrongKey'))]), NOW)).toHaveLength(1);
   });
 
   test('a stalled robot is a warning, critical once its passphrase is wrong; said once per robot', () => {

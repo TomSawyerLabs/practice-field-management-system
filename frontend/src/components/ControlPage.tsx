@@ -502,6 +502,13 @@ function RobotList({
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [addSuffix, setAddSuffix] = useState('');
+  /** The add form is open to re-enter a saved robot's passphrase */
+  const [fixing, setFixing] = useState(false);
+  const openAddForm = (suffix: string, fix = false) => {
+    setAddSuffix(suffix);
+    setFixing(fix);
+    setShowAddForm(true);
+  };
 
   // What the robot Wi-Fi scan hears, marked on each robot's own row. When a
   // robot off the field is on the air, the other rows' Enable steps back.
@@ -581,8 +588,8 @@ function RobotList({
               size="small"
               startIcon={<AddIcon />}
               onClick={() => {
-                setAddSuffix('');
-                setShowAddForm(!showAddForm);
+                if (showAddForm) setShowAddForm(false);
+                else openAddForm('');
               }}
             >
               Add Robot
@@ -595,18 +602,16 @@ function RobotList({
         <RobotWifiHeard
           teamNumber={teamNumber}
           hasRobotOnField={activeStations.size > 0}
-          onAdd={suffix => {
-            setAddSuffix(suffix);
-            setShowAddForm(true);
-          }}
+          onAdd={suffix => openAddForm(suffix)}
         />
 
         <SixGhzClashAlerts teamNumber={teamNumber} />
 
         {showAddForm && (
           <AddRobotForm
-            key={addSuffix}
+            key={`${addSuffix}\n${fixing}`}
             initialSuffix={addSuffix}
+            fixing={fixing}
             teamNumber={teamNumber}
             availableStation={availableStation}
             onDone={() => setShowAddForm(false)}
@@ -634,6 +639,7 @@ function RobotList({
                 isVerified={config.ssid === verifiedSsid}
                 wifi={rowWifi.get(config.ssid) ?? null}
                 quietEnable={anyOnAir && !rowWifi.get(config.ssid)?.onAir}
+                onFixPassphrase={() => openAddForm(suffixOf(config.ssid), true)}
               />
             ))}
           </Box>
@@ -659,6 +665,7 @@ function RobotRow({
   isVerified,
   wifi,
   quietEnable,
+  onFixPassphrase,
 }: {
   config: SavedTeamClientConfig;
   isActive: boolean;
@@ -673,6 +680,8 @@ function RobotRow({
   wifi: RobotRowWifi | null;
   /** Another of the team's robots is on the air and this one isn't */
   quietEnable: boolean;
+  /** Open the form to re-enter this robot's passphrase */
+  onFixPassphrase: () => void;
 }) {
   const [pendingDrive, setPendingDrive] = useState(false);
   const [showEnableHint, setShowEnableHint] = useState(false);
@@ -921,6 +930,31 @@ function RobotRow({
                 Release
               </Button>
             </>
+          ) : wifi?.passphraseWrong ? (
+            // Fix it here rather than spend a field reconfiguration finding out.
+            // Enable anyway: a robot whose 2.4 GHz network has its own
+            // passphrase fails this check but still joins the field.
+            <>
+              <Button
+                size="small"
+                variant="contained"
+                color="error"
+                onClick={e => {
+                  e.stopPropagation();
+                  onFixPassphrase();
+                }}
+              >
+                Fix passphrase
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={configCooldown || !availableStation}
+                onClick={e => handleEnable(e)}
+              >
+                Enable anyway
+              </Button>
+            </>
           ) : (
             // Disabled when the field is full — the alert above says what to do.
             <Button
@@ -1057,6 +1091,7 @@ function AddRobotForm({
   teamNumber,
   availableStation,
   initialSuffix = '',
+  fixing = false,
   onDone,
   onSelectRobot,
 }: {
@@ -1064,6 +1099,9 @@ function AddRobotForm({
   availableStation: StationName | null;
   /** Prefilled from the robot's own broadcast name ("Add as 1234-Comp"). */
   initialSuffix?: string;
+  /** Re-entering a saved robot's passphrase: the name is fixed, and Save
+   *  lets pFMS check the new passphrase on the robot before it is enabled. */
+  fixing?: boolean;
   onDone: () => void;
   onSelectRobot: (ssid: string) => void;
 }) {
@@ -1090,7 +1128,8 @@ function AddRobotForm({
     onDone();
   };
 
-  /** Field full: keep the robot so Enable Robot is one tap once room opens. */
+  /** Save without enabling: the field is full (Enable Robot is one tap once
+   *  room opens), or a fixed passphrase gets checked on the robot first. */
   const handleAdd = () => {
     if (!isValid) return;
     sendSaveTeam(ssid, passphrase);
@@ -1101,7 +1140,7 @@ function AddRobotForm({
   return (
     <Card variant="outlined" sx={{ mb: 2, p: 2 }}>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        New Robot
+        {fixing ? 'Fix passphrase' : 'New Robot'}
       </Typography>
       <Typography variant="body2" color={duplicateStation ? 'warning.main' : 'text.secondary'} sx={{ mb: 1 }}>
         SSID: <strong>{ssid}</strong>
@@ -1111,6 +1150,7 @@ function AddRobotForm({
         label="Suffix (optional)"
         value={suffix}
         onChange={e => setSuffix(e.target.value.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 10))}
+        disabled={fixing}
         fullWidth
         size="small"
         helperText="Exactly as set on the radio. Capitals matter: Comp and comp are different robots."
@@ -1141,8 +1181,24 @@ function AddRobotForm({
         error={!!passphrase && !isValid}
         sx={{ mb: 2 }}
       />
+      {fixing && (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          Save, and pFMS tries it on your robot within a few seconds — its row says whether it works.
+        </Typography>
+      )}
       <Box sx={{ display: 'flex', gap: 1 }}>
-        {duplicateStation ? (
+        {fixing && !duplicateStation ? (
+          <>
+            <Button variant="contained" size="small" disabled={!isValid} onClick={handleAdd}>
+              Save
+            </Button>
+            {availableStation && (
+              <Button variant="outlined" size="small" disabled={!isValid} onClick={handleSubmit}>
+                Save and enable
+              </Button>
+            )}
+          </>
+        ) : duplicateStation ? (
           <Button variant="contained" size="small" color="warning" disabled={!isValid} onClick={handleReplace}>
             Replace
           </Button>

@@ -435,11 +435,30 @@ export function findStalls(attempts: ConnectAttempt[], heard: Heard[], now: numb
 /** 2.4 GHz channels 1–13 and 14: robot radios only broadcast there. */
 const SCAN_FREQS = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 2484].join(',');
 
+/** A robot a team has saved. */
+export interface SavedRobot {
+  ssid: string;
+  /** Never leaves the server. */
+  wpaKey: string;
+}
+
+/** One passphrase to try on one heard robot network. */
+interface KeyCheckJob {
+  /** The network heard, e.g. `FRC-1234-Comp` */
+  heardSsid: string;
+  /** The SSID whose passphrase is tried: the field's, or a saved robot's */
+  ssid: string;
+  wpaKey: string;
+  /** For the log line */
+  why: string;
+}
+
 export interface RobotWifiScannerOptions {
   iface: string;
   runner: WifiRunner;
-  /** SSIDs of the robots teams have saved, for name matching */
-  savedSsids: () => string[];
+  /** The robots teams have saved: names to match what is heard against,
+   *  and passphrases to try on them */
+  savedRobots: () => SavedRobot[];
   /** Stations the field is trying to connect robots on */
   connectAttempts: () => ConnectAttempt[];
   onChange: (state: RobotWifiScanState) => void;
@@ -590,25 +609,75 @@ export class RobotWifiScanner {
     return findStalls(this.o.connectAttempts(), [...this.seen.values()], this.o.now(), this.o.stallMs);
   }
 
-  private checkId(st: Stall): string {
-    return `${st.broadcast.ssid}\n${keyHash(st.attempt.wpaKey)}`;
+  private checkId(job: Pick<KeyCheckJob, 'heardSsid' | 'wpaKey'>): string {
+    return `${job.heardSsid}\n${keyHash(job.wpaKey)}`;
   }
 
-  /** Test one stalled connection, if one is due: first any a team asked
-   *  for, then any not yet tested whose robot is named like the field
-   *  expects (capitals aside). One at a time — the radio also scans. */
+  private stallJob(st: Stall): KeyCheckJob {
+    const { station, ssid, wpaKey } = st.attempt;
+    return {
+      heardSsid: st.broadcast.ssid,
+      ssid,
+      wpaKey,
+      why: `${station} set up for ${ssid}, stalled; field passphrase`,
+    };
+  }
+
+  /** Heard robots that match a saved robot (capitals aside) and aren't on
+   *  the field: the saved passphrase, tried before the team enables it, so
+   *  a typo doesn't cost a field reconfiguration to find out. */
+  private savedJobs(): KeyCheckJob[] {
+    const saved = this.o.savedRobots();
+    const savedSsids = saved.map(r => r.ssid);
+    const onField = new Set(this.o.connectAttempts().map(a => a.ssid));
+    return [...this.seen.values()].flatMap(s => {
+      const match = matchSavedRobot(s.robotSsid, savedSsids);
+      if (match.kind === 'unknown' || onField.has(match.savedSsid)) return [];
+      const robot = saved.find(r => r.ssid === match.savedSsid);
+      if (!robot) return [];
+      return [
+        {
+          heardSsid: s.ssid,
+          ssid: robot.ssid,
+          wpaKey: robot.wpaKey,
+          why: `saved ${robot.ssid}, not on the field; saved passphrase`,
+        },
+      ];
+    });
+  }
+
+  /** Whether a job has not been tried yet and can be. */
+  private due(job: KeyCheckJob): boolean {
+    if (this.keyChecks.has(this.checkId(job))) return false;
+    const seen = this.seen.get(job.heardSsid);
+    if (!seen) return false;
+    const security = keyMgmtFor(seen.flags);
+    return security === 'open' || !joinProblem(seen.ssid, security, job.wpaKey);
+  }
+
+  /** Try one passphrase, if one is due: first a stalled connection a team
+   *  asked about, then any stalled connection not yet tested whose robot is
+   *  named like the field expects (capitals aside), then any saved robot
+   *  heard on the air but not on the field. One at a time — the radio also
+   *  scans. */
   async checkNextKey(): Promise<void> {
     if (this.checking || this.status !== 'running') return;
     const stalls = this.stalls();
     for (const station of this.asked)
       if (!stalls.some(st => st.attempt.station === station)) this.asked.delete(station);
-    const next =
-      stalls.find(st => this.asked.has(st.attempt.station)) ??
-      stalls.find(st => st.match !== 'otherName' && !this.keyChecks.has(this.checkId(st)));
-    if (!next) return;
-    this.asked.delete(next.attempt.station);
-    await this.runKeyCheck(next);
-    if (this.asked.size) void this.checkNextKey();
+    const asked = stalls.find(st => this.asked.has(st.attempt.station));
+    if (asked) this.asked.delete(asked.attempt.station);
+    const job =
+      (asked && this.stallJob(asked)) ??
+      stalls
+        .filter(st => st.match !== 'otherName')
+        .map(st => this.stallJob(st))
+        .find(j => this.due(j)) ??
+      this.savedJobs().find(j => this.due(j));
+    if (!job) return;
+    await this.runKeyCheck(job);
+    // Keep going while there is more to try; scans wait meanwhile
+    void this.checkNextKey();
   }
 
   /** "Test connection" for a stalled station: try the field's passphrase
@@ -616,17 +685,17 @@ export class RobotWifiScanner {
   test(station: StationName): void {
     const st = this.stalls().find(s => s.attempt.station === station);
     if (!st) return;
-    const prev = this.keyChecks.get(this.checkId(st));
+    const prev = this.keyChecks.get(this.checkId(this.stallJob(st)));
     if (prev && (prev.result === 'checking' || this.o.now() - prev.at < this.o.testMinGapMs)) return;
     this.asked.add(station);
     void this.checkNextKey();
   }
 
-  private async runKeyCheck(st: Stall): Promise<void> {
-    const id = this.checkId(st);
-    const seen = this.seen.get(st.broadcast.ssid);
+  private async runKeyCheck(job: KeyCheckJob): Promise<void> {
+    const id = this.checkId(job);
+    const seen = this.seen.get(job.heardSsid);
     if (!seen) return;
-    const { ssid: fieldSsid, wpaKey } = st.attempt;
+    const { ssid: fieldSsid, wpaKey } = job;
     const security = keyMgmtFor(seen.flags);
     if (security === 'open') {
       this.keyChecks.set(id, { result: 'open', at: this.o.now(), fieldSsid });
@@ -651,10 +720,7 @@ export class RobotWifiScanner {
     } finally {
       this.checking = null;
     }
-    console.log(
-      `Robot Wi-Fi passphrase check: ${st.attempt.station} set up for ${fieldSsid}, stalled; ` +
-        `field passphrase on ${seen.ssid}: ${result}`,
-    );
+    console.log(`Robot Wi-Fi passphrase check: ${job.why} on ${seen.ssid}: ${result}`);
     this.keyChecks.set(id, { result, at: this.o.now(), fieldSsid });
     this.emit();
   }
@@ -677,12 +743,18 @@ export class RobotWifiScanner {
   }
 
   getState(): RobotWifiScanState {
-    const savedSsids = this.o.savedSsids();
+    const saved = this.o.savedRobots();
+    const savedSsids = saved.map(r => r.ssid);
     const broadcasts: RobotWifiBroadcast[] = [...this.seen.values()]
       .sort((a, b) => a.team - b.team || a.ssid.localeCompare(b.ssid))
-      .map(({ flags: _flags, ...s }) => ({ ...s, match: matchSavedRobot(s.robotSsid, savedSsids) }));
+      .map(({ flags: _flags, ...s }) => {
+        const match = matchSavedRobot(s.robotSsid, savedSsids);
+        const robot = match.kind === 'unknown' ? undefined : saved.find(r => r.ssid === match.savedSsid);
+        const keyCheck = robot && this.keyChecks.get(this.checkId({ heardSsid: s.ssid, wpaKey: robot.wpaKey }));
+        return { ...s, match, ...(keyCheck && { keyCheck }) };
+      });
     const stalls: RobotWifiStall[] = this.stalls().map(st => {
-      const keyCheck = this.keyChecks.get(this.checkId(st));
+      const keyCheck = this.keyChecks.get(this.checkId(this.stallJob(st)));
       return {
         station: st.attempt.station,
         team: st.broadcast.team,

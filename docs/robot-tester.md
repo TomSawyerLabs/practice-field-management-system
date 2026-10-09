@@ -157,9 +157,18 @@ not be used for anything else. Linux only.
   saved robot's row is marked **Name differs**.
 - **Not saved** — a note with the same **Add as …** button.
 
-A robot on the field whose connection stalled (below) gets **Passphrase
-OK**, **Passphrase wrong** or **Checking passphrase…** on its row once
-pFMS has tried it.
+**The saved passphrase, before Enable.** When a saved robot that isn't on
+the field is heard (by its exact name, or with only the capitals
+different), pFMS tries its saved passphrase on the robot's network once, by
+itself — and again whenever the team changes it. The row shows
+**Passphrase OK**, **Passphrase wrong** or **Checking passphrase…**. When
+it's wrong, the row's main button becomes **Fix passphrase** (re-enter it;
+**Save** has pFMS try the new one right away, before anything changes on
+the field) with **Enable anyway** beside it — so a typo doesn't cost a
+field reconfiguration to find out.
+
+A robot on the field whose connection stalled (below) gets the same chips
+for the field's passphrase.
 
 **A robot taking too long to join.** When a station is set up for a team's
 robot, the radio is up, and the robot still hasn't linked after **60
@@ -182,19 +191,23 @@ joined, and says what pFMS hears:
 **Test connection** runs the test again, or for the first time when the
 names differ — at most once every 30 seconds per station. A test joins the
 robot's network once and leaves straight away: no DHCP, no address, no
-retries. Nothing is tried just because a robot is heard. The test uses the
+retries. The test uses the
 field's own passphrase (the station's set-up, which is what the field is
 failing with) on the robot's **2.4 GHz** network, which can be given its
 own passphrase when the radio is configured. A team that did that sees
 "wrong" even though the field's 6 GHz passphrase may be fine; the wording
-says so.
+says so. The same goes for the saved-passphrase check above, which is why
+**Enable anyway** stays. A result is kept per (network heard, passphrase),
+so a stall on a robot already checked before Enable reuses that answer.
 
 **What CSAs see:** `/csa` lists a robot taking too long to join — critical
 when the passphrase is wrong or only the capitals differ, a warning
 otherwise, with what to try — as well as a capitals mismatch on any robot
-heard (critical) and a robot on the air that its team has not saved (a
-note). `/admin` shows every robot network heard, with its signal, what it
-is saved as, and the field's passphrase result when there is one.
+heard (critical), a saved passphrase that doesn't open its robot (a
+warning), and a robot on the air that its team has not saved (a note).
+`/admin` shows every robot network heard, with its signal, what it is saved
+as, and the passphrase result when there is one (the field's, for a
+stalled robot; otherwise the saved one).
 
 ### Wireless cards and test joins
 

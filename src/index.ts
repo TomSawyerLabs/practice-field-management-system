@@ -538,7 +538,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       robotWifi = new RobotWifiScanner({
         iface,
         runner: new WpaSupplicantRunner(iface),
-        savedSsids: () => savedTeamStore.getTeams().map(t => t.ssid),
+        savedRobots: () => savedTeamStore.getTeams(),
         connectAttempts,
         onChange: () => {
           broadcastRobotWifi(robotWifiState());
@@ -552,8 +552,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   };
   applyRobotWifiSetting();
   setupConfigStore.addListener(applyRobotWifiSetting);
-  // A robot saved or changed: re-match what is on the air.
-  savedTeamStore.addListener(() => broadcastRobotWifi(robotWifiState()));
+  // A robot saved or changed: re-match what is on the air, and try a new
+  // passphrase on it now rather than after the next scan.
+  savedTeamStore.addListener(() => {
+    broadcastRobotWifi(robotWifiState());
+    void robotWifi?.checkNextKey();
+  });
   process.on('exit', () => robotWifi?.stop());
 
   // 6 GHz watch: listen on a 6 GHz-capable card for other access points

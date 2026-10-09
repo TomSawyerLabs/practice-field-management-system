@@ -2216,14 +2216,17 @@ export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
 
 // ── Robot Wi-Fi Scan ────────────────────────────────────────────────
 
-/** Whether a team's saved passphrase opened the robot's 2.4 GHz network.
+/** Whether a passphrase — the field's for a stalled connection, or the
+ *  saved one for a robot heard before it is enabled — opened the robot's
+ *  2.4 GHz network.
  *  `wrongKey` is only about the 2.4 GHz network: a team that gave it a
  *  different passphrase from the field's 6 GHz one sees this even though the
  *  field would connect. */
 export interface RobotWifiKeyCheck {
   result: 'checking' | 'ok' | 'wrongKey' | 'unreachable' | 'open';
   at: number;
-  /** The SSID the field is set up to join, whose passphrase was tried. */
+  /** The SSID whose passphrase was tried: what the field is set up to join,
+   *  or the saved robot's. */
   fieldSsid: string;
 }
 
@@ -2242,6 +2245,9 @@ export interface RobotWifiBroadcast {
   /** Against the team's saved robots. `caseOnly` means it differs from a
    *  saved robot only in capitalization — the field will never connect. */
   match: { kind: 'exact' | 'caseOnly'; savedSsid: string } | { kind: 'unknown' };
+  /** The saved robot's passphrase, tried on this network once it is heard
+   *  (and again whenever the saved passphrase changes). */
+  keyCheck?: RobotWifiKeyCheck;
 }
 
 /** A team trying to connect whose robot has not joined the field for a

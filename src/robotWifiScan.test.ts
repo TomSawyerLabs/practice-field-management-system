@@ -21,6 +21,7 @@ import {
   type WpaEvent,
 } from './robotWifiScan.js';
 import type { RobotWifiScanState } from './types.js';
+import type { SavedRobot } from './robotWifiScan.js';
 
 const HEADER = 'bssid / frequency / signal level / flags / ssid';
 const row = (bssid: string, ssid: string, signal = -50, flags = '[WPA2-PSK-CCMP][ESS]') =>
@@ -271,34 +272,97 @@ afterEach(() => {
 
 function setup(
   attempts: ConnectAttempt[],
-  overrides: { now?: () => number; keyCheckTimeoutMs?: number; saved?: string[] } = {},
+  overrides: { now?: () => number; keyCheckTimeoutMs?: number; saved?: (string | SavedRobot)[] } = {},
 ) {
+  const { saved, ...rest } = overrides;
   const runner = new FakeRunner();
   let state: RobotWifiScanState | null = null;
   scanner = new RobotWifiScanner({
     iface: 'wlan0',
     runner,
-    savedSsids: () => overrides.saved ?? ['1234-Comp'],
+    savedRobots: () =>
+      (saved ?? ['1234-Comp']).map(r => (typeof r === 'string' ? { ssid: r, wpaKey: 'passphrase1' } : r)),
     connectAttempts: () => attempts,
     onChange: s => (state = s),
     scanIntervalMs: 1_000_000, // tests drive scans by hand
     scanSettleMs: 0,
     now: () => NOW,
-    ...overrides,
+    ...rest,
   });
   return { runner, scanner, state: () => state! };
 }
 
 describe('the scanner', () => {
-  test('hearing a robot matches its name against saved robots, but never joins it', async () => {
+  test('hearing a robot nobody saved matches nothing, and never joins it', async () => {
     const { runner, scanner, state } = setup([]);
-    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp'), row('aa:bb:cc:dd:ee:09', 'Guest')].join('\n');
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-5678'), row('aa:bb:cc:dd:ee:09', 'Guest')].join('\n');
     await scanner.start();
     await flush();
     expect(state().broadcasts).toHaveLength(1); // the guest network is not a robot
-    expect(state().broadcasts[0]).toMatchObject({ ssid: 'FRC-1234-Comp', match: { kind: 'exact' } });
+    expect(state().broadcasts[0]).toMatchObject({ ssid: 'FRC-5678', match: { kind: 'unknown' } });
+    expect(state().broadcasts[0].keyCheck).toBeUndefined();
     expect(state().stalls).toEqual([]);
     expect(runner.joins()).toBe(0);
+  });
+
+  test('a saved robot heard off the field gets its saved passphrase tried once, before anyone enables it', async () => {
+    const { runner, scanner, state } = setup([]);
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'wrongKey';
+    await scanner.start();
+    await flush();
+    expect(state().broadcasts[0]).toMatchObject({
+      match: { kind: 'exact', savedSsid: '1234-Comp' },
+      keyCheck: { result: 'wrongKey', fieldSsid: '1234-Comp' },
+    });
+    expect(runner.calls).toContainEqual(['set_network', '0', 'psk', pskHex('passphrase1', 'FRC-1234-Comp')]);
+    expect(JSON.stringify(state())).not.toContain('passphrase1');
+
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(1); // not again by itself
+  });
+
+  test('a saved passphrase that changes is tried afresh', async () => {
+    const saved: SavedRobot[] = [{ ssid: '1234-Comp', wpaKey: 'passphrase1' }];
+    const { runner, scanner, state } = setup([], { saved });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'wrongKey';
+    await scanner.start();
+    await flush();
+    expect(state().broadcasts[0].keyCheck?.result).toBe('wrongKey');
+
+    saved[0] = { ssid: '1234-Comp', wpaKey: 'passphrase2' };
+    runner.outcome = 'connect';
+    expect(scanner.getState().broadcasts[0].keyCheck).toBeUndefined(); // the old answer is for the old passphrase
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(2);
+    expect(state().broadcasts[0].keyCheck?.result).toBe('ok');
+  });
+
+  test('a saved robot already on the field is left to the stall check', async () => {
+    const { runner, scanner, state } = setup([stalled({ since: NOW })]); // trying, not stalled yet
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    await scanner.start();
+    await flush();
+    expect(state().stalls).toEqual([]);
+    expect(runner.joins()).toBe(0);
+  });
+
+  test("a saved passphrase already found right isn't tried again when that robot stalls", async () => {
+    const attempts: ConnectAttempt[] = [];
+    const { runner, scanner, state } = setup(attempts);
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    await scanner.start();
+    await flush();
+    expect(runner.joins()).toBe(1);
+
+    attempts.push(stalled());
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(1);
+    expect(state().stalls[0].keyCheck?.result).toBe('ok');
   });
 
   test("a stalled connection gets the field's passphrase tried once, automatically", async () => {

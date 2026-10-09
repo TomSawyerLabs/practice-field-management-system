@@ -139,6 +139,10 @@ export interface RobotRowWifi {
   /** Off the field, and its radio is on the air under exactly this name:
    *  the one to enable. */
   onAir: boolean;
+  /** Off the field, and its saved passphrase didn't open the robot's
+   *  network: fix it first rather than spend a field reconfiguration
+   *  finding out. */
+  passphraseWrong: boolean;
 }
 
 const KEY_CHIP: Partial<Record<NonNullable<RobotWifiStall['keyCheck']>['result'], RobotWifiLine>> = {
@@ -148,8 +152,9 @@ const KEY_CHIP: Partial<Record<NonNullable<RobotWifiStall['keyCheck']>['result']
 };
 
 /** The row marks for saved robot `ssid`, on the field at `station` (null
- *  when it isn't). A robot already on the field isn't marked "Radio on" —
- *  only what a stalled connection found about its passphrase. */
+ *  when it isn't). Off the field: whether it is on the air, and what its
+ *  saved passphrase did on it. On the field it isn't marked "Radio on" —
+ *  only what a stalled connection found about the field's passphrase. */
 export function robotRowWifi(
   scan: RobotWifiScanState | null,
   ssid: string,
@@ -159,14 +164,24 @@ export function robotRowWifi(
   const mine = scan.broadcasts.filter(b => b.match.kind !== 'unknown' && b.match.savedSsid === ssid);
   const exact = mine.find(b => b.match.kind === 'exact');
   const caseOnly = exact ? undefined : mine[0];
-  const stall = station ? scan.stalls?.find(st => st.station === station && st.fieldSsid === ssid) : undefined;
+  const keyCheck = station
+    ? scan.stalls?.find(st => st.station === station && st.fieldSsid === ssid)?.keyCheck
+    : (exact ?? caseOnly)?.keyCheck;
 
   const chips: RobotWifiLine[] = [];
   let line: RobotWifiLine | undefined;
   const onAir = !!exact && !station;
+  const passphraseWrong = !station && keyCheck?.result === 'wrongKey';
   if (onAir) {
     chips.push({ severity: 'success', text: 'Radio on' });
-    line = { severity: 'success', text: `We can hear it as ${exact.ssid} (${exact.signal} dBm).` };
+    line = passphraseWrong
+      ? {
+          severity: 'error',
+          text:
+            `The saved passphrase doesn't open ${exact.ssid}, so the field won't connect — fix it before you ` +
+            `enable. (We check the robot's 2.4 GHz network; if you gave that its own passphrase, enable anyway.)`,
+        }
+      : { severity: 'success', text: `We can hear it as ${exact.ssid} (${exact.signal} dBm).` };
   } else if (caseOnly) {
     chips.push({ severity: 'error', text: 'Name differs' });
     line = {
@@ -176,9 +191,9 @@ export function robotRowWifi(
         `Capitals must match, so the field won't connect to this one.`,
     };
   }
-  const key = stall?.keyCheck && KEY_CHIP[stall.keyCheck.result];
+  const key = keyCheck && KEY_CHIP[keyCheck.result];
   if (key) chips.push(key);
-  return chips.length ? { chips, line, onAir } : null;
+  return chips.length ? { chips, line, onAir, passphraseWrong } : null;
 }
 
 /** Stalled connections for one team. */
@@ -271,6 +286,15 @@ export function robotWifiStaffIssues(
         title: `Team ${b.team}'s robot name differs only in capitals from what they saved`,
         detail: `${heard} Saved as ${b.match.savedSsid}; the field will never connect.`,
         fix: `Have the team add the robot again as ${b.robotSsid} (their page offers it).`,
+      });
+    } else if (b.match.kind === 'exact' && b.keyCheck?.result === 'wrongKey') {
+      issues.push({
+        id: `robotWifi-key-${b.ssid}`,
+        severity: 'warning',
+        team: b.team,
+        title: `Team ${b.team}'s saved passphrase for ${b.match.savedSsid} doesn't open their robot`,
+        detail: `${heard} The field won't connect until it's fixed — unless the team gave the 2.4 GHz network its own passphrase.`,
+        fix: 'The team presses Fix passphrase on their page and re-enters it, capitals included.',
       });
     } else if (b.match.kind === 'unknown') {
       issues.push({

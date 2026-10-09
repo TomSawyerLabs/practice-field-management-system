@@ -816,14 +816,14 @@ function RobotWifiScanSection() {
                     <TableCell>Heard</TableCell>
                     <TableCell>Signal</TableCell>
                     <TableCell>Saved as</TableCell>
-                    <Tooltip title="Tried only when a robot is taking too long to join the field">
-                      <TableCell>Field passphrase</TableCell>
-                    </Tooltip>
+                    <TableCell>Passphrase</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {scan.broadcasts.map(b => {
-                    const keyCheck = scan.stalls?.find(st => st.broadcast.ssid === b.ssid)?.keyCheck;
+                    // A stalled connection's test (the field's passphrase) wins over
+                    // the saved passphrase tried before the robot was enabled
+                    const keyCheck = scan.stalls?.find(st => st.broadcast.ssid === b.ssid)?.keyCheck ?? b.keyCheck;
                     return (
                       <TableRow key={b.ssid}>
                         <TableCell sx={{ fontFamily: 'monospace' }}>{b.ssid}</TableCell>
