@@ -158,6 +158,20 @@ Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
       Robot scan, still no address; pFMS's own wpa_supplicant (`scan_results`) hears 29 networks (building Wi-Fi, `FRC-VH-COMPETITION`
       — not `FRC-<number>`, correctly ignored). No robot radios on at the
       time.
+- [x] Round 3 (user, 2026-10-08: "working great… if an existing config is
+      detected, the matching row needs to be indicated somehow (not by
+      matching the text)"). `robotRowWifi` in `frontend/src/utils/robotWifi.ts`
+      → the heard robot's row: green tint + bar, **Radio on** chip, "We can
+      hear it as FRC-… (−52 dBm)"; other off-field rows' Enable goes
+      outlined. Capitals-only → **Name differs** chip on the saved row (the
+      alert with Add as … stays). Stalled robot on the field → **Passphrase
+      OK / wrong / Checking…** chip on its row. The green "matches your saved
+      robot" alert is gone (the row says it). No hover tooltips (user rule):
+      the "Passphrase verified" tooltip icon became a visible chip. Checked
+      in a browser (local DRY_RUN backend + injected scan); the stall chips
+      are unit-tested only.
+- [ ] Open: should pFMS check the saved passphrase for a robot heard
+      _before_ it's enabled? See Open questions 2.
 - [ ] Verify against a real robot: its `FRC-<team>` network listed on
       /admin; a stalled connection warns on the team page and tests.
 
@@ -166,6 +180,11 @@ Round 1 was deployed in `58d91a8`; the scan is still off on steamboat.
 1. OK to turn the scanner on on steamboat after deploy? It brings up the
    unused Intel card and briefly associates with robots' 2.4 GHz networks
    (no IP). Recommendation: yes.
+2. (2026-10-08) Passphrase for a robot heard but not yet enabled: today it
+   is only tried once a connection stalls (round-2 decision). Options:
+   (a) leave it; (b) a **Test passphrase** button on the "Radio on" row,
+   team-pressed, rate-limited, saved key vs the 2.4 GHz network; (c) try it
+   automatically once per (heard SSID, saved-key hash). Recommendation: (b).
 
 ## Things not to do
 
