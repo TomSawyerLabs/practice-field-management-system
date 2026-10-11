@@ -68,7 +68,9 @@ A frontend client sends a WebSocket message with
      the next match or asking again withdraws it (`releaseAfterMatch`
      setting). A set-up match nobody joins cancels itself after 10 minutes
      (`SETUP_AUTO_CANCEL_MS`) and then applies the waiting enables only
-     (`applyPendingJoins()`); releases keep waiting for staff.
+     (`applyPendingJoins()`); releases keep waiting for staff. A team page
+     can do the same early with `stationClearEmptyMatch`
+     (`matchEngine.clearEmptySetup()`, refused once anyone has joined).
    - **Deferred** while any robot is enabled: the change is applied to the
      active config straight away, but `commitConfiguration()` waits and
      re-runs as soon as the last robot is disabled.

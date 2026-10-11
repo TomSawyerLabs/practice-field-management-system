@@ -40,6 +40,8 @@ import {
   sendRobotWifiTest,
   useSixGhzWatch,
   getServerTime,
+  sendStationClearEmptyMatch,
+  serverToBrowserTime,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -653,6 +655,84 @@ function RobotList({
  * A single row in the robot list showing a saved config.
  * Clickable to select — the selected robot's experience is shown below the list.
  */
+/** What the match on the field is doing, as far as a held Wi-Fi request is
+ *  concerned. null: no match (the hold is something else). */
+type MatchHold =
+  | { kind: 'empty'; expiresAt: number | undefined }
+  | { kind: 'setup'; joined: number }
+  | { kind: 'running' }
+  | { kind: 'over' };
+
+function useMatchHold(): MatchHold | null {
+  const matchState = useMatchState();
+  if (!matchState) return null;
+  const { phase } = matchState;
+  if (phase === 'idle') return null;
+  if (phase === 'created') {
+    const joined = Object.values(matchState.stationStates).filter(s => s?.joined).length;
+    return joined === 0 ? { kind: 'empty', expiresAt: matchState.setupExpiresAt } : { kind: 'setup', joined };
+  }
+  if (phase === 'postMatch') return { kind: 'over' };
+  return { kind: 'running' };
+}
+
+/** Why a match is holding this team's robot, and — when the match is set up
+ *  with nobody in it — a button to clear it so the robot goes on now.
+ *  2026-10-10: team 6036 re-tapped Enable seven times and waited half an hour
+ *  behind an empty set-up match, with only a "Waiting" chip to go on. */
+function MatchHoldNotice({
+  hold,
+  team,
+  variant,
+}: {
+  hold: MatchHold;
+  team: number | undefined;
+  variant: 'caption' | 'body2';
+}) {
+  const [clearing, setClearing] = useState(false);
+  // A refused or slow clear must not leave the button dead.
+  useEffect(() => {
+    if (!clearing) return;
+    const t = setTimeout(() => setClearing(false), 3000);
+    return () => clearTimeout(t);
+  }, [clearing]);
+
+  const text =
+    hold.kind === 'empty'
+      ? 'A match has been set up on the field, but no team has joined it. Your robot goes on the field as soon as that match is cleared' +
+        (hold.expiresAt !== undefined
+          ? ` — it clears itself at ${new Date(serverToBrowserTime(hold.expiresAt)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+          : '.')
+      : hold.kind === 'setup'
+        ? `A match is being set up on the field (${hold.joined} ${hold.joined === 1 ? 'team has' : 'teams have'} joined). Your robot goes on the field when field staff apply Wi-Fi changes after it.`
+        : hold.kind === 'running'
+          ? 'A match is running on the field. Your robot goes on the field when field staff apply Wi-Fi changes after it — changing the Wi-Fi now would cut off the robots playing.'
+          : 'A match just finished on the field. Your robot goes on the field when field staff apply Wi-Fi changes.';
+
+  return (
+    <Box onClick={e => e.stopPropagation()}>
+      <Typography variant={variant} sx={{ display: 'block', color: 'warning.main' }}>
+        {text}
+      </Typography>
+      {hold.kind === 'empty' && (
+        <Button
+          size="small"
+          variant="contained"
+          color="warning"
+          sx={{ mt: 0.5 }}
+          disabled={clearing}
+          onClick={() => {
+            setClearing(true);
+            sendStationClearEmptyMatch(team);
+          }}
+        >
+          Clear the empty match
+        </Button>
+      )}
+    </Box>
+  );
+}
+
 function RobotRow({
   config,
   isActive,
@@ -750,6 +830,12 @@ function RobotRow({
     : robotPending.kind.startsWith('held')
       ? holdReasonText(pendingState.hold, 'team')
       : DEFERRED_TEXT_TEAM;
+  // A held enable behind a match gets the match-aware notice instead of the
+  // generic line (and, for an empty set-up match, a button to clear it).
+  const matchHold = useMatchHold();
+  const heldByMatch =
+    robotPending?.kind === 'held-enable' && pendingState.hold === 'match' && matchHold ? matchHold : null;
+  const team = teamOfSsid(config.ssid) ?? undefined;
 
   // This robot's entry on the pending list, if any. A new entry opens a
   // dialog once — the match admin has to apply it, which is not obvious from
@@ -769,20 +855,28 @@ function RobotRow({
             ? 'The match is over — your robot is queued to leave'
             : myChange?.kind === 'release'
               ? 'Your robot is queued to leave the field'
-              : 'Waiting for the match admin'}
+              : heldByMatch
+                ? 'A match on the field is holding your robot'
+                : 'Waiting for the match admin'}
         </DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            {leavingAfterMatch
-              ? 'When a match ends, every robot on the field is queued to leave so the next match starts clean. Nothing changes until the match admin presses Apply now. Playing again? Press Keep — joining the next match keeps it too.'
-              : myChange?.kind === 'release'
-                ? 'Your release is on the list for the match admin to apply. Until then the robot stays on Wi-Fi. Changed your mind? Press Keep.'
-                : 'Your Wi-Fi request is on the list. Nothing reaches the radio until the match admin presses Apply now on the match page — every change goes out together, between matches, so no robot is cut off mid-drive.'}
-          </Typography>
-          {pendingReason && (
-            <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-              {pendingReason}
-            </Typography>
+          {heldByMatch ? (
+            <MatchHoldNotice hold={heldByMatch} team={team} variant="body2" />
+          ) : (
+            <>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                {leavingAfterMatch
+                  ? 'When a match ends, every robot on the field is queued to leave so the next match starts clean. Nothing changes until the match admin presses Apply now. Playing again? Press Keep — joining the next match keeps it too.'
+                  : myChange?.kind === 'release'
+                    ? 'Your release is on the list for the match admin to apply. Until then the robot stays on Wi-Fi. Changed your mind? Press Keep.'
+                    : 'Your Wi-Fi request is on the list. Nothing reaches the radio until the match admin presses Apply now on the match page — every change goes out together, between matches, so no robot is cut off mid-drive.'}
+              </Typography>
+              {pendingReason && (
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  {pendingReason}
+                </Typography>
+              )}
+            </>
           )}
         </DialogContent>
         <DialogActions>
@@ -880,10 +974,14 @@ function RobotRow({
               {wifi.line.text}
             </Typography>
           )}
-          {pendingReason && (
-            <Typography variant="caption" sx={{ display: 'block', color: 'warning.main' }}>
-              {pendingReason}
-            </Typography>
+          {heldByMatch ? (
+            <MatchHoldNotice hold={heldByMatch} team={team} variant="caption" />
+          ) : (
+            pendingReason && (
+              <Typography variant="caption" sx={{ display: 'block', color: 'warning.main' }}>
+                {pendingReason}
+              </Typography>
+            )
           )}
         </Box>
 

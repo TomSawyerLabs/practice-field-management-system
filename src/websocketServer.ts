@@ -83,6 +83,7 @@ import {
   isStationSelfUndisable,
   isStationSelfEStop,
   isStationTeamStop,
+  isStationClearEmptyMatch,
   isStationSelfAStop,
   isStationClearAStop,
   isAdminStationEnable,
@@ -1127,6 +1128,15 @@ export function setupWebSocket(
         matchEngine.resumeMatch();
       } else if (isStationAbandonMatch(data)) {
         matchEngine.abandonMatch();
+      } else if (isStationClearEmptyMatch(data)) {
+        const who = data.team ? `team ${data.team}'s page` : `a team page (${clientIp})`;
+        if (!matchEngine.clearEmptySetup(who)) {
+          ws.send(
+            JSON.stringify({
+              error: 'The match can no longer be cleared from here: a team has joined it, or it has already ended.',
+            }),
+          );
+        }
       } else if (isUpdateMatchConfig(data)) {
         matchEngine.updateMatchConfig(data.config);
       } else if (isAdminStopMatch(data)) {

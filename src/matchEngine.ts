@@ -501,15 +501,29 @@ export class MatchEngine {
 
   private cancelAbandonedSetup() {
     this.setupAutoCancelTimer = null;
-    if (this.phase !== 'created' || this.getJoinedCount() > 0) return;
-    console.log(`Set-up match abandoned: no team joined in ${SETUP_AUTO_CANCEL_MS / 60_000} minutes`);
-    this.cancelMatch();
-    this.abandonedSetupHook?.();
+    this.cancelEmptySetup(`Set-up match abandoned: no team joined in ${SETUP_AUTO_CANCEL_MS / 60_000} minutes`);
   }
 
-  /** Runs after a set-up match nobody joined has cancelled itself, so the
-   *  join requests it was holding can go through with nobody at the match
-   *  page to apply them. */
+  /** A team page's "Clear the empty match": the same as the abandoned-setup
+   *  clock running out, just sooner — so the join requests the match was
+   *  holding go through. Refused (false) once anyone has joined, or when no
+   *  match is set up: the button the team saw may be stale. */
+  clearEmptySetup(who: string): boolean {
+    return this.cancelEmptySetup(`Set-up match cleared by ${who}: no team had joined`);
+  }
+
+  private cancelEmptySetup(why: string): boolean {
+    if (this.phase !== 'created' || this.getJoinedCount() > 0) return false;
+    console.log(why);
+    this.cancelMatch();
+    this.abandonedSetupHook?.();
+    return true;
+  }
+
+  /** Runs after a set-up match nobody joined has been cancelled — by its
+   *  clock running out, or by a team page clearing it — so the join requests
+   *  it was holding can go through with nobody at the match page to apply
+   *  them. */
   private abandonedSetupHook?: () => void;
   setAbandonedSetupHook(fn: () => void) {
     this.abandonedSetupHook = fn;

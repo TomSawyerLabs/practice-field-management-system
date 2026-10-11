@@ -34,7 +34,10 @@ Other phases: `idle` (no match), `created` (match set up, teams joining),
    joins **cancels itself after 10 minutes** (the match page says when):
    a match that exists holds teams' Wi-Fi requests, so one that was set up
    and walked away from would lock arriving teams off the field. The clock
-   stops when a team joins and starts again if the last one leaves.
+   stops when a team joins and starts again if the last one leaves. A team
+   whose robot is waiting behind it doesn't have to wait out the clock: its
+   page explains the hold and offers **Clear the empty match**, which works
+   the same as the clock running out (refused once any team has joined).
 2. **Join** — teams choose an alliance (Red or Blue, up to 3 stations
    each) from their station page. Joining hands the Driver Station to the
    field: it is disabled until the match starts — leave the match to drive
@@ -263,7 +266,8 @@ requests whatever the switch says. Turning it off does not send what is
 already waiting — press Apply now.
 
 One exception to "only staff apply": when a set-up match cancels itself
-because nobody joined, the robots waiting to **join** go through, since
+because nobody joined — or a waiting team clears it from its page with
+**Clear the empty match** — the robots waiting to **join** go through, since
 nobody is at the match page to apply them. Robots queued to **leave** stay
 on the list for staff, and nothing goes through while the admin hold is on.
 

@@ -1734,6 +1734,17 @@ export function isStationTeamStop(msg: unknown): msg is StationTeamStop {
   return m.type === 'stationTeamStop' && StationNameRegex.test(m.station) && typeof m.stop === 'boolean';
 }
 
+/** A team page clears a set-up match nobody has joined, so the Wi-Fi
+ *  request it was holding goes through (as when the match's own 10-minute
+ *  clock runs out). The server refuses if anyone has joined. `team` is for
+ *  the log line. */
+export type StationClearEmptyMatch = { type: 'stationClearEmptyMatch'; team?: number };
+export function isStationClearEmptyMatch(msg: unknown): msg is StationClearEmptyMatch {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as StationClearEmptyMatch;
+  return m.type === 'stationClearEmptyMatch' && (m.team === undefined || Number.isInteger(m.team));
+}
+
 /** Team-side recovery from an accidental mid-match disable (DS Enter key or
  *  the console Disable button). Refused while e-stopped, a-stopped, admin-
  *  disabled, or outside the auto/teleop/endgame phases. */

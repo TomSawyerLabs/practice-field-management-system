@@ -1360,6 +1360,13 @@ export function sendMatchCancel() {
   ws?.send(JSON.stringify({ type: 'matchCancel' }));
 }
 
+/** A team page clears a set-up match nobody has joined, so the Wi-Fi
+ *  request it was holding goes through. The server refuses if anyone has
+ *  joined since. */
+export function sendStationClearEmptyMatch(team: number | undefined) {
+  ws?.send(JSON.stringify({ type: 'stationClearEmptyMatch', team }));
+}
+
 export function sendMatchClear() {
   ws?.send(JSON.stringify({ type: 'matchClear' }));
 }

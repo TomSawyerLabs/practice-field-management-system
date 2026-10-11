@@ -552,6 +552,29 @@ describe('a set-up match nobody joins', () => {
     expire(engine);
     expect(abandoned).toBe(0);
   });
+
+  test('a team page can clear it early, which lets held joins through like the clock does', () => {
+    const engine = created();
+    let abandoned = 0;
+    engine.setAbandonedSetupHook(() => abandoned++);
+    expect(engine.clearEmptySetup("team 6036's page")).toBe(true);
+    expect(engine.getState().phase).toBe('idle');
+    expect(engine.getState().setupExpiresAt).toBeUndefined();
+    expect(abandoned).toBe(1);
+  });
+
+  test('a team page cannot clear it once anyone has joined, or when no match is set up', () => {
+    const engine = created();
+    let abandoned = 0;
+    engine.setAbandonedSetupHook(() => abandoned++);
+    engine.joinStationAlliance('slot1', 'red');
+    expect(engine.clearEmptySetup("team 6036's page")).toBe(false);
+    expect(engine.getState().phase).toBe('created');
+
+    engine.cancelMatch();
+    expect(engine.clearEmptySetup("team 6036's page")).toBe(false);
+    expect(abandoned).toBe(0);
+  });
 });
 
 describe('a manual relay', () => {
