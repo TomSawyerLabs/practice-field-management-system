@@ -46,7 +46,7 @@ packets and make the field accept them.
        byte running past the packet end, is logged once and skipped — the header
        (team number, status) is still used.
 3. [x] Tests for both.
-4. [ ] Deploy (needs the user's OK).
+4. [x] Deployed `2a1faea` to steamboat 2026-10-11 13:25.
 5. [ ] **Current:** next time team 100 is on the field with the 2027 DS, read
        the new `Unparseable DS UDP status … bytes): <hex>` / `Skipping DS UDP status tag` lines (or
        `sudo tcpdump -i any -X udp port 1160 and host <ip>`) and confirm whether
