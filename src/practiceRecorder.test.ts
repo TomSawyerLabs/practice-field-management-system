@@ -123,10 +123,12 @@ describe('PracticeRecorder', () => {
       inputPrefixArgs: ['-re', '-stream_loop', '-1'],
     });
     recorder.start();
-  });
+    // Encoding the 40 s fixture takes a few seconds, more under a full
+    // parallel test run — past bun's 5 s default hook timeout.
+  }, 60_000);
 
   afterAll(async () => {
-    await recorder.stop();
+    await recorder?.stop();
     try {
       rmSync(dir, { recursive: true, force: true });
     } catch {
