@@ -354,8 +354,18 @@ export type UdpMessage = {
 // DS generation's extra tags can be identified without flooding journald.
 const loggedUnknownUdpTags = new Set<number>();
 const loggedTrailingUdpTags = new Set<number>();
+const loggedShortUdpTags = new Set<string>();
 
-function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
+/** Log a malformed tag once per (tag type, problem), with the whole packet. */
+function logShortUdpTag(tagType: number | undefined, problem: string, buff: Buffer) {
+  const key = `${tagType}|${problem}`;
+  if (loggedShortUdpTags.has(key)) return;
+  loggedShortUdpTags.add(key);
+  const tag = tagType === undefined ? 'tags' : `tag ${tagType}`;
+  console.log(`Skipping DS UDP status ${tag} (${problem}), keeping the rest of the packet: ${buff.toString('hex')}`);
+}
+
+export function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
   const r = new BufferReader(buff);
   const sequence = r.readNumber(2);
   const commVersion = r.readNumber(1);
@@ -365,41 +375,27 @@ function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
   const BatteryVoltage = parseBatteryVoltage(r.readNumber(2));
   const tags: Tags = [];
 
+  // The header above is what the field needs (team, status). Tags are
+  // extras, and a DS generation that lays one out differently must not cost
+  // us the whole packet: on 2026-10-10 every status packet from team 100's
+  // 2027 DS failed to parse, the field never heard it, and staff had to
+  // force-ready the station. So a bad tag is logged and skipped.
   while (r.remaining > 0) {
     const size = r.readNumber(1);
-    if (size === 0) throw new Error('Size is 0');
+    if (size === 0 || size > r.remaining) {
+      logShortUdpTag(undefined, size === 0 ? 'tag size 0' : `tag size ${size}, ${r.remaining} byte(s) left`, buff);
+      break;
+    }
 
-    const tagBuff = r.readSlice(size);
-
-    const t = new BufferReader(tagBuff);
-
+    const t = new BufferReader(r.readSlice(size));
     const tagType = t.readNumber(1);
 
-    switch (tagType) {
-      case 0x00:
-        tags.push({ type: 'field', signalStrength: t.readNumber(1), bandwidthUtilization: t.readNumber(2) });
-        break;
-      case 0x01:
-        tags.push({
-          lostPackets: t.readNumber(2),
-          sentPackets: t.readNumber(2),
-          averageRoundTripTime: t.readNumber(1),
-        });
-        break;
-      case 0x02:
-        tags.push({ batteryPercent: t.readNumber(1), cpuPercent: t.readNumber(1) });
-        break;
-      case 0x03:
-        tags.push({ type: 'robot', signalStrength: t.readNumber(1), bandwidthUtilization: t.readNumber(2) });
-        break;
-      case 0x04:
-        tags.push({ type: 'pd' });
-        break;
-      default:
-        if (!loggedUnknownUdpTags.has(tagType)) {
-          loggedUnknownUdpTags.add(tagType);
-          console.log(`Unknown DS UDP status tag ${tagType} (0x${tagType.toString(16)}): ${buff.toString('hex')}`);
-        }
+    try {
+      parseUdpTag(tagType, t, tags, buff);
+    } catch (err) {
+      if (!(err instanceof BufferOverflowError)) throw err;
+      logShortUdpTag(tagType, `${size}-byte tag is shorter than expected`, buff);
+      continue;
     }
 
     if (t.remaining && !loggedTrailingUdpTags.has(tagType)) {
@@ -417,6 +413,35 @@ function parseIncomingUdpMessage(buff: Buffer): UdpMessage {
     BatteryVoltage,
     tags,
   };
+}
+
+function parseUdpTag(tagType: number, t: BufferReader, tags: Tags, buff: Buffer) {
+  switch (tagType) {
+    case 0x00:
+      tags.push({ type: 'field', signalStrength: t.readNumber(1), bandwidthUtilization: t.readNumber(2) });
+      break;
+    case 0x01:
+      tags.push({
+        lostPackets: t.readNumber(2),
+        sentPackets: t.readNumber(2),
+        averageRoundTripTime: t.readNumber(1),
+      });
+      break;
+    case 0x02:
+      tags.push({ batteryPercent: t.readNumber(1), cpuPercent: t.readNumber(1) });
+      break;
+    case 0x03:
+      tags.push({ type: 'robot', signalStrength: t.readNumber(1), bandwidthUtilization: t.readNumber(2) });
+      break;
+    case 0x04:
+      tags.push({ type: 'pd' });
+      break;
+    default:
+      if (!loggedUnknownUdpTags.has(tagType)) {
+        loggedUnknownUdpTags.add(tagType);
+        console.log(`Unknown DS UDP status tag ${tagType} (0x${tagType.toString(16)}): ${buff.toString('hex')}`);
+      }
+  }
 }
 
 type Events = {
@@ -487,8 +512,14 @@ export async function startFMSServer({
     // Last handshake outcome logged per address (team, DS generation, reply
     // slot), so steady re-handshakes aren't re-logged but every change is.
     const lastLoggedHandshake = new Map<string, string>();
-    // Unparseable UDP status packets per source address (first one is logged)
+    // Unparseable UDP status packets per source address, and the shapes
+    // (length + error) already logged with their payload. Logging only the
+    // first bad packet per address hid what team 100's 2027 DS sent on
+    // 2026-10-10: its first was an empty legacy-DS packet the day before, and
+    // the 4000 that kept it off the field were only counted.
     const badUdpByAddr = new Map<string, number>();
+    const badUdpShapesByAddr = new Map<string, Set<string>>();
+    const MAX_BAD_UDP_SHAPES_PER_ADDR = 5;
 
     const tcpServer = net.createServer(socket => {
       const rawAddr = socket.remoteAddress || '';
@@ -626,12 +657,16 @@ export async function startFMSServer({
           message = parseIncomingUdpMessage(msg);
         } catch (err) {
           // A DS generation we don't fully understand must not take the FMS
-          // down. Log the first bad packet per address with its payload.
+          // down. Log each new shape of bad packet per address with its payload.
           const bad = badUdpByAddr.get(rinfo.address) ?? 0;
           badUdpByAddr.set(rinfo.address, bad + 1);
-          if (bad === 0) {
+          let shapes = badUdpShapesByAddr.get(rinfo.address);
+          if (!shapes) badUdpShapesByAddr.set(rinfo.address, (shapes = new Set()));
+          const shape = `${msg.length}|${(err as Error).message}`;
+          if (!shapes.has(shape) && shapes.size < MAX_BAD_UDP_SHAPES_PER_ADDR) {
+            shapes.add(shape);
             console.log(
-              `Unparseable DS UDP status from ${rinfo.address}:${rinfo.port} (${(err as Error).message}): ${msg.toString('hex')}`,
+              `Unparseable DS UDP status from ${rinfo.address}:${rinfo.port} (${(err as Error).message}, ${msg.length} bytes): ${msg.toString('hex')}`,
             );
           } else if (bad % 1000 === 0) {
             console.log(`Unparseable DS UDP status from ${rinfo.address}: ${bad} so far`);

@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import dgram from 'node:dgram';
 import net from 'node:net';
-import { startFMSServer, type FmsServer } from './fmsServer.js';
+import { parseIncomingUdpMessage, startFMSServer, type FmsServer } from './fmsServer.js';
 
 // Loopback, on ports nothing else on a dev box should hold. The real server
 // binds 10.0.100.5:1750/1160, which a test cannot.
@@ -126,5 +127,73 @@ describe('handshake reply follows the resolver', () => {
   test("the resolver is told the DS's address", () => {
     expect(askedFrom.every(a => a === ADDRESS)).toBe(true);
     expect(askedFrom.length).toBeGreaterThan(0);
+  });
+});
+
+/** DS UDP status header: seq 7, comm 0, status 0x3a, team 100, battery 12.5 V. */
+const statusHeader = Buffer.from([0x00, 0x07, 0x00, 0x3a, 0x00, 0x64, 0x0c, 0x80]);
+const status = (...tags: number[][]) => Buffer.concat([statusHeader, Buffer.from(tags.flat())]);
+
+describe('DS UDP status parsing', () => {
+  test('a well-formed packet keeps its header and tags', () => {
+    const m = parseIncomingUdpMessage(status([4, 0x03, 50, 0x00, 0x10], [3, 0x02, 80, 20]));
+    expect(m.teamNumber).toBe(100);
+    expect(m.rawStatus).toBe(0x3a);
+    expect(m.tags).toEqual([
+      { type: 'robot', signalStrength: 50, bandwidthUtilization: 0x10 },
+      { batteryPercent: 80, cpuPercent: 20 },
+    ]);
+  });
+
+  test('a tag shorter than its layout is skipped; the header and later tags survive', () => {
+    const m = parseIncomingUdpMessage(status([2, 0x03, 50], [3, 0x02, 80, 20]));
+    expect(m.teamNumber).toBe(100);
+    expect(m.tags).toEqual([{ batteryPercent: 80, cpuPercent: 20 }]);
+  });
+
+  test('a tag size running past the end of the packet keeps the header', () => {
+    const m = parseIncomingUdpMessage(status([3, 0x02, 80, 20], [9, 0x01, 0]));
+    expect(m.teamNumber).toBe(100);
+    expect(m.tags).toEqual([{ batteryPercent: 80, cpuPercent: 20 }]);
+  });
+
+  test('a zero tag size ends tag parsing but keeps the header', () => {
+    expect(parseIncomingUdpMessage(status([0, 0x02])).teamNumber).toBe(100);
+  });
+
+  test('a packet shorter than the header is still rejected', () => {
+    expect(() => parseIncomingUdpMessage(Buffer.alloc(0))).toThrow();
+    expect(() => parseIncomingUdpMessage(statusHeader.subarray(0, 5))).toThrow();
+  });
+});
+
+describe('unparseable UDP status logging', () => {
+  let fms: FmsServer;
+  const UDP3 = UDP + 2;
+
+  beforeAll(async () => {
+    fms = await startFMSServer({ address: ADDRESS, tcp: TCP + 2, udp: UDP3 });
+  });
+  afterAll(() => {
+    fms.udpSocket.close();
+  });
+
+  test('each new shape of bad packet from one address is logged with its payload', async () => {
+    const log = spyOn(console, 'log');
+    const client = dgram.createSocket('udp4');
+    const send = (b: Buffer) => new Promise<void>(r => client.send(b, UDP3, ADDRESS, () => r()));
+    try {
+      await send(Buffer.alloc(0));
+      await send(Buffer.from([0xab, 0xcd, 0xef]));
+      await send(Buffer.from([0xab, 0xcd, 0xef])); // same shape: counted, not re-logged
+      await settle();
+      const lines = log.mock.calls.map(c => String(c[0])).filter(l => l.startsWith('Unparseable DS UDP status'));
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain('0 bytes');
+      expect(lines[1]).toContain('3 bytes): abcdef');
+    } finally {
+      client.close();
+      log.mockRestore();
+    }
   });
 });
