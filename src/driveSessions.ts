@@ -70,7 +70,13 @@ export const DS_STALE_TIMEOUT_MS = 20_000;
 /** Laptops idle this long, and not driving or blocked, are forgotten. */
 const LAPTOP_FORGET_MS = 10 * 60_000;
 
-type Laptop = { team: number | null; lastActivity: number };
+type Laptop = {
+  team: number | null;
+  lastActivity: number;
+  /** The robot it last drove, kept after the session ends — so a laptop of
+   *  a two-robot team that goes quiet and comes back gets the same robot. */
+  lastRobot?: RobotId;
+};
 
 export type StationSession = { dsIp: string; lastActivity: number; timeoutRemaining: number };
 
@@ -128,8 +134,19 @@ export class DriveSessions {
     if (team === undefined) return;
 
     const robots = this.robotsOfTeam(team);
-    // Two robots of one team: the laptop picks one with the Drive button.
-    if (robots.length === 1) this.claim(robots[0], dsIp);
+    if (robots.length === 1) {
+      this.claim(robots[0], dsIp);
+      return;
+    }
+    // Two robots of one team: the laptop picks one with the Drive button —
+    // but one coming back from a lapsed session (DS quiet for
+    // DS_STALE_TIMEOUT_MS) gets the robot it was driving again, if nobody
+    // else has taken it since.
+    const last = this.laptops.get(dsIp)!.lastRobot;
+    if (last !== undefined && robots.includes(last) && this.isFree(last)) {
+      this.fx.info(`Drive resumed: ${dsIp} → ${last} (the robot it drove last)`);
+      this.claim(last, dsIp);
+    }
   }
 
   /** The Drive button: this laptop drives the robot on `station` (or, with
@@ -143,6 +160,8 @@ export class DriveSessions {
     if (station === null) {
       const driving = this.robotDrivenBy(dsIp);
       if (driving !== undefined) this.endSession(driving, 'stopped from the Drive button');
+      // Stopped on purpose: don't take it back on the next handshake.
+      this.laptops.get(dsIp)!.lastRobot = undefined;
       return;
     }
     const robot = this.fx.robotOn(station);
@@ -424,6 +443,8 @@ export class DriveSessions {
     const previous = this.robotDrivenBy(dsIp);
     if (previous !== undefined) this.endSession(previous, `laptop switched to ${robot}`, { quiet: true });
     this.sessions.set(robot, dsIp);
+    const laptop = this.laptops.get(dsIp);
+    if (laptop) laptop.lastRobot = robot;
     this.blocked.get(robot)?.delete(dsIp);
     this.pruneEmptyBlocks();
     this.fx.info(`Drive started: ${dsIp} → ${robot} on ${this.stationOf(robot) ?? '?'}`);
@@ -466,6 +487,12 @@ export class DriveSessions {
   private robotDrivenBy(dsIp: string): RobotId | undefined {
     for (const [robot, ip] of this.sessions) if (ip === dsIp) return robot;
     return undefined;
+  }
+
+  /** Nobody is actively driving `robot`. */
+  private isFree(robot: RobotId): boolean {
+    const holder = this.sessions.get(robot);
+    return holder === undefined || this.isStale(holder);
   }
 
   private isBlocked(dsIp: string): boolean {

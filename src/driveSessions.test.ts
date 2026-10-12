@@ -244,6 +244,57 @@ describe('two robots of one team', () => {
   });
 });
 
+describe('two robots of one team, after a laptop’s session lapses', () => {
+  // 1967-Elsa's laptop at 12:11 on 2026-10-12: quiet for 20 s, then back.
+  const ELSA_LAPTOP = '10.55.19.67';
+  const OTHER_LAPTOP = '10.55.19.68';
+
+  test('the laptop gets the robot it was driving back when its DS returns', async () => {
+    const f = field({ slot1: '1967-Elsa', slot2: '1967-Olaf' });
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    f.ds.drive(ELSA_LAPTOP, 'slot1');
+    await f.settle();
+
+    f.advance(DS_STALE_TIMEOUT_MS + 1);
+    f.ds.sweep();
+    await f.settle();
+    expect(f.ds.laptopOn('slot1')).toBeUndefined();
+
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    await f.settle();
+    expect(f.ds.laptopOn('slot1')).toBe(ELSA_LAPTOP);
+    expect([...f.dnat.keys()]).toEqual(['slot1|1967|10.55.19.67']);
+  });
+
+  test('but not if another laptop has taken that robot meanwhile', async () => {
+    const f = field({ slot1: '1967-Elsa', slot2: '1967-Olaf' });
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    f.ds.drive(ELSA_LAPTOP, 'slot1');
+    f.advance(DS_STALE_TIMEOUT_MS + 1);
+    f.ds.sweep();
+    f.ds.heard(OTHER_LAPTOP, 1967);
+    f.ds.drive(OTHER_LAPTOP, 'slot1');
+    await f.settle();
+
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    await f.settle();
+    expect(f.ds.laptopOn('slot1')).toBe(OTHER_LAPTOP);
+    // ...and it is not treated as a duplicate of that robot either
+    expect(f.blocks.size).toBe(0);
+  });
+
+  test('nor after the laptop stopped driving on purpose', async () => {
+    const f = field({ slot1: '1967-Elsa', slot2: '1967-Olaf' });
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    f.ds.drive(ELSA_LAPTOP, 'slot1');
+    f.ds.drive(ELSA_LAPTOP, null);
+    f.ds.heard(ELSA_LAPTOP, 1967);
+    await f.settle();
+    expect(f.ds.laptopOn('slot1')).toBeUndefined();
+    expect(f.dnat.size).toBe(0);
+  });
+});
+
 describe('sessions end', () => {
   test('when the laptop goes quiet', async () => {
     const f = field({ slot4: '840-FuriousG' });

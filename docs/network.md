@@ -210,7 +210,9 @@ only when a rule is built on that slot's bridge.
 - **Starting.** A laptop announces its team number in every DS handshake and
   UDP status. When that team has exactly one robot on the field, the laptop
   drives it. With two robots of one team, the laptop picks one with the Drive
-  button on its team page (or `/route`).
+  button on its team page (or `/route`). A laptop whose session lapsed (DS
+  quiet for 20 s) gets the robot it last drove back when it speaks again,
+  unless another laptop has taken that robot meanwhile or it pressed Stop.
 - **Select is not Drive.** Picking a robot on the team page routes that
   device (its traffic to the team subnet, and its `.local` lookups) to the
   robot, without making it the robot's Driver Station. That's for laptops
