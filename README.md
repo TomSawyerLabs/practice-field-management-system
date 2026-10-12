@@ -75,6 +75,12 @@ They're worth knowing before you set up a field:
   from one team sit on identical subnets on different VLANs. pFMS keeps
   them apart (see _Multiple robots per team_ above).
 
+**Other field APs are welcome.** The VH-113/VH-109 is the only radio
+supported today, but given the limits above, we'd be very happy to support
+other APs. If you run a field
+on different hardware, or want to help add a radio driver,
+[open an issue](https://github.com/TomSawyerLabs/practice-field-management-system/issues).
+
 ## Setting Up a New Field
 
 **Start it, then open `/setup` — the wizard walks you through the rest.**
