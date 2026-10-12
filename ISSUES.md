@@ -115,8 +115,12 @@ hardware or a real deployment:
 
 ## Setup and packaging
 
-- No "restart pFMS" action: settings read at startup only tell you to
-  restart.
+- Restart after a startup-only setting: the admin page has Restart pFMS
+  (`04a4cd7`), but it is a graceful restart that keeps network rules
+  (`KEEP_NETWORK`). The setup page tells you to restart after changing the
+  trunk interface or radio URL and offers no button, and it's unverified
+  whether a graceful restart picks up a new trunk interface (the flush is
+  skipped), so a button there might not apply the change.
 - The Linux standalone-binary targets compile but have never been run, and
   the binary has no self-update path (`update.sh` doesn't apply to it).
 
