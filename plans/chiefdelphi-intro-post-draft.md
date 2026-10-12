@@ -51,8 +51,12 @@ pFMS is built for that:
   control packets going to the robot.
 - **Laptops stay on your normal network.** The host routes between your site
   Wi-Fi and the team VLANs, so a programmer can deploy code, reach the
-  Limelight, and still have internet. Duplicate team numbers (two robots from
-  the same team) are handled too.
+  Limelight, and still have internet.
+- **Multiple robots per team, all active at once.** Bring your comp bot and
+  your practice bot and drive both together, each from its own laptop. Each
+  laptop's DS link, routing, `.local` names (Limelights, roboRIO) and E-stop
+  reach only the robot it drives. One tap on the team page picks which robot
+  that is.
 
 ### Hardware (deliberately boring)
 
@@ -101,6 +105,19 @@ poke at it.
 
 - Linux only for real hardware, and it needs root to manage networking.
 - VH-113/VH-109 only. The six stations are fixed to VLANs 10–60 for now.
+- **The field AP firmware has limits of its own**, and pFMS works around
+  them rather than hiding them:
+  - The `OFFSEASON` image firewalls off too much, so pFMS needs `PRACTICE`.
+  - `PRACTICE` runs its own DHCP on the team VLANs, so pFMS has to NAT
+    laptop ↔ robot traffic. The DS ↔ roboRIO UDP ports are asymmetric, so
+    that takes per-laptop DNAT on top of MASQUERADE.
+  - Any Wi-Fi change reconfigures the whole radio: about 30 s with
+    **every** robot's Wi-Fi down. pFMS schedules changes for when no robot
+    is enabled and no match is set up, but on a busy day you'll still
+    notice it.
+  - Each team gets one subnet (`10.TE.AM.0/24`), so a team's two robots
+    sit on identical subnets. That's the reason two-robot support took real
+    work.
 - It's built for practice fields, not for running an official-style event.
   For a full offseason event with schedules, alliance selection and playoffs,
   [Cheesy Arena](https://github.com/Team254/cheesy-arena) /
