@@ -2,7 +2,6 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost } from './types.js';
 import { StationNameList } from './types.js';
-import { stationMdnsIp } from './utils.js';
 
 const execFile = promisify(execFileCb);
 
@@ -28,9 +27,6 @@ export class SubnetScanner {
     private readonly getTeamForStation: TeamLookup,
     private readonly onScanComplete?: (results: SubnetScanResults) => void,
     private readonly dryRun = false,
-    /** The bridges' gateway octet: pFMS's own per-station mDNS addresses
-     *  sit just below it and answer pings, but aren't team devices. */
-    private readonly vlanHostOctet?: number,
   ) {}
 
   start(intervalMs = 10_000): void {
@@ -138,9 +134,6 @@ export class SubnetScanner {
 
     const aliveIps = await this.runFping(station, rangeStart, rangeEnd);
     if (aliveIps === null) return; // fping failed entirely
-    if (this.vlanHostOctet !== undefined) {
-      for (const s of StationNameList) aliveIps.delete(stationMdnsIp(team, s, this.vlanHostOctet));
-    }
 
     if (!this.state.has(station)) {
       this.state.set(station, new Map());
