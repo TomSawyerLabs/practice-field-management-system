@@ -39,7 +39,7 @@ import {
   sendStationTestModeStop,
   sendStationRadioConfigureRequest,
 } from '../hooks/useBackend';
-import { FreeplayControl, MatchPanel } from './MatchPanel';
+import { FreeplayControl, FreeplayStopButton, MatchPanel } from './MatchPanel';
 import { StationNetworkCard } from './NetworkPage';
 import { useSavedWiFiSettings } from '../hooks/useSavedWiFiSettings';
 import { useBackendStagedChanges } from '../hooks/useBackend';
@@ -336,7 +336,8 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                 </Tooltip>
               )}
             </Box>
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              {full && <FreeplayStopButton station={station} />}
               {/** CLEAR BUTTON */}
               {(stationSsid || hasStagedChange(station)) && (
                 <Tooltip title="Clear station configuration">

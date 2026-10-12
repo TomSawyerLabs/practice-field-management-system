@@ -152,12 +152,8 @@ function SelfServiceControls({
   // Space/Enter aimed at the Driver Station still activates a focused E-Stop
   // the first time. Drop keyboard-synthesized clicks (detail === 0) as the
   // match window already does — an E-Stop latches until field staff clear it,
-  // so a stray keystroke must never reach it. A real tap still fires at once.
-  const tapOnly = (fn: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
-    e.currentTarget.blur();
-    if (e.detail === 0) return;
-    fn();
-  };
+  // so a stray keystroke must never reach it. A real tap still fires at once
+  // (tapOnly, below).
 
   // Through the countdown and auto, A-Stop is the button a driver wants and
   // E-Stop is the one they must not hit by mistake (A-Stop self-releases at
@@ -232,25 +228,48 @@ function SelfServiceControls({
   );
 }
 
-/**
- * Driving outside a match: says who controls the robot right now and gives
- * the team a Stop that works whatever their Driver Station is doing (the
- * field cuts the DS's control traffic to the robot). Shown on the team's
- * pages whenever the station is not in a match, match or no match — the match
- * panel's own console takes over once they join.
- */
-export function FreeplayControl({ station }: { station: StationName }) {
-  const matchState = useMatchState();
-  const myState = matchState?.stationStates[station];
-  if (!myState?.teamNumber || myState.joined) return null;
-
-  // Keyboard-synthesized clicks (Space/Enter aimed at the Driver Station) must
-  // never reach a robot-stopping or -starting button; a real tap still fires.
-  const tapOnly = (fn: () => void) => (e: MouseEvent<HTMLButtonElement>) => {
+// Keyboard-synthesized clicks (Space/Enter aimed at the Driver Station) must
+// never reach a robot-stopping or -starting button; a real tap still fires.
+function tapOnly(fn: () => void) {
+  return (e: MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.blur();
     if (e.detail === 0) return;
     fn();
   };
+}
+
+/** The station's state when it's driving outside a match, else undefined. */
+function useFreeplayState(station: StationName) {
+  const myState = useMatchState()?.stationStates[station];
+  if (!myState?.teamNumber || myState.joined) return undefined;
+  return myState;
+}
+
+/**
+ * Driving outside a match: a Stop that works whatever the team's Driver
+ * Station is doing (the field cuts the DS's control traffic to the robot).
+ * Shown only while the robot is free to drive — FreeplayControl explains
+ * every other state, and the match panel's own console takes over once
+ * they join.
+ */
+export function FreeplayStopButton({ station }: { station: StationName }) {
+  const myState = useFreeplayState(station);
+  if (!myState || myState.eStop || myState.teamStopped || myState.blockedReason || myState.heldReason) return null;
+  return (
+    <Button color="error" variant="contained" onClick={tapOnly(() => sendStationTeamStop(station, true))}>
+      Stop robot
+    </Button>
+  );
+}
+
+/**
+ * Driving outside a match: says why the robot can't drive right now, if it
+ * can't. Shown on the team's pages whenever the station is not in a match,
+ * match or no match — the match panel's own console takes over once they join.
+ */
+export function FreeplayControl({ station }: { station: StationName }) {
+  const myState = useFreeplayState(station);
+  if (!myState) return null;
 
   if (myState.eStop) {
     return (
@@ -290,20 +309,7 @@ export function FreeplayControl({ station }: { station: StationName }) {
       </Alert>
     );
   }
-  return (
-    <Alert
-      severity="info"
-      sx={{ mb: 2, alignItems: 'center' }}
-      action={
-        <Button color="error" variant="contained" onClick={tapOnly(() => sendStationTeamStop(station, true))}>
-          Stop robot
-        </Button>
-      }
-    >
-      Outside matches your Driver Station’s Enable/Disable controls your robot. Stop works from here too, even if the
-      Driver Station doesn’t respond.
-    </Alert>
-  );
+  return null;
 }
 
 export function MatchPanel({ station }: { station?: StationName }) {

@@ -110,7 +110,7 @@ export function TeamChecksModal({ station }: { station: StationName }) {
   // All passed — show a brief inline confirmation, not a modal
   if (allPassed) {
     return (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, my: 1, px: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <CheckCircleIcon sx={{ color: 'success.main' }} />
         <Typography variant="body2" sx={{ color: 'success.main' }}>
           All equipment checks passed
@@ -130,7 +130,6 @@ export function TeamChecksModal({ station }: { station: StationName }) {
             display: 'flex',
             alignItems: 'center',
             gap: 1,
-            my: 1,
             px: 1,
             py: 0.5,
             cursor: 'pointer',

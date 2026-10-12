@@ -58,7 +58,7 @@ import {
   suffixOf,
 } from '../utils/robotWifi';
 import { clashesForTeam, describeClashForTeam, isSixGhzWatching } from '../utils/sixGhzWatch';
-import { FreeplayControl, MatchPanelForControl } from './MatchPanel';
+import { FreeplayControl, FreeplayStopButton, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
@@ -344,11 +344,17 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
 
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, mb: 2 }}>
         <TeamAvatar teamNumber={teamNumber} size={40} />
         <Typography variant="h4" sx={{ fontWeight: 700 }}>
           Team {teamNumber}
         </Typography>
+        {selectedStation && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, ml: 'auto' }}>
+            <TeamChecksModal station={selectedStation} />
+            <FreeplayStopButton station={selectedStation} />
+          </Box>
+        )}
       </Box>
 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
@@ -1372,8 +1378,7 @@ function useDebouncedMultipleDsWarning(station: StationName, holdMs = 10_000): D
 
 /**
  * Alerts for the selected robot that must show whatever tab is open: the
- * team checks (a modal when something failed) and the multiple-Driver-Station
- * warning.
+ * multiple-Driver-Station warning. (The team checks sit in the page header.)
  */
 function StationAlerts({ station }: { station: StationName }) {
   const multipleDsWarning = useDebouncedMultipleDsWarning(station);
@@ -1381,8 +1386,6 @@ function StationAlerts({ station }: { station: StationName }) {
 
   return (
     <>
-      <TeamChecksModal station={station} />
-
       {/* DS connection alerts — shows all DS IPs (accepted + blocked) with debounced hold */}
       {multipleDsWarning && (
         <Alert
