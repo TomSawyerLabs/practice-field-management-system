@@ -1,3 +1,4 @@
+import { robotNameOf } from '../../../src/utils';
 import { useCallback, useEffect, useLayoutEffect, useState, useMemo, useRef, useSyncExternalStore, memo } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import Box from '@mui/material/Box';
@@ -1364,7 +1365,7 @@ setInterval(() => {
 function stationInfoKey(matchState: ReturnType<typeof useMatchState>): string {
   return StationNameList.map(s => {
     const st = matchState?.stationStates?.[s];
-    return `${s}:${st?.teamNumber ?? ''}:${st?.alliance ?? ''}`;
+    return `${s}:${st?.teamNumber ?? ''}:${st?.alliance ?? ''}:${encodeURIComponent(st?.robot ?? '')}`;
   }).join('|');
 }
 
@@ -1400,12 +1401,16 @@ function useBatteryRobots(stationKey: string, leftAlliance: Alliance, pinnedKey:
   const version = useSyncExternalStore(batteryStore.subscribe, batteryStore.getVersion);
 
   return useMemo(() => {
-    const infoByStation = new Map<string, { teamNumber: number | null; alliance: Alliance | null }>();
+    const infoByStation = new Map<
+      string,
+      { teamNumber: number | null; alliance: Alliance | null; robot: string | null }
+    >();
     for (const part of stationKey.split('|')) {
-      const [station, team, alliance] = part.split(':');
+      const [station, team, alliance, robot] = part.split(':');
       infoByStation.set(station, {
         teamNumber: team ? Number(team) : null,
         alliance: (alliance || null) as Alliance | null,
+        robot: robot ? decodeURIComponent(robot) : null,
       });
     }
     const pinned = new Set(pinnedKey ? pinnedKey.split(',') : []);
@@ -1421,7 +1426,7 @@ function useBatteryRobots(stationKey: string, leftAlliance: Alliance, pinnedKey:
         station,
         teamNumber: info?.teamNumber ?? null,
         alliance: info?.alliance ?? null,
-        ssid: null,
+        ssid: info?.robot ?? null,
         battery: batt,
       });
     }
@@ -1591,9 +1596,10 @@ function BatteryCard({
         >
           {robot.teamNumber ?? robot.station}
           {isDuplicate && (
-            <span style={{ color: 'rgba(255,255,255,0.3)', fontWeight: 400, fontSize: '0.7rem' }}>
+            // One team, two robots: the robot's name says which
+            <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: 500, fontSize: '0.75em' }}>
               {' '}
-              ({robot.station.replace('slot', '#')})
+              {robot.ssid ? robotNameOf(robot.ssid) : `(${robot.station.replace('slot', '#')})`}
             </span>
           )}
         </Typography>

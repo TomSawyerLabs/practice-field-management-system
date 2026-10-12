@@ -1,3 +1,4 @@
+import { teamLabelAmong } from '../../../src/utils';
 import { useMemo, type MouseEvent } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -57,28 +58,15 @@ function MatchTimer({ remainingTime, phase }: { remainingTime: number; phase: Ma
   );
 }
 
-/** Build a display label for a joined station chip, using team number. */
+/** Build a display label for a joined station chip: the team number, plus
+ *  the robot's name when the team has two robots on the field. */
 function stationChipLabel(
-  station: StationName,
   state: StationControlState | undefined,
   allStates: Partial<Record<StationName, StationControlState>>,
 ) {
-  const team = state?.teamNumber;
-  if (!team) return 'No Team';
-
-  // Check if another joined station shares the same team number
-  const sameTeamStations = (Object.entries(allStates) as [StationName, StationControlState | undefined][]).filter(
-    ([s, st]) => st?.joined && st?.teamNumber === team && s !== station,
-  ).length;
-
-  const suffix = state?.ready ? ' \u2713' : '';
-  if (sameTeamStations > 0) {
-    // Disambiguate with alliance tag
-    const alliance = state?.alliance;
-    const tag = alliance ? (alliance === 'red' ? 'R' : 'B') : '?';
-    return `${team}-${tag}${suffix}`;
-  }
-  return `${team}${suffix}`;
+  const label = state && teamLabelAmong(state, Object.values(allStates));
+  if (!label) return 'No Team';
+  return `${label}${state?.ready ? ' \u2713' : ''}`;
 }
 
 /** Shown under a greyed Ready button while the field can't hear the Driver
@@ -415,7 +403,7 @@ export function MatchPanel({ station }: { station?: StationName }) {
               <Chip
                 key={s}
                 avatar={<TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />}
-                label={stationChipLabel(s, stationStates[s], stationStates)}
+                label={stationChipLabel(stationStates[s], stationStates)}
                 size="small"
                 color={stationStates[s]?.ready ? 'success' : 'default'}
                 variant="outlined"
@@ -519,12 +507,16 @@ export function MatchPanel({ station }: { station?: StationName }) {
  * Build a display label for a joined station chip in the control page context.
  * Uses team number — never exposes physical slot / radio identifiers.
  */
-function controlChipLabel(_station: StationName, state: StationControlState | undefined) {
-  const team = state?.teamNumber;
+function controlChipLabel(
+  _station: StationName,
+  state: StationControlState | undefined,
+  allStates: Partial<Record<StationName, StationControlState>>,
+) {
+  const label = state && teamLabelAmong(state, Object.values(allStates));
   const readySuffix = state?.ready ? ' \u2713' : '';
   const alliance = state?.alliance;
   const allianceTag = alliance ? `${alliance === 'red' ? 'R' : 'B'}` : '';
-  if (team) return `${allianceTag} ${team}${readySuffix}`;
+  if (label) return `${allianceTag} ${label}${readySuffix}`;
   return `No Team${readySuffix}`;
 }
 
@@ -647,7 +639,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
                         <Chip
                           key={s}
                           avatar={<TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />}
-                          label={controlChipLabel(s, stationStates[s])}
+                          label={controlChipLabel(s, stationStates[s], stationStates)}
                           size="small"
                           color={stationStates[s]?.ready ? 'success' : 'default'}
                           variant={s === station ? 'filled' : 'outlined'}
@@ -667,7 +659,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
                         <Chip
                           key={s}
                           avatar={<TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />}
-                          label={controlChipLabel(s, stationStates[s])}
+                          label={controlChipLabel(s, stationStates[s], stationStates)}
                           size="small"
                           color={stationStates[s]?.ready ? 'success' : 'default'}
                           variant={s === station ? 'filled' : 'outlined'}

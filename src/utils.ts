@@ -48,6 +48,30 @@ export function prettyStationName(station: StationName) {
   return `Slot ${match[1]}`;
 }
 
+/** A robot's name within its team: the SSID after the team number
+ *  ("1967-Elsa" → "Elsa"), or the whole SSID when it has no suffix. */
+export function robotNameOf(ssid: string): string {
+  const dash = ssid.indexOf('-');
+  return dash < 0 ? ssid : ssid.slice(dash + 1);
+}
+
+type TeamEntry = { teamNumber: number | null | undefined; robot?: string | null };
+
+/**
+ * How to name a team among the others on the field (or in a match): its
+ * number, plus the robot's name when another entry has the same team — one
+ * team running two robots, where the number alone can't say which robot.
+ * Null when the entry has no team.
+ */
+export function teamLabelAmong(entry: TeamEntry, all: Iterable<TeamEntry | undefined>): string | null {
+  const team = entry.teamNumber;
+  if (!team) return null;
+  let sameTeam = 0;
+  for (const e of all) if (e?.teamNumber === team) sameTeam++;
+  if (sameTeam < 2 || !entry.robot) return String(team);
+  return `${team} ${robotNameOf(entry.robot)}`;
+}
+
 /** Team number out of a robot's SSID ("1234-Comp" → 1234), or null. */
 export function teamOfSsid(ssid: string | null | undefined): number | null {
   if (!ssid) return null;

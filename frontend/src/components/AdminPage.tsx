@@ -22,7 +22,7 @@ import TableSortLabel from '@mui/material/TableSortLabel';
 
 import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
-import { prettyStationName } from '../../../src/utils';
+import { prettyStationName, teamLabelAmong } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -216,6 +216,8 @@ type TeamRow = {
   teamNumber: number;
   /** The robot's SSID as the radio reports it (the saved-team key). */
   ssid: string | null;
+  /** The team, with the robot's name when the team has two robots here. */
+  label: string;
   state: StationControlState;
   isRobotLinked: boolean;
 };
@@ -235,6 +237,11 @@ function useConnectedTeamRows(): TeamRow[] {
         station,
         teamNumber: state.teamNumber,
         ssid: radio?.ssid || null,
+        label:
+          teamLabelAmong(
+            { teamNumber: state.teamNumber, robot: state.robot ?? radio?.ssid },
+            Object.values(matchState?.stationStates ?? {}),
+          ) ?? String(state.teamNumber),
         state,
         isRobotLinked: radio?.isLinked ?? false,
       },
@@ -337,7 +344,7 @@ function TeamControlButtons({ row }: { row: TeamRow }) {
 }
 
 function ConnectedTeamRow({ row }: { row: TeamRow }) {
-  const { station, teamNumber, state, isRobotLinked } = row;
+  const { station, teamNumber, label, state, isRobotLinked } = row;
   const now = Date.now();
 
   return (
@@ -346,7 +353,7 @@ function ConnectedTeamRow({ row }: { row: TeamRow }) {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <TeamAvatar teamNumber={teamNumber} size={28} />
           <Typography variant="subtitle1" fontWeight="bold" sx={{ whiteSpace: 'nowrap' }}>
-            {teamNumber}
+            {label}
           </Typography>
         </Box>
       </TableCell>

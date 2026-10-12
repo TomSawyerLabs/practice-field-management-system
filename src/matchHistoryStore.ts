@@ -116,6 +116,7 @@ export class MatchHistoryStore {
           teams.push({
             station: station as StationName,
             teamNumber: ss.teamNumber,
+            ...(ss.robot ? { robot: ss.robot } : {}),
             alliance: ss.alliance,
             matchSlot: ss.matchSlot,
           });

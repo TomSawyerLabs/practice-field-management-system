@@ -1,3 +1,4 @@
+import { teamLabelAmong } from '../../../src/utils';
 import { useEffect, useMemo, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import Box from '@mui/material/Box';
 import { QRCodeSVG } from 'qrcode.react';
@@ -114,10 +115,13 @@ function getPageBg(matchState: MatchState): string {
 
 // ── Station label — uses team number, never exposes slot/radio ids ──
 
-function teamLabel(state: StationControlState | undefined): string {
-  const team = state?.teamNumber;
-  if (team) return String(team);
-  return '(no team)';
+/** The station's team, with the robot's name when the team has another
+ *  robot on the field (`all`: every station's state). */
+function teamLabel(
+  state: StationControlState | undefined,
+  all: Partial<Record<StationName, StationControlState>> | undefined,
+): string {
+  return (state && teamLabelAmong(state, Object.values(all ?? {}))) ?? '(no team)';
 }
 
 // ── Progress computation ────────────────────────────────────────────
@@ -480,7 +484,7 @@ export function MatchControlPage() {
         cooldownLeftMs={cooldownLeftMs}
         cancelledByLabel={
           matchState.restartCooldown?.cancelledBy
-            ? teamLabel(matchState.stationStates[matchState.restartCooldown.cancelledBy])
+            ? teamLabel(matchState.stationStates[matchState.restartCooldown.cancelledBy], matchState.stationStates)
             : null
         }
       />
@@ -605,7 +609,10 @@ function CreatedView({
   // the team page, so "press Ready" alone would send staff to the wrong place.
   const notReadyTeams = joinedStations
     .filter(s => !stationStates[s]?.ready)
-    .map(s => `${teamLabel(stationStates[s])}${stationStates[s]?.dsAttached === false ? ' (DS offline)' : ''}`);
+    .map(
+      s =>
+        `${teamLabel(stationStates[s], stationStates)}${stationStates[s]?.dsAttached === false ? ' (DS offline)' : ''}`,
+    );
   // Spell out exactly who or what is holding the start, right under the button.
   const holdDisabledReason = !readyRequested
     ? 'Ask for Ready first — nobody can ready up until the check is open.'
@@ -871,6 +878,7 @@ function ParticipantRow({
    *  wrong (it was, for every DS, in July 2026). */
   onForceReady: () => void;
 }) {
+  const allStates = useMatchState()?.stationStates;
   const dsOffline = state?.dsAttached === false;
   return (
     <Box
@@ -888,7 +896,7 @@ function ParticipantRow({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <TeamAvatar teamNumber={state?.teamNumber} size={22} />
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {teamLabel(state)}
+          {teamLabel(state, allStates)}
         </Typography>
         {state?.ready && <Chip label="Ready" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
         {/* The team's Ready button is greyed while this shows: the field has
@@ -1219,6 +1227,7 @@ function ActiveMatchView({
 
 /** A participant row during an active match, with per-station disable/e-stop controls */
 function ActiveParticipantRow({ station, state }: { station: StationName; state: StationControlState | undefined }) {
+  const allStates = useMatchState()?.stationStates;
   const phase = useMatchState()?.phase;
   const isEnabled = state?.enabled ?? false;
   const isEStopped = state?.eStop ?? false;
@@ -1243,7 +1252,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <TeamAvatar teamNumber={state?.teamNumber} size={22} />
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {teamLabel(state)}
+          {teamLabel(state, allStates)}
         </Typography>
         {isEStopped && (
           <Chip
@@ -1401,7 +1410,7 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
                       >
                         <TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {teamLabel(stationStates[s])}
+                          {teamLabel(stationStates[s], stationStates)}
                         </Typography>
                       </Box>
                     ))}
@@ -1430,7 +1439,7 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
                       >
                         <TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {teamLabel(stationStates[s])}
+                          {teamLabel(stationStates[s], stationStates)}
                         </Typography>
                       </Box>
                     ))}
@@ -1600,7 +1609,19 @@ function EndReasonIcon({ reason }: { reason: string }) {
 /** One alliance's teams for the history grid: avatars + numbers, in the
  *  alliance colour, anchored toward the score so the red|blue split lines up
  *  on every row regardless of how many teams played. */
-function HistoryTeams({ teams, color, align }: { teams: MatchHistoryTeam[]; color: string; align: 'left' | 'right' }) {
+function HistoryTeams({
+  teams,
+  all,
+  color,
+  align,
+}: {
+  teams: MatchHistoryTeam[];
+  /** Every team in the match, both alliances: a team that ran two robots is
+   *  named with the robot's name. */
+  all: MatchHistoryTeam[];
+  color: string;
+  align: 'left' | 'right';
+}) {
   return (
     <Box
       sx={{
@@ -1615,7 +1636,7 @@ function HistoryTeams({ teams, color, align }: { teams: MatchHistoryTeam[]; colo
         <Box key={t.station} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, whiteSpace: 'nowrap' }}>
           <TeamAvatar teamNumber={t.teamNumber} size={16} />
           <Typography variant="body2" sx={{ fontWeight: 500, color }}>
-            {t.teamNumber}
+            {teamLabelAmong(t, all)}
           </Typography>
         </Box>
       ))}
@@ -1736,7 +1757,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
       <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary' }}>
         #{index}
       </Typography>
-      <HistoryTeams teams={redTeams} color="error.main" align="right" />
+      <HistoryTeams teams={redTeams} all={match.teams} color="error.main" align="right" />
       <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
         {redChallenge !== null ? (
           <ChallengeResult label={redChallenge} color="error.main" align="right" />
@@ -1772,7 +1793,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
           />
         )}
       </Box>
-      <HistoryTeams teams={blueTeams} color="info.main" align="left" />
+      <HistoryTeams teams={blueTeams} all={match.teams} color="info.main" align="left" />
       <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {formatDuration(match.durationSeconds)}
       </Typography>

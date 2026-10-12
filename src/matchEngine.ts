@@ -124,6 +124,8 @@ function challengeConfig(requestedConfig: Partial<MatchConfig>): MatchConfig {
 }
 
 export type TeamResolver = (station: StationName) => number | null;
+/** The SSID of the robot on a station ("1967-Elsa"), or null. */
+export type RobotResolver = (station: StationName) => string | null;
 
 /** 24 random bytes as base64url (32 chars): unguessable, URL- and QR-safe. */
 export function mintShareToken(): string {
@@ -235,9 +237,20 @@ export class MatchEngine {
    *  Returns { red: number, blue: number } totals. */
   private autoScoreResolver?: () => { red: number; blue: number };
 
-  constructor(teamResolver?: TeamResolver, projectedTeamResolver?: TeamResolver) {
+  /** The robot (SSID) alongside each resolver above, same views. */
+  private robotResolver: RobotResolver;
+  private projectedRobotResolver: RobotResolver;
+
+  constructor(
+    teamResolver?: TeamResolver,
+    projectedTeamResolver?: TeamResolver,
+    robotResolver?: RobotResolver,
+    projectedRobotResolver?: RobotResolver,
+  ) {
     this.teamResolver = teamResolver ?? (() => null);
     this.projectedTeamResolver = projectedTeamResolver ?? this.teamResolver;
+    this.robotResolver = robotResolver ?? (() => null);
+    this.projectedRobotResolver = projectedRobotResolver ?? this.robotResolver;
     this.udpSocket = dgram.createSocket('udp4');
     for (const station of StationNameList) {
       this.stationStates.set(station, {
@@ -833,6 +846,7 @@ export class MatchEngine {
     // holds right now: while a match exists Wi-Fi changes are held, so the
     // radio may still carry the previous team. Kept until the station leaves.
     state.teamNumber = this.projectedTeamResolver(station);
+    state.robot = this.projectedRobotResolver(station);
     state.joined = true;
     // A team Stop is for driving outside matches; match control takes over.
     state.teamStopped = false;
@@ -857,7 +871,8 @@ export class MatchEngine {
       const state = this.stationStates.get(station)!;
       if (!state.joined) continue;
       const now = this.projectedTeamResolver(station);
-      if (now === state.teamNumber) continue;
+      // Same team, other robot counts as a change: a team runs two robots.
+      if (now === state.teamNumber && this.projectedRobotResolver(station) === (state.robot ?? null)) continue;
       console.log(
         `Station ${station} left match: robot changed from team ${state.teamNumber ?? 'none'} to ${now ?? 'none'}`,
       );
@@ -867,6 +882,7 @@ export class MatchEngine {
       state.matchSlot = null;
       state.aStop = false;
       state.teamNumber = this.teamResolver(station);
+      state.robot = this.robotResolver(station);
       changed = true;
     }
     if (!changed) return;
@@ -1230,7 +1246,10 @@ export class MatchEngine {
       const state = this.stationStates.get(station)!;
       // Joined stations keep the robot recorded at join; the rest snapshot
       // whatever is on the radio.
-      if (!state.joined) state.teamNumber = this.teamResolver(station);
+      if (!state.joined) {
+        state.teamNumber = this.teamResolver(station);
+        state.robot = this.robotResolver(station);
+      }
       state.enabled = false;
       state.eStop = false;
       state.disabledBy = null;
@@ -1727,6 +1746,7 @@ export class MatchEngine {
       // joined, and during a match everyone keeps the start snapshot.
       if (!this.isMatchActive() && this.phase !== 'postMatch' && !state.joined) {
         state.teamNumber = this.teamResolver(station);
+        state.robot = this.robotResolver(station);
       }
       stationStates[station] = state;
     }

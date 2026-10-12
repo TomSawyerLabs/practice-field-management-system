@@ -10,6 +10,7 @@
  * In a relay the lap button gives way to the line ref's hand-off button:
  * the robots run one at a time, and pressing it sends the next one.
  */
+import { teamLabelAmong } from '../../../src/utils';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -33,7 +34,9 @@ import { formatName } from '../utils/matchFormat';
 
 const ALLIANCE_COLOR: Record<Alliance, string> = { red: '#d32f2f', blue: '#1565c0' };
 
-type Participant = { station: StationName; team: number | null; state: StationControlState };
+/** `team`: the team's label, with the robot's name when the team has two
+ *  robots in the match. */
+type Participant = { station: StationName; team: string | null; state: StationControlState };
 
 /** Which alliances have a robot on the field, and who, in match-slot order —
  *  which is the relay running order. */
@@ -41,7 +44,7 @@ function participants(stationStates: MatchState['stationStates']): Record<Allian
   const sides: Record<Alliance, Participant[]> = { red: [], blue: [] };
   for (const [station, state] of Object.entries(stationStates) as [StationName, StationControlState | undefined][]) {
     if (!state?.joined || !state.alliance) continue;
-    sides[state.alliance].push({ station, team: state.teamNumber, state });
+    sides[state.alliance].push({ station, team: teamLabelAmong(state, Object.values(stationStates)), state });
   }
   for (const side of Object.values(sides)) {
     side.sort((a, b) => (a.state.matchSlot ?? '').localeCompare(b.state.matchSlot ?? ''));
@@ -120,7 +123,7 @@ function AllianceTally({
   const relay = config.challengeTiming === 'relay';
   const fmsHandoff = isFmsHandoff(config);
   const finished = tally.finishedAt !== undefined;
-  const teams = side.map(p => p.team).filter((t): t is number => t !== null);
+  const teams = side.map(p => p.team).filter((t): t is string => t !== null);
   const legsDone = tally.splits?.length ?? 0;
   const lastLeg = legsDone >= side.length - 1;
 

@@ -7,8 +7,8 @@ import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import { StationName } from '../../../src/types';
-import { prettyStationName } from '../../../src/utils';
-import { useRoutePreferenceState, useMyDriveStation, sendDrive } from '../hooks/useBackend';
+import { prettyStationName, robotNameOf } from '../../../src/utils';
+import { useLatest, useRoutePreferenceState, useMyDriveStation, sendDrive } from '../hooks/useBackend';
 import { useHostname } from './HostDisplay';
 
 function ConflictingTeamCard({
@@ -21,6 +21,13 @@ function ConflictingTeamCard({
   /** The station this laptop drives (its drive session), if any */
   driving: StationName | null;
 }) {
+  // The robot on each station: the slot number alone can't say which of
+  // the team's robots a button drives.
+  const statuses = useLatest()?.radioUpdate?.stationStatuses;
+  const label = (station: StationName) => {
+    const ssid = statuses?.[station]?.ssid;
+    return ssid ? `${robotNameOf(ssid)} (${prettyStationName(station)})` : prettyStationName(station);
+  };
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
@@ -37,7 +44,7 @@ function ConflictingTeamCard({
                 variant={selected ? 'contained' : 'outlined'}
                 color={selected ? 'primary' : 'inherit'}
               >
-                {prettyStationName(station)}
+                {label(station)}
               </Button>
             );
           })}
@@ -47,7 +54,7 @@ function ConflictingTeamCard({
             <Typography variant="body2" color="text.secondary">
               Driving:
             </Typography>
-            <Chip label={prettyStationName(driving)} size="small" color="primary" />
+            <Chip label={label(driving)} size="small" color="primary" />
             <Button size="small" onClick={() => sendDrive(null)} sx={{ ml: 'auto' }}>
               Clear
             </Button>

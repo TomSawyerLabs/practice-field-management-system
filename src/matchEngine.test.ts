@@ -847,3 +847,18 @@ describe('a team Stop out of a match', () => {
     expect(engine.isEStopped('slot1')).toBe(false);
   });
 });
+
+describe('two robots of one team', () => {
+  test('each station records the robot that joined, not just the team', () => {
+    const robots: Record<string, string> = { slot1: '1967-Elsa', slot2: '1967-Lupe' };
+    const robotOn = (s: string) => robots[s] ?? null;
+    const engine = new MatchEngine(s => (robots[s] ? 1967 : null), undefined, robotOn);
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'blue');
+    engine.joinStationAlliance('slot2', 'red');
+    const { stationStates } = engine.getState();
+    expect(stationStates.slot1?.robot).toBe('1967-Elsa');
+    expect(stationStates.slot2?.robot).toBe('1967-Lupe');
+    expect(stationStates.slot2?.teamNumber).toBe(1967);
+  });
+});

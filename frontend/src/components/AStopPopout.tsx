@@ -1,3 +1,4 @@
+import { teamLabelAmong } from '../../../src/utils';
 import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -83,7 +84,8 @@ function togglePopupMuted() {
 }
 
 type ConsoleRobot = {
-  team: number | null;
+  /** The team, with the robot's name when the team has two robots in play. */
+  team: string | null;
   alliance: 'red' | 'blue' | null;
   ready: boolean;
   self: boolean;
@@ -433,7 +435,7 @@ function consoleStateFrom(match: MatchState, station: StationName): ConsoleState
   const robots: ConsoleRobot[] = (Object.entries(match.stationStates) as [StationName, typeof my][])
     .filter(([, s]) => s?.joined)
     .map(([name, s]) => ({
-      team: s?.teamNumber ?? null,
+      team: (s && teamLabelAmong(s, Object.values(match.stationStates))) ?? null,
       alliance: s?.alliance ?? null,
       ready: s?.ready ?? false,
       self: name === station,

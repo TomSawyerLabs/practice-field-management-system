@@ -1361,6 +1361,16 @@ class RadioManager {
     return teamOfSsid(this.activeConfig[station]?.ssid);
   }
 
+  /** The SSID of the robot on a station's active config, or null. */
+  getRobotForStation(station: StationName): string | null {
+    return this.activeConfig[station]?.ssid ?? null;
+  }
+
+  /** The SSID behind getProjectedTeamForStation. */
+  getProjectedRobotForStation(station: StationName): string | null {
+    return this.computeTarget().target[station]?.ssid ?? null;
+  }
+
   /** The team a station is, or is about to be, configured for: a held
    *  request for the station wins over the active config. (A deferred change
    *  is already in the active config.) This is the view the team page uses

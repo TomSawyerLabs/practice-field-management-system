@@ -1,3 +1,4 @@
+import { teamLabelAmong } from '../../../src/utils';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -31,7 +32,8 @@ export function useDsClientStation(): StationName | null | undefined {
  */
 export function DsClientBlock({ station, roleNoun }: { station: StationName; roleNoun: string }) {
   const matchState = useMatchState();
-  const team = matchState?.stationStates?.[station]?.teamNumber;
+  const own = matchState?.stationStates?.[station];
+  const team = own && teamLabelAmong(own, Object.values(matchState?.stationStates ?? {}));
   const url = window.location.href;
 
   return (

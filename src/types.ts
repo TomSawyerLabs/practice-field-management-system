@@ -1224,6 +1224,9 @@ export type StationControlState = {
    *  config. Joined: the team that pressed Join (held Wi-Fi changes count),
    *  kept while joined and frozen for the match. */
   teamNumber: number | null;
+  /** The same robot's Wi-Fi name (SSID, e.g. "1967-Elsa"), resolved with
+   *  `teamNumber`. Tells apart two robots of one team. */
+  robot?: string | null;
   enabled: boolean;
   eStop: boolean;
   /** A-Stop: robot stopped for the remainder of the autonomous period, auto-released at teleop */
@@ -3673,6 +3676,9 @@ export function isRefreshAudioDevices(msg: unknown): msg is RefreshAudioDevices 
 export interface MatchHistoryTeam {
   station: StationName;
   teamNumber: number;
+  /** The robot's SSID ("1967-Elsa"), so two robots of one team can be told
+   *  apart. Absent on entries recorded before 2026-10-12. */
+  robot?: string;
   alliance: Alliance;
   matchSlot: MatchSlot | null;
 }

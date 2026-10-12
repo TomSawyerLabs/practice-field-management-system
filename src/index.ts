@@ -339,6 +339,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const matchEngine = new MatchEngine(
     s => radioManager.getTeamForStation(s),
     s => radioManager.getProjectedTeamForStation(s),
+    s => radioManager.getRobotForStation(s),
+    s => radioManager.getProjectedRobotForStation(s),
   );
   // A joined robot whose Wi-Fi request changes during setup leaves the match.
   // Held requests only announce themselves through the pending-commit state,
