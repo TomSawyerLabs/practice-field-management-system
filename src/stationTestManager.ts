@@ -12,7 +12,7 @@ import type { NetworkBackend } from './node-ip/index.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import type RadioManager from './radioManager.js';
 import { hashWpaKey } from './wpaKeyUtils.js';
-import { teamSubnet } from './teamChecker.js';
+import { teamSubnet } from './utils.js';
 import { appInfo, appWarn } from './appLogger.js';
 
 /** How long (ms) before an idle test port mode session auto-exits. */

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { FirmwareUpdateProgress } from './types.js';
-import { teamSubnet } from './teamChecker.js';
+import { teamSubnet } from './utils.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import { hashWpaKey } from './wpaKeyUtils.js';
 

@@ -30,16 +30,6 @@ interface SetupWebSocketOptions {
 
 Every new feature that adds another callback makes this worse. This is the single highest-impact refactor for maintainability of the WebSocket server wiring.
 
-## `teamSubnet` duplication across files
-
-The `teamSubnet()` function (converting a team number to `"10.TE.AM"` subnet prefix) is exported from `src/teamChecker.ts` but has private copies in:
-
-- `src/robotTestMonitor.ts:693` — `teamSubnetStr()`, identical logic
-- `src/subnetScanner.ts:312` — `SubnetScanner.teamSubnet()`, identical logic
-- `src/routePreferenceManager.ts:16` — `teamSubnet()`, slight variant (appends `.0/24`)
-
-**Fix:** Consolidate all to use the export from `teamChecker.ts`. The route preference variant could call the shared one and append the CIDR suffix.
-
 ## Global hook redundancy in StationStatus
 
 `StationStatus` renders 6 times (once per station). Each instance subscribes to several global hooks (`useLastLinked`, `usePortBridgeState`, `useLatest`, `useMatchState`, `useNetworkStats`, `useSubnetScan`, `useMdnsActivity`, etc.). Any update to these global states causes all 6 instances to re-render and diff their entire subtree, even if only one station's data changed.

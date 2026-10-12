@@ -1,5 +1,6 @@
 import { StationName, StationNameList } from './types.js';
 import { networkBackend as net, vlanMap } from './networkManager.js';
+import { teamSubnet } from './utils.js';
 
 type Preference = {
   station: StationName;
@@ -10,14 +11,8 @@ type Preference = {
 /** In-memory map of laptopIP → active routing preference */
 const preferences = new Map<string, Preference>();
 
-function teamSubnet(team: number): string {
-  const high = Math.floor(team / 100);
-  const low = team % 100;
-  return `10.${high}.${low}.0/24`;
-}
-
 export async function setRoutePreference(laptopIp: string, station: StationName, team: number): Promise<void> {
-  const subnet = teamSubnet(team);
+  const subnet = `${teamSubnet(team)}.0/24`;
   const old = preferences.get(laptopIp);
 
   // Clear map entry first so a partial failure doesn't leave stale data

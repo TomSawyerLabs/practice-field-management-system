@@ -2,6 +2,7 @@ import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost } from './types.js';
 import { StationNameList } from './types.js';
+import { teamSubnet } from './utils.js';
 
 const execFile = promisify(execFileCb);
 
@@ -63,7 +64,7 @@ export class SubnetScanner {
       const hostMap = this.state.get(station);
       if (!hostMap || hostMap.size === 0) continue;
 
-      const subnet = SubnetScanner.teamSubnet(team);
+      const subnet = teamSubnet(team);
       const hosts: DiscoveredHost[] = [];
 
       for (const [ip, state] of hostMap) {
@@ -121,7 +122,7 @@ export class SubnetScanner {
   }
 
   private async scanStation(station: StationName, team: number): Promise<void> {
-    const subnet = SubnetScanner.teamSubnet(team);
+    const subnet = teamSubnet(team);
     const rangeStart = `${subnet}.1`;
     const rangeEnd = `${subnet}.253`;
     const now = Date.now();
@@ -199,7 +200,7 @@ export class SubnetScanner {
     for (const station of StationNameList) {
       const team = this.getTeamForStation(station);
       if (team === null) continue;
-      subnetToStation.set(SubnetScanner.teamSubnet(team), station);
+      subnetToStation.set(teamSubnet(team), station);
     }
     if (subnetToStation.size === 0) return;
 
@@ -307,11 +308,5 @@ export class SubnetScanner {
       return second >= 16 && second <= 31;
     }
     return false;
-  }
-
-  static teamSubnet(team: number): string {
-    const high = Math.floor(team / 100);
-    const low = team % 100;
-    return `10.${high}.${low}`;
   }
 }

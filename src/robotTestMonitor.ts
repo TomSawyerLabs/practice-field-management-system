@@ -7,6 +7,7 @@ import type {
   FirmwareUpdateProgress,
   RadioConfigureProgress,
 } from './types.js';
+import { teamSubnet } from './utils.js';
 import { checkRadio, checkRobotController, checkFactoryDefault } from './teamChecker.js';
 import { updateRadioFirmware } from './firmwareUpdater.js';
 import type { FirmwareStore } from './firmwareStore.js';
@@ -591,7 +592,7 @@ export class RobotTestMonitor {
 
     try {
       // Determine which IP to reach the radio at
-      const radioIp = this.factoryRadioIp ?? (this.teamNumber ? `${teamSubnetStr(this.teamNumber)}.1` : null);
+      const radioIp = this.factoryRadioIp ?? (this.teamNumber ? `${teamSubnet(this.teamNumber)}.1` : null);
       if (!radioIp) {
         throw new Error('No radio detected — connect a radio to the test interface first');
       }
@@ -707,6 +708,3 @@ export class RobotTestMonitor {
 }
 
 /** Format a team number as a subnet prefix: 10.TE.AM */
-function teamSubnetStr(team: number): string {
-  return `10.${Math.floor(team / 100)}.${team % 100}`;
-}

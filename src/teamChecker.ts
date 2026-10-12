@@ -1,4 +1,5 @@
 import dgram from 'node:dgram';
+import { teamSubnet } from './utils.js';
 import { openInterfaceSocket, type InterfaceSocket } from './mdnsSocket.js';
 import type {
   StationName,
@@ -47,12 +48,6 @@ const EXPECTED_RADIO_FIRMWARE_PREFIX = '2.0.1';
 const EXPECTED_IMAGE_YEAR = '2026';
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-export function teamSubnet(team: number): string {
-  const high = Math.floor(team / 100);
-  const low = team % 100;
-  return `10.${high}.${low}`;
-}
 
 function expectedHostname(team: number): string {
   return `roboRIO-${team}-FRC`;

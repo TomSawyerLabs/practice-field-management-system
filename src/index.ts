@@ -10,7 +10,7 @@ import { waitForRadio, detectFirmwareMode, checkInterfaceIps, checkRequiredTools
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 import CIDRMatcher from 'cidr-matcher';
-import { toCidr } from './utils.js';
+import { teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine } from './matchEngine.js';
 import {
@@ -312,9 +312,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             }
           }
           for (const team of Object.keys(teamMappings).map(Number)) {
-            const high = Math.floor(team / 100);
-            const low = team % 100;
-            const expectedIp = `10.${high}.${low}.${VlanHostOctet}`;
+            const expectedIp = `${teamSubnet(team)}.${VlanHostOctet}`;
             if (!ifaceIps.has(expectedIp)) {
               console.warn(`VLAN IP ${expectedIp} missing for team ${team} — will re-apply config`);
               vlansOk = false;
@@ -1394,9 +1392,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
      * return traffic here — which the DNAT rule rewrites to the real DS IP.
      */
     function teamGatewayIp(team: number): string {
-      const high = Math.floor(team / 100);
-      const low = team % 100;
-      return `10.${high}.${low}.${VlanHostOctet}`;
+      return `${teamSubnet(team)}.${VlanHostOctet}`;
     }
 
     /** Check if an IP routes through a team bridge interface. Uses `ip route get`

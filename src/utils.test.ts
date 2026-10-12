@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { robotNameOf, teamLabelAmong, teamOfSsid } from './utils.js';
+import { robotNameOf, teamLabelAmong, teamOfSsid, teamSubnet } from './utils.js';
 
 describe('teamOfSsid', () => {
   test('reads the number before the first hyphen', () => {
@@ -32,5 +32,14 @@ describe('teamLabelAmong', () => {
     expect(teamLabelAmong({ teamNumber: null, robot: null }, [elsa])).toBeNull();
     // Recorded before robots were tracked: no name to add
     expect(teamLabelAmong({ teamNumber: 1967 }, [{ teamNumber: 1967 }, lupe])).toBe('1967');
+  });
+});
+
+describe('teamSubnet', () => {
+  test('splits the team number into the 10.TE.AM octets', () => {
+    expect(teamSubnet(1967)).toBe('10.19.67');
+    expect(teamSubnet(254)).toBe('10.2.54');
+    expect(teamSubnet(8)).toBe('10.0.8');
+    expect(teamSubnet(10000)).toBe('10.100.0');
   });
 });

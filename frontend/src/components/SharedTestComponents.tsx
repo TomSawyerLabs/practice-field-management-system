@@ -1,3 +1,4 @@
+import { teamSubnet } from '../../../src/utils';
 import { useState, useEffect, type ReactNode } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -139,10 +140,7 @@ export function SettlingBanner({
 
 export type ControllerKind = 'roboRIO' | 'systemcore' | null;
 
-/** `10.TE.AM` for a team — the first three octets every robot-side address hangs off. */
-export function teamSubnet(team: number): string {
-  return `10.${Math.floor(team / 100)}.${team % 100}`;
-}
+export { teamSubnet };
 
 /**
  * Which controller the checks found. The roboRIO checks are all named

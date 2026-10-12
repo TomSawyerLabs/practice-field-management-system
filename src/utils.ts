@@ -1,6 +1,12 @@
 import type { Alliance, DiscoveredHost, StationName } from './types.js';
 import CIDRMatcher from 'cidr-matcher';
 
+/** `10.TE.AM` for a team — the first three octets every robot-side address
+ *  hangs off (radio .1, roboRIO .2, field server .254 on its bridge). */
+export function teamSubnet(team: number): string {
+  return `10.${Math.floor(team / 100)}.${team % 100}`;
+}
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
