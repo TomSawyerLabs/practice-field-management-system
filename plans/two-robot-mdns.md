@@ -130,7 +130,19 @@ laptop.
       clearMatch now clears e-stops/a-stops. Not deployed yet. The DS
       restart at 12:01 is unexplained: pFMS had released both DSes and
       Elsa's DS never reported an e-stop after 11:59:05.
-- [ ] Interface-pinned mDNS (design above): awaiting the user's go-ahead.
+- [x] Select deployed (`6bc53c5`, 12:57).
+- [x] Forwarded-only bridge MASQUERADE + migration (`bb587c3`).
+- [x] Interface-pinned mDNS: Rust addon `native/mdns-socket`, loader
+      `src/mdnsSocket.ts`, reflector and team checks rewritten, CI workflow
+      `.github/workflows/mdns-socket.yml`, fetch in `bun run build`
+      (`e263bcf`). Unit tests pass. The full suite's fmsServer setup
+      failures are environmental (they pass alone and on master).
+- [ ] ← current: push the tag `mdns-socket-v0.1.0` (user OK needed), wait
+      for the release, then deploy. Deploying before the release fails the
+      build (the fetch can't find the binary), which is safe.
+- [ ] After deploy: from this PC (`laptop-test.mjs`, VLAN 3), each slot
+      resolves its own robot's names. Then delete `/tmp/pfms-mdns-test` on
+      steamboat.
 - [ ] Optional: re-route a non-DS laptop when a robot is picked on the team
       page (only for laptops not driving one). Awaiting the user's call.
 
