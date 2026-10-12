@@ -1,8 +1,5 @@
-import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import { StationName, StationNameList } from './types.js';
-import { vlanMap } from './networkManager.js';
-
-const net = process.env.DRY_RUN ? createDryRunBackend() : createBackend();
+import { networkBackend as net, vlanMap } from './networkManager.js';
 
 type Preference = {
   station: StationName;
@@ -26,17 +23,17 @@ export async function setRoutePreference(laptopIp: string, station: StationName,
   // Clear map entry first so a partial failure doesn't leave stale data
   preferences.delete(laptopIp);
   if (old) {
-    await net.removeIpRule({ from: laptopIp, to: old.subnet, table: vlanMap[old.station] });
+    await net().removeIpRule({ from: laptopIp, to: old.subnet, table: vlanMap[old.station] });
   }
 
-  await net.addIpRule({ from: laptopIp, to: subnet, table: vlanMap[station] });
+  await net().addIpRule({ from: laptopIp, to: subnet, table: vlanMap[station] });
   preferences.set(laptopIp, { station, team, subnet });
 }
 
 export async function clearRoutePreference(laptopIp: string): Promise<void> {
   const old = preferences.get(laptopIp);
   if (!old) return;
-  await net.removeIpRule({ from: laptopIp, to: old.subnet, table: vlanMap[old.station] });
+  await net().removeIpRule({ from: laptopIp, to: old.subnet, table: vlanMap[old.station] });
   preferences.delete(laptopIp);
 }
 
@@ -101,7 +98,7 @@ export async function restorePreferencesFromKernel(): Promise<number> {
     tableToStation.set(tableId, station as StationName);
   }
 
-  const rules = await net.listIpRules();
+  const rules = await net().listIpRules();
   let count = 0;
 
   for (const rule of rules) {

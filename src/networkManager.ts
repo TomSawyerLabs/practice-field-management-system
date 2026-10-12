@@ -7,7 +7,23 @@ import { appInfo, appWarn } from './appLogger.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 
-const net: NetworkBackend = process.env.DRY_RUN ? createDryRunBackend() : createBackend();
+let backend: NetworkBackend | undefined;
+
+/** The network backend, built on first use rather than when this module
+ *  loads: createBackend() throws off Linux, and importing the module (the
+ *  route preference manager, tests, a non-Linux dev box) shouldn't need a
+ *  network stack until something actually configures one. Shared with
+ *  routePreferenceManager. */
+export function networkBackend(): NetworkBackend {
+  return (backend ??= process.env.DRY_RUN ? createDryRunBackend() : createBackend());
+}
+
+/** Run against this backend instead (tests: a fake that records calls). */
+export function useNetworkBackend(b: NetworkBackend): void {
+  backend = b;
+}
+
+const net = networkBackend;
 const commentPrefix = process.env.IPTABLES_COMMENT_PREFIX || 'pfms-';
 const vlanHostOctet = Number(process.env.VLAN_HOST_OCTET) || 254;
 if (vlanHostOctet < 220 || vlanHostOctet > 254) {
@@ -174,10 +190,10 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
     const brName = bridgeName(station); // For everything else (IP, iptables, routes, DHCP)
 
     // Ensure the VLAN sub-interface and bridge exist with correct membership
-    await net.createVlan({ parent: physical_interface, vlanId, name: vlanIfName });
-    await net.createBridge(brName);
-    await net.addBridgeMember(brName, vlanIfName);
-    await net.setInterfaceUp(vlanIfName);
+    await net().createVlan({ parent: physical_interface, vlanId, name: vlanIfName });
+    await net().createBridge(brName);
+    await net().addBridgeMember(brName, vlanIfName);
+    await net().setInterfaceUp(vlanIfName);
 
     // Skip stations that haven't changed — unless the bridge is missing its IP
     // (migration case: first restart after switching from bare VLAN to bridge architecture,
@@ -185,7 +201,7 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
     if (team === prevTeam) {
       if (team) {
         const expectedIp = teamIp(team, vlanHostOctet);
-        const brInterfaces = await net.listInterfaces(brName);
+        const brInterfaces = await net().listInterfaces(brName);
         const hasIp = brInterfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === expectedIp);
         if (hasIp) {
           await migrateBridgeNat(station);
@@ -201,62 +217,62 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
     if (prevTeam) {
       // Remove the specific old team IP rather than flushing all addresses — avoids
       // disturbing IPv6 link-local and other addresses managed outside this code.
-      await net.removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 });
-      await net.iptables({
+      await net().removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 });
+      await net().iptables({
         chain: 'FORWARD',
         inInterface: brName,
         jump: 'ACCEPT',
         comment: `${commentPrefix}fwd-${station}`,
         action: '-D',
       });
-      await net.iptables({
+      await net().iptables({
         chain: 'FORWARD',
         outInterface: brName,
         jump: 'ACCEPT',
         comment: `${commentPrefix}fwd-in-${station}`,
         action: '-D',
       });
-      await net.iptables(bridgeMasquerade(station, '-D'));
-      await net.iptables(bridgeMasquerade(station, '-D', { legacy: true }));
+      await net().iptables(bridgeMasquerade(station, '-D'));
+      await net().iptables(bridgeMasquerade(station, '-D', { legacy: true }));
       // Remove the per-station routing table entry used for laptop route preferences
-      await net.removeRoute({ destination: teamIp(prevTeam, '0/24'), device: brName, table: vlanId });
+      await net().removeRoute({ destination: teamIp(prevTeam, '0/24'), device: brName, table: vlanId });
     }
 
     if (team) {
-      await net.setInterfaceUp(brName);
+      await net().setInterfaceUp(brName);
 
       const us = teamIp(team, vlanHostOctet);
 
       // Remove any stale IPv4 addresses that don't belong to this team.
       // This covers the process-restart case where previousStations is empty
       // and the teardown above was skipped, leaving addresses from a prior session.
-      const interfaces = await net.listInterfaces(brName);
+      const interfaces = await net().listInterfaces(brName);
       for (const addr of interfaces[0]?.addresses ?? []) {
         if (addr.family === 'inet' && addr.address !== us) {
           appWarn(`Removing stale address ${addr.address}/${addr.prefixLength} from ${brName}`);
-          await net.removeAddress({ interfaceName: brName, address: addr.address, prefixLength: addr.prefixLength });
+          await net().removeAddress({ interfaceName: brName, address: addr.address, prefixLength: addr.prefixLength });
         }
       }
 
       if (!practiceMode) {
-        const conflict = await net.arping({ interfaceName: brName, address: us });
+        const conflict = await net().arping({ interfaceName: brName, address: us });
         if (conflict) {
           appWarn(`Address conflict: ${us} is already in use on ${brName}, skipping`);
           continue;
         }
       }
 
-      await net.addAddress({ interfaceName: brName, address: us, prefixLength: 24 });
+      await net().addAddress({ interfaceName: brName, address: us, prefixLength: 24 });
 
       // Add forwarding rules
-      await net.iptables({
+      await net().iptables({
         chain: 'FORWARD',
         inInterface: brName,
         jump: 'ACCEPT',
         comment: `${commentPrefix}fwd-${station}`,
         action: '-A',
       });
-      await net.iptables({
+      await net().iptables({
         chain: 'FORWARD',
         outInterface: brName,
         jump: 'ACCEPT',
@@ -264,12 +280,12 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
         action: '-A',
       });
       // MASQUERADE traffic entering the VLAN so return traffic comes back to the same host
-      await net.iptables(bridgeMasquerade(station, '-A'));
+      await net().iptables(bridgeMasquerade(station, '-A'));
       // Add a per-station routing table entry so laptops can select which robot to talk to
       // when multiple stations share the same team subnet (same team, different robot suffix)
-      await net.addRoute({ destination: teamIp(team, '0/24'), device: brName, table: vlanId });
+      await net().addRoute({ destination: teamIp(team, '0/24'), device: brName, table: vlanId });
     } else {
-      await net.setInterfaceDown(brName);
+      await net().setInterfaceDown(brName);
     }
   }
 
@@ -308,14 +324,14 @@ function bridgeMasquerade(station: StationName, action: '-A' | '-D', { legacy = 
  * per-station mDNS address attempt left (its /32 and RETURN rule).
  */
 async function migrateBridgeNat(station: StationName): Promise<void> {
-  await net.iptables(bridgeMasquerade(station, '-A'));
-  await net.iptables(bridgeMasquerade(station, '-D', { legacy: true }));
+  await net().iptables(bridgeMasquerade(station, '-A'));
+  await net().iptables(bridgeMasquerade(station, '-D', { legacy: true }));
   const brName = bridgeName(station);
   const slot = Number(station.replace(/^slot/, ''));
-  for (const addr of (await net.listInterfaces(brName))[0]?.addresses ?? []) {
+  for (const addr of (await net().listInterfaces(brName))[0]?.addresses ?? []) {
     if (addr.family !== 'inet' || addr.prefixLength !== 32) continue;
     if (Number(addr.address.split('.')[3]) !== vlanHostOctet - slot) continue;
-    await net.removeAddress({ interfaceName: brName, address: addr.address, prefixLength: 32 });
+    await net().removeAddress({ interfaceName: brName, address: addr.address, prefixLength: 32 });
     appInfo(`Removed leftover mDNS address ${addr.address}/32 from ${brName}`);
   }
 }
@@ -331,7 +347,7 @@ export async function migrateAllBridgeNat(getTeamForStation: (s: StationName) =>
       appWarn(`Could not update the NAT rules of ${station}: ${(err as Error).message}`);
     }
   }
-  await net.flushRulesByComment(`${commentPrefix}nat-mdns-`);
+  await net().flushRulesByComment(`${commentPrefix}nat-mdns-`);
 }
 
 /**
@@ -346,11 +362,11 @@ export async function cleanupOldVlanInterfaces(physicalInterface: string): Promi
   for (const oldName of oldNames) {
     const oldIfName = `${physicalInterface}.${oldName}`;
     try {
-      const ifaces = await net.listInterfaces(oldIfName);
+      const ifaces = await net().listInterfaces(oldIfName);
       if (ifaces.length > 0) {
         appWarn(`Removing legacy VLAN interface ${oldIfName}`);
-        await net.setInterfaceDown(oldIfName);
-        await net.deleteInterface(oldIfName);
+        await net().setInterfaceDown(oldIfName);
+        await net().deleteInterface(oldIfName);
       }
     } catch {
       // Interface doesn't exist — nothing to do
@@ -372,7 +388,7 @@ export async function setInternetAccess(
 
   const action = enabled ? '-A' : '-D';
 
-  await net.iptables({
+  await net().iptables({
     action,
     table: 'nat',
     chain: 'POSTROUTING',
@@ -403,7 +419,7 @@ type Stations = Record<StationName, number | undefined>;
  * ICMP for every packet.
  */
 export async function dropHairpinForwarding(physicalInterface: string): Promise<void> {
-  await net.iptables({
+  await net().iptables({
     chain: 'FORWARD',
     inInterface: physicalInterface,
     outInterface: physicalInterface,
@@ -426,7 +442,7 @@ const DS_TO_ROBOT_CONTROL_PORT = 1110;
  * sees the robot's status. Idempotent both ways.
  */
 export async function setEStopCut(station: StationName, on: boolean): Promise<void> {
-  await net.iptables({
+  await net().iptables({
     action: on ? '-I' : '-D',
     chain: 'FORWARD',
     outInterface: bridgeName(station),
@@ -440,7 +456,7 @@ export async function setEStopCut(station: StationName, on: boolean): Promise<vo
 /** Remove every e-stop cut — at startup, where no station is e-stopped yet
  *  (a graceful restart keeps rules, but not the e-stop state behind them). */
 export async function clearEStopCuts(): Promise<void> {
-  await net.flushRulesByComment(`${commentPrefix}estop-`);
+  await net().flushRulesByComment(`${commentPrefix}estop-`);
 }
 
 export async function configureNetwork(stations: Stations, interfaceName: string, practiceMode = false) {

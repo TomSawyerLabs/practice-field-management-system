@@ -164,8 +164,6 @@ hardware or a real deployment:
 
 - No "restart pFMS" action: settings read at startup only tell you to
   restart.
-- The network backend is built when `networkManager.ts` loads; it should be
-  created lazily.
 - The Linux standalone-binary targets compile but have never been run, and
   the binary has no self-update path (`update.sh` doesn't apply to it).
 
