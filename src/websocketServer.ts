@@ -135,6 +135,7 @@ import {
   isSubscribeTopic,
   isUnsubscribeTopic,
   type Topic,
+  type ChallengeLeaderboardState,
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
@@ -155,6 +156,7 @@ import type { AdminAuth } from './adminAuth.js';
 import type { ExternalAccessStore } from './externalAccessStore.js';
 import type { MatchAudio } from './matchAudio.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
+import { challengeLeaderboard } from './challengeRanking.js';
 import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
@@ -407,6 +409,7 @@ export function setupWebSocket(
     'playGetReady',
     'queueState',
     'stationChecks',
+    'challengeLeaderboard',
   ]);
 
   /** Track which WebSocket connections are in which chat sessions */
@@ -741,6 +744,25 @@ export function setupWebSocket(
   // Broadcast match history changes to all clients
   matchHistoryStore?.addListener(broadcast);
 
+  /** The leaderboard is all the TVs need from match history (the read-only
+   *  /ws/scores socket never gets the history itself). Sent only when it
+   *  actually changes — most history edits (reviews, recordings) don't
+   *  touch it. */
+  let leaderboardJson = '';
+  function leaderboardMessage(): ChallengeLeaderboardState {
+    return { type: 'challengeLeaderboard', tables: challengeLeaderboard(matchHistoryStore?.getState().matches ?? []) };
+  }
+  if (matchHistoryStore) {
+    leaderboardJson = JSON.stringify(leaderboardMessage());
+    matchHistoryStore.addListener(() => {
+      const msg = leaderboardMessage();
+      const json = JSON.stringify(msg);
+      if (json === leaderboardJson) return;
+      leaderboardJson = json;
+      broadcast(msg);
+    });
+  }
+
   // Broadcast usage tracking state changes to all clients
   usageTracker?.addListener(broadcast);
 
@@ -775,6 +797,7 @@ export function setupWebSocket(
       publicConnections.add(ws);
       console.log('Public scores client connected');
       ws.send(JSON.stringify(matchEngine.getState()));
+      if (leaderboardJson) ws.send(leaderboardJson);
       ws.send(
         JSON.stringify({
           type: 'serverInfo',
@@ -833,6 +856,7 @@ export function setupWebSocket(
     // Send initial history + match state
     ws.send(JSON.stringify(radioManager.getStatusHistory()));
     ws.send(JSON.stringify(matchEngine.getState()));
+    if (leaderboardJson) ws.send(leaderboardJson);
 
     // Send known guest-network hostnames (IP → device name)
     if (hostnameResolver) {

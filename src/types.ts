@@ -3896,6 +3896,37 @@ export function isMatchHistoryState(msg: unknown): msg is MatchHistoryState {
   return (msg as MatchHistoryState).type === 'matchHistoryState';
 }
 
+/** One row of the speed challenge leaderboard: a team-set's best attempt. */
+export interface ChallengeAttempt {
+  /** Team numbers that ran together, ascending. */
+  teams: number[];
+  /** Identity of the team-set, for grouping attempts. */
+  key: string;
+  laps: number;
+  /** Finishing time with penalties, or null for a window run or a DNF. */
+  seconds: number | null;
+  /** When the best attempt ended. */
+  at: number;
+  /** How many times this team-set has run. */
+  attempts: number;
+}
+
+/** Ranked rows per timing style; a style nobody has run is absent. */
+export type ChallengeLeaderboardTables = Partial<Record<ChallengeTiming, ChallengeAttempt[]>>;
+
+/** The speed challenge leaderboard, computed from match history. Public:
+ *  the read-only /ws/scores socket gets this instead of the full history,
+ *  which it must not see. */
+export interface ChallengeLeaderboardState {
+  type: 'challengeLeaderboard';
+  tables: ChallengeLeaderboardTables;
+}
+
+export function isChallengeLeaderboardState(msg: unknown): msg is ChallengeLeaderboardState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as ChallengeLeaderboardState).type === 'challengeLeaderboard';
+}
+
 /** HTTP body for POST /api/match-review — a human reviewer's final score for one alliance. */
 export interface MatchReviewSubmission {
   matchId: string;

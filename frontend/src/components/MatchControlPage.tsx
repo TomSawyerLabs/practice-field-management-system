@@ -38,6 +38,7 @@ import {
 import {
   useMatchState,
   useMatchHistory,
+  useChallengeLeaderboard,
   sendMatchCreate,
   sendMatchCancel,
   sendMatchAbortCountdown,
@@ -449,6 +450,7 @@ function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean
 export function MatchControlPage() {
   const matchState = useMatchState();
   const matchHistory = useMatchHistory();
+  const leaderboard = useChallengeLeaderboard();
   const dsStation = useDsClientStation();
 
   // Keep the module-level hold watcher's view of the phase current so a release
@@ -521,7 +523,7 @@ export function MatchControlPage() {
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
         )}
 
-        {showHistory && <ChallengeLeaderboard matches={matchHistory.matches} />}
+        {showHistory && <ChallengeLeaderboard tables={leaderboard} />}
         {showHistory && <MatchHistorySection matches={matchHistory.matches} />}
       </Container>
     </Box>

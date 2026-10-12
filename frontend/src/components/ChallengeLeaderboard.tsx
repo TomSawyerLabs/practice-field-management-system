@@ -1,7 +1,9 @@
 /**
  * The speed challenge leaderboard — a view over match history, not a store of
  * its own. Every challenge run leaves a history entry carrying its tally, so
- * ranking is a matter of reading them back.
+ * ranking is a matter of reading them back. The server does the ranking
+ * (src/challengeRanking.ts) and sends the rows, so the read-only scoreboard
+ * socket gets them without seeing the history.
  *
  * One row per set of teams, showing their best attempt. Window runs rank by
  * laps (penalties already deducted); stopwatch and relay runs rank by time
@@ -13,8 +15,7 @@ import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Typography from '@mui/material/Typography';
-import { ChallengeTiming, MatchHistoryEntry, isCountUpTiming } from '../../../src/types';
-import { leaderboardRows } from '../../../src/challengeRanking';
+import { ChallengeLeaderboardTables, ChallengeTiming, isCountUpTiming } from '../../../src/types';
 import { CHALLENGE_COLOR } from '../utils/matchFormat';
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -26,17 +27,17 @@ const TABLE_TITLES: Record<ChallengeTiming, string> = {
 };
 
 export function ChallengeLeaderboard({
-  matches,
+  tables: byTiming,
   compact,
   limit,
 }: {
-  matches: MatchHistoryEntry[];
+  tables: ChallengeLeaderboardTables;
   /** TV styling: bigger type, no card chrome. */
   compact?: boolean;
   limit?: number;
 }) {
   const tables = (['window', 'stopwatch', 'relay'] as ChallengeTiming[])
-    .map(timing => ({ timing, rows: leaderboardRows(matches, timing) }))
+    .map(timing => ({ timing, rows: byTiming[timing] ?? [] }))
     .filter(t => t.rows.length > 0);
 
   if (tables.length === 0) return null;

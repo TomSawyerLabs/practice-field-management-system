@@ -127,6 +127,8 @@ import {
   StationChecksState,
   QueueAdmin,
   isQueueState,
+  isChallengeLeaderboardState,
+  type ChallengeLeaderboardTables,
   isStationChecksState,
   TeamPrefsState,
   isTeamPrefsState,
@@ -432,6 +434,7 @@ let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
+let currentChallengeLeaderboard: ChallengeLeaderboardTables = {};
 let currentStationChecks: StationChecksState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
@@ -569,6 +572,11 @@ function handleStationChecks(state: StationChecksState) {
 function handleQueueState(state: QueueState) {
   currentQueueState = state;
   events.dispatchEvent(new CustomEvent('queueState', { detail: state }));
+}
+
+function handleChallengeLeaderboard(tables: ChallengeLeaderboardTables) {
+  currentChallengeLeaderboard = tables;
+  events.dispatchEvent(new CustomEvent('challengeLeaderboard', { detail: tables }));
 }
 
 const currentTeamPrefs = new Map<number, TeamPrefsState>();
@@ -926,6 +934,11 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isChallengeLeaderboardState(detail)) {
+    handleChallengeLeaderboard(detail.tables);
+    return;
+  }
+
   if (isTeamPrefsState(detail)) {
     handleTeamPrefsState(detail);
     return;
@@ -1181,6 +1194,21 @@ export function useQueueState(): QueueState | null {
   }, []);
 
   return state;
+}
+
+/** The speed challenge leaderboard, computed by the server. Unlike
+ *  `useMatchHistory`, this reaches the read-only /scores socket too. */
+export function useChallengeLeaderboard(): ChallengeLeaderboardTables {
+  const [tables, setTables] = useState<ChallengeLeaderboardTables>(currentChallengeLeaderboard);
+
+  useEffect(() => {
+    setTables(currentChallengeLeaderboard);
+    const handler = (e: Event) => setTables((e as CustomEvent<ChallengeLeaderboardTables>).detail);
+    events.addEventListener('challengeLeaderboard', handler);
+    return () => events.removeEventListener('challengeLeaderboard', handler);
+  }, []);
+
+  return tables;
 }
 
 /** A team joins the fill line from its page. */

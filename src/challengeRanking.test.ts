@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { leaderboardRows } from './challengeRanking.js';
+import { challengeLeaderboard, leaderboardRows } from './challengeRanking.js';
 import type { Alliance, ChallengeTally, ChallengeTiming, MatchHistoryEntry } from './types.js';
 
 let nextEnd = 1_700_000_000_000;
@@ -183,5 +183,25 @@ describe('relay runs rank like stopwatch runs, in their own table', () => {
     expect(rows[0].seconds).toBe(55);
     expect(rows[2].seconds).toBeNull();
     expect(leaderboardRows(matches, 'stopwatch').map(r => r.key)).toEqual(['8']);
+  });
+});
+
+describe('the leaderboard the scoreboard is sent', () => {
+  test('one table per timing that has runs, ranked the same as leaderboardRows', () => {
+    const matches = [
+      run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 0 } } }),
+      run('window', { red: { teams: [254], tally: { laps: 8, penalties: 0 } } }),
+      run('relay', { blue: { teams: [1678], tally: { laps: 1, penalties: 0, finishedAt: 30 } } }),
+    ];
+    const tables = challengeLeaderboard(matches);
+    expect(Object.keys(tables).sort()).toEqual(['relay', 'window']);
+    expect(tables.window).toEqual(leaderboardRows(matches, 'window'));
+    expect(tables.relay?.map(r => r.teams[0])).toEqual([1678]);
+  });
+
+  test('no challenge runs means no tables at all', () => {
+    const match = run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 0 } } });
+    delete match.challenge;
+    expect(challengeLeaderboard([match])).toEqual({});
   });
 });

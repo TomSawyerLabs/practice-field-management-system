@@ -12,7 +12,7 @@ import SmoothieComponent from 'react-smoothie';
 import {
   useScoreState,
   useMatchState,
-  useMatchHistory,
+  useChallengeLeaderboard,
   useTelemetryCallback,
   useWsConnected,
   sendCastReceiverRegister,
@@ -213,7 +213,7 @@ const COUNTING_PHASES = new Set(['countdown', 'auto', 'autoPause', 'teleop', 'en
 export function ScoreboardPage() {
   const score = useScoreState();
   const matchState = useMatchState();
-  const matchHistory = useMatchHistory();
+  const leaderboard = useChallengeLeaderboard();
   const stationChecks = useStationChecks();
   const [, setTick] = useState(0);
   const [swapped, setSwapped] = useState(getInitialSwap);
@@ -476,8 +476,7 @@ export function ScoreboardPage() {
   // The leaderboard takes the TV between runs — never while one is going,
   // and only once a challenge has actually been run.
   const betweenRuns = !matchState || matchState.phase === 'idle' || matchState.phase === 'created';
-  const showLeaderboard =
-    !videoMode && betweenRuns && (matchHistory?.matches ?? []).some(m => m.challenge !== undefined);
+  const showLeaderboard = !videoMode && betweenRuns && Object.keys(leaderboard).length > 0;
 
   // Background — split when only one side is in a match
   const scoreboardBg = getScoreboardBg(matchState, leftInMatch, rightInMatch);
@@ -1107,7 +1106,7 @@ export function ScoreboardPage() {
               >
                 Speed Challenge Leaderboard
               </Box>
-              <ChallengeLeaderboard matches={matchHistory?.matches ?? []} compact limit={5} />
+              <ChallengeLeaderboard tables={leaderboard} compact limit={5} />
             </Box>
           )}
 

@@ -15,24 +15,16 @@ import {
   challengeScore,
   isCountUpTiming,
   type Alliance,
+  type ChallengeAttempt,
+  type ChallengeLeaderboardTables,
   type ChallengeTally,
   type ChallengeTiming,
   type MatchHistoryEntry,
 } from './types.js';
 
-export interface ChallengeAttempt {
-  /** Team numbers that ran together, ascending. */
-  teams: number[];
-  /** Identity of the team-set, for grouping attempts. */
-  key: string;
-  laps: number;
-  /** Finishing time with penalties, or null for a window run or a DNF. */
-  seconds: number | null;
-  /** When the best attempt ended. */
-  at: number;
-  /** How many times this team-set has run. */
-  attempts: number;
-}
+export type { ChallengeAttempt };
+
+const TIMINGS: ChallengeTiming[] = ['window', 'stopwatch', 'relay'];
 
 /** Whichever attempt is the better result. Ties go to whoever did it first. */
 export function betterAttempt(a: ChallengeAttempt, b: ChallengeAttempt, timing: ChallengeTiming): ChallengeAttempt {
@@ -78,4 +70,14 @@ export function leaderboardRows(matches: MatchHistoryEntry[], timing: ChallengeT
   }
 
   return [...byTeams.values()].sort((a, b) => (betterAttempt(a, b, timing) === a ? -1 : 1));
+}
+
+/** Every timing style's ranked rows, leaving out styles nobody has run. */
+export function challengeLeaderboard(matches: MatchHistoryEntry[]): ChallengeLeaderboardTables {
+  const tables: ChallengeLeaderboardTables = {};
+  for (const timing of TIMINGS) {
+    const rows = leaderboardRows(matches, timing);
+    if (rows.length > 0) tables[timing] = rows;
+  }
+  return tables;
 }
