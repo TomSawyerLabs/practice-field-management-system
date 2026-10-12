@@ -1,158 +1,135 @@
-# mDNS for two robots of one team
+# Two robots of one team: mDNS and matches
 
 ## Goal
 
-When one team runs two robots at once (1967, 2026-10-12), `.local` names
-(`limelight-*.local`, `roboRIO-TEAM-FRC.local`, `radio.local`) must resolve
-on each laptop to the devices on the robot that laptop drives. On
-2026-10-12, 1967 couldn't reach their Limelight until one of the two robots
-was released.
+When one team runs two robots at once (1967, 2026-10-12), each laptop must
+resolve `.local` names (`limelight-*.local`, `roboRIO-TEAM-FRC.local`,
+`radio.local`) to the devices on the robot that laptop drives, and both
+robots must be able to play a match. Same day: 1967 couldn't reach a
+Limelight until one robot was released, and couldn't ready their second
+robot for a match.
 
 ## Environment / context
 
 - Field server: steamboat (`ssh steamboat`, passwordless sudo). The backend
-  runs `node dist`, Node v22.20.0. Python 3 is available on the host.
+  runs `node dist`, Node v22.20.0. Python 3 is on the host. pFMS's websocket
+  is behind Caddy: `ws://10.55.0.5/ws` with `Host: pfms.tsl` from the team
+  network (TLS there is refused).
 - Each station has a bridge `br-slotN` (VLAN 10×N). A team's station gets
-  `10.TE.AM.<VLAN_HOST_OCTET>` (default `.254`) as a /24 on its bridge.
-  `net.ipv4.conf.all.promote_secondaries = 0`.
-- 1967's robot devices (seen 2026-10-12, on `br-slot1`): radio `.1`/`.4`,
-  roboRIO `.2`, `limelight-front.local` `.14`, `limelight-back.local` `.15`.
-  Nothing answers plain `limelight.local` on that robot.
+  `10.TE.AM.<VLAN_HOST_OCTET>` (default `.254`) as a /24 on its bridge, so
+  two stations of one team both hold `10.TE.AM.254`.
+- 1967 on 2026-10-12: `1967-Elsa` on slot1 (laptop `10.55.79.159`),
+  `1967-Lupe` on slot2 from 11:07 (laptop `10.55.139.121`). Elsa's devices:
+  radio `.1`, roboRIO `.2`, `limelight-front.local` `.14`,
+  `limelight-back.local` `.15`.
 - Drive-session DNAT: `-d 10.TE.AM.254/32 -i br-slotN -p udp → laptop`.
-  It catches **all** UDP the robot sends to `.254`, unicast mDNS replies
+  It catches **all** UDP a robot sends to `.254`, unicast mDNS replies
   included.
+- This PC has `10.55.193.64` on VLAN 3 (the team network), so it can test
+  the laptop path itself: `%TEMP%\claude-mdns-probe\laptop-test.mjs`
+  (`node laptop-test.mjs 10.55.193.64 "slot1:name,name" "slot2:name"`). It
+  sets a route preference the way the team page does, resolves with
+  one-shot queries, and clears the preference afterwards.
 
-## Root cause (confirmed)
+## Root causes (confirmed)
 
-With two stations on one team, both bridges carry the same address,
-`10.19.67.254`. Node's dgram selects an IPv4 multicast interface only by
-address (`addMembership(group, ifaceAddr)`, `setMulticastInterface(addr)`
-→ `IP_MULTICAST_IF` with an `in_addr`). The kernel resolves that address
-to the first device that has it, so:
+**mDNS.** Node's dgram picks an IPv4 multicast interface only by address
+(`setMulticastInterface(addr)`, `addMembership(group, addr)`). Two bridges
+holding `10.19.67.254` resolve to one device, so the reflector sends every
+query for the team out of one bridge. Verified 11:48 from this PC: routed to
+slot2, `roboRIO-1967-FRC.local` answered; routed to slot1, pFMS sent the
+query out `br-slot2`, and no answer came. Answers are also attributed by
+team, not station.
 
-- every laptop query the reflector forwards for team 1967 goes out the
-  **same** bridge, whichever robot the laptop drives, and the other robot's
-  Limelight never hears it;
-- answers are attributed by team (source `10.TE.AM.x`), and `teamToStation`
-  keeps only the last station, so an answer can't be traced to its robot.
+**Matches (fixed, `f60afee`).** The FMS handshake (`resolveTeamSlot`) and
+the DS UDP status both found a DS's station with `getStationForTeam`, which
+for a duplicated team is always the first station. Lupe's laptop resolved
+to slot1, which Elsa's laptop drives, so it was treated as a duplicate and
+never assigned. slot2 could never be readied ("the field is not hearing from
+its Driver Station"), and its disable/e-stop went to slot1. Also, a station
+join/leave closed every TCP connection of the team, kicking the other
+laptop.
 
-Releasing one robot left one bridge holding the address, so it worked
-again. The team-check mDNS diagnostics (`teamChecker.mdnsQuery`) have the
-same flaw.
+## Decisions made (don't re-ask)
 
-## Decisions made
-
-- **A per-station mDNS address.** Each team bridge also gets
-  `10.TE.AM.(VLAN_HOST_OCTET − slotNumber)` as a **/32** (`.253` for slot1
-  … `.248` for slot6 with the default octet). Being /32 it's its own
-  primary, so it can't be swept away with the /24, and source selection and
-  MASQUERADE keep using `.254` (the /24 is the on-subnet match). It sits
-  outside the DHCP pool (`.100–.199`) and outside the DNAT match (`.254`).
-- **Forward queries as legacy unicast** (RFC 6762 §6.7), from a
-  per-station socket bound to `stationMdnsIp:<ephemeral>`, with
-  `IP_MULTICAST_IF` = that address. That selects the right bridge, and every
-  answer comes back unicast to that socket, so it is attributed to the
-  exact station. No multicast joins on team VLANs are needed for this path.
-- **Uniform for all stations**, not only duplicated teams. One code path,
-  exercised by every team every day. If a station's socket can't bind
-  (the address is missing or conflicted), fall back to the old team path.
+- **No extra per-station IP addresses.** Tried 2026-10-12 (`20242ce`,
+  `add1ce6`); the user called it a hack, and it failed on the field (below).
+  Reverted in `cdcd1df`.
+- **One mDNS system for every team**, no old/new or duplicated-team split
+  (user, 2026-10-12).
+- **Prove it on a live robot from this PC before deploying** (the laptop
+  test above), not with probes from steamboat alone.
+- **Next design: one socket per station pinned to its bridge with
+  `SO_BINDTODEVICE`**, sending ordinary queries from `.254:5353` and
+  receiving only that bridge's answers. No extra addresses, NAT exceptions
+  or one-shot queries. Clear the QU bit when forwarding, so answers are
+  multicast on the robot's own bridge instead of unicast to `.254` (which
+  the DNAT would take). Node can't set `SO_BINDTODEVICE`, so this needs a
+  small helper. Leading option: a stdlib-only Python helper spawned by pFMS,
+  packets over stdin/stdout. Alternative: a native addon. Not started; the
+  design isn't approved yet.
 
 ## Findings / gotchas
 
-- Legacy-unicast probe from `10.19.67.254:<ephemeral>` (2026-10-12,
-  tcpdump on br-slot1): the roboRIO, both Limelights and the radio all
-  answered unicast to the ephemeral port. QU queries from :5353 drew
-  **multicast** answers from the roboRIO, and no answer at all for
-  `limelight.local` (the name doesn't exist on that robot).
-- The probe socket never received those unicast answers: the drive-session
-  DNAT rewrote them to the DS laptop (`10.55.79.159`). That's why the
-  per-station address must not be `.254`.
-- `dig -b 10.19.67.254 -p 5353 @224.0.0.251` times out: dig doesn't set
-  `IP_MULTICAST_IF`. Use the Python probe below instead.
-- **MASQUERADE rewrote the per-station address (first deploy, 10:48).**
-  `-o br-slotN -j MASQUERADE` (pfms-nat-vlan-\*) applies to pFMS's own
-  output too, so queries from `.253` reached the robot as from `.254`.
-  Answers went to `.254:<port>` and the DNAT sent them to the laptop, so
-  every team's lookups failed. Fixed in `add1ce6` with a nat POSTROUTING
-  `-s <mdns>/32 -o br-slotN -j RETURN` inserted ahead of the MASQUERADE,
-  deployed 11:02. The wire then showed `10.19.67.253.<port> > 224.0.0.251`.
-- **Unresolved: no answers to the true `.253` source (11:02:26–11:02:43).**
-  With the robot on (enabled 11:02:29–38), one-shot queries from `.253`
-  drew no answer from either Limelight, the roboRIO or the radio. The
-  roboRIO sent one ARP `who-has 10.19.67.253` and got a reply, but no UDP
-  followed. Counter-evidence: at 10:50 the same reflector socket's queries,
-  rewritten to `.254`, were answered. The robot powered off at 11:03:35
-  (`Robot dropped off the field radio`), so this is not conclusive. A
-  watcher (`%TEMP%\claude-mdns-probe\wait-and-test.sh`, results in
-  `results.txt` there) reruns `.253` vs `.254` once the roboRIO is back.
-- When probing, run each `python3 -` in its own `ssh`: a second one in the
-  same command finds stdin already drained and silently does nothing.
-- `br-slot1` showed 57 members of 224.0.0.251 in `/proc/net/igmp`
-  (`br-slot2` 35, …), which looks like leaked memberships. Logged in
-  ISSUES.md; not part of this fix.
-
-Probe used (read-only; nothing written on steamboat):
-`ssh steamboat 'python3 - 10.19.67.254 limelight-front.local' < probe.py`
-(the script lives in `%TEMP%\claude-mdns-probe\probe.py`).
-
-## Plan / steps
-
-1. **networkManager** — `stationMdnsIp(station, team)`. Ensure the /32 is
-   present on every team bridge (including the "unchanged team" skip path,
-   so the first deploy adds it **without** tearing down `.254`). Remove it on
-   teardown and keep it in the stale-address sweep. Arping before adding;
-   skip on conflict.
-2. **subnetScanner** — drop pFMS's own addresses from fping results.
-3. **mdnsReflector** — per-station legacy-unicast sockets; answers are
-   attributed per station; fall back to the team path when a socket can't
-   bind. Tests.
-4. **teamChecker** — mDNS checks use the station's address with
-   legacy-unicast queries.
-5. Typecheck, tests, commit. **Deploy only with the user's go-ahead**
-   (1967 is on the field).
-6. After deploy: verify `ip -4 addr` shows the /32 on team bridges; probe
-   or tcpdump a laptop's `limelight-front.local` lookup.
+- **Per-station addresses didn't work.** 11:35, from this PC: queries went
+  out the right bridges from `.253`/`.252`, but no device answered any of
+  them. 11:18 capture: the Limelights, roboRIO and radio each sent
+  `who-has 10.19.67.253` about once a second. Steamboat replied every time,
+  and they never sent the answer. Something on the robot side drops ARP
+  replies for an address it hasn't seen (cause not found). Don't revisit.
+- **MASQUERADE applies to pFMS's own output.** `-o br-slotN -j MASQUERADE`
+  rewrote `.253` to `.254` (proved by the roboRIO answering
+  `.254:<same port>`). Remember this for anything sent from steamboat onto
+  a bridge.
+- Probes from `.254` are ambiguous while a team is on two stations: the
+  kernel picks the bridge. Several mid-day "nothing answers .254" results
+  were this, not the robot.
+- `dig -b … -p 5353 @224.0.0.251` doesn't set `IP_MULTICAST_IF` and times
+  out. Use `%TEMP%\claude-mdns-probe\probe.py`, one `python3 -` per `ssh`:
+  a second one in the same command gets an empty stdin and does nothing.
+- Robots can power off between tests (11:03:35 "Robot dropped off the field
+  radio"). Check `ping 10.19.67.2` before reading anything into silence.
+- The leftover `.253`/`.252` /32s and `pfms-nat-mdns-*` RETURN rules stay
+  on steamboat until the next reconfigure of those stations. Harmless.
+- `br-slot1` showed 57 members of 224.0.0.251 in `/proc/net/igmp` (logged
+  in ISSUES.md).
 
 ## Progress log
 
-- [x] Root cause found and confirmed on steamboat (read-only)
-- [x] Verified responders: legacy unicast works for radio, roboRIO, Limelight
-- [x] Step 1 networkManager — plus `ensureMdnsAddresses()` at graceful
-      restart (index.ts), since a reload doesn't rerun the network config
-- [x] Step 2 subnetScanner
-- [x] Step 3 mdnsReflector + tests (bind failures retried every 30 s)
-- [x] Step 4 teamChecker (robot tester keeps the multicast path)
-- [x] Step 5 typecheck, 881 tests, prettier; committed `20242ce`, side
-      issues logged in ISSUES.md (`34e9ec4`)
-- [x] Related, same visit: the team page showed "Driving" from the route
-      preference it sets on load, which hid both Drive buttons and linked
-      nothing. Now it reads the drive session for the browser's IP
-      (`useMyDriveStation`). Same for `/route` and the station panel.
-      `a4623c9`. The load-time route stays: it gives non-DS devices mDNS.
-- [x] Step 6a deployed `cf5f85c` at 10:48. Drive session and DNAT restored;
-      `.253/32` added. Masquerade bug found; hotfix `add1ce6` deployed 11:02
-      (pushed as part of `02b4658`, with another session's commit on top).
-- [ ] Step 6b ← current: prove `.253` one-shot queries are answered on a
-      live robot (the watcher). If they aren't, find why and fix it within
-      the one per-station path. The user doesn't want an old/new split.
-- [ ] Step 6c: on each 1967 laptop, the team page shows "This laptop
-      drives <robot>", the other robot has a Drive button, and Limelight
-      names resolve.
+- [x] Drive-button fix: the team page, `/route` and the station panel show
+      "Driving" from the drive session, not the route preference
+      (`a4623c9`). 1967 used it on slot2 at 11:08.
+- [x] Per-station addresses: built, deployed, failed on the field,
+      reverted (`20242ce`, `add1ce6`, revert `cdcd1df`).
+- [x] Match fix `f60afee`: stationOfDs (drive session for duplicated
+      teams) in the handshake and the UDP status; no team-wide kick for a
+      duplicated team.
+- [x] Deployed `cdcd1df` + `f60afee` at 11:47. Both drive sessions
+      restored. Laptop test: slot2 resolves, slot1 doesn't (the known bug).
+- [ ] Verify the match fix when 1967 next joins both stations: the log
+      should show `DS at 10.55.139.121: team 1967 → assigned …`, and slot2
+      can be readied.
+- [ ] Interface-pinned mDNS (design above): awaiting the user's go-ahead.
+- [ ] Optional: re-route a non-DS laptop when a robot is picked on the team
+      page (only for laptops not driving one). Awaiting the user's call.
 
 ## Open questions for the user
 
-(none open: the user chose one system for everyone, proven on a live
-robot, over reverting or a hybrid. 2026-10-12)
+1. Build the interface-pinned design with a Python helper? Recommended. The
+   alternative is a native addon.
+2. Re-route non-DS laptops when a robot is picked on the team page?
+   Recommended.
 
 ## Things not to do
 
-- Don't use `.254` as the mDNS source for unicast answers: the DNAT eats
-  them.
-- Don't re-run the full station teardown to add the new address. It
-  removes `.254` and disrupts a live robot.
-- Don't disable IPv6 or touch the radio as part of this.
-- Don't add a second mDNS path for "normal" teams (no hybrid). Fix the one
-  per-station path.
+- Don't add extra IP addresses to station bridges.
+- Don't send unicast-answer mDNS to `.254`: the drive-session DNAT takes
+  the answers.
+- Don't re-run the full station teardown to change addresses: it removes
+  `.254` and disrupts a live robot.
+- Don't disable IPv6 or touch the radio.
 - Don't commit from the main checkout while another session's half-done
-  work breaks the typecheck. Commit from a clean temp worktree
-  (`%TEMP%\pfms-hotfix`) and move `master` with `git update-ref`.
+  work breaks the typecheck. Commit from the clean temp worktree
+  (`%TEMP%\pfms-hotfix`) and move `master` with
+  `git update-ref refs/heads/master <new> <old>`. Then sync the main
+  checkout's copies of your own files only.
