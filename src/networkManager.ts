@@ -205,11 +205,9 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
       // Remove the specific old team IP rather than flushing all addresses — avoids
       // disturbing IPv6 link-local and other addresses managed outside this code.
       await net.removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 });
-      await net.removeAddress({
-        interfaceName: brName,
-        address: stationMdnsIp(prevTeam, station, vlanHostOctet),
-        prefixLength: 32,
-      });
+      const prevMdns = stationMdnsIp(prevTeam, station, vlanHostOctet);
+      await net.removeAddress({ interfaceName: brName, address: prevMdns, prefixLength: 32 });
+      await net.iptables(mdnsNoMasquerade(station, prevMdns, '-D'));
       await net.iptables({
         chain: 'FORWARD',
         inInterface: brName,
@@ -328,20 +326,42 @@ export async function ensureMdnsAddresses(
  * keep picking the gateway address, the on-subnet match. Skipped if a team
  * device already holds the address; the mDNS reflector then falls back to
  * the gateway address, which works as long as the team has one robot here.
+ *
+ * The bridge's MASQUERADE rewrites everything leaving it to the gateway
+ * address, pFMS's own packets included, so the address is exempted from it.
+ * Without that, the robot answered mDNS queries from this address to the
+ * gateway one, where the drive-session DNAT handed the answers to the laptop
+ * (2026-10-12, broke `.local` names for every team until fixed).
  */
 async function ensureMdnsAddress(station: StationName, team: number, practiceMode: boolean): Promise<void> {
   const brName = bridgeName(station);
   const mdns = stationMdnsIp(team, station, vlanHostOctet);
   const interfaces = await net.listInterfaces(brName);
-  if (interfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === mdns)) return;
-  if (!practiceMode && (await net.arping({ interfaceName: brName, address: mdns }))) {
-    appWarn(
-      `Address conflict: ${mdns} is already in use on ${brName}, so mDNS for ${station} uses the gateway address`,
-    );
-    return;
+  if (!interfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === mdns)) {
+    if (!practiceMode && (await net.arping({ interfaceName: brName, address: mdns }))) {
+      appWarn(
+        `Address conflict: ${mdns} is already in use on ${brName}, so mDNS for ${station} uses the gateway address`,
+      );
+      return;
+    }
+    await net.addAddress({ interfaceName: brName, address: mdns, prefixLength: 32 });
+    appInfo(`mDNS address ${mdns}/32 added to ${brName}`);
   }
-  await net.addAddress({ interfaceName: brName, address: mdns, prefixLength: 32 });
-  appInfo(`mDNS address ${mdns}/32 added to ${brName}`);
+  // Inserted at the top of the chain, so it comes before the bridge's MASQUERADE.
+  await net.iptables(mdnsNoMasquerade(station, mdns, '-I'));
+}
+
+/** The rule keeping the station's mDNS address out of the bridge's MASQUERADE. */
+function mdnsNoMasquerade(station: StationName, mdns: string, action: '-I' | '-D') {
+  return {
+    action,
+    table: 'nat',
+    chain: 'POSTROUTING',
+    source: `${mdns}/32`,
+    outInterface: bridgeName(station),
+    jump: 'RETURN',
+    comment: `${commentPrefix}nat-mdns-${station}`,
+  } as const;
 }
 
 /**
