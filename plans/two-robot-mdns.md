@@ -106,9 +106,18 @@ laptop.
       duplicated team.
 - [x] Deployed `cdcd1df` + `f60afee` at 11:47. Both drive sessions
       restored. Laptop test: slot2 resolves, slot1 doesn't (the known bug).
-- [ ] Verify the match fix when 1967 next joins both stations: the log
-      should show `DS at 10.55.139.121: team 1967 → assigned …`, and slot2
-      can be readied.
+- [x] Match fix verified 11:50: `assigned blue1` / `assigned red1`, both
+      ready, Match 1 ran with slot1 + slot2.
+- [x] Robot names next to the team number when a team has two robots
+      (`a5a13ef`): match state carries `robot` (SSID), history records it,
+      label rule `teamLabelAmong` in src/utils.ts. Not deployed yet.
+- [x] E-stop latch after Clear match (`6aec796`): a Global E-Stop
+      (11:51:52) latched every station; Clear match (11:56:15) left it, so
+      both robots were held under field control with no Clear E-Stop button
+      on the match page, until a match was created+cancelled at 11:59:05.
+      clearMatch now clears e-stops/a-stops. Not deployed yet. The DS
+      restart at 12:01 is unexplained: pFMS had released both DSes and
+      Elsa's DS never reported an e-stop after 11:59:05.
 - [ ] Interface-pinned mDNS (design above): awaiting the user's go-ahead.
 - [ ] Optional: re-route a non-DS laptop when a robot is picked on the team
       page (only for laptops not driving one). Awaiting the user's call.
