@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 import { StationName, StationNameList } from './types.js';
-import { appInfo, appWarn } from './appLogger.js';
+import { appError, appInfo, appWarn } from './appLogger.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 
@@ -181,116 +181,174 @@ export function restorePreviousStations(getTeamForStation: (s: StationName) => n
   }
 }
 
+/** Stations whose last pass failed part-way. They are torn down and set up
+ *  again on the next pass even if their team hasn't changed — their kernel
+ *  state is unknown. */
+const failedStations = new Set<StationName>();
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Bring every station's bridge in line with `stations`. Each station is
+ * handled on its own: one that fails is reported, recorded for a retry on
+ * the next pass, and doesn't stop the others. Throws at the end if any
+ * station failed, so the caller's commit still shows as failed.
+ */
 async function updateNetworkConfig(stations: Stations, physical_interface: string, practiceMode: boolean) {
+  const failures: string[] = [];
   for (const station of StationNameList) {
     const team = stations[station];
     const prevTeam = previousStations[station];
-    const vlanId = vlanMap[station];
-    const vlanIfName = `${physical_interface}.${station}`; // For VLAN creation + bridge membership only
-    const brName = bridgeName(station); // For everything else (IP, iptables, routes, DHCP)
-
-    // Ensure the VLAN sub-interface and bridge exist with correct membership
-    await net().createVlan({ parent: physical_interface, vlanId, name: vlanIfName });
-    await net().createBridge(brName);
-    await net().addBridgeMember(brName, vlanIfName);
-    await net().setInterfaceUp(vlanIfName);
-
-    // Skip stations that haven't changed — unless the bridge is missing its IP
-    // (migration case: first restart after switching from bare VLAN to bridge architecture,
-    // enslaving the VLAN sub-interface to the bridge removes its IP).
-    if (team === prevTeam) {
-      if (team) {
-        const expectedIp = teamIp(team, vlanHostOctet);
-        const brInterfaces = await net().listInterfaces(brName);
-        const hasIp = brInterfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === expectedIp);
-        if (hasIp) {
-          await migrateBridgeNat(station);
-          continue;
-        }
-        appInfo(`Bridge ${brName} missing IP ${expectedIp}, re-applying config for ${station}`);
-      } else {
-        continue;
-      }
-    }
-
-    // Tear down the old config for this station
-    if (prevTeam) {
-      // Remove the specific old team IP rather than flushing all addresses — avoids
-      // disturbing IPv6 link-local and other addresses managed outside this code.
-      await net().removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 });
-      await net().iptables({
-        chain: 'FORWARD',
-        inInterface: brName,
-        jump: 'ACCEPT',
-        comment: `${commentPrefix}fwd-${station}`,
-        action: '-D',
-      });
-      await net().iptables({
-        chain: 'FORWARD',
-        outInterface: brName,
-        jump: 'ACCEPT',
-        comment: `${commentPrefix}fwd-in-${station}`,
-        action: '-D',
-      });
-      await net().iptables(bridgeMasquerade(station, '-D'));
-      await net().iptables(bridgeMasquerade(station, '-D', { legacy: true }));
-      // Remove the per-station routing table entry used for laptop route preferences
-      await net().removeRoute({ destination: teamIp(prevTeam, '0/24'), device: brName, table: vlanId });
-    }
-
-    if (team) {
-      await net().setInterfaceUp(brName);
-
-      const us = teamIp(team, vlanHostOctet);
-
-      // Remove any stale IPv4 addresses that don't belong to this team.
-      // This covers the process-restart case where previousStations is empty
-      // and the teardown above was skipped, leaving addresses from a prior session.
-      const interfaces = await net().listInterfaces(brName);
-      for (const addr of interfaces[0]?.addresses ?? []) {
-        if (addr.family === 'inet' && addr.address !== us) {
-          appWarn(`Removing stale address ${addr.address}/${addr.prefixLength} from ${brName}`);
-          await net().removeAddress({ interfaceName: brName, address: addr.address, prefixLength: addr.prefixLength });
-        }
-      }
-
-      if (!practiceMode) {
-        const conflict = await net().arping({ interfaceName: brName, address: us });
-        if (conflict) {
-          appWarn(`Address conflict: ${us} is already in use on ${brName}, skipping`);
-          continue;
-        }
-      }
-
-      await net().addAddress({ interfaceName: brName, address: us, prefixLength: 24 });
-
-      // Add forwarding rules
-      await net().iptables({
-        chain: 'FORWARD',
-        inInterface: brName,
-        jump: 'ACCEPT',
-        comment: `${commentPrefix}fwd-${station}`,
-        action: '-A',
-      });
-      await net().iptables({
-        chain: 'FORWARD',
-        outInterface: brName,
-        jump: 'ACCEPT',
-        comment: `${commentPrefix}fwd-in-${station}`,
-        action: '-A',
-      });
-      // MASQUERADE traffic entering the VLAN so return traffic comes back to the same host
-      await net().iptables(bridgeMasquerade(station, '-A'));
-      // Add a per-station routing table entry so laptops can select which robot to talk to
-      // when multiple stations share the same team subnet (same team, different robot suffix)
-      await net().addRoute({ destination: teamIp(team, '0/24'), device: brName, table: vlanId });
-    } else {
-      await net().setInterfaceDown(brName);
+    try {
+      await updateStation(station, team, prevTeam, physical_interface, practiceMode);
+      previousStations[station] = team;
+      failedStations.delete(station);
+    } catch (err) {
+      // Whatever got part-applied belongs to the team just attempted (or,
+      // when clearing the station, the one being removed) — the next
+      // pass's teardown starts from that.
+      previousStations[station] = team ?? prevTeam;
+      failedStations.add(station);
+      const who = team ? `team ${team}` : prevTeam ? `clearing team ${prevTeam}` : 'no team';
+      appError(`Network setup for ${station} (${who}) failed: ${errorText(err)}`);
+      failures.push(`${station}: ${errorText(err)}`);
     }
   }
 
-  previousStations = { ...stations };
+  if (failures.length > 0) {
+    throw new Error(`Network configuration failed for ${failures.length} station(s) — ${failures.join('; ')}`);
+  }
   appInfo('Network configuration applied');
+}
+
+async function updateStation(
+  station: StationName,
+  team: number | undefined,
+  prevTeam: number | undefined,
+  physical_interface: string,
+  practiceMode: boolean,
+): Promise<void> {
+  const vlanId = vlanMap[station];
+  const vlanIfName = `${physical_interface}.${station}`; // For VLAN creation + bridge membership only
+  const brName = bridgeName(station); // For everything else (IP, iptables, routes, DHCP)
+
+  // Ensure the VLAN sub-interface and bridge exist with correct membership
+  await net().createVlan({ parent: physical_interface, vlanId, name: vlanIfName });
+  await net().createBridge(brName);
+  await net().addBridgeMember(brName, vlanIfName);
+  await net().setInterfaceUp(vlanIfName);
+
+  // Skip stations that haven't changed — unless the bridge is missing its IP
+  // (migration case: first restart after switching from bare VLAN to bridge architecture,
+  // enslaving the VLAN sub-interface to the bridge removes its IP).
+  if (team === prevTeam && !failedStations.has(station)) {
+    if (team) {
+      const expectedIp = teamIp(team, vlanHostOctet);
+      const brInterfaces = await net().listInterfaces(brName);
+      const hasIp = brInterfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === expectedIp);
+      if (hasIp) {
+        await migrateBridgeNat(station);
+        return;
+      }
+      appInfo(`Bridge ${brName} missing IP ${expectedIp}, re-applying config for ${station}`);
+    } else {
+      return;
+    }
+  }
+
+  // Tear down the old config for this station. Best effort, step by step:
+  // anything left behind is either harmless or cleared by the stale-address
+  // sweep below, and a teardown error used to abort the whole pass — and,
+  // since previousStations was never updated, every pass after it.
+  if (prevTeam) {
+    const undo = async (what: string, step: () => Promise<void>) => {
+      try {
+        await step();
+      } catch (err) {
+        appWarn(`Teardown of team ${prevTeam} on ${station}: could not ${what}: ${errorText(err)}`);
+      }
+    };
+    // Remove the specific old team IP rather than flushing all addresses — avoids
+    // disturbing IPv6 link-local and other addresses managed outside this code.
+    await undo('remove its address', () =>
+      net().removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 }),
+    );
+    await undo('remove the outbound forward rule', () =>
+      net().iptables({
+        chain: 'FORWARD',
+        inInterface: brName,
+        jump: 'ACCEPT',
+        comment: `${commentPrefix}fwd-${station}`,
+        action: '-D',
+      }),
+    );
+    await undo('remove the inbound forward rule', () =>
+      net().iptables({
+        chain: 'FORWARD',
+        outInterface: brName,
+        jump: 'ACCEPT',
+        comment: `${commentPrefix}fwd-in-${station}`,
+        action: '-D',
+      }),
+    );
+    await undo('remove the MASQUERADE', () => net().iptables(bridgeMasquerade(station, '-D')));
+    await undo('remove the legacy MASQUERADE', () => net().iptables(bridgeMasquerade(station, '-D', { legacy: true })));
+    // Remove the per-station routing table entry used for laptop route preferences
+    await undo('remove its route-preference route', () =>
+      net().removeRoute({ destination: teamIp(prevTeam, '0/24'), device: brName, table: vlanId }),
+    );
+  }
+
+  if (team) {
+    await net().setInterfaceUp(brName);
+
+    const us = teamIp(team, vlanHostOctet);
+
+    // Remove any stale IPv4 addresses that don't belong to this team.
+    // This covers the process-restart case where previousStations is empty
+    // and the teardown above was skipped, leaving addresses from a prior session.
+    const interfaces = await net().listInterfaces(brName);
+    for (const addr of interfaces[0]?.addresses ?? []) {
+      if (addr.family === 'inet' && addr.address !== us) {
+        appWarn(`Removing stale address ${addr.address}/${addr.prefixLength} from ${brName}`);
+        await net().removeAddress({ interfaceName: brName, address: addr.address, prefixLength: addr.prefixLength });
+      }
+    }
+
+    if (!practiceMode) {
+      const conflict = await net().arping({ interfaceName: brName, address: us });
+      if (conflict) {
+        throw new Error(`address conflict: ${us} is already in use on ${brName}`);
+      }
+    }
+
+    await net().addAddress({ interfaceName: brName, address: us, prefixLength: 24 });
+
+    // Add forwarding rules
+    await net().iptables({
+      chain: 'FORWARD',
+      inInterface: brName,
+      jump: 'ACCEPT',
+      comment: `${commentPrefix}fwd-${station}`,
+      action: '-A',
+    });
+    await net().iptables({
+      chain: 'FORWARD',
+      outInterface: brName,
+      jump: 'ACCEPT',
+      comment: `${commentPrefix}fwd-in-${station}`,
+      action: '-A',
+    });
+    // MASQUERADE traffic entering the VLAN so return traffic comes back to the same host
+    await net().iptables(bridgeMasquerade(station, '-A'));
+    // Add a per-station routing table entry so laptops can select which robot to talk to
+    // when multiple stations share the same team subnet (same team, different robot suffix)
+    await net().addRoute({ destination: teamIp(team, '0/24'), device: brName, table: vlanId });
+  } else {
+    await net().setInterfaceDown(brName);
+  }
 }
 
 /**

@@ -72,35 +72,6 @@ connected DS IPs. Two accepted gaps (user decision 2026-07-24: fine for now):
   compute a per-connection DS flag server-side and reject operator/staff
   commands from flagged connections.
 
-## Remaining silent-skip paths in RadioManager
-
-Two members of the 2026-07-24 incident's "silent skip" family were fixed
-(reconcile-on-reconnect in `reconcileAfterConnect()`, and commit-queue
-poisoning where one rejected commit made every later commit re-reject without
-executing — both covered by `scripts/test-radio-reconcile.ts`). Two remain,
-neither surfaced to the user:
-
-- `configure()` early-returns with only a console log when `this.configuring`
-  is set — a user's config request during a ~30s radio reconfigure is
-  silently dropped instead of queued or rejected with a visible error.
-- `commitConfiguration()` silently defers when `shouldDefer()` is true
-  (match active or any robot enabled), and `TelemetryManager.enabledStations`
-  entries are never aged out — a DS that was enabled and then unplugged
-  (never sending a disabled packet) leaves a stale `true` entry that defers
-  all commits until some other DS event clears it.
-
-- `NetworkManager` only records `previousStations` after a fully successful
-  pass, so any teardown error repeats on every retry until the service
-  restarts. (`Address not found` is tolerated; other errors aren't.) The
-  station loop has no per-station error handling either, so one failing
-  teardown aborts the whole pass and leaves later stations' gateway
-  addresses on their bridges (needing a manual `ip addr del`).
-
-Diagnosis oracle: `curl -s http://10.0.100.2/status` from the field server.
-`stationStatuses.<station> = null` means the station is not configured on the
-radio, whatever `active-config.json` says — that file is written even when the
-radio push fails.
-
 ## Stop buttons
 
 Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make

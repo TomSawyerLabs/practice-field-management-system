@@ -1383,6 +1383,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     matchEngine.addStateListener(() => {
       radioManager.retryDeferredCommit();
     });
+    // And on a timer: an enabled DS that goes quiet (unplugged mid-enable)
+    // never sends the disabled report that would trigger a retry above —
+    // its report just ages out of anyRobotEnabled().
+    setInterval(() => radioManager.retryDeferredCommit(), 5_000);
 
     /**
      * Compute the gateway (MASQUERADE source) IP on a team's VLAN.

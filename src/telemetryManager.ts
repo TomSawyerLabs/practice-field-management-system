@@ -11,6 +11,12 @@ function isDsMessage(data: DSMessage | UdpMessage): data is DSMessage {
   return 'type' in data;
 }
 
+/** A DS sends its UDP status ~50 times a second. One that has gone quiet
+ *  this long (unplugged, laptop closed) is not vouching for an enabled
+ *  robot any more — without this, its last "enabled" report would defer
+ *  every radio commit until some other DS event cleared it. */
+export const ENABLED_REPORT_STALE_MS = 5_000;
+
 export class TelemetryManager {
   private loggedFirst = false;
   /** Track team number per TCP source address (learned from type 0x18 TeamNumberMessage) */
@@ -18,8 +24,8 @@ export class TelemetryManager {
   /** Cached team→station mappings, refreshed at most once per second */
   private cachedMappings: Record<number, StationName> = {};
   private cachedMappingsAt = 0;
-  /** Track per-station enabled state from DS UDP telemetry */
-  private enabledStations = new Map<StationName, boolean>();
+  /** Per-station enabled state from DS UDP telemetry, and when it was reported */
+  private enabledStations = new Map<StationName, { enabled: boolean; at: number }>();
 
   constructor(
     private readonly getTeamMappings: () => Record<number, StationName>,
@@ -27,12 +33,14 @@ export class TelemetryManager {
     /** Resolve the correct station when a team is duplicated across stations.
      *  Called with (teamNumber, dsSourceAddress) — returns the station if resolvable. */
     private readonly resolveByAddress?: (teamNumber: number, address: string) => StationName | undefined,
+    private readonly now: () => number = Date.now,
   ) {}
 
-  /** Returns true if any station's DS is reporting enabled. */
+  /** Returns true if any station's DS is reporting enabled, recently. */
   anyRobotEnabled(): boolean {
-    for (const enabled of this.enabledStations.values()) {
-      if (enabled) return true;
+    const now = this.now();
+    for (const { enabled, at } of this.enabledStations.values()) {
+      if (enabled && now - at <= ENABLED_REPORT_STALE_MS) return true;
     }
     return false;
   }
@@ -73,7 +81,7 @@ export class TelemetryManager {
     if (!station) return;
 
     this.logFirst(msg.teamNumber, station);
-    this.enabledStations.set(station, msg.status.enabled);
+    this.enabledStations.set(station, { enabled: msg.status.enabled, at: this.now() });
 
     let dsCpuPercent: number | undefined;
     for (const tag of msg.tags) {

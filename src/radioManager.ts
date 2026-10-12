@@ -910,15 +910,24 @@ class RadioManager {
     } else {
       this.setPendingCommit(false);
     }
-    // Serialize concurrent calls — each queues after the previous one so
-    // previousStations in networkManager is never read mid-update. The
-    // leading catch isolates each commit from its predecessors: without it,
-    // one rejected commit poisons the queue and every later commit re-rejects
-    // with the stale error without ever executing (2026-07-24 incident).
+    return this.enqueueRadioPush(() => this.doCommitConfiguration());
+  }
+
+  /**
+   * Run a push to the radio after every push already queued. Every
+   * configureRadio() goes through here: the radio takes one configuration
+   * at a time (~30 s each), and a push that arrived mid-reconfigure used to
+   * be dropped with only a console line. Serializing also means
+   * previousStations in networkManager is never read mid-update. The
+   * leading catch isolates each push from its predecessors: without it, one
+   * rejected commit poisons the queue and every later commit re-rejects
+   * with the stale error without ever executing (2026-07-24 incident).
+   */
+  private enqueueRadioPush(job: () => Promise<void>): Promise<void> {
     this.queuedCommits++;
     this.commitQueue = this.commitQueue
       .catch(() => {})
-      .then(() => this.doCommitConfiguration())
+      .then(job)
       .finally(() => {
         this.queuedCommits--;
       });
@@ -1032,9 +1041,10 @@ class RadioManager {
       });
     }
 
+    // Unreachable while every caller goes through enqueueRadioPush(). Fail
+    // loudly if that ever stops being true rather than drop the push.
     if (this.configuring) {
-      console.log('Already configuring');
-      return;
+      throw new Error('Radio push overlapped another one in progress (not queued through enqueueRadioPush)');
     }
 
     let isConfiguring: Promise<void> | undefined;
@@ -1131,11 +1141,8 @@ class RadioManager {
   async clearAllConfigurations(stage = false): Promise<void> {
     console.log(`Starting to clear all active radio configurations${stage ? ' (staged)' : ''}`);
 
-    if (this.configuring) {
-      console.log('Already configuring, skipping clear operation');
-      return;
-    }
-
+    // No guard for a reconfigure in progress: the commit below queues
+    // behind it (enqueueRadioPush).
     try {
       // Waiting changes go too: a clear is a reset, not a step in a batch.
       if (this.changes.length > 0) {
@@ -1412,7 +1419,11 @@ class RadioManager {
     return null;
   }
 
-  async setSyslogIP(ip: string): Promise<void> {
+  setSyslogIP(ip: string): Promise<void> {
+    return this.enqueueRadioPush(() => this.doSetSyslogIP(ip));
+  }
+
+  private async doSetSyslogIP(ip: string): Promise<void> {
     // The radio applies every /configuration POST as a FULL replacement, so a
     // syslog-only body wipes all station configs (2026-07-24: the startup
     // setSyslogIP call kicked configured teams off the radio on every deploy).

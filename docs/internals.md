@@ -77,7 +77,10 @@ A frontend client sends a WebSocket message with
 radio … after Nm`).
    - **Deferred** while any robot is enabled: the change is applied to the
      active config straight away, but `commitConfiguration()` waits and
-     re-runs as soon as the last robot is disabled.
+     re-runs as soon as the last robot is disabled. "Enabled" means a DS
+     reported enabled in the last 5 s (`ENABLED_REPORT_STALE_MS`): a DS
+     unplugged while enabled never sends the disabled report, so its last
+     one ages out, and a 5 s timer retries the deferred commit.
    - Otherwise `commitConfiguration()` fires immediately.
 
    Clients are told what is waiting and why (`pendingCommitState`: the
@@ -118,6 +121,14 @@ radio … after Nm`).
      - **Add routing table entry** — per-station route for laptop route
        preferences
    - If no team: **bring down** — `ip link set br-slot1 down`
+   - **Teardown of the old team is best effort** — each step that fails
+     (typically `iptables -D` of a rule that is already gone) is logged as
+     a warning and the new team is set up anyway.
+   - **Each station stands alone** — one that fails to set up is reported
+     (`Network setup for slot1 (team …) failed`), doesn't stop the rest,
+     and is torn down and set up again on the next pass even if its team
+     is unchanged. The pass as a whole still rejects, so the commit shows
+     as failed.
    - **Start DHCP server** _(OFFSEASON only)_ — serves
      `10.TE.AM.100–199`, gateway `10.TE.AM.254`. Skipped in PRACTICE mode
      since the AP handles DHCP (gateway = `10.TE.AM.4`).
@@ -137,6 +148,13 @@ radio … after Nm`).
      enters `CONFIGURING` (2 s timeout)
    - **Wait for ACTIVE** — polls until the radio exits `CONFIGURING`
      (45 s timeout), verifies final status is `ACTIVE`
+   - **One push at a time** — every POST (commits, the startup syslog IP,
+     clear-all) is queued through `enqueueRadioPush()`, so a push that
+     arrives mid-reconfigure waits its turn instead of being dropped.
+   - **Diagnosing** — `curl -s http://10.0.100.2/status` from the field
+     server. `stationStatuses.<station> = null` means the station is not
+     configured on the radio, whatever `active-config.json` says: that
+     file is written even when the radio push fails.
 
 5. **Result** — the robot connects to its team's SSID, gets a DHCP lease
    from the AP (PRACTICE) or the pFMS host (OFFSEASON), and is reachable

@@ -19,6 +19,8 @@
  *  4. setSyslogIP with a new IP → POST includes the active stations.
  *  5. Radio station config wiped mid-session → reconcile re-commits within
  *     the debounce window.
+ *  6. setSyslogIP and a clear-all arriving while a commit is mid-reconfigure
+ *     queue behind it — every push reaches the radio, none is dropped.
  */
 import { createServer } from 'node:http';
 import { writeFileSync, rmSync } from 'node:fs';
@@ -177,6 +179,27 @@ check(
   'mid-session station wipe auto-repaired',
   configPosts.length === 4 && stationStatuses.red1?.ssid === '8048-COMP',
   `posts=${configPosts.length} red1=${JSON.stringify(stationStatuses.red1 ?? null)}`,
+);
+
+// ── Scenario 6: pushes that overlap a reconfigure queue, not drop ────
+const before6 = configPosts.length;
+const inFlight = radioManager.commitConfiguration();
+await sleep(50); // the commit's POST is out; the radio is CONFIGURING
+const overlapErrors: unknown[] = [];
+const syslogDuring = radioManager.setSyslogIP('10.0.100.5').catch(err => overlapErrors.push(err));
+const clearDuring = radioManager.clearAllConfigurations();
+await Promise.all([inFlight, syslogDuring, clearDuring]);
+await sleep(500);
+check(
+  'overlapping setSyslogIP and clear both reach the radio after the commit',
+  configPosts.length === before6 + 3 && overlapErrors.length === 0,
+  `posts=${configPosts.length - before6} errors=${overlapErrors.map(String).join('; ')}`,
+);
+check('the overlapping syslog push landed', syslogIpAddress === '10.0.100.5', syslogIpAddress);
+check(
+  'the clear landed last',
+  Object.values(stationStatuses).every(s => s === null),
+  JSON.stringify(stationStatuses.red1 ?? null),
 );
 
 // ── Cleanup ──────────────────────────────────────────────────────────
