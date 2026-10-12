@@ -76,6 +76,10 @@ const POST_ROLL_MS = 5000;
 const PREROLL_ABANDON_MS = 20_000;
 /** How long a `q` gets to finish the file before SIGKILL. */
 const STOP_GRACE_MS = 10_000;
+/** How often an adopted pre-roll checks whether its ffmpegs have opened
+ *  their output files yet, and how long it waits before moving anyway. */
+const ADOPT_POLL_MS = 250;
+const ADOPT_MAX_WAIT_MS = 15_000;
 const RECONNECT_DELAY_MS = 1000;
 const MAX_PARTS = 30;
 const STATUS_INTERVAL_MS = 2000;
@@ -196,6 +200,8 @@ interface Session {
   stopTimer?: NodeJS.Timeout;
   /** Robots ran at some point — otherwise the files are discarded at the end. */
   sawPlay: boolean;
+  /** An adopted pre-roll waiting to move under its match id (see adopt). */
+  move?: { dir: string; since: number; timer?: NodeJS.Timeout };
 }
 
 /** The field is one hold-to-start away from a match: check open, every
@@ -842,26 +848,60 @@ export class MatchRecorder {
     if (!session && isStartable(state)) this.startSession(state, null);
   }
 
-  /** A pre-roll session's match has started: move its files under the match
-   *  id and record what we now know. ffmpeg keeps writing through the rename
-   *  (open file descriptors follow the directory). */
+  /** A pre-roll session's match has started: record what we now know and
+   *  move its files under the match id. ffmpeg keeps writing through the
+   *  rename (open file descriptors follow the directory) — but only once it
+   *  has opened its output, which it does after probing the stream, seconds
+   *  after it starts. A rename in that window left it opening a path in a
+   *  directory that no longer existed ("Error opening output files") and
+   *  dropping into a reconnect. So the move waits for every running ffmpeg
+   *  to have its file open (see moveWhenOpen). */
   private adopt(session: Session, state: MatchState): void {
     const matchId = state.matchId!;
     const newDir = this.matchDirectory(matchId);
     if (!newDir) return;
-    try {
-      renameSync(session.dir, newDir);
-    } catch (err) {
-      console.error(`Match recorder: could not move pre-roll ${session.dir} → ${newDir}: ${(err as Error).message}`);
-      return;
-    }
-    for (const job of session.jobs) job.parts = job.parts.map(p => newDir + p.slice(session.dir.length));
-    session.dir = newDir;
     session.matchId = matchId;
     session.matchNumber = state.matchNumber;
     session.teams = teamsOf(state);
+    session.move = { dir: newDir, since: Date.now() };
+    // Labelled where it is now, so a crash before the move doesn't leave an
+    // anonymous pre-roll for the sweep to throw away.
     this.writeManifest(session, []);
     console.log(`Match recording continues as match ${state.matchNumber ?? '?'} (${matchId})`);
+    this.moveWhenOpen(session);
+    this.emit();
+  }
+
+  /** Move an adopted pre-roll once no ffmpeg is still about to open its
+   *  output, or after ADOPT_MAX_WAIT_MS regardless (one stuck probing a
+   *  dead stream would reconnect into the new directory anyway). */
+  private moveWhenOpen(session: Session): void {
+    const move = session.move;
+    if (!move || session.stopping) return;
+    move.timer = undefined;
+    const opening = session.jobs.some(job => job.proc && !existsSync(job.parts.at(-1)!));
+    if (opening && Date.now() - move.since < ADOPT_MAX_WAIT_MS) {
+      move.timer = setTimeout(() => this.moveWhenOpen(session), ADOPT_POLL_MS);
+      return;
+    }
+    this.moveSession(session);
+  }
+
+  /** Rename the session directory to its pending move target. */
+  private moveSession(session: Session): void {
+    const move = session.move;
+    if (!move) return;
+    if (move.timer) clearTimeout(move.timer);
+    session.move = undefined;
+    try {
+      renameSync(session.dir, move.dir);
+    } catch (err) {
+      console.error(`Match recorder: could not move pre-roll ${session.dir} → ${move.dir}: ${(err as Error).message}`);
+      return;
+    }
+    for (const job of session.jobs) job.parts = job.parts.map(p => move.dir + p.slice(session.dir.length));
+    session.dir = move.dir;
+    this.writeManifest(session, []);
     this.emit();
   }
 
@@ -1017,6 +1057,14 @@ export class MatchRecorder {
 
   private async finishSession(session: Session): Promise<void> {
     await Promise.all(session.jobs.map(job => this.stopJob(job)));
+    // Every ffmpeg has exited, so a move still waiting is safe now.
+    if (session.move) {
+      if (session.sawPlay) this.moveSession(session);
+      else {
+        clearTimeout(session.move.timer);
+        session.move = undefined;
+      }
+    }
     if (session.matchId === null || !session.sawPlay) {
       // Nothing worth keeping: the hold was released, the countdown aborted,
       // or the field stopped being startable before anyone pressed start.

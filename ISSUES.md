@@ -105,9 +105,6 @@ hardware or a real deployment:
 
 - The Blue Alliance reporting (from the match-review work) was scoped and
   never begun.
-- `matchRecorder`'s `finishSession`/`adopt` can still remove or rename a
-  session directory under a just-spawned ffmpeg. Only the part-directory
-  race was fixed. Low severity, self-recovering.
 
 ## SystemCore gaps
 
