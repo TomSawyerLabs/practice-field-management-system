@@ -180,3 +180,17 @@ hardware or a real deployment:
   created lazily.
 - The Linux standalone-binary targets compile but have never been run, and
   the binary has no self-update path (`update.sh` doesn't apply to it).
+
+## Two robots of one team
+
+- pFMS's own traffic to a duplicated team's subnet (subnet-scanner fping,
+  team-check HTTP to the radio/roboRIO, robot packet capture lookups) follows
+  the main routing table, which holds one connected `10.TE.AM.0/24` route per
+  bridge, so it all goes to one of the two robots. The Network page and team
+  checks for the other robot show the first robot's devices. Seen with 1967
+  on 2026-10-12. mDNS is fixed separately (per-station addresses, see
+  `plans/two-robot-mdns.md`).
+- `/proc/net/igmp` on steamboat showed 57 members of 224.0.0.251 on
+  `br-slot1` (35 on slot2, 19, 18, 12, 10 on the rest) on 2026-10-12. A
+  handful is expected, so memberships are probably leaking (team-check mDNS
+  sockets, or reflector re-joins). Check with `cat /proc/net/igmp` over time.
