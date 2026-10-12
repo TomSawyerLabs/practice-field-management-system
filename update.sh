@@ -41,9 +41,12 @@ if [[ ! " $* " =~ " continue " ]]; then
   exec "$(realpath "$0")" continue "$@"
 fi
 
-bun install
+# A failed install or build must stop the deploy: carrying on would sync
+# the files and reload the backend onto the previous build while reporting
+# the new commit.
+bun install || { echo "❌ bun install failed — nothing deployed"; exit 1; }
 
-bun run build
+bun run build || { echo "❌ Build failed — nothing deployed, the backend keeps running"; exit 1; }
 
 DEPLOY_BASE=${PFMS_DEPLOY_BASE:-/opt/practice-field-management-system}
 SERVICE=${PFMS_SERVICE:-practice-field-management-system.service}
