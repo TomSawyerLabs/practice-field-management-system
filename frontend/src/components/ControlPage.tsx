@@ -33,6 +33,7 @@ import {
   sendCancelStationChange,
   sendDrive,
   sendRoutePreference,
+  useMyDriveStation,
   useRoutePreferenceState,
   usePortBridgeState,
   sendPortBridge,
@@ -298,21 +299,29 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
 
   const selectedStation = activeStations.get(currentSsid) ?? null;
 
-  // Route preference state — for multi-robot routing feedback
+  // Route preference: which robot this device's traffic (and .local lookups)
+  // goes to. Driving is separate — a drive session for this laptop, which
+  // also brings the robot's replies back to it. Only that is "Driving".
   const routeState = useRoutePreferenceState();
   const routePreference = routeState?.preference ?? null;
+  const drivenStation = useMyDriveStation();
   const isMultiRobot = activeStations.size >= 2;
 
-  // Resolve the SSID that the laptop is currently routed to
-  const routedSsid = useMemo(() => {
-    if (!routePreference) return null;
-    for (const [ssid, station] of activeStations) {
-      if (station === routePreference) return ssid;
-    }
-    return null;
-  }, [routePreference, activeStations]);
+  const ssidOn = useCallback(
+    (station: StationName | null) => {
+      if (!station) return null;
+      for (const [ssid, s] of activeStations) if (s === station) return ssid;
+      return null;
+    },
+    [activeStations],
+  );
+  const drivenSsid = useMemo(() => ssidOn(drivenStation), [ssidOn, drivenStation]);
+  const routedSsid = useMemo(() => ssidOn(routePreference), [ssidOn, routePreference]);
 
-  // Auto-connect to the selected robot's station on first load if no preference exists.
+  // Route this device to the selected robot on first load, so its .local
+  // names resolve without driving anything (a programming laptop, a phone).
+  // With two robots it picks one arbitrarily, which is why it never counts
+  // as driving.
   const autoConnectDone = useRef(false);
   useEffect(() => {
     if (autoConnectDone.current) return;
@@ -360,20 +369,37 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
       <QueueBanner teamNumber={teamNumber} />
 
-      {/* Network routing banner — shows once connected, with option to switch or disconnect */}
-      {routePreference && activeStations.size > 0 && (
+      {/* What this laptop drives, or which robot its traffic goes to */}
+      {drivenSsid ? (
         <Alert
-          severity={routedSsid === currentSsid ? 'success' : 'warning'}
+          severity={drivenSsid === currentSsid ? 'success' : 'warning'}
           sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' } }}
           action={
-            <Button color="inherit" size="small" onClick={() => sendRoutePreference(null)}>
-              Disconnect
+            <Button color="inherit" size="small" onClick={() => sendDrive(null)}>
+              Stop driving
             </Button>
           }
         >
-          Connected to <strong>{routedSsid ?? routePreference}</strong>.
-          {isMultiRobot && routedSsid !== currentSsid && ' Select the robot you want below or click its Drive button.'}
+          This laptop drives <strong>{drivenSsid}</strong>.
+          {drivenSsid !== currentSsid && ` To drive ${currentSsid} instead, click its Drive button below.`}
         </Alert>
+      ) : (
+        routePreference &&
+        activeStations.size > 0 && (
+          <Alert
+            severity={isMultiRobot ? 'info' : 'success'}
+            sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' } }}
+            action={
+              <Button color="inherit" size="small" onClick={() => sendRoutePreference(null)}>
+                Disconnect
+              </Button>
+            }
+          >
+            Connected to <strong>{routedSsid ?? routePreference}</strong>.
+            {isMultiRobot &&
+              " This laptop isn't driving either robot. On a Driver Station laptop, click Drive on the robot it runs."}
+          </Alert>
+        )
       )}
 
       {/* Always on screen, whatever the tab: alerts, and the match panel with
@@ -427,7 +453,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
             availableStation={availableStation}
             selectedSsid={currentSsid}
             onSelectRobot={handleSelectRobot}
-            routePreference={routePreference}
+            drivenStation={drivenStation}
             isMultiRobot={isMultiRobot}
           />
           {activeStations.size === 0 && (
@@ -496,7 +522,7 @@ function RobotList({
   availableStation,
   selectedSsid,
   onSelectRobot,
-  routePreference,
+  drivenStation,
   isMultiRobot,
 }: {
   teamNumber: number;
@@ -505,7 +531,8 @@ function RobotList({
   availableStation: StationName | null;
   selectedSsid: string;
   onSelectRobot: (ssid: string) => void;
-  routePreference: StationName | null;
+  /** The station this laptop drives (its drive session), if any */
+  drivenStation: StationName | null;
   isMultiRobot: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -642,7 +669,7 @@ function RobotList({
                 activeStation={activeStations.get(config.ssid) ?? null}
                 availableStation={availableStation}
                 onSelect={() => onSelectRobot(config.ssid)}
-                routePreference={routePreference}
+                drivenStation={drivenStation}
                 isMultiRobot={isMultiRobot}
                 isVerified={config.ssid === verifiedSsid}
                 wifi={rowWifi.get(config.ssid) ?? null}
@@ -746,7 +773,7 @@ function RobotRow({
   activeStation,
   availableStation,
   onSelect,
-  routePreference,
+  drivenStation,
   isMultiRobot,
   isVerified,
   wifi,
@@ -759,7 +786,8 @@ function RobotRow({
   activeStation: StationName | null;
   availableStation: StationName | null;
   onSelect: () => void;
-  routePreference: StationName | null;
+  /** The station this laptop drives (its drive session), if any */
+  drivenStation: StationName | null;
   isMultiRobot: boolean;
   isVerified: boolean;
   /** What the robot Wi-Fi scan hears of this robot */
@@ -778,10 +806,18 @@ function RobotRow({
   // "Active" means the radio has it and nothing is waiting to change that.
   const isLive = isActive && !robotPending;
 
-  // Clear pending state once the server confirms (or the situation changes)
+  const drivingThis = activeStation !== null && drivenStation === activeStation;
+  // Clear pending state once the server confirms (or the situation changes).
+  // It may never confirm — another laptop already drives this robot, so this
+  // one is held off as a duplicate — so give up after a few seconds.
   useEffect(() => {
-    if (routePreference === activeStation || !isMultiRobot) setPendingDrive(false);
-  }, [routePreference, activeStation, isMultiRobot]);
+    if (drivingThis || !isMultiRobot) setPendingDrive(false);
+  }, [drivingThis, isMultiRobot]);
+  useEffect(() => {
+    if (!pendingDrive) return;
+    const timer = setTimeout(() => setPendingDrive(false), 8_000);
+    return () => clearTimeout(timer);
+  }, [pendingDrive]);
 
   // Clear the enable hint once the robot becomes active
   useEffect(() => {
@@ -958,10 +994,10 @@ function RobotRow({
                 sx={{ height: 20, fontSize: '0.7rem' }}
               />
             )}
-            {isLive && isMultiRobot && (routePreference === activeStation || pendingDrive) && (
+            {isLive && isMultiRobot && (drivingThis || pendingDrive) && (
               <Chip
                 label="Driving"
-                color={pendingDrive && routePreference !== activeStation ? 'default' : 'info'}
+                color={drivingThis ? 'info' : 'default'}
                 size="small"
                 sx={{ height: 20, fontSize: '0.7rem', fontWeight: 700 }}
                 onDelete={e => {
@@ -1010,7 +1046,7 @@ function RobotRow({
             )
           ) : isActive ? (
             <>
-              {isMultiRobot && !routePreference && !pendingDrive && (
+              {isMultiRobot && !drivingThis && !pendingDrive && (
                 <Button
                   size="small"
                   variant="contained"

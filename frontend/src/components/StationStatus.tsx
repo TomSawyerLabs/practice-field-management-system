@@ -31,6 +31,7 @@ import {
   useMdnsActivity,
   useRoutePreferenceState,
   useDriveSessionState,
+  useMyDriveStation,
   sendDrive,
   useLastLinked,
   usePortBridgeState,
@@ -70,14 +71,17 @@ function formatNumberWithThinSpace(num: number | undefined): string {
 /** Banner shown when this station's team is also assigned to other stations. */
 function RoutePreferenceBanner({ station }: { station: StationName }) {
   const routeState = useRoutePreferenceState();
+  // Driving, not the route preference: a team page routes a device to one of
+  // the robots on load without driving it.
+  const driving = useMyDriveStation();
   if (!routeState) return null;
 
   // Find conflicting teams that include this station
   const myConflicts = Object.entries(routeState.conflictingTeams).filter(([, stations]) => stations.includes(station));
   if (myConflicts.length === 0) return null;
 
-  const isSelected = routeState.preference === station;
-  const otherSelected = routeState.preference !== null && routeState.preference !== station;
+  const isSelected = driving === station;
+  const otherSelected = driving !== null && driving !== station;
 
   return (
     <Box sx={{ mb: 1 }}>
@@ -98,7 +102,7 @@ function RoutePreferenceBanner({ station }: { station: StationName }) {
           <TeamAvatar teamNumber={parseInt(team, 10) || null} size={20} />
           <Typography variant="body2" sx={{ flex: 1 }}>
             Team {team} is on {stations.length} stations
-            {otherSelected && ` (driving ${prettyStationName(routeState.preference!)})`}
+            {otherSelected && ` (driving ${prettyStationName(driving)})`}
           </Typography>
           <Button
             size="small"

@@ -8,17 +8,18 @@ import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import { StationName } from '../../../src/types';
 import { prettyStationName } from '../../../src/utils';
-import { useRoutePreferenceState, sendDrive } from '../hooks/useBackend';
+import { useRoutePreferenceState, useMyDriveStation, sendDrive } from '../hooks/useBackend';
 import { useHostname } from './HostDisplay';
 
 function ConflictingTeamCard({
   team,
   stations,
-  currentPreference,
+  driving,
 }: {
   team: string;
   stations: StationName[];
-  currentPreference: StationName | null;
+  /** The station this laptop drives (its drive session), if any */
+  driving: StationName | null;
 }) {
   return (
     <Card sx={{ mb: 2 }}>
@@ -28,7 +29,7 @@ function ConflictingTeamCard({
         </Typography>
         <ButtonGroup variant="outlined" size="large" fullWidth>
           {stations.map(station => {
-            const selected = currentPreference === station;
+            const selected = driving === station;
             return (
               <Button
                 key={station}
@@ -41,12 +42,12 @@ function ConflictingTeamCard({
             );
           })}
         </ButtonGroup>
-        {currentPreference && stations.includes(currentPreference) && (
+        {driving && stations.includes(driving) && (
           <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="body2" color="text.secondary">
               Driving:
             </Typography>
-            <Chip label={prettyStationName(currentPreference)} size="small" color="primary" />
+            <Chip label={prettyStationName(driving)} size="small" color="primary" />
             <Button size="small" onClick={() => sendDrive(null)} sx={{ ml: 'auto' }}>
               Clear
             </Button>
@@ -59,6 +60,7 @@ function ConflictingTeamCard({
 
 export function RoutePage() {
   const state = useRoutePreferenceState();
+  const driving = useMyDriveStation();
   const yourHostname = useHostname(state?.yourIp);
 
   const conflictingTeams = state?.conflictingTeams ?? {};
@@ -104,7 +106,7 @@ export function RoutePage() {
 
       {hasConflicts &&
         Object.entries(conflictingTeams).map(([team, stations]) => (
-          <ConflictingTeamCard key={team} team={team} stations={stations} currentPreference={state!.preference} />
+          <ConflictingTeamCard key={team} team={team} stations={stations} driving={driving} />
         ))}
     </Container>
   );

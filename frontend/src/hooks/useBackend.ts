@@ -2047,6 +2047,22 @@ export function useDriveSessionState(): DriveSessionState | null {
   return state;
 }
 
+/**
+ * The station whose robot this browser's laptop drives (a drive session for
+ * its IP), or null. Not the route preference: that only says where this
+ * device's traffic to the team subnet goes, and a team page sets it on load
+ * without driving anything.
+ */
+export function useMyDriveStation(): StationName | null {
+  const drive = useDriveSessionState();
+  const yourIp = useRoutePreferenceState()?.yourIp;
+  if (!drive || !yourIp) return null;
+  for (const [station, session] of Object.entries(drive.sessions)) {
+    if (session?.dsIp === yourIp) return station as StationName;
+  }
+  return null;
+}
+
 // ── Guest Host Names ─────────────────────────────────────────────────
 
 let currentHostnames: HostnamesState['hostnames'] = {};
