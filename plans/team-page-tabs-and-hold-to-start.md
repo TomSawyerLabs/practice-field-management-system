@@ -28,10 +28,15 @@
 - The match panel (Join / Ready / Disable / A-Stop / E-Stop) stays **above**
   the tabs, always visible. It carries the stop buttons and mounts the
   `AStopPopout` controller; hiding either behind a tab is unsafe.
-- The multiple-Driver-Station alert and team checks (modal + "all passed"
-  line) also stay above the tabs — they're alerts, not a category.
+- The multiple-Driver-Station alert also stays above the tabs — it's an
+  alert, not a category.
+- (2026-10-12, user) Equipment checks are **not** a pop-up. They have their
+  own **Equipment** tab with a status dot like Radio's (red: a check failed;
+  amber: a warning or a check that couldn't run; green: all passed). The old
+  modal re-opened itself on every new result set, and checks re-run on
+  their own (new devices, error retries), so it kept popping up.
 - Tabs: **Robots** (saved robots, enable/release, add, verify) · **Radio**
-  (radio status charts/tables) · **Network** (port selector, network card,
+  (radio status charts/tables) · **Equipment** (team check results) · **Network** (port selector, network card,
   other robots' network cards) · **Video**.
 - Tab lives in the URL hash (`#radio`) so a reload keeps it; robot selection
   (`replaceState`) keeps the hash.
@@ -106,6 +111,10 @@
       re-taps during it sent nothing to the server; at 5 s the button re-enabled
       and a hold started the match into Autonomous.
 - [ ] Real-phone long-press test (also covers the cooldown on a phone).
+- [x] (2026-10-12) Equipment checks moved from the auto-opening modal to an
+      Equipment tab with a status dot. Headless check against a fake backend
+      re-sending failing results every 3 s: no dialog; dot red; tab lists
+      the checks with a Re-run button; `#equipment` hash works.
 
 ## Open questions for the user
 
@@ -114,4 +123,5 @@
 ## Things not to do
 
 - Don't put the match panel or E-Stop behind a tab.
+- Don't bring back an auto-opening equipment-check dialog.
 - Don't leave the overlay up after robots enable — it would cover E-Stop All.
