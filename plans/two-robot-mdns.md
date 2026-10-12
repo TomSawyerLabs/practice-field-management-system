@@ -106,7 +106,14 @@ Probe used (read-only; nothing written on steamboat):
 - [x] Step 4 teamChecker (robot tester keeps the multicast path)
 - [x] Step 5 typecheck, 881 tests, prettier; committed `20242ce`, side
       issues logged in ISSUES.md (`34e9ec4`)
-- [ ] Step 6 deploy + verify (needs user OK) ← current
+- [x] Related, same visit: the team page showed "Driving" from the route
+      preference it sets on load, which hid both Drive buttons and linked
+      nothing. Now it reads the drive session for the browser's IP
+      (`useMyDriveStation`). Same for `/route` and the station panel.
+      `a4623c9`. The load-time route stays: it gives non-DS devices mDNS.
+- [ ] Step 6 deploy + verify (needs user OK) ← current. After deploy, on
+      each 1967 laptop: the team page shows "This laptop drives <robot>",
+      and the other robot has a Drive button.
 
 ## Open questions for the user
 
