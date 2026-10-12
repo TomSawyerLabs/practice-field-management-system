@@ -1,5 +1,17 @@
 # Known Issues & Technical Debt
 
+## Docs present OFFSEASON AP firmware as supported, for the wrong reason
+
+`README.md:7`, `docs/setup.md:5`, `docs/network.md:3,62` and
+`docs/getting-started.md:91-97` say pFMS works with `PRACTICE` **or**
+`OFFSEASON` firmware. `getting-started.md` says `PRACTICE` is recommended
+because the AP serves DHCP itself. Per the user (2026-10-12), `PRACTICE` is
+**required**: `OFFSEASON` has excessive firewalls. The AP's DHCP on
+`PRACTICE` is actually a cost that pFMS has to work around with reverse NAT.
+A new field following the docs could flash `OFFSEASON` and get stuck.
+Before changing the docs, decide whether the OFFSEASON code paths
+(per-VLAN dnsmasq, `docs/internals.md`) stay.
+
 ## `setupWebSocket` parameter sprawl
 
 The `setupWebSocket()` function in `src/websocketServer.ts` now has **21 positional parameters**. The call site in `src/index.ts` is nearly impossible to read — you have to count commas to understand which argument maps to which parameter. Adjacent optional callbacks of compatible types make it easy to accidentally swap arguments.
