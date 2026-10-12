@@ -283,12 +283,24 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
     });
   }, [savedTeams, teamNumber]);
 
-  // Selection handler — updates URL for viewing, but does NOT start driving.
-  // The team must explicitly click "Drive" to set up the DNAT/routing.
-  const handleSelectRobot = useCallback((ssid: string) => {
+  // Which robot the page shows (and the URL names).
+  const showRobot = useCallback((ssid: string) => {
     setCurrentSsid(ssid);
     window.history.replaceState(null, '', `/${encodeURIComponent(ssid)}${window.location.hash}`);
   }, []);
+
+  // Select: picking a robot also puts this device on that robot's network
+  // (its traffic to the team subnet and its .local lookups go there; see the
+  // effect below). It does not drive: Drive is for a Driver Station laptop.
+  // Disconnect turns Select's routing off until a robot is picked again.
+  const [selectRoutes, setSelectRoutes] = useState(true);
+  const handleSelectRobot = useCallback(
+    (ssid: string) => {
+      setSelectRoutes(true);
+      showRobot(ssid);
+    },
+    [showRobot],
+  );
 
   // Auto-select: if the current SSID is not active but another robot for this team is,
   // switch to the first active one.
@@ -296,9 +308,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
     if (activeStations.has(currentSsid)) return;
     if (activeStations.size > 0) {
       const firstSsid = activeStations.keys().next().value as string;
-      handleSelectRobot(firstSsid);
+      showRobot(firstSsid);
     }
-  }, [activeStations, currentSsid, handleSelectRobot]);
+  }, [activeStations, currentSsid, showRobot]);
 
   const selectedStation = activeStations.get(currentSsid) ?? null;
 
@@ -321,19 +333,27 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const drivenSsid = useMemo(() => ssidOn(drivenStation), [ssidOn, drivenStation]);
   const routedSsid = useMemo(() => ssidOn(routePreference), [ssidOn, routePreference]);
 
-  // Route this device to the selected robot on first load, so its .local
-  // names resolve without driving anything (a programming laptop, a phone).
-  // With two robots it picks one arbitrarily, which is why it never counts
-  // as driving.
-  const autoConnectDone = useRef(false);
+  // Select: route this device to the selected robot, so a laptop that isn't
+  // a Driver Station (programming laptop, phone) reaches that robot and its
+  // .local names. Not while it drives a robot: Drive routes it to that one.
+  // Asked once per selection, so a route the server doesn't take isn't
+  // re-sent on every update.
+  const selectRequested = useRef<StationName | null>(null);
   useEffect(() => {
-    if (autoConnectDone.current) return;
-    if (routeState === null) return; // Haven't received state from server yet
-    if (routePreference) return; // Already connected to something
-    if (!selectedStation) return; // Selected robot isn't active
-    autoConnectDone.current = true;
+    if (!selectRoutes || routeState === null || !selectedStation || drivenStation) return;
+    if (routePreference === selectedStation) {
+      selectRequested.current = selectedStation;
+      return;
+    }
+    if (selectRequested.current === selectedStation) return;
+    selectRequested.current = selectedStation;
     sendRoutePreference(selectedStation);
-  }, [routeState, routePreference, selectedStation]);
+  }, [selectRoutes, routeState, routePreference, selectedStation, drivenStation]);
+  const disconnect = () => {
+    setSelectRoutes(false);
+    selectRequested.current = null;
+    sendRoutePreference(null);
+  };
 
   // Tab: the URL hash if it names one, else picked once the field state first
   // arrives — Radio when a robot is already on the field, Robots otherwise.
@@ -401,14 +421,14 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
             severity={isMultiRobot ? 'info' : 'success'}
             sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' } }}
             action={
-              <Button color="inherit" size="small" onClick={() => sendRoutePreference(null)}>
+              <Button color="inherit" size="small" onClick={disconnect}>
                 Disconnect
               </Button>
             }
           >
-            Connected to <strong>{routedSsid ?? routePreference}</strong>.
+            This device is on <strong>{routedSsid ?? routePreference}</strong>&apos;s network.
             {isMultiRobot &&
-              " This laptop isn't driving either robot. On a Driver Station laptop, click Drive on the robot it runs."}
+              ' Select another robot below to switch. A Driver Station laptop uses Drive on the robot it runs instead.'}
           </Alert>
         )
       )}
@@ -457,6 +477,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
             selectedSsid={currentSsid}
             onSelectRobot={handleSelectRobot}
             drivenStation={drivenStation}
+            routedStation={routePreference}
             isMultiRobot={isMultiRobot}
           />
           {activeStations.size === 0 && (
@@ -528,6 +549,7 @@ function RobotList({
   selectedSsid,
   onSelectRobot,
   drivenStation,
+  routedStation,
   isMultiRobot,
 }: {
   teamNumber: number;
@@ -538,6 +560,8 @@ function RobotList({
   onSelectRobot: (ssid: string) => void;
   /** The station this laptop drives (its drive session), if any */
   drivenStation: StationName | null;
+  /** The station this device's traffic is routed to (Select or Drive) */
+  routedStation: StationName | null;
   isMultiRobot: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
@@ -675,6 +699,7 @@ function RobotList({
                 availableStation={availableStation}
                 onSelect={() => onSelectRobot(config.ssid)}
                 drivenStation={drivenStation}
+                routedStation={routedStation}
                 isMultiRobot={isMultiRobot}
                 isVerified={config.ssid === verifiedSsid}
                 wifi={rowWifi.get(config.ssid) ?? null}
@@ -779,6 +804,7 @@ function RobotRow({
   availableStation,
   onSelect,
   drivenStation,
+  routedStation,
   isMultiRobot,
   isVerified,
   wifi,
@@ -793,6 +819,8 @@ function RobotRow({
   onSelect: () => void;
   /** The station this laptop drives (its drive session), if any */
   drivenStation: StationName | null;
+  /** The station this device's traffic is routed to (Select or Drive) */
+  routedStation: StationName | null;
   isMultiRobot: boolean;
   isVerified: boolean;
   /** What the robot Wi-Fi scan hears of this robot */
@@ -996,6 +1024,15 @@ function RobotRow({
                 color={pendingChip.color}
                 size="small"
                 variant="outlined"
+                sx={{ height: 20, fontSize: '0.7rem' }}
+              />
+            )}
+            {isLive && isMultiRobot && !drivenStation && !pendingDrive && routedStation === activeStation && (
+              <Chip
+                label="Selected"
+                color="info"
+                variant="outlined"
+                size="small"
                 sx={{ height: 20, fontSize: '0.7rem' }}
               />
             )}

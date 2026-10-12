@@ -211,6 +211,12 @@ only when a rule is built on that slot's bridge.
   UDP status. When that team has exactly one robot on the field, the laptop
   drives it. With two robots of one team, the laptop picks one with the Drive
   button on its team page (or `/route`).
+- **Select is not Drive.** Picking a robot on the team page routes that
+  device (its traffic to the team subnet, and its `.local` lookups) to the
+  robot, without making it the robot's Driver Station. That's for laptops
+  and phones that aren't a DS. A device that drives a robot is routed to
+  that robot instead, and Disconnect turns Select's routing off until a
+  robot is picked again.
 - **Kernel state is derived.** From the sessions and the current radio
   config, pFMS works out which DNAT rules, duplicate-DS blocks and route
   preferences should exist, and one serialised sync adds or removes the
