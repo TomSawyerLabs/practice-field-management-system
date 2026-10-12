@@ -1746,10 +1746,12 @@ export class MatchEngine {
         // Kept after the disable so clients can show "last drove at"
         lastEnabledAt: this.lastFmsEnable.get(station),
       };
-      // Outside a match (and postMatch), unjoined stations show whoever is on
-      // the radio right now. A joined station keeps the robot recorded when it
-      // joined, and during a match everyone keeps the start snapshot.
-      if (!this.isMatchActive() && this.phase !== 'postMatch' && !state.joined) {
+      // Outside a running match, unjoined stations show whoever is on the
+      // radio right now — postMatch included, so a robot that connects after
+      // the buzzer shows up straight away rather than at the auto-clear. A
+      // joined station keeps the robot recorded when it joined, and during a
+      // match everyone keeps the start snapshot.
+      if (!this.isMatchActive() && !state.joined) {
         state.teamNumber = this.teamResolver(station);
         state.robot = this.robotResolver(station);
       }

@@ -395,6 +395,35 @@ describe('a robot in the match with no Driver Station', () => {
   }, 15_000);
 });
 
+describe('after the buzzer', () => {
+  test('a robot that connects to a station outside the match shows straight away', async () => {
+    const onRadio: Partial<Record<Station, number>> = { slot1: 5940 };
+    const engine = new MatchEngine(station => onRadio[station] ?? null);
+    engine.createMatch();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 60 }));
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    await Bun.sleep(3400);
+
+    // Mid-match, the roster is frozen
+    onRadio.slot2 = 254;
+    expect(engine.getState().stationStates.slot2!.teamNumber).toBeNull();
+
+    engine.stopMatch();
+    expect(engine.getState().phase).toBe('postMatch');
+    expect(engine.getState().stationStates.slot2!.teamNumber).toBe(254);
+    // The team that played keeps its number, whatever the radio says now
+    onRadio.slot1 = 1678;
+    expect(engine.getState().stationStates.slot1!.teamNumber).toBe(5940);
+
+    engine.clearMatch();
+  }, 10_000);
+});
+
 /** Robots on both alliances, all readied, started. Returns after the horn. */
 async function startRace(config: Partial<MatchConfig>, stations: Record<string, 'red' | 'blue'>) {
   const engine = new MatchEngine(() => 5940);
