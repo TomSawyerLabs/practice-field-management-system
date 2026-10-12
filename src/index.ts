@@ -1111,7 +1111,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       const scan = subnetScanner.getResults();
       return scan.stations[s]?.hosts.filter(h => h.alive) ?? [];
     },
-    VlanInterface ? VlanHostOctet : undefined,
+    VlanInterface ? bridgeName : undefined,
   );
   const latestCheckResults = new Map<StationName, TeamCheckResults>();
   // Snapshot of alive IPs when checks last ran, so we can re-trigger when new devices appear
@@ -1325,7 +1325,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     mdnsReflector = new MdnsReflector(
       s => radioManager.getTeamForStation(s),
       ip => getPreference(ip),
-      VlanHostOctet,
+      bridgeName,
       process.env.MDNS_EXCLUDE_REQUESTERS,
       process.env.MDNS_LISTEN_INTERFACES?.split(/[,\s]+/).filter(Boolean) ?? [],
     );

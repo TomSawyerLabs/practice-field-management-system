@@ -41,6 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=build /build/dist ./dist
+# The mdns-socket addon, fetched by `bun run build` (scripts/fetch-mdns-socket.ts).
+COPY --from=build /build/native/mdns-socket/prebuilt ./native/mdns-socket/prebuilt
 COPY --from=build /build/node_modules ./node_modules
 COPY --from=build /build/package.json ./package.json
 COPY --from=build /build/frontend/dist ./frontend/dist

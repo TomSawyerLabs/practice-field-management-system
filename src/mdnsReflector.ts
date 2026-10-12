@@ -20,10 +20,21 @@
  * answer from a VLAN is sent unicast only to the laptop(s) whose open question
  * it answers. Unsolicited announcements are dropped.
  *
- * Loop prevention relies on setMulticastLoopback(false) — the socket never
- * receives its own forwarded packets — plus the directional filter above.
+ * The robot side is one socket per station, pinned to that station's bridge
+ * (src/mdnsSocket.ts, a native addon): a query leaves by the laptop's
+ * station's bridge only, and an answer is known to come from that station's
+ * robot. A team running two robots has the same address on two bridges,
+ * which is why the bridge can't be chosen by address (1967, 2026-10-12).
+ * Forwarded queries ask for multicast answers (the QU bit is cleared): a
+ * unicast one would go to the gateway address, and the drive session's DNAT
+ * would hand it to the DS laptop.
+ *
+ * The laptop side is one ordinary socket on :5353. It ignores anything from
+ * a team subnet on the field (the station sockets have it), and never
+ * receives its own packets (multicast loopback off).
  */
 import dgram from 'node:dgram';
+import { mdnsSocketUnavailable, openInterfaceSocket, type InterfaceSocket } from './mdnsSocket.js';
 import { MdnsActivity, MdnsResolvedName, StationMdnsActivity, StationName, StationNameList } from './types.js';
 
 const MDNS_ADDR = '224.0.0.251';
@@ -230,9 +241,13 @@ export interface Requester {
 }
 
 interface PendingEntry extends Requester {
-  team: number;
+  /** Where the question went (stationScope). */
+  scope: string;
   expires: number;
 }
+
+/** Scope of a question forwarded to a station's robot. */
+export const stationScope = (station: StationName) => `station:${station}`;
 
 function normalizeName(name: string): string {
   return name.toLowerCase().replace(/\.$/, '');
@@ -247,22 +262,22 @@ export class PendingQueries {
 
   constructor(private readonly ttlMs = PENDING_QUERY_TTL_MS) {}
 
-  add(names: string[], team: number, requester: Requester, now = Date.now()): void {
+  add(names: string[], scope: string, requester: Requester, now = Date.now()): void {
     const expires = now + this.ttlMs;
     for (const raw of names) {
       const name = normalizeName(raw);
       const entries = this.byName.get(name) ?? [];
       // A re-ask from the same laptop replaces its earlier entry rather than stacking
       const kept = entries.filter(
-        e => e.expires > now && !(e.address === requester.address && e.port === requester.port && e.team === team),
+        e => e.expires > now && !(e.address === requester.address && e.port === requester.port && e.scope === scope),
       );
-      kept.push({ ...requester, team, expires });
+      kept.push({ ...requester, scope, expires });
       this.byName.set(name, kept);
     }
   }
 
-  /** Laptops with an open question for any of `names` on `team`'s VLAN — one per laptop:port. */
-  match(names: string[], team: number, now = Date.now()): Requester[] {
+  /** Laptops with an open question for any of `names` in `scope` — one per laptop:port. */
+  match(names: string[], scope: string, now = Date.now()): Requester[] {
     const seen = new Map<string, Requester>();
     for (const raw of names) {
       const name = normalizeName(raw);
@@ -272,7 +287,7 @@ export class PendingQueries {
       if (live.length === 0) this.byName.delete(name);
       else if (live.length !== entries.length) this.byName.set(name, live);
       for (const e of live) {
-        if (e.team !== team) continue;
+        if (e.scope !== scope) continue;
         const key = `${e.address}:${e.port}`;
         if (!seen.has(key)) seen.set(key, { address: e.address, port: e.port, id: e.id });
       }
@@ -305,13 +320,33 @@ export function withDnsId(packet: Buffer, id: number): Buffer {
   return copy;
 }
 
-// ── Team IP helpers ─────────────────────────────────────────────────
-
-function teamToVlanIp(team: number, hostOctet: number): string {
-  const high = Math.floor(team / 100);
-  const low = team % 100;
-  return `10.${high}.${low}.${hostOctet}`;
+/** An answer as `target` expects it: a full mDNS client (asking from 5353)
+ *  wants ID 0, a legacy one-shot querier the ID it sent. One forwarded query
+ *  can stand for several laptops' questions, so the ID is set per laptop. */
+export function answerFor(packet: Buffer, target: Requester): Buffer {
+  const id = target.port === MDNS_PORT ? 0 : target.id;
+  return packet.readUInt16BE(0) === id ? packet : withDnsId(packet, id);
 }
+
+/** Copy of a query with the unicast-response ("QU") bit cleared in every
+ *  question, so responders answer by multicast. A malformed question
+ *  section is left as it is from that point on. */
+export function withoutUnicastResponse(packet: Buffer): Buffer {
+  if (packet.length < 12) return packet;
+  const copy = Buffer.from(packet);
+  const qdCount = copy.readUInt16BE(4);
+  let offset = 12;
+  for (let i = 0; i < qdCount && offset < copy.length; i++) {
+    const { bytesRead } = readDnsName(copy, offset);
+    const classAt = offset + bytesRead + 2;
+    if (bytesRead === 0 || classAt + 2 > copy.length) break;
+    copy.writeUInt16BE(copy.readUInt16BE(classAt) & 0x7fff, classAt);
+    offset = classAt + 2;
+  }
+  return copy;
+}
+
+// ── Team IP helpers ─────────────────────────────────────────────────
 
 /** Derive a team number from a 10.te.am.x source IP, or null if not a valid team VLAN IP. */
 function ipToTeam(ip: string): number | null {
@@ -326,54 +361,47 @@ function ipToTeam(ip: string): number | null {
 
 // ── MdnsReflector ───────────────────────────────────────────────────
 
-/** A packet waiting to leave: a query multicast on one VLAN, or an answer
- *  unicast back to the laptop that asked. */
-type Outbound = { packet: Buffer; label: string } & (
-  | { kind: 'multicast'; iface: string }
-  | { kind: 'unicast'; address: string; port: number }
-);
+/** An answer waiting to go back to a laptop. */
+type Outbound = { packet: Buffer; address: string; port: number; label: string };
+
+/** A station's pinned socket, or why it couldn't be opened (retried later). */
+type StationSocket =
+  | { kind: 'open'; ifname: string; socket: InterfaceSocket }
+  | { kind: 'failed'; ifname: string; at: number };
+
+/** How long before a station socket that failed to open is tried again. */
+const REOPEN_AFTER_MS = 30_000;
 
 export class MdnsReflector {
   private socket: dgram.Socket | null = null;
-  /** Teams whose VLAN we've joined multicast on → their VLAN IP */
-  private joinedTeams = new Map<number, string>();
-  /** Reverse lookup: team number → station name (rebuilt in refreshMemberships) */
-  private teamToStation = new Map<number, StationName>();
+  /** Teams with a station on the field (rebuilt in refreshMemberships). A
+   *  packet from one of their subnets on the shared socket is the robot
+   *  side: its station's socket handles it. */
+  private activeTeams = new Set<number>();
+  private stationSockets = new Map<StationName, StationSocket>();
   /** Per-station counters and recent names for reflected packets */
   private counters = new Map<StationName, StationMdnsActivity>();
   /** IPs/ranges to exclude from requester tracking */
   private readonly excludedRequesters: IpMatcher[];
 
-  /**
-   * Serialized send queue.
-   *
-   * setMulticastInterface() is a socket-wide option (setsockopt IP_MULTICAST_IF)
-   * that takes effect immediately, but socket.send() is DEFERRED — in libuv, when
-   * called during receive processing (UV_HANDLE_UDP_PROCESSING flag), the actual
-   * sendmsg() syscall is queued and flushed after all pending reads complete.
-   *
-   * When multiple mDNS packets arrive simultaneously (common: laptops query,
-   * robots announce, service discovery fires), each handlePacket call overwrites
-   * IP_MULTICAST_IF and queues a send. All queued sends then execute using
-   * whichever interface was set LAST — sending packets out the wrong interface.
-   *
-   * This queue serializes sends: set the interface, send, wait for the callback,
-   * then process the next entry. This guarantees each packet goes out on the
-   * correct interface regardless of how many packets are batched in one read cycle.
-   */
+  /** Answers go out one at a time (see flushSendQueue). */
   private sendQueue: Outbound[] = [];
   private sendInFlight = false;
   /** Questions forwarded to a VLAN and still waiting for their answers. */
   private readonly pending = new PendingQueries();
   private pruneTimer: NodeJS.Timeout | null = null;
+  private unavailableLogged = false;
 
   constructor(
     private readonly getTeamForStation: (station: StationName) => number | null,
     private readonly getStationForRequester: (ip: string) => StationName | null,
-    private readonly vlanHostOctet: number = 254,
+    /** The bridge interface of a station ("br-slot1"). */
+    private readonly bridgeOf: (station: StationName) => string,
     excludeRequesters?: string,
     /** Additional interface IPs to join multicast on (e.g. guest WiFi VLAN). */
     private readonly listenInterfaces: string[] = [],
+    /** Opens a station's pinned socket; the native addon in production. */
+    private readonly openSocket: typeof openInterfaceSocket = openInterfaceSocket,
   ) {
     this.excludedRequesters = excludeRequesters ? parseExcludeList(excludeRequesters) : [];
     if (this.excludedRequesters.length > 0) {
@@ -393,6 +421,8 @@ export class MdnsReflector {
   start(): void {
     if (this.socket) return;
 
+    // The laptop side: queries from team laptops arrive here, and answers go
+    // back to them from here (unicast, from :5353 on their own subnet).
     const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
     socket.on('error', err => {
@@ -400,7 +430,7 @@ export class MdnsReflector {
     });
 
     socket.on('message', (msg, rinfo) => {
-      this.handlePacket(msg, rinfo);
+      this.handleLaptopPacket(msg, rinfo);
     });
 
     socket.bind(MDNS_PORT, () => {
@@ -422,13 +452,14 @@ export class MdnsReflector {
       }
 
       console.log('mDNS reflector started on port', MDNS_PORT);
-
-      // Join multicast on active VLAN interfaces
       this.refreshMemberships();
     });
 
     this.socket = socket;
-    this.pruneTimer = setInterval(() => this.pending.prune(), PENDING_QUERY_TTL_MS);
+    this.pruneTimer = setInterval(() => {
+      this.pending.prune();
+      this.reopenFailedSockets();
+    }, PENDING_QUERY_TTL_MS);
     this.pruneTimer.unref();
   }
 
@@ -441,127 +472,143 @@ export class MdnsReflector {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
     }
-    this.joinedTeams.clear();
+    for (const station of [...this.stationSockets.keys()]) this.closeStationSocket(station);
+    this.activeTeams.clear();
     this.sendQueue.length = 0;
     this.sendInFlight = false;
     console.log('mDNS reflector stopped');
   }
 
-  /** Call when station config changes to update multicast memberships. */
+  /** Call when station config changes (and after the bridges are up): opens,
+   *  keeps or closes each station's pinned socket. */
   refreshMemberships(): void {
     if (!this.socket) return;
 
-    // Rebuild team → station reverse map
-    this.teamToStation.clear();
-    const activeTeams = new Set<number>();
+    this.activeTeams.clear();
     for (const station of StationNameList) {
       const team = this.getTeamForStation(station);
-      if (team !== null) {
-        activeTeams.add(team);
-        this.teamToStation.set(team, station);
-      }
-    }
-
-    // Leave multicast on VLANs that are no longer active
-    for (const [team, ip] of this.joinedTeams) {
-      if (!activeTeams.has(team)) {
-        try {
-          this.socket.dropMembership(MDNS_ADDR, ip);
-          console.log(`mDNS: left multicast on VLAN for team ${team} (${ip})`);
-        } catch {
-          // Interface may already be gone
-        }
-        this.joinedTeams.delete(team);
-      }
-    }
-
-    // Clean up counters for stations that no longer have a team
-    for (const station of this.counters.keys()) {
-      const team = this.getTeamForStation(station);
-      if (team === null || !activeTeams.has(team)) {
+      if (team === null) {
+        this.closeStationSocket(station);
         this.counters.delete(station);
+        continue;
       }
+      this.activeTeams.add(team);
+      const ifname = this.bridgeOf(station);
+      const have = this.stationSockets.get(station);
+      if (have?.kind === 'open' && have.ifname === ifname) continue;
+      this.closeStationSocket(station);
+      this.openStationSocket(station, ifname);
     }
-
-    // Join multicast on newly active VLANs
-    for (const team of activeTeams) {
-      if (this.joinedTeams.has(team)) continue;
-      const ip = teamToVlanIp(team, this.vlanHostOctet);
-      try {
-        this.socket.addMembership(MDNS_ADDR, ip);
-        this.joinedTeams.set(team, ip);
-        console.log(`mDNS: joined multicast on VLAN for team ${team} (${ip})`);
-      } catch (err) {
-        const code = err && typeof err === 'object' && 'code' in err ? (err as { code: string }).code : '';
-        if (code === 'ENODEV') {
-          console.warn(`mDNS: VLAN interface not found for team ${team} (${ip}) — skipping`);
-        } else {
-          console.error(`mDNS: failed to join multicast for team ${team} (${ip}):`, err);
-        }
-      }
+    for (const [station, entry] of this.counters) {
+      if (entry.team !== this.getTeamForStation(station)) this.counters.delete(station);
     }
   }
 
-  private handlePacket(msg: Buffer, rinfo: dgram.RemoteInfo): void {
-    if (msg.length < 12) return;
+  // ── The robot side: one pinned socket per station ──────────────────
 
-    const isResponse = (msg[2] & 0x80) !== 0; // QR bit in DNS header flags
-    const sourceTeam = ipToTeam(rinfo.address);
-
-    if (sourceTeam && this.joinedTeams.has(sourceTeam)) {
-      // Packet from a team VLAN — only forward responses (robot answers) to main
-      if (!isResponse) return;
-
-      const station = this.teamToStation.get(sourceTeam);
-      if (!station) return;
-
-      // Hand the answer to the laptop(s) with an open question for one of its
-      // names on this VLAN — and only them. Any name is fair game (radio.local,
-      // service discovery, camera names); the source IP already says which
-      // team VLAN answered. An answer nobody asked for goes nowhere.
-      const records = parseAnswerRecords(msg);
-      const targets = this.pending.match(
-        records.map(r => r.name),
-        sourceTeam,
+  private openStationSocket(station: StationName, ifname: string, { quiet = false } = {}): void {
+    try {
+      const socket = this.openSocket(ifname, MDNS_PORT, (data, address) =>
+        this.handleRobotPacket(station, data, address),
       );
-      if (targets.length === 0) return;
-
-      const names: MdnsResolvedName[] = records.map(r => ({ name: r.name.toLowerCase(), resolvedIp: r.resolvedIp }));
-      this.incrementCounter(station, sourceTeam, 'responsesForwarded', names);
-      for (const target of targets) this.replyTo(msg, target, sourceTeam);
-    } else {
-      // Packet from the main network — forward queries to the requester's selected VLAN.
-      if (isResponse) return;
-
-      const station = this.getStationForRequester(rinfo.address);
-      if (!station) return; // Laptop hasn't selected a slot — nowhere to forward
-
-      const team = this.getTeamForStation(station);
-      if (team === null || !this.joinedTeams.has(team)) return;
-
-      const queryNames = parseQuestionNames(msg);
-      if (queryNames.length === 0) return;
-
-      const excluded = isExcluded(rinfo.address, this.excludedRequesters);
-      if (!excluded) {
-        const names: MdnsResolvedName[] = queryNames.map(n => ({
-          name: n.toLowerCase(),
-          requester: rinfo.address,
-        }));
-        this.incrementCounter(station, team, 'queriesForwarded', names);
+      this.stationSockets.set(station, { kind: 'open', ifname, socket });
+      console.log(`mDNS: ${station} uses its own socket on ${ifname} (ifindex ${socket.ifindex})`);
+    } catch (err) {
+      this.stationSockets.set(station, { kind: 'failed', ifname, at: Date.now() });
+      const msg = (err as Error).message;
+      if (mdnsSocketUnavailable()) {
+        // No addon: no robot-side mDNS at all. Say so once, loudly.
+        if (!this.unavailableLogged) console.error(`mDNS: robot networks unreachable — ${msg}`);
+        this.unavailableLogged = true;
+      } else if (!quiet) {
+        // The bridge isn't up yet (cold start), most likely: retried.
+        console.warn(`mDNS: can't open a socket on ${ifname} for ${station} (${msg}) — retrying`);
       }
-
-      // Remember who asked so the answer can come back to them alone
-      this.pending.add(queryNames, team, { address: rinfo.address, port: rinfo.port, id: msg.readUInt16BE(0) });
-      this.forwardToVlan(msg, team);
     }
   }
 
-  /**
-   * Enqueue a multicast send and kick the queue if idle.
-   * Each send sets its own multicast interface before calling sendmsg(),
-   * avoiding the race where batched reads overwrite IP_MULTICAST_IF.
-   */
+  private closeStationSocket(station: StationName): void {
+    const entry = this.stationSockets.get(station);
+    this.stationSockets.delete(station);
+    if (entry?.kind === 'open') entry.socket.close();
+  }
+
+  private reopenFailedSockets(now = Date.now()): void {
+    for (const [station, entry] of [...this.stationSockets]) {
+      if (entry.kind !== 'failed' || now - entry.at < REOPEN_AFTER_MS) continue;
+      if (this.getTeamForStation(station) === null) {
+        this.stationSockets.delete(station);
+        continue;
+      }
+      this.openStationSocket(station, entry.ifname, { quiet: true });
+    }
+  }
+
+  /** A packet on a station's bridge: an answer goes to the laptop(s) whose
+   *  question was forwarded to this station; anything else is dropped. */
+  private handleRobotPacket(station: StationName, msg: Buffer, address: string): void {
+    if (msg.length < 12 || (msg[2] & 0x80) === 0) return; // robots' own queries
+    const team = this.getTeamForStation(station);
+    if (team === null) return;
+    const records = parseAnswerRecords(msg);
+    const targets = this.pending.match(
+      records.map(r => r.name),
+      stationScope(station),
+    );
+    if (targets.length === 0) return; // an announcement nobody asked for
+    const names: MdnsResolvedName[] = records.map(r => ({ name: r.name.toLowerCase(), resolvedIp: r.resolvedIp }));
+    this.incrementCounter(station, team, 'responsesForwarded', names);
+    for (const target of targets) {
+      this.enqueueSend({
+        packet: answerFor(msg, target),
+        address: target.address,
+        port: target.port,
+        label: `answer from ${station} (${address}) → ${target.address}:${target.port}`,
+      });
+    }
+  }
+
+  // ── The laptop side: the shared socket ─────────────────────────────
+
+  private handleLaptopPacket(msg: Buffer, rinfo: dgram.RemoteInfo): void {
+    if (msg.length < 12) return;
+    // The shared socket also sees robot-side traffic (it's bound to
+    // 0.0.0.0:5353, and the host has joined the group on the bridges). The
+    // station sockets handle that.
+    const sourceTeam = ipToTeam(rinfo.address);
+    if (sourceTeam !== null && this.activeTeams.has(sourceTeam)) return;
+    if ((msg[2] & 0x80) !== 0) return; // answers from laptops aren't ours to forward
+
+    const station = this.getStationForRequester(rinfo.address);
+    if (!station) return; // Laptop hasn't selected a robot — nowhere to forward
+    const team = this.getTeamForStation(station);
+    const entry = this.stationSockets.get(station);
+    if (team === null || entry?.kind !== 'open') return;
+
+    const queryNames = parseQuestionNames(msg);
+    if (queryNames.length === 0) return;
+
+    if (!isExcluded(rinfo.address, this.excludedRequesters)) {
+      const names: MdnsResolvedName[] = queryNames.map(n => ({ name: n.toLowerCase(), requester: rinfo.address }));
+      this.incrementCounter(station, team, 'queriesForwarded', names);
+    }
+
+    // Remember who asked so the answer can come back to them alone
+    this.pending.add(queryNames, stationScope(station), {
+      address: rinfo.address,
+      port: rinfo.port,
+      id: msg.readUInt16BE(0),
+    });
+    try {
+      // Multicast answers only: a unicast one would go to the gateway
+      // address, where the drive session's DNAT hands it to the DS laptop.
+      entry.socket.send(withoutUnicastResponse(msg));
+    } catch (err) {
+      console.error(`mDNS: failed to send (query → ${station}):`, err);
+    }
+  }
+
+  /** Answers are sent one at a time, in order. */
   private enqueueSend(entry: Outbound): void {
     this.sendQueue.push(entry);
     this.flushSendQueue();
@@ -571,49 +618,10 @@ export class MdnsReflector {
     if (this.sendInFlight || this.sendQueue.length === 0 || !this.socket) return;
     this.sendInFlight = true;
     const entry = this.sendQueue.shift()!;
-    const done = (err: Error | null) => {
+    this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, err => {
       if (err) console.error(`mDNS: failed to send (${entry.label}):`, err);
       this.sendInFlight = false;
       this.flushSendQueue();
-    };
-    if (entry.kind === 'multicast') {
-      // Throws EADDRNOTAVAIL when the VLAN address isn't on this host yet —
-      // seen on a cold start (2026-09-27) racing the bridges coming up. Drop
-      // the packet like any other send failure; the next query will retry.
-      try {
-        this.socket.setMulticastInterface(entry.iface);
-      } catch (err) {
-        done(err instanceof Error ? err : new Error(String(err)));
-        return;
-      }
-      this.socket.send(entry.packet, 0, entry.packet.length, MDNS_PORT, MDNS_ADDR, done);
-    } else {
-      this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, done);
-    }
-  }
-
-  private forwardToVlan(packet: Buffer, team: number): void {
-    const vlanIp = this.joinedTeams.get(team);
-    if (!vlanIp || !this.socket) return;
-    this.enqueueSend({ kind: 'multicast', packet, iface: vlanIp, label: `query → team ${team}` });
-  }
-
-  /**
-   * Send a VLAN's answer straight to the laptop that asked. Unicast from our
-   * own 5353 socket, so the kernel picks the source address on the laptop's
-   * subnet — mDNS clients check that an answer's sender is on-link. A laptop
-   * asking from port 5353 is a full mDNS client that matches on name and
-   * expects ID 0; anything else is a legacy one-shot query that matches on
-   * the ID it sent.
-   */
-  private replyTo(packet: Buffer, target: Requester, team: number): void {
-    const legacy = target.port !== MDNS_PORT;
-    this.enqueueSend({
-      kind: 'unicast',
-      packet: legacy ? withDnsId(packet, target.id) : packet,
-      address: target.address,
-      port: target.port,
-      label: `answer from team ${team} → ${target.address}:${target.port}`,
     });
   }
 

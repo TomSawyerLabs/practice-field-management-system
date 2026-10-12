@@ -1,4 +1,5 @@
 import dgram from 'node:dgram';
+import { openInterfaceSocket, type InterfaceSocket } from './mdnsSocket.js';
 import type {
   StationName,
   CheckResult,
@@ -103,6 +104,51 @@ function parseNISysAPIResponse(xml: string): NISysAPIBag[] {
 const FACTORY_DEFAULT_IP = '192.168.69.1';
 
 /**
+ * Where a diagnostic mDNS query goes out. `ifname`: a station's bridge, with
+ * a socket pinned to it (two stations of one team share an address, so the
+ * address can't pick the bridge). `ip`: an interface address, for the robot
+ * tester's own interface.
+ */
+export type MdnsSource = { ifname: string } | { ip: string };
+
+/** Send an mDNS query and wait for the A record. Null on timeout. */
+function mdnsQuery(hostname: string, source: MdnsSource, timeoutMs: number): Promise<string | null> {
+  return 'ifname' in source
+    ? pinnedMdnsQuery(hostname, source.ifname, timeoutMs)
+    : multicastMdnsQuery(hostname, source.ip, timeoutMs);
+}
+
+/** A query out of one bridge on a pinned socket (src/mdnsSocket.ts), which
+ *  hears only that bridge's answers. Asks for a multicast answer: a unicast
+ *  one would go to the gateway address, which the drive session's DNAT
+ *  hands to the DS laptop. */
+function pinnedMdnsQuery(hostname: string, ifname: string, timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    let sock: InterfaceSocket | undefined;
+    const settle = (result: { ip: string | null } | { error: Error }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sock?.close();
+      if ('error' in result) reject(result.error);
+      else resolve(result.ip);
+    };
+    try {
+      sock = openInterfaceSocket(ifname, MDNS_PORT, msg => {
+        const ip = parseARecord(msg, hostname);
+        if (ip) settle({ ip });
+      });
+      timer = setTimeout(() => settle({ ip: null }), timeoutMs);
+      sock.send(buildMdnsQuery(hostname, 1, { unicastResponse: false }));
+    } catch (err) {
+      settle({ error: err as Error });
+    }
+  });
+}
+
+/**
  * Send a raw mDNS multicast query on a specific interface and wait for a response.
  * Returns the first A record IP, or null on timeout.
  *
@@ -119,11 +165,11 @@ const FACTORY_DEFAULT_IP = '192.168.69.1';
  *     reflector's forwarded packets all arrive here. parseARecord() filters
  *     by hostname to ensure we only accept the specific A record we asked for.
  *
- *   - Binding to sourceIp:5353 instead of 0.0.0.0 would seem cleaner but
+ *   - Binding to mdnsSource:5353 instead of 0.0.0.0 would seem cleaner but
  *     breaks multicast delivery on Linux: the kernel filters by destination
  *     IP, and mDNS responses are addressed to 224.0.0.251, not our unicast IP.
  */
-function mdnsQuery(hostname: string, sourceIp: string, timeoutMs: number): Promise<string | null> {
+function multicastMdnsQuery(hostname: string, mdnsSource: string, timeoutMs: number): Promise<string | null> {
   return new Promise(resolve => {
     const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
     const timer = setTimeout(() => {
@@ -150,18 +196,18 @@ function mdnsQuery(hostname: string, sourceIp: string, timeoutMs: number): Promi
       }
     });
 
-    // Bind to 0.0.0.0:5353 — see function doc for why not sourceIp.
+    // Bind to 0.0.0.0:5353 — see function doc for why not mdnsSource.
     // SO_REUSEADDR (set in createSocket) allows coexistence with the mDNS reflector.
     sock.bind(MDNS_PORT, '0.0.0.0', () => {
       try {
-        sock.addMembership('224.0.0.251', sourceIp);
+        sock.addMembership('224.0.0.251', mdnsSource);
       } catch {
         // May fail if already a member (e.g. reflector already joined this interface)
       }
       // Set the outgoing multicast interface explicitly — otherwise the OS sends
       // on the default-route interface (main network) and the query never reaches
       // the team VLAN where the robot lives.
-      sock.setMulticastInterface(sourceIp);
+      sock.setMulticastInterface(mdnsSource);
       sock.setMulticastTTL(255); // mDNS spec requires TTL=255
       const query = buildMdnsQuery(hostname);
       sock.send(query, 0, query.length, 5353, '224.0.0.251');
@@ -170,7 +216,7 @@ function mdnsQuery(hostname: string, sourceIp: string, timeoutMs: number): Promi
 }
 
 /** Build a minimal DNS query packet (A record by default, or `qtype`). */
-function buildMdnsQuery(hostname: string, qtype = 1): Buffer {
+function buildMdnsQuery(hostname: string, qtype = 1, { unicastResponse = true } = {}): Buffer {
   // DNS header: ID=0, flags=0, 1 question, 0 answers
   const header = Buffer.from([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
   // Encode hostname labels (e.g. "roboRIO-1234-FRC.local" → \x12roboRIO-1234-FRC\x05local\x00)
@@ -181,8 +227,8 @@ function buildMdnsQuery(hostname: string, qtype = 1): Buffer {
     return buf;
   });
   const name = Buffer.concat([...labels, Buffer.from([0])]);
-  // Type, Class IN (1) with unicast-response bit
-  const question = Buffer.from([(qtype >> 8) & 0xff, qtype & 0xff, 0x80, 1]);
+  // Type, Class IN (1), with or without the unicast-response bit
+  const question = Buffer.from([(qtype >> 8) & 0xff, qtype & 0xff, unicastResponse ? 0x80 : 0, 1]);
   return Buffer.concat([header, name, question]);
 }
 
@@ -264,11 +310,11 @@ export async function checkMdns(
   name: string,
   hostname: string,
   expectedIp: string | undefined,
-  sourceIp?: string,
+  mdnsSource?: MdnsSource,
 ): Promise<CheckResult[]> {
-  if (!sourceIp) return [];
+  if (!mdnsSource) return [];
   try {
-    const resolved = await mdnsQuery(hostname, sourceIp, FETCH_TIMEOUT);
+    const resolved = await mdnsQuery(hostname, mdnsSource, FETCH_TIMEOUT);
     if (!resolved) {
       return [{ name, status: 'error', message: `${hostname} — no response` }];
     }
@@ -460,7 +506,7 @@ export function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: numb
  *  `controller` (from checkRobotController) decides what the SystemCore mode should be. */
 export async function checkRadio(
   team: number,
-  sourceIp?: string,
+  mdnsSource?: MdnsSource,
   controller?: RobotController | null,
 ): Promise<CheckResult[]> {
   const radioIp = `${teamSubnet(team)}.1`;
@@ -515,7 +561,7 @@ export async function checkRadio(
   }
 
   // radio.local mDNS check
-  const mdns = await checkMdns('Radio mDNS', 'radio.local', radioIp, sourceIp);
+  const mdns = await checkMdns('Radio mDNS', 'radio.local', radioIp, mdnsSource);
   results.push(...mdns);
 
   return results;
@@ -651,9 +697,9 @@ export function parseMdnsAnswers(msg: Buffer): MdnsAnswer[] {
 export async function checkRobotController(
   team: number,
   extraIps: string[] = [],
-  sourceIp?: string,
+  mdnsSource?: MdnsSource,
 ): Promise<{ controller: RobotController | null; checks: CheckResult[] }> {
-  const found = await detectRobotController(team, extraIps, sourceIp);
+  const found = await detectRobotController(team, extraIps, mdnsSource);
   const policy = evaluateControllerPolicy(found.controller, controllerPolicyResolver?.() ?? 'none');
   if (policy) found.checks.push(policy);
   return found;
@@ -744,16 +790,16 @@ export function evaluateControllerPolicy(
 async function detectRobotController(
   team: number,
   extraIps: string[],
-  sourceIp?: string,
+  mdnsSource?: MdnsSource,
 ): Promise<{ controller: RobotController | null; checks: CheckResult[] }> {
   const rio = await findRoboRIO(team, extraIps);
-  if (rio) return { controller: 'roboRIO', checks: await roboRIOChecks(team, rio, sourceIp) };
+  if (rio) return { controller: 'roboRIO', checks: await roboRIOChecks(team, rio, mdnsSource) };
 
   const standardIp = expectedIP(team);
   const ipsToTry = [standardIp, ...extraIps.filter(ip => ip !== standardIp)];
   for (const ip of ipsToTry) {
     const core = await probeSystemCore(ip);
-    if (core) return { controller: 'systemcore', checks: await systemCoreChecks(team, core, sourceIp) };
+    if (core) return { controller: 'systemcore', checks: await systemCoreChecks(team, core, mdnsSource) };
   }
 
   return {
@@ -769,7 +815,7 @@ async function detectRobotController(
   };
 }
 
-async function systemCoreChecks(team: number, core: SystemCoreInfo, sourceIp?: string): Promise<CheckResult[]> {
+async function systemCoreChecks(team: number, core: SystemCoreInfo, mdnsSource?: MdnsSource): Promise<CheckResult[]> {
   const checks: CheckResult[] = [
     {
       name: 'Robot Controller',
@@ -791,13 +837,17 @@ async function systemCoreChecks(team: number, core: SystemCoreInfo, sourceIp?: s
   });
   // The SystemCore keeps the default "robot.local" name; there is no per-team
   // hostname convention to enforce, so this only proves the name resolves.
-  const mdns = await checkMdns('SystemCore mDNS', core.hostname, core.ip, sourceIp);
+  const mdns = await checkMdns('SystemCore mDNS', core.hostname, core.ip, mdnsSource);
   checks.push(...mdns);
   return checks;
 }
 
 /** Run roboRIO checks. `extraIps` are additional addresses to probe beyond the standard .2. */
-export async function checkRoboRIO(team: number, extraIps: string[] = [], sourceIp?: string): Promise<CheckResult[]> {
+export async function checkRoboRIO(
+  team: number,
+  extraIps: string[] = [],
+  mdnsSource?: MdnsSource,
+): Promise<CheckResult[]> {
   const result = await findRoboRIO(team, extraIps);
   if (!result) {
     return [
@@ -810,13 +860,13 @@ export async function checkRoboRIO(team: number, extraIps: string[] = [], source
     ];
   }
 
-  return roboRIOChecks(team, result, sourceIp);
+  return roboRIOChecks(team, result, mdnsSource);
 }
 
 async function roboRIOChecks(
   team: number,
   result: { ip: string; bags: NISysAPIBag[] },
-  sourceIp?: string,
+  mdnsSource?: MdnsSource,
 ): Promise<CheckResult[]> {
   const { ip, bags } = result;
   const systemBag = bags.find(b => b.itemName.endsWith('/system'));
@@ -898,7 +948,7 @@ async function roboRIOChecks(
   }
 
   // roboRIO mDNS check
-  const mdns = await checkMdns('roboRIO mDNS', `roboRIO-${team}-FRC.local`, expectedIP(team), sourceIp);
+  const mdns = await checkMdns('roboRIO mDNS', `roboRIO-${team}-FRC.local`, expectedIP(team), mdnsSource);
   checks.push(...mdns);
 
   return checks;
@@ -1020,19 +1070,20 @@ type HostLookup = (station: StationName) => DiscoveredHost[];
 export class TeamChecker {
   constructor(
     private readonly getAliveHosts: HostLookup,
-    private readonly vlanHostOctet?: number,
+    /** A station's bridge interface, when pFMS runs the station networks. */
+    private readonly bridgeOf?: (station: StationName) => string,
   ) {}
 
   async runChecks(station: StationName, team: number): Promise<TeamCheckResults> {
     const hosts = this.getAliveHosts(station);
     const extraIps = hosts.filter(h => h.alive && !h.ip.endsWith('.1') && !h.ip.endsWith('.254')).map(h => h.ip);
-    const sourceIp = this.vlanHostOctet ? `${teamSubnet(team)}.${this.vlanHostOctet}` : undefined;
+    const mdnsSource: MdnsSource | undefined = this.bridgeOf ? { ifname: this.bridgeOf(station) } : undefined;
     // Detect the controller first (roboRIO or SystemCore) so the radio's
     // SystemCore-mode verdict is judged against what actually answered — the
     // station checks used to assume a roboRIO and reported SystemCore robots
     // as "not found".
-    const controllerResult = await checkRobotController(team, extraIps, sourceIp);
-    const radioChecks = await checkRadio(team, sourceIp, controllerResult.controller);
+    const controllerResult = await checkRobotController(team, extraIps, mdnsSource);
+    const radioChecks = await checkRadio(team, mdnsSource, controllerResult.controller);
     return {
       type: 'teamCheckResults',
       station,

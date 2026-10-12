@@ -121,7 +121,13 @@ bun install
 bun run build
 ```
 
-**Check:** `bun run typecheck` passes and `dist/` exists.
+`bun run build` also downloads a small prebuilt native addon from the
+project's GitHub releases (`native/mdns-socket`, which lets the robot
+networks' mDNS work when one team runs two robots), so the host needs
+internet access for the build. No Rust toolchain is needed.
+
+**Check:** `bun run typecheck` passes, `dist/` exists, and
+`native/mdns-socket/prebuilt/` holds a `.node` file.
 
 ---
 

@@ -316,6 +316,20 @@ It is a per-laptop bridge, not a flood:
   dropped. This is what lets several robots share a name: every radio is
   `radio.local`, and a flooded answer from one team used to land in every
   laptop's cache.
+- **Each station has its own socket, pinned to its bridge**
+  (`SO_BINDTODEVICE`, from the native addon in `native/mdns-socket`). A
+  query leaves by the laptop's station's bridge only, and an answer is
+  known to come from that station's robot. That keeps two robots of one
+  team apart: their bridges share the gateway address, and an IPv4
+  multicast interface can't be picked by address when two interfaces hold
+  it. Forwarded queries ask for multicast answers (QU bit cleared), since a
+  unicast answer to the gateway address would be caught by the drive
+  session's DNAT. Without the addon (not Linux, or the prebuilt binary
+  missing), pFMS logs an error and robot networks get no mDNS.
+- **The bridges' MASQUERADE skips steamboat's own packets**
+  (`-m addrtype ! --src-type LOCAL`). Masquerading them did nothing useful,
+  and conntrack then dropped a pinned socket's query (EPERM) when the same
+  flow had already gone out the other bridge of a two-robot team.
 
 ## Physical Field Ports
 

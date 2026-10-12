@@ -1,0 +1,70 @@
+# Builds the mdns-socket native addon (native/mdns-socket) and attaches the
+# binaries to a GitHub release. pFMS fetches them at build time
+# (scripts/fetch-mdns-socket.ts), so no Rust toolchain is needed where pFMS
+# is installed.
+#
+# Release: bump `version` in native/mdns-socket/Cargo.toml, commit, then
+#   git tag mdns-socket-v<version> && git push origin mdns-socket-v<version>
+# Pull requests that touch the crate only build it (no release).
+name: mdns-socket
+
+on:
+  push:
+    # Tags only: a `paths` filter would also apply to tag pushes.
+    tags: ['mdns-socket-v*']
+  pull_request:
+    paths: ['native/mdns-socket/**', '.github/workflows/mdns-socket.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04's glibc (2.35) is older than every target we run on
+          # (Debian bookworm 2.36 in the Docker image, newer Ubuntu hosts).
+          - runner: ubuntu-22.04
+            file: mdns-socket.linux-x64-gnu.node
+          - runner: ubuntu-22.04-arm
+            file: mdns-socket.linux-arm64-gnu.node
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: native/mdns-socket
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release --locked
+      - name: Name the addon
+        run: cp target/release/libmdns_socket.so ${{ matrix.file }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: native/mdns-socket/${{ matrix.file }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/mdns-socket-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the crate version
+        run: |
+          crate=$(sed -n 's/^version *= *"\(.*\)"/\1/p' native/mdns-socket/Cargo.toml | head -1)
+          [ "mdns-socket-v$crate" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} ≠ crate $crate"; exit 1; }
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.node \
+            --title "mdns-socket ${GITHUB_REF_NAME#mdns-socket-v}" \
+            --notes "Prebuilt mdns-socket addon (native/mdns-socket) for pFMS. Fetched by scripts/fetch-mdns-socket.ts."
