@@ -2031,13 +2031,22 @@ export class MatchEngine {
     this.autoWinnerAlliance = null;
     this.endReason = undefined;
     this.resetReadyCheckAndStaff();
+    // Clearing the match is staff ending it, so its e-stops go with it, as
+    // creating the next match already did. Kept, they held every e-stopped
+    // robot under field control, disabled, with no match on the field and
+    // no Clear E-Stop button left on the match page (the participant rows
+    // go with the match). After a Global E-Stop that was every robot: 1967,
+    // 2026-10-12, until someone created and cancelled a match.
+    const eStopped = StationNameList.filter(s => this.stationStates.get(s)!.eStop);
     for (const state of this.stationStates.values()) {
       state.joined = false;
       state.ready = false;
       state.alliance = null;
       state.matchSlot = null;
+      state.eStop = false;
+      state.aStop = false;
     }
-    console.log('Match cleared');
+    console.log(`Match cleared${eStopped.length ? ` (e-stops cleared: ${eStopped.join(', ')})` : ''}`);
     this.broadcast();
   }
 

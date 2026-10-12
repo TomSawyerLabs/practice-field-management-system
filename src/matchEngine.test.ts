@@ -862,3 +862,19 @@ describe('two robots of one team', () => {
     expect(stationStates.slot2?.teamNumber).toBe(1967);
   });
 });
+
+describe('ending a match with an e-stop', () => {
+  test('clearing the match clears the e-stops, so robots are released', () => {
+    const engine = new MatchEngine(() => 1967);
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'blue');
+    engine.globalEStop();
+    expect(engine.getState().phase).toBe('postMatch');
+    expect(engine.isEStopped('slot1')).toBe(true);
+    expect(engine.isEStopped('slot4')).toBe(true);
+    engine.clearMatch();
+    expect(engine.getState().phase).toBe('idle');
+    expect(engine.isEStopped('slot1')).toBe(false);
+    expect(engine.isEStopped('slot4')).toBe(false);
+  });
+});
