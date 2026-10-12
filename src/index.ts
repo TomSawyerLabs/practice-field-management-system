@@ -22,6 +22,7 @@ import {
   dropHairpinForwarding,
   setEStopCut,
   clearEStopCuts,
+  migrateAllBridgeNat,
 } from './networkManager.js';
 import {
   onConfigChange as onRouteConfigChange,
@@ -1963,6 +1964,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // Tell networkManager which teams are already configured so future config
     // changes properly tear down old routes and iptables rules.
     restorePreviousStations(s => radioManager.getTeamForStation(s));
+    // Rules written by an older pFMS: bring the bridges' NAT up to date.
+    void migrateAllBridgeNat(s => radioManager.getTeamForStation(s));
 
     const restored = await restorePreferencesFromKernel();
     if (restored > 0) {

@@ -77,6 +77,7 @@ export function createDryRunBackend(inner?: NetworkBackend): NetworkBackend {
           (opts.notDestination ? ` ! -d ${opts.notDestination}` : '') +
           (opts.inInterface ? ` -i ${opts.inInterface}` : '') +
           (opts.outInterface ? ` -o ${opts.outInterface}` : '') +
+          (opts.notLocalSource ? ' -m addrtype ! --src-type LOCAL' : '') +
           (opts.protocol ? ` -p ${opts.protocol}` : '') +
           (opts.destinationPort != null ? ` --dport ${opts.destinationPort}` : '') +
           ` -j ${opts.jump}` +

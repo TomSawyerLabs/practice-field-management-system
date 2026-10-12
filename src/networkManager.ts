@@ -187,7 +187,10 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
         const expectedIp = teamIp(team, vlanHostOctet);
         const brInterfaces = await net.listInterfaces(brName);
         const hasIp = brInterfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === expectedIp);
-        if (hasIp) continue;
+        if (hasIp) {
+          await migrateBridgeNat(station);
+          continue;
+        }
         appInfo(`Bridge ${brName} missing IP ${expectedIp}, re-applying config for ${station}`);
       } else {
         continue;
@@ -213,14 +216,8 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
         comment: `${commentPrefix}fwd-in-${station}`,
         action: '-D',
       });
-      await net.iptables({
-        table: 'nat',
-        chain: 'POSTROUTING',
-        outInterface: brName,
-        jump: 'MASQUERADE',
-        comment: `${commentPrefix}nat-vlan-${station}`,
-        action: '-D',
-      });
+      await net.iptables(bridgeMasquerade(station, '-D'));
+      await net.iptables(bridgeMasquerade(station, '-D', { legacy: true }));
       // Remove the per-station routing table entry used for laptop route preferences
       await net.removeRoute({ destination: teamIp(prevTeam, '0/24'), device: brName, table: vlanId });
     }
@@ -267,14 +264,7 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
         action: '-A',
       });
       // MASQUERADE traffic entering the VLAN so return traffic comes back to the same host
-      await net.iptables({
-        table: 'nat',
-        chain: 'POSTROUTING',
-        outInterface: brName,
-        jump: 'MASQUERADE',
-        comment: `${commentPrefix}nat-vlan-${station}`,
-        action: '-A',
-      });
+      await net.iptables(bridgeMasquerade(station, '-A'));
       // Add a per-station routing table entry so laptops can select which robot to talk to
       // when multiple stations share the same team subnet (same team, different robot suffix)
       await net.addRoute({ destination: teamIp(team, '0/24'), device: brName, table: vlanId });
@@ -285,6 +275,63 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
 
   previousStations = { ...stations };
   appInfo('Network configuration applied');
+}
+
+/**
+ * The MASQUERADE on a station's bridge: traffic forwarded into the robot's
+ * VLAN (from laptops) leaves with steamboat's address, so the robot's
+ * replies come back through steamboat. Forwarded traffic only: steamboat's
+ * own packets already carry its address. Matching them too broke two
+ * things on 2026-10-12, when one team had robots on two bridges that share
+ * an address: a second address on a bridge was rewritten to the gateway
+ * one, and the kernel dropped (EPERM) an mDNS query sent out one bridge
+ * because conntrack had the same flow masqueraded out the other
+ * (nf_nat_oif_changed). `legacy`: the old form without that match, to
+ * remove it.
+ */
+function bridgeMasquerade(station: StationName, action: '-A' | '-D', { legacy = false } = {}) {
+  return {
+    table: 'nat',
+    chain: 'POSTROUTING',
+    outInterface: bridgeName(station),
+    ...(legacy ? {} : { notLocalSource: true }),
+    jump: 'MASQUERADE',
+    comment: `${commentPrefix}nat-vlan-${station}`,
+    action,
+  } as const;
+}
+
+/**
+ * Bring a configured bridge's NAT up to date without reconfiguring it: add
+ * the forwarded-only MASQUERADE before removing the old form (so forwarded
+ * traffic is never left un-masqueraded), and remove what the reverted
+ * per-station mDNS address attempt left (its /32 and RETURN rule).
+ */
+async function migrateBridgeNat(station: StationName): Promise<void> {
+  await net.iptables(bridgeMasquerade(station, '-A'));
+  await net.iptables(bridgeMasquerade(station, '-D', { legacy: true }));
+  const brName = bridgeName(station);
+  const slot = Number(station.replace(/^slot/, ''));
+  for (const addr of (await net.listInterfaces(brName))[0]?.addresses ?? []) {
+    if (addr.family !== 'inet' || addr.prefixLength !== 32) continue;
+    if (Number(addr.address.split('.')[3]) !== vlanHostOctet - slot) continue;
+    await net.removeAddress({ interfaceName: brName, address: addr.address, prefixLength: 32 });
+    appInfo(`Removed leftover mDNS address ${addr.address}/32 from ${brName}`);
+  }
+}
+
+/** migrateBridgeNat for every configured station. For a graceful restart,
+ *  which keeps the bridges as they were and doesn't run the network config. */
+export async function migrateAllBridgeNat(getTeamForStation: (s: StationName) => number | null): Promise<void> {
+  for (const station of StationNameList) {
+    if (getTeamForStation(station) === null) continue;
+    try {
+      await migrateBridgeNat(station);
+    } catch (err) {
+      appWarn(`Could not update the NAT rules of ${station}: ${(err as Error).message}`);
+    }
+  }
+  await net.flushRulesByComment(`${commentPrefix}nat-mdns-`);
 }
 
 /**

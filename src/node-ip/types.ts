@@ -96,6 +96,9 @@ export interface IptablesOptions {
   notDestination?: string;
   inInterface?: string;
   outInterface?: string;
+  /** Skip packets whose source is one of this host's own addresses
+   *  (`-m addrtype ! --src-type LOCAL`): match forwarded traffic only. */
+  notLocalSource?: boolean;
   protocol?: 'tcp' | 'udp';
   destinationPort?: number;
   jump: string;

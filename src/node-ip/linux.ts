@@ -189,6 +189,7 @@ export function createLinuxBackend(): NetworkBackend {
         if (opts.notDestination) args.push('!', '-d', opts.notDestination);
         if (opts.inInterface) args.push('-i', opts.inInterface);
         if (opts.outInterface) args.push('-o', opts.outInterface);
+        if (opts.notLocalSource) args.push('-m', 'addrtype', '!', '--src-type', 'LOCAL');
         if (opts.protocol) args.push('-p', opts.protocol);
         if (opts.destinationPort != null) args.push('--dport', String(opts.destinationPort));
         args.push('-j', opts.jump);
