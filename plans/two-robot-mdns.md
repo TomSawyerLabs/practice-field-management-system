@@ -71,6 +71,18 @@ laptop.
 
 ## Findings / gotchas
 
+- **Rust addon works, but sends collide in conntrack (2026-10-12, 13:04).**
+  Built in WSL (rustup in WSL Ubuntu, napi-rs 2, libc), live-tested from
+  `/tmp/pfms-mdns-test/` on steamboat. A pinned socket on `br-slot1`:
+  `sendto` returns EPERM exactly when conntrack holds a
+  `10.19.67.254:5353 → 224.0.0.251:5353` entry made by the reflector's
+  socket going out the _other_ bridge, and works when there's none.
+  Correlated over 10 tries. Cause: the bridge MASQUERADE
+  (`-o br-slotN -j MASQUERADE`) also matches steamboat's own output, and
+  the kernel drops a masqueraded connection whose output interface
+  changed (`nf_nat_oif_changed`). Python's identical sequence gets the same
+  EPERM, so it isn't the addon's code.
+
 - **Per-station addresses didn't work.** 11:35, from this PC: queries went
   out the right bridges from `.253`/`.252`, but no device answered any of
   them. 11:18 capture: the Limelights, roboRIO and radio each sent
