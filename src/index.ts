@@ -1574,6 +1574,21 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       FmsTcpReplyStations.split(/[,\s]+/).filter((s): s is StationName => StationNameRegex.test(s)),
     );
 
+    /**
+     * The station a Driver Station speaks for. Normally its team's only
+     * station. With two robots of one team, the station of the robot this
+     * laptop drives (its drive session), or none until it presses Drive: the
+     * team number alone can't say which. Taking the team's first station
+     * here assigned the second laptop to the first robot, which another
+     * laptop drives, so it got no assignment and its station could never be
+     * readied, and its disable and e-stop were credited to the other station
+     * (1967, 2026-10-12).
+     */
+    const stationOfDs = (teamNumber: number, address: string): StationName | undefined =>
+      radioManager.isTeamDuplicated(teamNumber)
+        ? driveSessions.stationDrivenBy(address, teamNumber)
+        : radioManager.getStationForTeam(teamNumber);
+
     runFMS({
       // Station-assignment reply (0x19/0x1f): only for a station the field is
       // controlling. Joined stations get their slot. A station the field holds
@@ -1587,7 +1602,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // robot's network anyway, and an assignment would lock it.
       // FMS_TCP_REPLY_STATIONS assigns a real slot for testing.
       resolveTeamSlot: (teamNumber, address) => {
-        const station = radioManager.getStationForTeam(teamNumber);
+        const station = stationOfDs(teamNumber, address);
         if (!station) return undefined;
         if (driveSessions.isDuplicateOn(station, address)) return undefined;
         const state = matchEngine.getState();
@@ -1723,9 +1738,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           // The station may have no DS address on record (the team was just
           // moved here, or its drive session was cleared) while the DS still
           // holds a session with an old assignment — so also close by team
-          // number. A no-op for the socket disconnectDS just closed.
+          // number. A no-op for the socket disconnectDS just closed. Not for
+          // a team on two stations whose DS is known: that would also kick
+          // the laptop driving the team's other robot.
           const team = state.stationStates[station]?.teamNumber;
-          if (team) fms.emit('disconnectTeam', { teamNumber: team, reason: `${station} ${edge}` });
+          if (team && !(dsIp && radioManager.isTeamDuplicated(team))) {
+            fms.emit('disconnectTeam', { teamNumber: team, reason: `${station} ${edge}` });
+          }
         }
       });
 
@@ -1810,7 +1829,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         // The team must always be able to disable their robot.
         if ('BatteryVoltage' in msg.data) {
           const udp = msg.data as import('./fmsServer.js').UdpMessage;
-          const station = radioManager.getStationForTeam(udp.teamNumber);
+          const station = stationOfDs(udp.teamNumber, msg.address.replace(/^::ffff:/, ''));
           if (station) {
             matchEngine.dsReportedStatus(
               station,
