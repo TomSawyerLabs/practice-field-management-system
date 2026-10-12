@@ -64,10 +64,10 @@ laptop.
   receiving only that bridge's answers. No extra addresses, NAT exceptions
   or one-shot queries. Clear the QU bit when forwarding, so answers are
   multicast on the robot's own bridge instead of unicast to `.254` (which
-  the DNAT would take). Node can't set `SO_BINDTODEVICE`, so this needs a
-  small helper. Leading option: a stdlib-only Python helper spawned by pFMS,
-  packets over stdin/stdout. Alternative: a native addon. Not started; the
-  design isn't approved yet.
+  the DNAT would take). Node can't set `SO_BINDTODEVICE`.
+- **The helper is a native addon, Rust preferred** (modern C++ acceptable),
+  **not Python** (user, 2026-10-12). How it's built and shipped (CI
+  prebuilds vs building on steamboat) is still open.
 
 ## Findings / gotchas
 
@@ -124,10 +124,11 @@ laptop.
 
 ## Open questions for the user
 
-1. Build the interface-pinned design with a Python helper? Recommended. The
-   alternative is a native addon.
-2. Re-route non-DS laptops when a robot is picked on the team page?
-   Recommended.
+1. Addon build/ship: CI prebuilds via napi-rs (recommended) or a Rust
+   toolchain on steamboat?
+2. The word for "put this laptop on this robot's network" without driving
+   it. The user proposed "Select" or "Isolate". Recommendation: make
+   selecting a robot on the team page do it, labelled "Select".
 
 ## Things not to do
 
