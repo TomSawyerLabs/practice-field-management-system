@@ -112,9 +112,6 @@ hardware or a real deployment:
   UDP port 1150. A SystemCore robot talks to its DS mostly over UDP 1110, so
   check whether battery voltage shows up for a SystemCore robot that isn't
   in a match. Unverified on hardware.
-- Route preference (`routePreferenceManager.ts`) always runs an IPv4
-  `ip rule add`. A browser on an IPv6 address logs `Invalid source address`
-  and gets no route preference (and no mDNS reflection).
 
 ## Setup and packaging
 

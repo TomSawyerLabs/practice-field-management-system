@@ -1,3 +1,4 @@
+import { isIPv6 } from 'node:net';
 import { StationName, StationNameList } from './types.js';
 import { networkBackend as net, vlanMap } from './networkManager.js';
 import { teamSubnet } from './utils.js';
@@ -12,6 +13,14 @@ type Preference = {
 const preferences = new Map<string, Preference>();
 
 export async function setRoutePreference(laptopIp: string, station: StationName, team: number): Promise<void> {
+  // The rule matches the laptop's packets to an IPv4 robot subnet, so it
+  // needs the laptop's IPv4 address. The kernel's answer for an IPv6 one is
+  // "Invalid source address"; say what is actually wrong instead.
+  if (isIPv6(laptopIp)) {
+    throw new Error(
+      `this device reached pFMS over IPv6 (${laptopIp}) and its IPv4 address isn't known yet — reload the page, or connect over IPv4`,
+    );
+  }
   const subnet = `${teamSubnet(team)}.0/24`;
   const old = preferences.get(laptopIp);
 

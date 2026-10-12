@@ -139,6 +139,8 @@ import {
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
+import { ipv4OfNeighbor } from './neighborAlias.js';
+import { isIPv6 } from 'node:net';
 import { handleVideoProxy } from './videoProxy.js';
 import CIDRMatcher from 'cidr-matcher';
 import { appError, appWarn } from './appLogger.js';
@@ -845,13 +847,30 @@ export function setupWebSocket(
 
     const socketRemoteAddress = (ws as any)._socket?.remoteAddress;
     const rawIp = getRealClientIp(socketRemoteAddress, req.headers, trustedProxyMatcher);
-    const clientIp = normalizeIp(rawIp);
+    // `let`: a client seen over IPv6 switches to its IPv4 address below.
+    let clientIp = normalizeIp(rawIp);
     console.log(`New client connected: ${clientIp}`);
 
     wsToIp.set(ws, clientIp);
 
     // Resolve the client's own hostname so pages can label it (e.g. "YOU" rows)
     hostnameResolver?.track(clientIp);
+
+    // Everything pFMS does with a client's address — route preference,
+    // Drive, DS matching — is IPv4, so a laptop that reached us over IPv6
+    // is known by the same device's IPv4 address once the neighbour table
+    // gives it. Handlers read clientIp when they run, so they all follow.
+    if (isIPv6(clientIp)) {
+      const seenAs = clientIp;
+      void ipv4OfNeighbor(seenAs).then(v4 => {
+        if (!v4 || ws.readyState !== WebSocket.OPEN) return;
+        console.log(`Client ${seenAs} is ${v4} over IPv4`);
+        clientIp = v4;
+        wsToIp.set(ws, v4);
+        hostnameResolver?.track(v4);
+        sendRouteState(ws, v4);
+      });
+    }
 
     // Send initial history + match state
     ws.send(JSON.stringify(radioManager.getStatusHistory()));
@@ -1109,6 +1128,7 @@ export function setupWebSocket(
               })
               .catch(err => {
                 appError('Error starting drive: ' + err.message);
+                ws.send(JSON.stringify({ error: 'Could not drive', details: err.message }));
               });
           }
         }
@@ -1132,6 +1152,7 @@ export function setupWebSocket(
               .then(() => sendRouteState(ws, clientIp))
               .catch(err => {
                 appError('Error setting route preference: ' + err.message);
+                ws.send(JSON.stringify({ error: 'Could not set the route preference', details: err.message }));
               });
           }
         }
