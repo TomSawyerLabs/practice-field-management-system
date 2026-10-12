@@ -174,6 +174,10 @@ export class MatchEngine {
   /** Last "ip:port/protocol" match control was sent to, per station, so the
    *  first packet to a new destination is logged (proves the FMS→DS path). */
   private lastControlTarget = new Map<StationName, string>();
+  /** Joined stations already warned, this match, that there is no Driver
+   *  Station to send control packets to. Cleared when one turns up, so a
+   *  second drop warns again. */
+  private warnedNoDs = new Set<StationName>();
   /** Last FMS UDP status heartbeat per station — only an FMS-attached DS sends these */
   private lastDsHeartbeat = new Map<StationName, number>();
   /** Recent DS status arrival times per station (last few), so a steady
@@ -1204,6 +1208,7 @@ export class MatchEngine {
     }
 
     this.config = { ...this.pendingConfig };
+    this.warnedNoDs.clear();
     this.challengeTally = emptyChallengeTally();
     this.runStartedAt = null;
     this.matchNumber++;
@@ -2065,6 +2070,16 @@ export class MatchEngine {
     }
   }
 
+  /** A robot in the match whose DS isn't talking to the field never gets
+   *  an enable. Say so, once, rather than run the match without it. */
+  private warnNoDs(station: StationName) {
+    const state = this.stationStates.get(station)!;
+    if (!state.joined || !this.isMatchActive() || this.warnedNoDs.has(station)) return;
+    this.warnedNoDs.add(station);
+    const who = state.teamNumber ? `Team ${state.teamNumber} (${station})` : station;
+    appWarn(`${who} has no Driver Station connected to the field, so its robot can't be enabled`);
+  }
+
   private enableParticipating(mode: 'auto' | 'teleOp') {
     // Reached at the horn and again after every resume. In a count-up run
     // an alliance that has stopped its clock stays down; in a relay with
@@ -2151,7 +2166,11 @@ export class MatchEngine {
 
   private sendDSPacket(station: StationName) {
     const ip = this.dsConnections.get(station)?.ip;
-    if (!ip) return;
+    if (!ip) {
+      this.warnNoDs(station);
+      return;
+    }
+    this.warnedNoDs.delete(station);
 
     const state = this.stationStates.get(station)!;
     const seq = (this.sequenceNumbers.get(station) ?? 0) + 1;

@@ -101,16 +101,6 @@ Diagnosis oracle: `curl -s http://10.0.100.2/status` from the field server.
 radio, whatever `active-config.json` says — that file is written even when the
 radio push fails.
 
-## Silent paths in match control
-
-- `sendDSPacket` returns silently when a joined station has no live DS
-  endpoint, so a match can run with a robot that never receives an enable.
-  Nothing warns at countdown or auto start; the only signal is the advisory
-  DS chip before Ready.
-- A match that ends because every station left (`abandoned`) is never
-  written to match history: no station is still joined when postMatch is
-  entered, so the history store finds no teams and skips it.
-
 ## Stop buttons
 
 Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make

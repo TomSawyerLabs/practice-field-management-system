@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
+import { setBroadcast } from './appLogger.js';
 import { ScoringEngine } from './scoringEngine.js';
 import {
   challengeScore,
@@ -313,6 +314,85 @@ describe('a challenge run lands in match history', () => {
 
     rmSync(file, { force: true });
   }, 10_000);
+});
+
+describe('a match everyone walked away from', () => {
+  test('is still recorded, with every team that played', async () => {
+    const file = join(tmpdir(), `pfms-history-${randomUUID()}.json`);
+    const engine = new MatchEngine(station => (station === 'slot1' ? 5940 : 254));
+    const history = new MatchHistoryStore(file);
+    history.attach(engine, new ScoringEngine());
+
+    engine.createMatch();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 60 }));
+    engine.joinStationAlliance('slot1', 'red');
+    engine.joinStationAlliance('slot2', 'blue');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    for (const station of ['slot1', 'slot2'] as const) {
+      dsAttached(engine, station);
+      engine.setReady(station, true);
+    }
+    engine.startMatch();
+    await Bun.sleep(3400);
+
+    // One leaves, then the other — the last departure ends the match
+    engine.leaveStation('slot1');
+    engine.leaveStation('slot2');
+    expect(engine.getState().phase).toBe('postMatch');
+
+    const entry = history.getState().matches.at(-1)!;
+    expect(entry.endReason).toBe('abandoned');
+    expect(entry.teams.map(t => [t.station, t.teamNumber, t.alliance])).toEqual([
+      ['slot1', 5940, 'red'],
+      ['slot2', 254, 'blue'],
+    ]);
+    expect(Object.keys(entry.challenge!.tally).sort()).toEqual(['blue', 'red']);
+
+    engine.clearMatch();
+    rmSync(file, { force: true });
+  }, 10_000);
+});
+
+describe('a robot in the match with no Driver Station', () => {
+  test('is warned about once, and again if its DS drops a second time', async () => {
+    const warnings: string[] = [];
+    setBroadcast(msg => {
+      const m = msg as { type?: string; level?: string; message?: string };
+      if (m.type === 'appLog' && m.level === 'warn' && m.message?.includes('no Driver Station')) {
+        warnings.push(m.message);
+      }
+    });
+    const engine = new MatchEngine(() => 5940);
+    engine.createMatch();
+    engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 60 }));
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    engine.setDSAddress('slot1', '10.59.40.5');
+    dsAttached(engine, 'slot1');
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    await Bun.sleep(3400);
+    expect(warnings).toEqual([]);
+
+    engine.clearDSAddress('slot1');
+    await Bun.sleep(600);
+    expect(warnings).toEqual([
+      "Team 5940 (slot1) has no Driver Station connected to the field, so its robot can't be enabled",
+    ]);
+
+    // Back, then gone again: a fresh warning
+    engine.setDSAddress('slot1', '10.59.40.5');
+    await Bun.sleep(600);
+    engine.clearDSAddress('slot1');
+    await Bun.sleep(600);
+    expect(warnings.length).toBe(2);
+
+    engine.stopMatch();
+    engine.clearMatch();
+    setBroadcast(() => {});
+  }, 15_000);
 });
 
 /** Robots on both alliances, all readied, started. Returns after the horn. */

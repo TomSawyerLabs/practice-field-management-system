@@ -8,6 +8,7 @@ import type {
   MatchHistoryTeam,
   MatchRecording,
   MatchReviewResult,
+  MatchState,
   StationName,
 } from './types.js';
 import { StationNameList, isChallengeConfig, challengePenalties, type ChallengeTally } from './types.js';
@@ -48,6 +49,11 @@ export class MatchHistoryStore {
   /** Attach to match engine and scoring engine to capture match results. */
   attach(matchEngine: MatchEngine, scoringEngine: ScoringEngine): void {
     let lastPhase = 'idle';
+    /** Everyone who has taken the field in the running match, by station.
+     *  A station that leaves mid-match still played; and when the last one
+     *  leaves, the match ends with nobody joined — without this it would
+     *  find no teams and go unrecorded. */
+    let played = new Map<StationName, MatchHistoryTeam>();
 
     /** Refresh an entry's scores from the engine: totals, period breakdown,
      *  and the score-over-time series built from when each ball scored. */
@@ -89,6 +95,12 @@ export class MatchHistoryStore {
         }
       }
 
+      if (phase === 'idle' || phase === 'created') {
+        played = new Map();
+      } else if (phase !== 'postMatch') {
+        for (const team of joinedTeams(state)) played.set(team.station, team);
+      }
+
       if (phase === lastPhase) return;
       const prevPhase = lastPhase;
       lastPhase = phase;
@@ -108,19 +120,10 @@ export class MatchHistoryStore {
       if (phase === 'postMatch' && prevPhase !== 'postMatch') {
         const now = Date.now();
 
-        // Collect participating teams
-        const teams: MatchHistoryTeam[] = [];
-        for (const station of StationNameList) {
-          const ss = state.stationStates[station];
-          if (!ss?.joined || !ss.teamNumber || !ss.alliance) continue;
-          teams.push({
-            station: station as StationName,
-            teamNumber: ss.teamNumber,
-            ...(ss.robot ? { robot: ss.robot } : {}),
-            alliance: ss.alliance,
-            matchSlot: ss.matchSlot,
-          });
-        }
+        // Collect participating teams: whoever is still on the field, plus
+        // anyone who played and left before the end.
+        for (const team of joinedTeams(state)) played.set(team.station, team);
+        const teams = StationNameList.flatMap(station => played.get(station) ?? []);
 
         if (teams.length === 0) return; // Nothing worth recording
 
@@ -290,4 +293,21 @@ export class MatchHistoryStore {
       console.error(`Failed to save match history to ${this.filePath}:`, (err as Error).message);
     }
   }
+}
+
+/** The teams on the field right now, in station order. */
+function joinedTeams(state: MatchState): MatchHistoryTeam[] {
+  const teams: MatchHistoryTeam[] = [];
+  for (const station of StationNameList) {
+    const ss = state.stationStates[station];
+    if (!ss?.joined || !ss.teamNumber || !ss.alliance) continue;
+    teams.push({
+      station: station as StationName,
+      teamNumber: ss.teamNumber,
+      ...(ss.robot ? { robot: ss.robot } : {}),
+      alliance: ss.alliance,
+      matchSlot: ss.matchSlot,
+    });
+  }
+  return teams;
 }
