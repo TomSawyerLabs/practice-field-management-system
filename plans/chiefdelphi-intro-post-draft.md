@@ -118,6 +118,9 @@ poke at it.
   - Each team gets one subnet (`10.TE.AM.0/24`), so a team's two robots
     sit on identical subnets. That's the reason two-robot support took real
     work.
+  - Given all that, **we'd be very happy to support field APs other than the
+    VH-109/VH-113.** If you've got other hardware in mind, or want to help
+    add it, let's talk.
 - It's built for practice fields, not for running an official-style event.
   For a full offseason event with schedules, alliance selection and playoffs,
   [Cheesy Arena](https://github.com/Team254/cheesy-arena) /
@@ -131,6 +134,8 @@ poke at it.
   easy for a second field to adopt it (per-field branding and layout config
   are on the roadmap), and real feedback from another site is the fastest
   way there.
+- **Other field radios**: if you'd like pFMS to drive an AP other than a
+  VH-109/VH-113, tell us which one. We'd love to add it.
 - **Bug reports, ideas, and PRs** are welcome on
   [GitHub issues](https://github.com/TomSawyerLabs/practice-field-management-system/issues).
 - Questions about the network setup, VLANs, or the DS protocol: ask away here.
