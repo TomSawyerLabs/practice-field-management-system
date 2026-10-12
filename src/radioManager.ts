@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { configureNetwork, setInternetAccess } from './networkManager.js';
 import { appError } from './appLogger.js';
-import { teamOfSsid } from './utils.js';
+import { formatDuration, teamOfSsid } from './utils.js';
 import {
   AdditionalChannelStatistic,
   AllChannels,
@@ -15,6 +15,7 @@ import {
   RadioUpdate,
   ReadyScanResults,
   ScanResults,
+  StationDetails,
   StationName,
   StationNameList,
   Status,
@@ -100,6 +101,9 @@ class RadioManager {
   private lastLinked = new Map<StationName, number>();
   /** Previous isLinked state per station — used to detect transitions and avoid chatty broadcasts. */
   private wasLinked = new Map<StationName, boolean>();
+  /** When each station's robot last linked, and the SSID it linked as —
+   *  for the "dropped off" log line, after the radio may have forgotten it. */
+  private linkedSince = new Map<StationName, { at: number; ssid: string }>();
   private lastLinkedListeners: ((timestamps: Partial<Record<StationName, number>>) => void)[] = [];
 
   constructor(
@@ -441,6 +445,16 @@ class RadioManager {
         }
         if (linked !== prev) {
           linkTransition = true;
+          const status = radioUpdate.stationStatuses[station];
+          if (linked) {
+            const ssid = status?.ssid || this.activeConfig[station]?.ssid || '?';
+            this.linkedSince.set(station, { at: timestamp, ssid });
+            console.log(describeLinkUp(station, ssid, status));
+          } else {
+            const since = this.linkedSince.get(station);
+            this.linkedSince.delete(station);
+            console.log(describeLinkDown(station, since?.ssid ?? (status?.ssid || '?'), since?.at));
+          }
         }
       }
       if (linkTransition) this.notifyLastLinkedListeners();
@@ -1580,4 +1594,24 @@ export default RadioManager;
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Robot link transitions are logged because nothing else records them: on
+// 2026-10-08 team 5940's robot took ~30 minutes to reach the field and the
+// journal could not say when it finally linked. Polled every 100 ms, so a
+// line marks a real change, not a heartbeat.
+
+/** "Robot linked to the field radio: 5940-sigma on slot2 (aa:bb:…, -52 dBm)" */
+export function describeLinkUp(
+  station: StationName,
+  ssid: string,
+  status: Pick<StationDetails, 'macAddress' | 'signalDbm'> | null | undefined,
+): string {
+  const details = [status?.macAddress, status?.signalDbm ? `${status.signalDbm} dBm` : ''].filter(Boolean);
+  return `Robot linked to the field radio: ${ssid} on ${station}${details.length ? ` (${details.join(', ')})` : ''}`;
+}
+
+/** "Robot dropped off the field radio: 5940-sigma on slot2 after 12m" */
+export function describeLinkDown(station: StationName, ssid: string, linkedAt: number | undefined): string {
+  return `Robot dropped off the field radio: ${ssid} on ${station}${linkedAt ? ` after ${formatDuration(linkedAt)}` : ''}`;
 }

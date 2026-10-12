@@ -623,3 +623,29 @@ describe('radio self-repair', () => {
     expect(commits).toBe(2);
   });
 });
+
+describe('robot link log lines', () => {
+  let describeLinkUp: typeof import('./radioManager.js').describeLinkUp;
+  let describeLinkDown: typeof import('./radioManager.js').describeLinkDown;
+  beforeAll(async () => {
+    ({ describeLinkUp, describeLinkDown } = await import('./radioManager.js'));
+  });
+
+  test('a link names the robot, station, MAC and signal', () => {
+    expect(describeLinkUp('slot2', '5940-sigma', { macAddress: '48:DA:35:B1:6B:DF', signalDbm: -52 })).toBe(
+      'Robot linked to the field radio: 5940-sigma on slot2 (48:DA:35:B1:6B:DF, -52 dBm)',
+    );
+    expect(describeLinkUp('slot2', '5940-sigma', undefined)).toBe(
+      'Robot linked to the field radio: 5940-sigma on slot2',
+    );
+  });
+
+  test('a drop says how long the robot was linked', () => {
+    expect(describeLinkDown('slot2', '5940-sigma', Date.now() - 12 * 60_000)).toBe(
+      'Robot dropped off the field radio: 5940-sigma on slot2 after 12m',
+    );
+    expect(describeLinkDown('slot2', '5940-sigma', undefined)).toBe(
+      'Robot dropped off the field radio: 5940-sigma on slot2',
+    );
+  });
+});
