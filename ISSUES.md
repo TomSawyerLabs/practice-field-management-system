@@ -195,6 +195,12 @@ hardware or a real deployment:
 
 ## Two robots of one team
 
+- A laptop of a two-robot team whose drive session lapses (DS quiet for
+  20 s, e.g. 1967-Elsa's laptop at 12:11 on 2026-10-12) doesn't get its
+  robot back when the DS returns: with two robots pFMS can't guess, so the
+  team has to press Drive again. Remembering the laptop's last robot, and
+  re-claiming it if nobody else drives it, would avoid that
+  (`src/driveSessions.ts`, `heard()`).
 - pFMS's own traffic to a duplicated team's subnet (subnet-scanner fping,
   team-check HTTP to the radio/roboRIO, robot packet capture lookups) follows
   the main routing table, which holds one connected `10.TE.AM.0/24` route per
