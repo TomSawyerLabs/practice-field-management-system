@@ -883,13 +883,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       return undefined;
     },
   });
-  const { wss, broadcast, broadcastRouteState, publicConnections } = setupWebSocket(
+  const { wss, broadcast, broadcastRouteState, publicConnections } = setupWebSocket({
     radioManager,
     matchEngine,
-    WebSocketPort,
+    port: WebSocketPort,
     trustedProxyMatcher,
-    station => onRunTeamChecks?.(station),
-    [
+    onRunTeamChecks: station => onRunTeamChecks?.(station),
+    httpHandlers: [
       (req: IncomingMessage, res: ServerResponse) =>
         handleExternalAccessAuth(req, res, externalAccessStore, { trustedProxyMatcher, onLink: onLinkChecker }),
       (req, res) => handleScoringRequest(req, res, scoringEngine, apiKeyStore, trustedProxyMatcher),
@@ -909,7 +909,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       handleTeamAvatarRequest,
       handleManifestRequest,
     ],
-    (wpaKey, wpaKey24, skipReconfigure) => {
+    onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
       // Auto-detect WPA key: active station config → saved team store
       const team = robotTestMonitor.getState().teamNumber;
@@ -922,7 +922,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         console.error('Firmware update failed:', err.message);
       });
     },
-    (teamNumber, wpaKey6, wpaKey24, ssidSuffix) => {
+    onRadioConfigure: (teamNumber, wpaKey6, wpaKey24, ssidSuffix) => {
       if (!robotTestMonitor) return;
       robotTestMonitor.configureTeamRadio(teamNumber, wpaKey6, wpaKey24, ssidSuffix).catch(err => {
         console.error('Radio configuration failed:', err.message);
@@ -932,28 +932,28 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     apiKeyStore,
     scoringEngine,
     portBridgeManager,
-    (dsIp, station) => onDriveAction?.(dsIp, station),
+    onDriveAction: (dsIp, station) => onDriveAction?.(dsIp, station),
     supportStore,
     slackBridge,
     adminAuth,
     externalAccessStore,
     // Station test port mode callbacks
-    (station, portVlanId) => {
+    onStationTestMode: (station, portVlanId) => {
       stationTestManager?.startTestMode(station, portVlanId).catch(err => {
         console.error(`Station test mode start failed for ${station}:`, err.message);
       });
     },
-    station => {
+    onStationTestModeStop: station => {
       stationTestManager?.stopTestMode(station).catch(err => {
         console.error(`Station test mode stop failed for ${station}:`, err.message);
       });
     },
-    (station, teamNumber, wpaKey6, wpaKey24, ssidSuffix) => {
+    onStationRadioConfigure: (station, teamNumber, wpaKey6, wpaKey24, ssidSuffix) => {
       stationTestManager?.configureRadio(station, teamNumber, wpaKey6, wpaKey24, ssidSuffix).catch(err => {
         console.error(`Station radio configure failed for ${station}:`, err.message);
       });
     },
-    (station, wpaKey, wpaKey24, skipReconfigure) => {
+    onStationFirmwareUpdate: (station, wpaKey, wpaKey24, skipReconfigure) => {
       stationTestManager?.startFirmwareUpdate(station, wpaKey, wpaKey24, skipReconfigure).catch(err => {
         console.error(`Station firmware update failed for ${station}:`, err.message);
       });
@@ -962,7 +962,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     matchHistoryStore,
     usageTracker,
     hostnameResolver,
-    {
+    setup: {
       configStore: setupConfigStore,
       matchRecorder,
       timelapse: fieldTimelapse,
@@ -1015,7 +1015,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         });
       },
     },
-  );
+  });
   setBroadcast(broadcast);
   broadcastRobotWifi = broadcast;
   broadcastSixGhzWatch = broadcast;

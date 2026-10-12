@@ -12,24 +12,6 @@ A new field following the docs could flash `OFFSEASON` and get stuck.
 Before changing the docs, decide whether the OFFSEASON code paths
 (per-VLAN dnsmasq, `docs/internals.md`) stay.
 
-## `setupWebSocket` parameter sprawl
-
-The `setupWebSocket()` function in `src/websocketServer.ts` now has **21 positional parameters**. The call site in `src/index.ts` is nearly impossible to read — you have to count commas to understand which argument maps to which parameter. Adjacent optional callbacks of compatible types make it easy to accidentally swap arguments.
-
-**Fix:** Refactor to accept an options object:
-
-```ts
-interface SetupWebSocketOptions {
-  radioManager: RadioManager;
-  matchEngine: MatchEngine;
-  port: number;
-  trustedProxyMatcher?: CIDRMatcher;
-  // ...
-}
-```
-
-Every new feature that adds another callback makes this worse. This is the single highest-impact refactor for maintainability of the WebSocket server wiring.
-
 ## Global hook redundancy in StationStatus
 
 `StationStatus` renders 6 times (once per station). Each instance subscribes to several global hooks (`useLastLinked`, `usePortBridgeState`, `useLatest`, `useMatchState`, `useNetworkStats`, `useSubnetScan`, `useMdnsActivity`, etc.). Any update to these global states causes all 6 instances to re-render and diff their entire subtree, even if only one station's data changed.

@@ -226,34 +226,35 @@ export type StationFirmwareUpdateCallback = (
   skipReconfigure: boolean,
 ) => void;
 
-export function setupWebSocket(
-  radioManager: RadioManager,
-  matchEngine: MatchEngine,
-  port: number,
-  trustedProxyMatcher?: CIDRMatcher,
-  onRunTeamChecks?: RunTeamChecksCallback,
-  httpHandlers?: HttpRequestHandler[],
-  onFirmwareUpdate?: FirmwareUpdateCallback,
-  onRadioConfigure?: RadioConfigureCallback,
-  savedTeamStore?: SavedTeamStore,
-  apiKeyStore?: ApiKeyStore,
-  scoringEngine?: ScoringEngine,
-  portBridgeManager?: PortBridgeManager,
-  onDriveAction?: DriveActionCallback,
-  supportStore?: SupportStore,
-  slackBridge?: SlackBridge,
-  adminAuth?: AdminAuth,
-  externalAccessStore?: ExternalAccessStore,
-  onStationTestMode?: StationTestModeCallback,
-  onStationTestModeStop?: StationTestModeStopCallback,
-  onStationRadioConfigure?: StationRadioConfigureCallback,
-  onStationFirmwareUpdate?: StationFirmwareUpdateCallback,
-  matchAudio?: MatchAudio,
-  matchHistoryStore?: MatchHistoryStore,
-  usageTracker?: UsageTracker,
-  hostnameResolver?: HostnameResolver,
-  // Grouped rather than appended as two more positional params — this
-  // signature is already 25 long (see ISSUES.md) and shouldn't grow further.
+/** Everything the WebSocket/HTTP server is wired to. Named rather than
+ *  positional: there are more than twenty, several of them adjacent
+ *  callbacks of compatible types that were easy to swap by accident. */
+export interface SetupWebSocketOptions {
+  radioManager: RadioManager;
+  matchEngine: MatchEngine;
+  port: number;
+  trustedProxyMatcher?: CIDRMatcher;
+  onRunTeamChecks?: RunTeamChecksCallback;
+  httpHandlers?: HttpRequestHandler[];
+  onFirmwareUpdate?: FirmwareUpdateCallback;
+  onRadioConfigure?: RadioConfigureCallback;
+  savedTeamStore?: SavedTeamStore;
+  apiKeyStore?: ApiKeyStore;
+  scoringEngine?: ScoringEngine;
+  portBridgeManager?: PortBridgeManager;
+  onDriveAction?: DriveActionCallback;
+  supportStore?: SupportStore;
+  slackBridge?: SlackBridge;
+  adminAuth?: AdminAuth;
+  externalAccessStore?: ExternalAccessStore;
+  onStationTestMode?: StationTestModeCallback;
+  onStationTestModeStop?: StationTestModeStopCallback;
+  onStationRadioConfigure?: StationRadioConfigureCallback;
+  onStationFirmwareUpdate?: StationFirmwareUpdateCallback;
+  matchAudio?: MatchAudio;
+  matchHistoryStore?: MatchHistoryStore;
+  usageTracker?: UsageTracker;
+  hostnameResolver?: HostnameResolver;
   setup?: {
     configStore: SetupConfigStore;
     runProbe: () => Promise<SetupProbeState>;
@@ -299,8 +300,38 @@ export function setupWebSocket(
       getState: () => WifiCardsState;
       testJoin: (iface: string, ssid: string, passphrase?: string) => Promise<unknown>;
     };
-  },
-): WebSocketContext {
+  };
+}
+
+export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
+  const {
+    radioManager,
+    matchEngine,
+    port,
+    trustedProxyMatcher,
+    onRunTeamChecks,
+    httpHandlers,
+    onFirmwareUpdate,
+    onRadioConfigure,
+    savedTeamStore,
+    apiKeyStore,
+    scoringEngine,
+    portBridgeManager,
+    onDriveAction,
+    supportStore,
+    slackBridge,
+    adminAuth,
+    externalAccessStore,
+    onStationTestMode,
+    onStationTestModeStop,
+    onStationRadioConfigure,
+    onStationFirmwareUpdate,
+    matchAudio,
+    matchHistoryStore,
+    usageTracker,
+    hostnameResolver,
+    setup,
+  } = opts;
   let serverVersion = 'unknown';
   try {
     serverVersion = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf-8' }).trim();
