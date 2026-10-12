@@ -1,8 +1,8 @@
 # Known Issues & Technical Debt
 
-## Docs present OFFSEASON AP firmware as supported, for the wrong reason
+## Docs present OFFSEASON AP firmware as supported, for the wrong reason (README fixed)
 
-`README.md:7`, `docs/setup.md:5`, `docs/network.md:3,62` and
+`docs/setup.md:5`, `docs/network.md:3,62` and
 `docs/getting-started.md:91-97` say pFMS works with `PRACTICE` **or**
 `OFFSEASON` firmware. `getting-started.md` says `PRACTICE` is recommended
 because the AP serves DHCP itself. Per the user (2026-10-12), `PRACTICE` is

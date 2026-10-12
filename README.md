@@ -4,7 +4,8 @@ A web interface for configuring practice field access points, running
 self-service matches, and enabling team laptop ↔ robot routing.
 
 pFMS drives a VH-113 (or VH-109) field AP running
-[`PRACTICE` or `OFFSEASON` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases),
+[`PRACTICE` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
+(see [Field AP firmware limitations](#field-ap-firmware-limitations)),
 and provides:
 
 - **Station configuration** — assign teams to the six field stations;
@@ -39,14 +40,40 @@ and provides:
   or rendered into a film on demand
   ([details](docs/match-system.md#long-term-field-timelapse))
 - **Laptop ↔ robot routing** — laptops on the site network reach robots on
-  their team VLANs, including duplicate-team disambiguation
-  ([details](docs/network.md))
+  their team VLANs ([details](docs/network.md))
+- **Multiple robots per team, active at once** — a team can put two (or
+  more) robots on the field together, each driven by its own laptop. Each
+  laptop's DS link, routes, mDNS (`limelight-*.local`, `roboRIO-…`) and
+  E-stop reach only the robot it drives, and it picks that robot with the
+  Drive button on the team page
+  ([details](docs/network.md#duplicate-team-handling))
 - **Diagnostics & support** — a robot network tester for CSAs
   ([details](docs/robot-tester.md)), live logs, device discovery, robot
   telemetry, and a built-in support widget bridged to Slack
   ([details](docs/support.md))
 - **Guided setup** — a `/setup` wizard that live-checks a new host and
   walks you through getting a field running (see below)
+
+## Field AP firmware limitations
+
+pFMS works around several limits of the Vivid-Hosting field AP firmware.
+They're worth knowing before you set up a field:
+
+- **`PRACTICE` firmware is required.** The `OFFSEASON` image's firewalls
+  block too much of the traffic pFMS routes between team laptops and
+  robots.
+- **`PRACTICE` serves DHCP on the team VLANs itself.** That's a cost, not
+  a convenience: robots get addresses pFMS didn't hand out, so the host
+  has to NAT (MASQUERADE plus per-DS DNAT) to route laptop ↔ robot traffic
+  through it ([details](docs/network.md#ds--rio-udp-and-dynamic-dnat)).
+- **Any Wi-Fi change reconfigures the whole radio.** Adding or releasing a
+  single team takes about 30 seconds and drops **every** robot's Wi-Fi.
+  pFMS decides when that happens: it waits for enabled robots to be
+  disabled, and it holds changes while a match is set up
+  ([details](docs/match-system.md#wi-fi-changes-and-matches)).
+- **The AP gives each team one subnet, `10.TE.AM.0/24`.** So two robots
+  from one team sit on identical subnets on different VLANs. pFMS keeps
+  them apart (see _Multiple robots per team_ above).
 
 ## Setting Up a New Field
 
