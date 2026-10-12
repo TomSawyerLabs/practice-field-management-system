@@ -1584,11 +1584,14 @@ export function sendMatchHoldWifi(hold: boolean) {
 
 // ── Team Checks ─────────────────────────────────────────────────────
 
-export function useTeamCheckResults(station: StationName): TeamCheckResults | null {
-  const [results, setResults] = useState<TeamCheckResults | null>(currentTeamCheckResults.get(station) ?? null);
+export function useTeamCheckResults(station: StationName | null): TeamCheckResults | null {
+  const [results, setResults] = useState<TeamCheckResults | null>(
+    station ? (currentTeamCheckResults.get(station) ?? null) : null,
+  );
 
   useEffect(() => {
-    setResults(currentTeamCheckResults.get(station) ?? null);
+    setResults(station ? (currentTeamCheckResults.get(station) ?? null) : null);
+    if (!station) return;
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<TeamCheckResults>).detail;
       if (detail.station === station) setResults(detail);

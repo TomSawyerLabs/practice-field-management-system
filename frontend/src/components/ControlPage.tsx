@@ -38,6 +38,7 @@ import {
   usePortBridgeState,
   sendPortBridge,
   useRobotWifiScan,
+  useTeamCheckResults,
   sendRobotWifiTest,
   useSixGhzWatch,
   getServerTime,
@@ -64,7 +65,7 @@ import { QueueBanner } from './QueueBanner';
 import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
 import { LaptopWifiCheck } from './LaptopWifiCheck';
-import { TeamChecksModal } from './TeamChecksModal';
+import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
 import { StationName, StationNameList, SavedTeamClientConfig, PortConfig } from '../../../src/types';
@@ -227,6 +228,7 @@ function useRobotPending(ssid: string): RobotPending {
 const CONTROL_TABS = [
   { id: 'robots', label: 'Robots', needsRobot: false },
   { id: 'radio', label: 'Radio', needsRobot: true },
+  { id: 'equipment', label: 'Equipment', needsRobot: true },
   // Open without a robot too: it holds the laptop's own Wi-Fi check
   { id: 'network', label: 'Network', needsRobot: false },
   { id: 'video', label: 'Video', needsRobot: false },
@@ -247,6 +249,7 @@ function tabFromHash(): ControlTab | null {
  * into tabs:
  * - Robots: saved robot configs, enable/release, add robot, verify passphrase
  * - Radio: the selected robot's radio status, charts or tables
+ * - Equipment: the selected robot's equipment check results
  * - Network: port bridging and network diagnostics, and the laptop Wi-Fi check
  * - Video: match and practice recordings
  *
@@ -350,6 +353,15 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const tab: ControlTab =
     tabChoice && !(CONTROL_TABS.find(t => t.id === tabChoice)!.needsRobot && !selectedStation) ? tabChoice : 'robots';
   const selectedLinked = selectedStation ? !!latest?.radioUpdate?.stationStatuses[selectedStation]?.isLinked : false;
+  const checkResults = useTeamCheckResults(selectedStation);
+
+  // Status dots on the tabs, so a dropped link or an equipment problem shows from any tab
+  const tabDot = (id: ControlTab): string | null => {
+    if (!selectedStation) return null;
+    if (id === 'radio') return selectedLinked ? 'success.main' : 'warning.main';
+    if (id === 'equipment') return teamChecksDotColor(checkResults);
+    return null;
+  };
 
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
@@ -359,8 +371,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           Team {teamNumber}
         </Typography>
         {selectedStation && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, ml: 'auto' }}>
-            <TeamChecksModal station={selectedStation} />
+          <Box sx={{ ml: 'auto' }}>
             <FreeplayStopButton station={selectedStation} />
           </Box>
         )}
@@ -424,20 +435,12 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
             value={t.id}
             label={t.label}
             disabled={t.needsRobot && !selectedStation}
-            // The Radio tab carries the link state, so a dropped link shows from any tab
-            icon={
-              t.id === 'radio' && selectedStation ? (
-                <Box
-                  component="span"
-                  sx={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    backgroundColor: selectedLinked ? 'success.main' : 'warning.main',
-                  }}
-                />
-              ) : undefined
-            }
+            icon={(() => {
+              const dot = tabDot(t.id);
+              return dot ? (
+                <Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: dot }} />
+              ) : undefined;
+            })()}
             iconPosition="end"
             sx={{ minHeight: 48 }}
           />
@@ -482,6 +485,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           />
         </>
       )}
+
+      {tab === 'equipment' && selectedStation && <TeamChecksTab station={selectedStation} results={checkResults} />}
 
       {tab === 'network' &&
         selectedStation &&
