@@ -137,22 +137,20 @@ laptop.
       `.github/workflows/mdns-socket.yml`, fetch in `bun run build`
       (`e263bcf`). Unit tests pass. The full suite's fmsServer setup
       failures are environmental (they pass alone and on master).
-- [ ] ← current: push the tag `mdns-socket-v0.1.0` (user OK needed), wait
-      for the release, then deploy. Deploying before the release fails the
-      build (the fetch can't find the binary), which is safe.
-- [ ] After deploy: from this PC (`laptop-test.mjs`, VLAN 3), each slot
-      resolves its own robot's names. Then delete `/tmp/pfms-mdns-test` on
-      steamboat.
-- [ ] Optional: re-route a non-DS laptop when a robot is picked on the team
-      page (only for laptops not driving one). Awaiting the user's call.
+- [x] Released `mdns-socket-v0.1.0` (x64 + arm64 assets, workflow run 38310973434) and deployed `458ab2d` at 14:31. All five bridges got
+      the forwarded-only MASQUERADE; the `.253/.252` leftovers and RETURN
+      rules were removed; pinned sockets opened on br-slot1..5.
+- [x] Verified from this PC (VLAN 3): routed to slot3 (1700-franz),
+      `roboRIO-1700-FRC.local → 10.17.0.2` and `radio.local → 10.17.0.1`.
+      The capture showed a QM query out br-slot3 from .254 and multicast
+      answers. `/tmp/pfms-mdns-test` deleted on steamboat.
+- [ ] Not yet seen live: two robots of one team both on. 1967's robots
+      were off at 14:32. Check with `laptop-test.mjs` on slot1 + slot2
+      when they're both up.
 
 ## Open questions for the user
 
-1. Addon build/ship: CI prebuilds via napi-rs (recommended) or a Rust
-   toolchain on steamboat?
-2. The word for "put this laptop on this robot's network" without driving
-   it. The user proposed "Select" or "Isolate". Recommendation: make
-   selecting a robot on the team page do it, labelled "Select".
+(none open)
 
 ## Things not to do
 
