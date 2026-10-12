@@ -265,11 +265,12 @@ applies as it comes, exactly as with no match. A running match holds
 requests whatever the switch says. Turning it off does not send what is
 already waiting — press Apply now.
 
-One exception to "only staff apply": when a set-up match cancels itself
-because nobody joined — or a waiting team clears it from its page with
-**Clear the empty match** — the robots waiting to **join** go through, since
-nobody is at the match page to apply them. Robots queued to **leave** stay
-on the list for staff, and nothing goes through while the admin hold is on.
+One exception to "only staff apply": when a set-up match is cancelled —
+by staff, by its own clock because nobody joined, or by a waiting team with
+**Clear the empty match** — the robots waiting to **join** go through. A
+match that never ran has nothing to protect, and once it's gone nobody may
+be at the match page to apply them. Robots queued to **leave** stay on the
+list for staff, and nothing goes through while the admin hold is on.
 
 The pending list is a list of changes, not a slot table. A new change
 overrides anything earlier about the same robot: a release followed by an

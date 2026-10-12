@@ -67,10 +67,14 @@ A frontend client sends a WebSocket message with
      match ends a release is queued for every robot on the field; joining
      the next match or asking again withdraws it (`releaseAfterMatch`
      setting). A set-up match nobody joins cancels itself after 10 minutes
-     (`SETUP_AUTO_CANCEL_MS`) and then applies the waiting enables only
-     (`applyPendingJoins()`); releases keep waiting for staff. A team page
-     can do the same early with `stationClearEmptyMatch`
-     (`matchEngine.clearEmptySetup()`, refused once anyone has joined).
+     (`SETUP_AUTO_CANCEL_MS`); a team page can cancel an empty one early
+     with `stationClearEmptyMatch` (`matchEngine.clearEmptySetup()`, refused
+     once anyone has joined). However a set-up match is cancelled — those
+     two or staff's `matchCancel` — `setupCancelledHook` then applies the
+     waiting enables only (`applyPendingJoins()`); releases keep waiting
+     for staff. Robot link transitions on the radio are logged
+     (`Robot linked to the field radio` / `Robot dropped off the field
+radio … after Nm`).
    - **Deferred** while any robot is enabled: the change is applied to the
      active config straight away, but `commitConfiguration()` waits and
      re-runs as soon as the last robot is disabled.

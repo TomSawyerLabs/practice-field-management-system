@@ -70,5 +70,10 @@ The user asked for:
 ## Findings / gotchas
 
 - The pFMS backend refuses to start on Windows without `DRY_RUN=1`.
-- Held changes don't apply when the hold lifts by staff cancelling a match
-  — only the empty-setup path applies joins. Not changed here.
+- Staff cancelling a set-up match by hand used to leave held joins waiting
+  for Apply now. Changed at the user's request: every cancel of a set-up
+  match now runs `setupCancelledHook` (renamed from `abandonedSetupHook`)
+  and applies waiting joins. Releases and the admin hold are unchanged; the
+  hold lifting any other way (post-match clear) still waits for staff.
+- Robot link/drop transitions are now logged by `radioManager` (asked for
+  after 5940's unexplained 30-minute link on 2026-10-08).

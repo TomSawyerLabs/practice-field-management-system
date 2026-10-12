@@ -463,7 +463,11 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  /** Cancel a created match — back to idle. */
+  /** Cancel a created match — back to idle. However it was cancelled (staff,
+   *  a team page, or its own abandoned-setup clock), the join requests it was
+   *  holding then go through (setupCancelledHook): a match that never ran
+   *  has nothing to protect, and with it gone nobody may be at the match
+   *  page to press Apply now. */
   cancelMatch() {
     if (this.phase !== 'created') {
       appWarn(`Cannot cancel match in phase ${this.phase}`);
@@ -480,6 +484,7 @@ export class MatchEngine {
     this.phase = 'idle';
     console.log('Match cancelled');
     this.broadcast();
+    this.setupCancelledHook?.();
   }
 
   /** Run the abandoned-setup clock exactly while a match is set up with no
@@ -505,8 +510,7 @@ export class MatchEngine {
   }
 
   /** A team page's "Clear the empty match": the same as the abandoned-setup
-   *  clock running out, just sooner — so the join requests the match was
-   *  holding go through. Refused (false) once anyone has joined, or when no
+   *  clock running out, just sooner. Refused (false) once anyone has joined, or when no
    *  match is set up: the button the team saw may be stale. */
   clearEmptySetup(who: string): boolean {
     return this.cancelEmptySetup(`Set-up match cleared by ${who}: no team had joined`);
@@ -516,17 +520,15 @@ export class MatchEngine {
     if (this.phase !== 'created' || this.getJoinedCount() > 0) return false;
     console.log(why);
     this.cancelMatch();
-    this.abandonedSetupHook?.();
     return true;
   }
 
-  /** Runs after a set-up match nobody joined has been cancelled — by its
-   *  clock running out, or by a team page clearing it — so the join requests
-   *  it was holding can go through with nobody at the match page to apply
-   *  them. */
-  private abandonedSetupHook?: () => void;
-  setAbandonedSetupHook(fn: () => void) {
-    this.abandonedSetupHook = fn;
+  /** Runs after a set-up match has been cancelled — by staff, by a team
+   *  page clearing an empty one, or by its own clock — so the join requests
+   *  it was holding can go through without waiting for Apply now. */
+  private setupCancelledHook?: () => void;
+  setSetupCancelledHook(fn: () => void) {
+    this.setupCancelledHook = fn;
   }
 
   /** Swap a station to the opposite alliance (controller only, pre-match). */

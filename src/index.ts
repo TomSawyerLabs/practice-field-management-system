@@ -427,13 +427,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if (settings.holdRadioChanges) return 'admin';
     return null;
   });
-  // A set-up match nobody joined has cancelled itself: nobody is at the
-  // match page, so the joins it was holding go through. Releases still wait
-  // for staff, and the admin hold still holds everything.
-  matchEngine.setAbandonedSetupHook(() => {
+  // A set-up match was cancelled (by staff, a team page clearing an empty
+  // one, or its own 10-minute clock): the joins it was holding go through.
+  // Releases still wait for staff, and the admin hold still holds everything.
+  matchEngine.setSetupCancelledHook(() => {
     if (setupConfigStore.get().settings.holdRadioChanges) return;
     radioManager.applyPendingJoins().catch(err => {
-      console.error('Error applying Wi-Fi joins after an abandoned match setup:', err);
+      console.error('Error applying Wi-Fi joins after a set-up match was cancelled:', err);
     });
   });
   matchEngine.addStateListener(() => radioManager.retryHeldChanges());

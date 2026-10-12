@@ -522,14 +522,14 @@ describe('a set-up match nobody joins', () => {
 
   test('says when it will cancel itself, and does', () => {
     const engine = created();
-    let abandoned = 0;
-    engine.setAbandonedSetupHook(() => abandoned++);
+    let cancelled = 0;
+    engine.setSetupCancelledHook(() => cancelled++);
     expect(engine.getState().setupExpiresAt).toBeGreaterThan(Date.now() + SETUP_AUTO_CANCEL_MS - 1000);
 
     expire(engine);
     expect(engine.getState().phase).toBe('idle');
     expect(engine.getState().setupExpiresAt).toBeUndefined();
-    expect(abandoned).toBe(1);
+    expect(cancelled).toBe(1);
   });
 
   test('a team joining stops the clock, and the last one leaving restarts it', () => {
@@ -543,37 +543,49 @@ describe('a set-up match nobody joins', () => {
     expect(engine.getState().setupExpiresAt).toBeDefined();
   });
 
-  test('staff cancelling it by hand is not an abandoned match', () => {
+  test('staff cancelling it by hand lets held joins through too, once', () => {
     const engine = created();
-    let abandoned = 0;
-    engine.setAbandonedSetupHook(() => abandoned++);
+    let cancelled = 0;
+    engine.setSetupCancelledHook(() => cancelled++);
     engine.cancelMatch();
     expect(engine.getState().setupExpiresAt).toBeUndefined();
-    expire(engine);
-    expect(abandoned).toBe(0);
+    expect(cancelled).toBe(1);
+    expire(engine); // a stale clock firing afterwards does nothing more
+    expect(cancelled).toBe(1);
+  });
+
+  test('staff can cancel it with teams joined, and held joins still go through', () => {
+    const engine = created();
+    let cancelled = 0;
+    engine.setSetupCancelledHook(() => cancelled++);
+    engine.joinStationAlliance('slot1', 'red');
+    engine.cancelMatch();
+    expect(engine.getState().phase).toBe('idle');
+    expect(cancelled).toBe(1);
   });
 
   test('a team page can clear it early, which lets held joins through like the clock does', () => {
     const engine = created();
-    let abandoned = 0;
-    engine.setAbandonedSetupHook(() => abandoned++);
+    let cancelled = 0;
+    engine.setSetupCancelledHook(() => cancelled++);
     expect(engine.clearEmptySetup("team 6036's page")).toBe(true);
     expect(engine.getState().phase).toBe('idle');
     expect(engine.getState().setupExpiresAt).toBeUndefined();
-    expect(abandoned).toBe(1);
+    expect(cancelled).toBe(1);
   });
 
   test('a team page cannot clear it once anyone has joined, or when no match is set up', () => {
     const engine = created();
-    let abandoned = 0;
-    engine.setAbandonedSetupHook(() => abandoned++);
+    let cancelled = 0;
+    engine.setSetupCancelledHook(() => cancelled++);
     engine.joinStationAlliance('slot1', 'red');
     expect(engine.clearEmptySetup("team 6036's page")).toBe(false);
     expect(engine.getState().phase).toBe('created');
+    expect(cancelled).toBe(0);
 
-    engine.cancelMatch();
+    engine.cancelMatch(); // staff
     expect(engine.clearEmptySetup("team 6036's page")).toBe(false);
-    expect(abandoned).toBe(0);
+    expect(cancelled).toBe(1);
   });
 });
 
