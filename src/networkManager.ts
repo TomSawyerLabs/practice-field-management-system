@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 import { StationName, StationNameList } from './types.js';
+import { stationMdnsIp } from './utils.js';
 import { appInfo, appWarn } from './appLogger.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
@@ -187,7 +188,12 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
         const expectedIp = teamIp(team, vlanHostOctet);
         const brInterfaces = await net.listInterfaces(brName);
         const hasIp = brInterfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === expectedIp);
-        if (hasIp) continue;
+        if (hasIp) {
+          // Added by the network config itself on bridges set up before it
+          // existed, without touching the gateway address a live robot uses.
+          await ensureMdnsAddress(station, team, practiceMode);
+          continue;
+        }
         appInfo(`Bridge ${brName} missing IP ${expectedIp}, re-applying config for ${station}`);
       } else {
         continue;
@@ -199,6 +205,11 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
       // Remove the specific old team IP rather than flushing all addresses — avoids
       // disturbing IPv6 link-local and other addresses managed outside this code.
       await net.removeAddress({ interfaceName: brName, address: teamIp(prevTeam, vlanHostOctet), prefixLength: 24 });
+      await net.removeAddress({
+        interfaceName: brName,
+        address: stationMdnsIp(prevTeam, station, vlanHostOctet),
+        prefixLength: 32,
+      });
       await net.iptables({
         chain: 'FORWARD',
         inInterface: brName,
@@ -229,13 +240,14 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
       await net.setInterfaceUp(brName);
 
       const us = teamIp(team, vlanHostOctet);
+      const mdns = stationMdnsIp(team, station, vlanHostOctet);
 
       // Remove any stale IPv4 addresses that don't belong to this team.
       // This covers the process-restart case where previousStations is empty
       // and the teardown above was skipped, leaving addresses from a prior session.
       const interfaces = await net.listInterfaces(brName);
       for (const addr of interfaces[0]?.addresses ?? []) {
-        if (addr.family === 'inet' && addr.address !== us) {
+        if (addr.family === 'inet' && addr.address !== us && addr.address !== mdns) {
           appWarn(`Removing stale address ${addr.address}/${addr.prefixLength} from ${brName}`);
           await net.removeAddress({ interfaceName: brName, address: addr.address, prefixLength: addr.prefixLength });
         }
@@ -250,6 +262,8 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
       }
 
       await net.addAddress({ interfaceName: brName, address: us, prefixLength: 24 });
+      // After the gateway address, so the /24 stays the bridge's primary.
+      await ensureMdnsAddress(station, team, practiceMode);
 
       // Add forwarding rules
       await net.iptables({
@@ -285,6 +299,49 @@ async function updateNetworkConfig(stations: Stations, physical_interface: strin
 
   previousStations = { ...stations };
   appInfo('Network configuration applied');
+}
+
+/**
+ * Make sure every team bridge has its mDNS address, without reconfiguring
+ * anything else. For a graceful restart, which leaves the bridges as they
+ * were and so doesn't run the network config.
+ */
+export async function ensureMdnsAddresses(
+  getTeamForStation: (s: StationName) => number | null,
+  practiceMode: boolean,
+): Promise<void> {
+  for (const station of StationNameList) {
+    const team = getTeamForStation(station);
+    if (team === null) continue;
+    try {
+      await ensureMdnsAddress(station, team, practiceMode);
+    } catch (err) {
+      appWarn(`Could not add the mDNS address for ${station}: ${(err as Error).message}`);
+    }
+  }
+}
+
+/**
+ * Put pFMS's per-station mDNS address (see `stationMdnsIp`) on a team's
+ * bridge, if it isn't there. A /32, so it is its own primary: removing the
+ * gateway /24 doesn't take it along, and source selection and MASQUERADE
+ * keep picking the gateway address, the on-subnet match. Skipped if a team
+ * device already holds the address; the mDNS reflector then falls back to
+ * the gateway address, which works as long as the team has one robot here.
+ */
+async function ensureMdnsAddress(station: StationName, team: number, practiceMode: boolean): Promise<void> {
+  const brName = bridgeName(station);
+  const mdns = stationMdnsIp(team, station, vlanHostOctet);
+  const interfaces = await net.listInterfaces(brName);
+  if (interfaces[0]?.addresses.some(a => a.family === 'inet' && a.address === mdns)) return;
+  if (!practiceMode && (await net.arping({ interfaceName: brName, address: mdns }))) {
+    appWarn(
+      `Address conflict: ${mdns} is already in use on ${brName}, so mDNS for ${station} uses the gateway address`,
+    );
+    return;
+  }
+  await net.addAddress({ interfaceName: brName, address: mdns, prefixLength: 32 });
+  appInfo(`mDNS address ${mdns}/32 added to ${brName}`);
 }
 
 /**

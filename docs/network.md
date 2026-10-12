@@ -310,6 +310,18 @@ It is a per-laptop bridge, not a flood:
   dropped. This is what lets several robots share a name: every radio is
   `radio.local`, and a flooded answer from one team used to land in every
   laptop's cache.
+- **Each station has its own mDNS address**, `10.TE.AM.x` with x just below
+  `VLAN_HOST_OCTET` (`.253` for slot 1 … `.248` for slot 6 by default), added
+  to its bridge as a /32. Queries leave that station's bridge from this
+  address as one-shot "legacy unicast" queries (RFC 6762 §6.7), so the
+  robot's devices answer unicast to the station's own socket. That is what
+  keeps two robots of one team apart: their bridges share the gateway
+  address, which can't pick a bridge for multicast, and the drive session's
+  DNAT sends every robot packet addressed to the gateway to the laptop. If a
+  team device already holds the address, that station falls back to
+  multicast from the gateway address. That fallback is fine while the team
+  has only one robot on the field. The subnet scanner hides these
+  addresses. The team checks' mDNS lookups use them too.
 
 ## Physical Field Ports
 

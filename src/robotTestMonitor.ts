@@ -438,11 +438,12 @@ export class RobotTestMonitor {
     try {
       // The controller (roboRIO or SystemCore) is identified first so the
       // radio's SystemCore mode can be judged against what is actually there.
+      const mdns = this.leasedIp ? { ip: this.leasedIp, oneShot: false } : undefined;
       const [factoryResult, controllerResult] = await Promise.all([
         checkFactoryDefault(this.teamNumber),
-        checkRobotController(this.teamNumber, [], this.leasedIp),
+        checkRobotController(this.teamNumber, [], mdns),
       ]);
-      const radioResults = await checkRadio(this.teamNumber, this.leasedIp, controllerResult.controller);
+      const radioResults = await checkRadio(this.teamNumber, mdns, controllerResult.controller);
       const rioResults = controllerResult.checks;
       this.checks = [...factoryResult, ...radioResults, ...rioResults];
 

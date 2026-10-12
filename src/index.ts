@@ -22,6 +22,7 @@ import {
   dropHairpinForwarding,
   setEStopCut,
   clearEStopCuts,
+  ensureMdnsAddresses,
 } from './networkManager.js';
 import {
   onConfigChange as onRouteConfigChange,
@@ -1098,6 +1099,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         }
       }
     },
+    false,
+    VlanInterface ? VlanHostOctet : undefined,
   );
   let latestSubnetScan: ReturnType<SubnetScanner['getResults']> | null = null;
   subnetScanner.start(10_000);
@@ -1942,6 +1945,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // Tell networkManager which teams are already configured so future config
     // changes properly tear down old routes and iptables rules.
     restorePreviousStations(s => radioManager.getTeamForStation(s));
+    // Bridges set up before per-station mDNS addresses existed get them now,
+    // rather than at the next radio change.
+    void ensureMdnsAddresses(s => radioManager.getTeamForStation(s), radioManager.isPracticeMode()).then(() =>
+      mdnsReflector?.refreshMemberships(),
+    );
 
     const restored = await restorePreferencesFromKernel();
     if (restored > 0) {

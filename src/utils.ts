@@ -56,6 +56,18 @@ export function teamOfSsid(ssid: string | null | undefined): number | null {
 }
 
 /**
+ * pFMS's own address on a station's bridge for mDNS: `10.TE.AM.x`, with x
+ * just below the bridge's gateway octet (`.253` for slot1 … `.248` for slot6
+ * with the default `.254`). Two stations of one team share the gateway
+ * address, so only this one can say which bridge a query goes out of, and
+ * which robot an answer came from. Added to the bridge as a /32.
+ */
+export function stationMdnsIp(team: number, station: StationName, vlanHostOctet: number): string {
+  const slot = Number(station.replace(/^slot/, ''));
+  return `10.${Math.floor(team / 100)}.${team % 100}.${vlanHostOctet - slot}`;
+}
+
+/**
  * Convert ip to CIDR format for CIDRMatcher
  */
 export function toCidr(ip: string): string {

@@ -1261,6 +1261,11 @@ class RadioManager {
     return undefined;
   }
 
+  /** Practice-mode radio firmware: the network config skips its address-conflict checks. */
+  isPracticeMode(): boolean {
+    return this.firmwareMode === 'PRACTICE';
+  }
+
   /** Returns true if the same team number is assigned to more than one station. */
   isTeamDuplicated(teamNumber: number): boolean {
     let count = 0;
