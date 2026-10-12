@@ -69,6 +69,24 @@ same flaw.
   per-station address must not be `.254`.
 - `dig -b 10.19.67.254 -p 5353 @224.0.0.251` times out: dig doesn't set
   `IP_MULTICAST_IF`. Use the Python probe below instead.
+- **MASQUERADE rewrote the per-station address (first deploy, 10:48).**
+  `-o br-slotN -j MASQUERADE` (pfms-nat-vlan-\*) applies to pFMS's own
+  output too, so queries from `.253` reached the robot as from `.254`.
+  Answers went to `.254:<port>` and the DNAT sent them to the laptop, so
+  every team's lookups failed. Fixed in `add1ce6` with a nat POSTROUTING
+  `-s <mdns>/32 -o br-slotN -j RETURN` inserted ahead of the MASQUERADE,
+  deployed 11:02. The wire then showed `10.19.67.253.<port> > 224.0.0.251`.
+- **Unresolved: no answers to the true `.253` source (11:02:26–11:02:43).**
+  With the robot on (enabled 11:02:29–38), one-shot queries from `.253`
+  drew no answer from either Limelight, the roboRIO or the radio. The
+  roboRIO sent one ARP `who-has 10.19.67.253` and got a reply, but no UDP
+  followed. Counter-evidence: at 10:50 the same reflector socket's queries,
+  rewritten to `.254`, were answered. The robot powered off at 11:03:35
+  (`Robot dropped off the field radio`), so this is not conclusive. A
+  watcher (`%TEMP%\claude-mdns-probe\wait-and-test.sh`, results in
+  `results.txt` there) reruns `.253` vs `.254` once the roboRIO is back.
+- When probing, run each `python3 -` in its own `ssh`: a second one in the
+  same command finds stdin already drained and silently does nothing.
 - `br-slot1` showed 57 members of 224.0.0.251 in `/proc/net/igmp`
   (`br-slot2` 35, …), which looks like leaked memberships. Logged in
   ISSUES.md; not part of this fix.
@@ -111,15 +129,20 @@ Probe used (read-only; nothing written on steamboat):
       nothing. Now it reads the drive session for the browser's IP
       (`useMyDriveStation`). Same for `/route` and the station panel.
       `a4623c9`. The load-time route stays: it gives non-DS devices mDNS.
-- [ ] Step 6 deploy + verify (needs user OK) ← current. After deploy, on
-      each 1967 laptop: the team page shows "This laptop drives <robot>",
-      and the other robot has a Drive button.
+- [x] Step 6a deployed `cf5f85c` at 10:48. Drive session and DNAT restored;
+      `.253/32` added. Masquerade bug found; hotfix `add1ce6` deployed 11:02
+      (pushed as part of `02b4658`, with another session's commit on top).
+- [ ] Step 6b ← current: prove `.253` one-shot queries are answered on a
+      live robot (the watcher). If they aren't, find why and fix it within
+      the one per-station path. The user doesn't want an old/new split.
+- [ ] Step 6c: on each 1967 laptop, the team page shows "This laptop
+      drives <robot>", the other robot has a Drive button, and Limelight
+      names resolve.
 
 ## Open questions for the user
 
-1. Deploy timing: 1967 is on the field. A graceful reload keeps network
-   rules (see the earlier answer in this thread). Recommend deploying while
-   their robots are disabled.
+(none open: the user chose one system for everyone, proven on a live
+robot, over reverting or a hybrid. 2026-10-12)
 
 ## Things not to do
 
@@ -128,3 +151,8 @@ Probe used (read-only; nothing written on steamboat):
 - Don't re-run the full station teardown to add the new address. It
   removes `.254` and disrupts a live robot.
 - Don't disable IPv6 or touch the radio as part of this.
+- Don't add a second mDNS path for "normal" teams (no hybrid). Fix the one
+  per-station path.
+- Don't commit from the main checkout while another session's half-done
+  work breaks the typecheck. Commit from a clean temp worktree
+  (`%TEMP%\pfms-hotfix`) and move `master` with `git update-ref`.
