@@ -51,7 +51,7 @@ The user asked for:
 2. [x] Frontend: `MatchHoldNotice` in the robot row caption and the waiting
        dialog, with the "Clear the empty match" button.
 3. [x] Typecheck, tests, commit.
-4. [ ] Deploy (needs the user's OK).
+4. [x] Deployed `ec7532c` to steamboat 2026-10-11 17:10 (with the cancel change and link logging).
 
 ## Progress log
 
