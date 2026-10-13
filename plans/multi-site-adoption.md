@@ -276,6 +276,12 @@ edited from a new `/admin` → **Site** section, broadcast to all clients:
   suffix, optional support contact line.
 - Theme: primary/secondary color, red/blue alliance colors, default
   light/dark, optional accent for the scoreboard.
+- Sounds: a site's own match sound set (countdown, start, end, pause,
+  abort…), chosen or uploaded here, with the generated defaults as the
+  fallback. Decided 2026-10-13 that sound setup belongs here rather than
+  in the setup wizard (`plans/setup-live-settings.md`, item 7). The sound
+  names are duplicated between `src/matchAudio.ts` and
+  `frontend/src/hooks/useMatchAudio.ts` and must stay in step.
 - Toggles: which optional features/pages are enabled (scoring, support
   widget, staff roles + labels, usage page, robot tester, video view).
 

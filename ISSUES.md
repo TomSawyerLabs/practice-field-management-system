@@ -113,3 +113,7 @@ hardware or a real deployment:
   `br-slot1` (35 on slot2, 19, 18, 12, 10 on the rest) on 2026-10-12. A
   handful is expected, so memberships are probably leaking (team-check mDNS
   sockets, or reflector re-joins). Check with `cat /proc/net/igmp` over time.
+
+## Flaky under load: robotWifiScan "capitals-only difference is still tested automatically"
+
+`src/robotWifiScan.test.ts` › `the scanner > capitals-only difference is still tested automatically` failed once in a full `bun test` run (2026-10-13, 941 pass / 1 fail, while another thread's uncommitted work was in the tree) and passes on its own (`bun test src/robotWifiScan.test.ts`, 29/29). Looks timing-dependent under the full suite's load. Matters because a red full run hides real regressions.
