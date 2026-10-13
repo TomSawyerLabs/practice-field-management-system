@@ -171,10 +171,13 @@ recommendation for each:
    the riskiest; would want your OK on the design first.
 5. **Scoreboard API key** — inline "create key" button instead of "go to
    /admin". Recommend yes (small).
-6. **FMS_ENDPOINT** — user asked whether it's the fixed IP DSes reach.
-   It's an on/off flag; the address is fixed (10.0.100.5). Proposed: run
-   the FMS server by default whenever the field network is up, keep
-   `FMS_ENDPOINT=false` as an off switch. Waiting on the user.
+6. **FMS_ENDPOINT** — decided (user, 2026-10-13): remove it entirely, no
+   setting either. The FMS server follows field control: started at boot
+   when 10.0.100.5 is present and on every trunk rebuild, stopped before a
+   teardown. Telemetry, drive sessions and the Wi-Fi commit deferral run
+   regardless (they were wrongly behind the flag). A leftover
+   `FMS_ENDPOINT=…` in a host's `/etc/pfms/environment` (steamboat's likely
+   has one — not checked) is now simply ignored.
 7. **Sounds** — user suggested making it part of the "theme" setup. No
    theme setup exists yet (Stage 2 of plans/multi-site-adoption.md).
    Decided (user, 2026-10-13): sounds belong to the theme; noted in
