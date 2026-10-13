@@ -399,8 +399,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   matchEngine.addStateListener(state => {
     for (const station of StationNameList) {
       const st = state.stationStates[station];
-      // E-stop, or a team Stop on a robot out of a match.
-      const want = (st?.eStop ?? false) || (!st?.joined && (st?.teamStopped ?? false));
+      // E-stop (and, after one, until the DS shows Disabled), or a team Stop
+      // on a robot out of a match.
+      const want = (st?.eStop ?? false) || (st?.reArming ?? false) || (!st?.joined && (st?.teamStopped ?? false));
       if (want === (eStopCut.get(station) ?? false)) continue;
       eStopCut.set(station, want);
       if (!VlanInterface || process.env.DRY_RUN) continue;
@@ -1253,6 +1254,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         return undefined;
       },
       (station, count) => stationChecks.noteJoysticks(station, count),
+      (station, enabled) => matchEngine.noteDsControl(station, enabled),
     );
     robotPacketCapture.start();
   }

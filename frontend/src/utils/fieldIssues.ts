@@ -280,6 +280,7 @@ const DISABLED_BY_WHY: Record<NonNullable<StationControlState['disabledBy']>, st
   self: 'the team disabled it from their station page',
   admin: 'field staff disabled it',
   relay: 'its relay leg is over',
+  estop: 'it came out of an e-stop and waits for the team to press Re-enable',
 };
 
 /** The field's side of "can this robot drive", plus the robot's own word for

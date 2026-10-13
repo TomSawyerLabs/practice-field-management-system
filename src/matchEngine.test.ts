@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS } from './matchEngine.js';
+import { MatchEngine, REARM_QUIET_MS, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { setBroadcast } from './appLogger.js';
 import { ScoringEngine } from './scoringEngine.js';
@@ -1093,5 +1093,111 @@ describe("one robot's e-stop", () => {
     engine.clearMatch();
     expect(engine.isEStopped('slot1')).toBe(false);
     expect(engine.getState().stationStates.slot1?.eStopBy).toBeUndefined();
+  });
+});
+
+describe('coming out of an e-stop starts disabled', () => {
+  afterEach(() => setSystemTime());
+
+  /** slot1 is driving in teleop. */
+  function driving(): MatchEngine {
+    const engine = startedWithSlot1();
+    (engine as unknown as { phase: string }).phase = 'teleop';
+    engine.undisable('slot1', true);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
+    return engine;
+  }
+  const enableEveryone = (engine: MatchEngine) =>
+    (engine as unknown as { enableParticipating(mode: string): void }).enableParticipating('teleOp');
+
+  test('in a match: phase changes leave it disabled until the team presses Enable', () => {
+    const engine = driving();
+    engine.stationEStop('slot1', 'team');
+    engine.clearEStop('slot1');
+    let slot1 = engine.getState().stationStates.slot1!;
+    expect(slot1.enabled).toBe(false);
+    expect(slot1.disabledBy).toBe('estop');
+
+    // The next teleop/resume enable passes it by
+    enableEveryone(engine);
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+
+    // The team's Re-enable is the click that brings it back
+    engine.undisable('slot1', false);
+    slot1 = engine.getState().stationStates.slot1!;
+    expect(slot1.enabled).toBe(true);
+    expect(slot1.disabledBy).toBeNull();
+    engine.stopMatch();
+  });
+
+  test('the field E-Stop clearing mid-setup or after a match leaves robots disabled too', () => {
+    const engine = driving();
+    engine.fieldEStop();
+    expect(engine.getState().phase).toBe('postMatch');
+    engine.clearFieldEStop();
+    expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
+  });
+
+  test('out of a match: the cut holds until the DS shows Disabled', () => {
+    const engine = new MatchEngine(() => 1967);
+    engine.fieldEStop();
+    engine.clearFieldEStop();
+    for (const s of ['slot1', 'slot2'] as const) {
+      expect(engine.isReArming(s)).toBe(true);
+      expect(engine.getState().stationStates[s]?.reArming).toBe(true);
+    }
+    // A DS still set to Enabled keeps its robot cut off
+    engine.noteDsControl('slot1', true);
+    expect(engine.isReArming('slot1')).toBe(true);
+    // Once it shows Disabled, the next Enable on the DS is the one that counts
+    engine.noteDsControl('slot1', false);
+    expect(engine.isReArming('slot1')).toBe(false);
+    expect(engine.isReArming('slot2')).toBe(true);
+  });
+
+  test('out of a match: with no DS commanding the robot, the cut lifts after a quiet spell', () => {
+    const now = Date.now();
+    setSystemTime(new Date(now));
+    const engine = new MatchEngine(() => 1967);
+    engine.stationEStop('slot3', 'staff');
+    engine.clearEStop('slot3');
+    engine.noteDsControl('slot4', true); // another station's DS, irrelevant
+    const check = () => (engine as unknown as { checkReArm(): void }).checkReArm();
+
+    setSystemTime(new Date(now + REARM_QUIET_MS - 1));
+    check();
+    expect(engine.isReArming('slot3')).toBe(true);
+    setSystemTime(new Date(now + REARM_QUIET_MS));
+    check();
+    expect(engine.isReArming('slot3')).toBe(false);
+  });
+
+  test('a DS that keeps saying Enabled keeps the cut, however long', () => {
+    const now = Date.now();
+    setSystemTime(new Date(now));
+    const engine = new MatchEngine(() => 1967);
+    engine.stationEStop('slot2', 'ds');
+    engine.clearEStop('slot2');
+    const check = () => (engine as unknown as { checkReArm(): void }).checkReArm();
+    for (let t = 0; t <= 5 * REARM_QUIET_MS; t += 500) {
+      setSystemTime(new Date(now + t));
+      engine.noteDsControl('slot2', true);
+      check();
+    }
+    expect(engine.isReArming('slot2')).toBe(true);
+  });
+
+  test('a robot e-stopped in setup stays e-stopped when the match starts', () => {
+    const engine = new MatchEngine(() => 1967);
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'red');
+    for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+    engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
+    engine.setReady('slot1', true);
+    engine.stationEStop('slot1', 'team');
+    engine.startMatch();
+    expect(engine.isEStopped('slot1')).toBe(true);
+    engine.stopMatch();
   });
 });

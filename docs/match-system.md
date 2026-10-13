@@ -177,6 +177,24 @@ is a field-wide **latch** for emergencies:
   band across the screen, and a Driver Station held out of a match shows
   `Field E-Stop` (`FieldES` on a 2027 DS) as its game data.
 
+### Coming out of an e-stop
+
+Whenever a robot comes out of an e-stop — the field E-Stop cleared, its own
+e-stop cleared, or a match cleared — it starts **disabled**, and runs again
+only after someone presses **Enable**. Nothing brings it back by itself:
+
+- **In a match**, the robot is marked disabled-after-e-stop. The next phase
+  change (auto → teleop, a resume) passes it by; the team presses
+  **Re-enable** on their page (or staff press Enable on `/match`).
+- **Out of a match**, the field keeps cutting the Driver Station's control
+  traffic to the robot until it sees the DS command the robot _disabled_
+  (or sees no control traffic for the robot for 2 s). A DS still set to
+  Enabled can't put the robot straight back on; the team page tells the
+  team to click Disable, then Enable on their DS.
+- An e-stop latched while a match is being set up stays latched through
+  the start: that robot sits the match out until staff clear it and the
+  team enables it.
+
 ### E-Stop (one robot)
 
 - Emergency stop for one robot for the rest of the match. Triggered from

@@ -69,8 +69,9 @@ function clockTime(epochMs: number): string {
 export function TeamEStopBanner({ station }: { station?: StationName }) {
   const matchState = useMatchState();
   if (!matchState) return null;
-  const reason = eStopReason(station ? matchState.stationStates[station] : undefined, matchState.fieldEStop);
-  if (!reason) return null;
+  const state = station ? matchState.stationStates[station] : undefined;
+  const reason = eStopReason(state, matchState.fieldEStop);
+  if (!reason) return <OutOfEStopNotice state={state} />;
   return (
     <Alert
       severity="error"
@@ -87,6 +88,29 @@ export function TeamEStopBanner({ station }: { station?: StationName }) {
       {reason.detail}
     </Alert>
   );
+}
+
+/** After the e-stop clears, the robot stays disabled until the team presses
+ *  Enable — this says which Enable, and why nothing moved yet. */
+function OutOfEStopNotice({ state }: { state: StationControlState | undefined }) {
+  if (state?.reArming) {
+    return (
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        <AlertTitle sx={{ fontWeight: 700 }}>E-Stop cleared: your robot is still stopped</AlertTitle>
+        The field keeps your robot stopped until your Driver Station shows <strong>Disabled</strong>. If it still says
+        Enabled, click <strong>Disable</strong> on it, then <strong>Enable</strong> when you’re ready to drive.
+      </Alert>
+    );
+  }
+  if (state?.joined && !state.enabled && state.disabledBy === 'estop') {
+    return (
+      <Alert severity="warning" sx={{ mb: 2 }}>
+        <AlertTitle sx={{ fontWeight: 700 }}>E-Stop cleared: your robot stays disabled</AlertTitle>
+        It won’t come back on by itself. Press <strong>Re-enable</strong> when you’re ready to drive.
+      </Alert>
+    );
+  }
+  return null;
 }
 
 // ── Staff pages ─────────────────────────────────────────────────────

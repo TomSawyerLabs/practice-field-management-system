@@ -1217,7 +1217,7 @@ export function challengeScore(
  *  match slot "red1" if the team joined the red alliance. */
 export type MatchSlot = `${Alliance}${StationNumber}`;
 
-export type DisabledBy = 'ds' | 'self' | 'admin' | 'relay';
+export type DisabledBy = 'ds' | 'self' | 'admin' | 'relay' | 'estop';
 
 /** Who e-stopped one robot: its Driver Station's own E-Stop, the team's page
  *  (station page or match window), or field staff (`/match` or `/admin`). */
@@ -1256,12 +1256,19 @@ export type StationControlState = {
   dsAttached?: boolean;
   /** Who latched the current disable, when it wasn't ordinary phase control:
    *  the team's DS (Enter key), the team's own station console, field
-   *  staff, or the relay moving on to the next robot. Teams may re-enable
-   *  themselves after a 'ds' or 'self' disable (stationSelfUndisable); an
-   *  'admin' disable only clears from the admin console, and a 'relay'
-   *  disable never clears — that robot's leg is over. Null when enabled or
-   *  when disabled by phase control. */
+   *  staff, the relay moving on to the next robot, or the robot coming out
+   *  of an e-stop mid-match. Teams may re-enable themselves after a 'ds',
+   *  'self' or 'estop' disable (stationSelfUndisable); an 'admin' disable
+   *  only clears from the admin console, and a 'relay' disable never clears —
+   *  that robot's leg is over. Phase changes (the horn, teleop, a resume)
+   *  never lift an 'estop' disable: someone has to press Enable. Null when
+   *  enabled or when disabled by phase control. */
   disabledBy: DisabledBy | null;
+  /** The robot just came out of an e-stop and the field still cuts its
+   *  Driver Station's control traffic, waiting to see the DS command it
+   *  disabled — so a DS still set to Enabled can't bring the robot back by
+   *  itself. Lifts when the DS shows Disabled (or sends the robot nothing). */
+  reArming?: boolean;
   /** Set when the field's control-system policy forbids this robot: why it
    *  cannot be enabled. The field holds it disabled in and out of matches. */
   blockedReason?: string;

@@ -132,7 +132,12 @@ control packet (UDP 1110) going into that station's bridge
 packets stop, whatever its DS thinks. Robot→DS traffic still flows, so the
 field keeps seeing the robot. An unjoined DS is also taken under field control
 like a held one (game data `E-Stop`). Both last until staff clear the e-stop
-(admin page "Clear all e-stops", or per station on the match page). Startup
+(the field E-Stop's Clear on `/match` or `/admin`, or per station on the
+match page) — and the cut a little longer: it stays until the packet capture
+sees the DS's own control packets to the robot (UDP 1110, read at ingress,
+so before the DROP) command it **disabled**, or sees none for 2 s. A DS that
+never noticed the stop and still says Enabled therefore can't re-enable the
+robot by itself; the driver has to click Disable and then Enable. Startup
 removes any leftover cut, since no station starts e-stopped.
 
 The team's pages offer the same cut out of a match: **Stop robot** (a team

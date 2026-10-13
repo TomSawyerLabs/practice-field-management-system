@@ -31,6 +31,10 @@ export class RobotPacketCapture {
     private readonly vlanToStation?: (vlanId: number) => StationName | undefined,
     /** A DS→robot control packet was seen, carrying this many joysticks. */
     private readonly onJoysticks?: (station: StationName, count: number) => void,
+    /** A DS→robot control packet was seen, commanding the robot enabled or
+     *  not. Captured at ingress, so it is seen even while the field's stop
+     *  cut drops the packet before it reaches the robot. */
+    private readonly onDsControl?: (station: StationName, enabled: boolean) => void,
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -235,6 +239,11 @@ export class RobotPacketCapture {
   private parseDsToRobot(payload: Buffer, dstIp: string, vlanId: number | undefined, capturedAt: number): void {
     const team = teamFromIp(dstIp);
     if (!team) return;
+    // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
+    if (payload.length >= 4 && payload[2] === 0x01) {
+      const station = this.resolveStation(team, vlanId);
+      if (station) this.onDsControl?.(station, Boolean(payload[3] & 0x04));
+    }
     const count = countDsJoysticks(payload);
     if (count === null) return;
     const station = this.resolveStation(team, vlanId);
