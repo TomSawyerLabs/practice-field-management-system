@@ -9,6 +9,8 @@ import Chip from '@mui/material/Chip';
 import Container from '@mui/material/Container';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import CancelIcon from '@mui/icons-material/Cancel';
 import DangerousIcon from '@mui/icons-material/Dangerous';
@@ -35,12 +37,14 @@ import {
   MatchHistoryTeam,
   challengeScore,
   isCountUpTiming,
+  type LeaderboardScope,
 } from '../../../src/types';
 import {
   useMatchState,
   useMatchHistory,
   useChallengeLeaderboard,
   sendChallengeLeaderboardOnTv,
+  sendChallengeLeaderboardScope,
   sendMatchCreate,
   sendMatchCancel,
   sendMatchAbortCountdown,
@@ -529,11 +533,27 @@ export function MatchControlPage() {
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
         )}
 
-        {showHistory && (
+        {showHistory && leaderboard.anyRuns && (
           <ChallengeLeaderboard
             tables={leaderboard.tables}
+            emptyText="No speed challenge runs today yet."
             action={
               <>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={leaderboard.scope}
+                  onChange={(_, scope: LeaderboardScope | null) => scope && sendChallengeLeaderboardScope(scope)}
+                  sx={{ mb: 1 }}
+                >
+                  <ToggleButton value="today">Today</ToggleButton>
+                  <ToggleButton value="all">All time</ToggleButton>
+                </ToggleButtonGroup>
+                <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1 }}>
+                  {leaderboard.scope === 'today'
+                    ? 'Ranks runs since midnight, here and on the TVs. Back to Today when pFMS restarts.'
+                    : 'Ranks every run in match history, past events included, here and on the TVs. Back to Today when pFMS restarts.'}
+                </Typography>
                 <FormControlLabel
                   control={
                     <Switch checked={leaderboard.onTv} onChange={e => sendChallengeLeaderboardOnTv(e.target.checked)} />

@@ -72,11 +72,26 @@ export function leaderboardRows(matches: MatchHistoryEntry[], timing: ChallengeT
   return [...byTeams.values()].sort((a, b) => (betterAttempt(a, b, timing) === a ? -1 : 1));
 }
 
-/** Every timing style's ranked rows, leaving out styles nobody has run. */
-export function challengeLeaderboard(matches: MatchHistoryEntry[]): ChallengeLeaderboardTables {
+/** Local midnight at the start of the day `now` falls in — where a "today"
+ *  leaderboard starts. The field's own clock decides what today is. */
+export function startOfDay(now: number): number {
+  const day = new Date(now);
+  day.setHours(0, 0, 0, 0);
+  return day.getTime();
+}
+
+/** Whether history holds any challenge run at all, whatever the scope. */
+export function hasChallengeRuns(matches: MatchHistoryEntry[]): boolean {
+  return matches.some(match => match.challenge);
+}
+
+/** Every timing style's ranked rows, leaving out styles nobody has run.
+ *  `since` drops runs that ended before it (a "today" leaderboard). */
+export function challengeLeaderboard(matches: MatchHistoryEntry[], since = 0): ChallengeLeaderboardTables {
+  const inScope = since > 0 ? matches.filter(match => match.endedAt >= since) : matches;
   const tables: ChallengeLeaderboardTables = {};
   for (const timing of TIMINGS) {
-    const rows = leaderboardRows(matches, timing);
+    const rows = leaderboardRows(inScope, timing);
     if (rows.length > 0) tables[timing] = rows;
   }
   return tables;

@@ -1094,7 +1094,7 @@ export function ScoreboardPage() {
                   mb: 1,
                 }}
               >
-                Speed Challenge Leaderboard
+                Speed Challenge Leaderboard{leaderboard.scope === 'today' ? ' · Today' : ''}
               </Box>
               <ChallengeLeaderboard tables={leaderboard.tables} compact limit={5} />
             </Box>

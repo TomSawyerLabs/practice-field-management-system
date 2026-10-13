@@ -593,6 +593,14 @@ One row per set of teams showing their best attempt, with the number of
 runs they've had. Window, stopwatch and relay runs are ranked in separate
 tables — they aren't comparable. Ties go to whoever got there first.
 
+It ranks **today's** runs by default — those since midnight on the field's
+own clock — so one event's results don't carry into the next. The **Today /
+All time** toggle on its `/match` card switches every leaderboard (the card,
+the scoreboard, leaderboard TVs) to every run in history and back; like the
+TV switch below, it goes back to Today when pFMS restarts. The card stays on
+`/match` on a day with no runs yet, as long as history has any, so All time
+is always one click away.
+
 It appears on `/match` while the field is idle, and a TV can show it two
 ways — both opt-in, because history keeps every past event's runs and a
 leaderboard that showed whenever one existed would sit on the TVs through

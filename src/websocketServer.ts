@@ -52,6 +52,8 @@ import {
   isCastReceiverMute,
   isCastReceiverChecks,
   isChallengeLeaderboardOnTv,
+  isChallengeLeaderboardScope,
+  type LeaderboardScope,
   isCastReceiverView,
   isScoreboardView,
   type ScoreboardView,
@@ -169,7 +171,7 @@ import type { AdminAuth } from './adminAuth.js';
 import type { ExternalAccessStore } from './externalAccessStore.js';
 import type { MatchAudio } from './matchAudio.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
-import { challengeLeaderboard } from './challengeRanking.js';
+import { challengeLeaderboard, hasChallengeRuns, startOfDay } from './challengeRanking.js';
 import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
@@ -801,10 +803,17 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
    *  again after a restart — history keeps every past event's runs, so a
    *  leaderboard left on would sit on the TVs through ordinary practice. */
   let leaderboardOnTv = false;
+  /** Today unless match control says otherwise, and today again after a
+   *  restart — the same reasoning as the TV switch. */
+  let leaderboardScope: LeaderboardScope = 'today';
   function leaderboardMessage(): ChallengeLeaderboardState {
+    const matches = matchHistoryStore?.getState().matches ?? [];
+    const since = leaderboardScope === 'today' ? startOfDay(Date.now()) : 0;
     return {
       type: 'challengeLeaderboard',
-      tables: challengeLeaderboard(matchHistoryStore?.getState().matches ?? []),
+      tables: challengeLeaderboard(matches, since),
+      scope: leaderboardScope,
+      anyRuns: hasChallengeRuns(matches),
       onTv: leaderboardOnTv,
     };
   }
@@ -818,6 +827,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   if (matchHistoryStore) {
     leaderboardJson = JSON.stringify(leaderboardMessage());
     matchHistoryStore.addListener(refreshLeaderboard);
+    // A "today" leaderboard empties at midnight with no history change to
+    // trigger it. Unchanged rankings aren't re-sent, so this is nearly free.
+    setInterval(refreshLeaderboard, 60_000);
   }
 
   // Broadcast usage tracking state changes to all clients
@@ -1457,6 +1469,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         broadcastReceiverList();
       } else if (isChallengeLeaderboardOnTv(data)) {
         leaderboardOnTv = data.show;
+        refreshLeaderboard();
+      } else if (isChallengeLeaderboardScope(data)) {
+        leaderboardScope = data.scope;
         refreshLeaderboard();
       } else if (isCastReceiverChecks(data)) {
         // Find the target receiver and send it the setup-checks toggle

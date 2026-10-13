@@ -4054,7 +4054,14 @@ export type ChallengeLeaderboardTables = Partial<Record<ChallengeTiming, Challen
  *  which it must not see. */
 export interface ChallengeLeaderboardState {
   type: 'challengeLeaderboard';
+  /** Ranked over `scope`'s runs only. */
   tables: ChallengeLeaderboardTables;
+  /** Which runs it ranks. Defaults to today, so a past event's results
+   *  don't carry into the next one. */
+  scope: LeaderboardScope;
+  /** Whether history holds any challenge run at all — so match control can
+   *  offer "All time" on a day with nothing yet. */
+  anyRuns: boolean;
   /** Whether the scoreboard TVs show it between runs. Opt-in for the day of
    *  a speed challenge: history keeps old events' runs, so without this the
    *  TV would show a stale leaderboard on every ordinary practice day. */
@@ -4064,6 +4071,22 @@ export interface ChallengeLeaderboardState {
 export function isChallengeLeaderboardState(msg: unknown): msg is ChallengeLeaderboardState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as ChallengeLeaderboardState).type === 'challengeLeaderboard';
+}
+
+/** The runs a leaderboard ranks: those since the field's local midnight, or
+ *  every one in history. */
+export type LeaderboardScope = 'today' | 'all';
+
+/** Sent by match control to choose which runs the leaderboard ranks. */
+export interface ChallengeLeaderboardScope {
+  type: 'challengeLeaderboardScope';
+  scope: LeaderboardScope;
+}
+
+export function isChallengeLeaderboardScope(msg: unknown): msg is ChallengeLeaderboardScope {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as ChallengeLeaderboardScope;
+  return m.type === 'challengeLeaderboardScope' && (m.scope === 'today' || m.scope === 'all');
 }
 
 /** Sent by match control to show or hide the leaderboard on the TVs. */

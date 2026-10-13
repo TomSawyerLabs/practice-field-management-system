@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { challengeLeaderboard, leaderboardRows } from './challengeRanking.js';
+import { challengeLeaderboard, hasChallengeRuns, leaderboardRows, startOfDay } from './challengeRanking.js';
 import type { Alliance, ChallengeTally, ChallengeTiming, MatchHistoryEntry } from './types.js';
 
 let nextEnd = 1_700_000_000_000;
@@ -203,5 +203,25 @@ describe('the leaderboard the scoreboard is sent', () => {
     const match = run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 0 } } });
     delete match.challenge;
     expect(challengeLeaderboard([match])).toEqual({});
+    expect(hasChallengeRuns([match])).toBe(false);
+  });
+
+  test('a since cutoff leaves out runs that ended before it, attempts included', () => {
+    const lastEvent = run('window', { red: { teams: [254], tally: { laps: 20, penalties: 0 } } });
+    const earlier = run('window', { red: { teams: [5940], tally: { laps: 9, penalties: 0 } } });
+    const today = run('window', { red: { teams: [5940], tally: { laps: 5, penalties: 0 } } });
+    const all = [lastEvent, earlier, today];
+
+    const scoped = challengeLeaderboard(all, today.endedAt);
+    expect(scoped.window?.map(r => [r.key, r.laps, r.attempts])).toEqual([['5940', 5, 1]]);
+    expect(challengeLeaderboard(all).window?.map(r => r.key)).toEqual(['254', '5940']);
+    expect(challengeLeaderboard(all, today.endedAt + 1)).toEqual({});
+    expect(hasChallengeRuns(all)).toBe(true);
+  });
+
+  test('today starts at local midnight', () => {
+    const afternoon = new Date(2026, 9, 13, 15, 30).getTime();
+    expect(startOfDay(afternoon)).toBe(new Date(2026, 9, 13).getTime());
+    expect(startOfDay(new Date(2026, 9, 13).getTime())).toBe(new Date(2026, 9, 13).getTime());
   });
 });

@@ -68,12 +68,25 @@ export function LeaderboardTvPage() {
       >
         Speed Challenge Leaderboard
       </Typography>
+      <Typography
+        sx={{
+          color: 'rgba(255,255,255,0.55)',
+          fontWeight: 700,
+          letterSpacing: '0.18em',
+          textTransform: 'uppercase',
+          textAlign: 'center',
+          fontSize: 'clamp(0.8rem, 1.4vw, 1.2rem)',
+          mt: -2,
+        }}
+      >
+        {leaderboard.scope === 'today' ? 'Today' : 'All time'}
+      </Typography>
 
       {matchState && <RunStrip matchState={matchState} />}
 
       {tables.length === 0 ? (
         <Typography sx={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', fontSize: '1.6rem', mt: 6 }}>
-          No speed challenge runs yet
+          {leaderboard.scope === 'today' ? 'No speed challenge runs today yet' : 'No speed challenge runs yet'}
         </Typography>
       ) : (
         <Box sx={{ display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>

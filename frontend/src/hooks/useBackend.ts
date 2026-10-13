@@ -136,6 +136,8 @@ import {
   type SystemdServiceInstallResult,
   isChallengeLeaderboardState,
   type ChallengeLeaderboardOnTv,
+  type ChallengeLeaderboardScope,
+  type LeaderboardScope,
   type ChallengeLeaderboardTables,
   isStationChecksState,
   TeamPrefsState,
@@ -442,7 +444,7 @@ let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
-let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, onTv: false };
+let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
@@ -958,7 +960,13 @@ function receiveMessage(detail: Message) {
   }
 
   if (isChallengeLeaderboardState(detail)) {
-    handleChallengeLeaderboard({ tables: detail.tables, onTv: detail.onTv === true });
+    handleChallengeLeaderboard({
+      tables: detail.tables,
+      scope: detail.scope === 'all' ? 'all' : 'today',
+      // An older server sends neither: then any table means runs exist.
+      anyRuns: detail.anyRuns ?? Object.keys(detail.tables).length > 0,
+      onTv: detail.onTv === true,
+    });
     return;
   }
 
@@ -1220,7 +1228,11 @@ export function useQueueState(): QueueState | null {
 }
 
 export interface ChallengeLeaderboard {
+  /** Ranked over `scope`'s runs only. */
   tables: ChallengeLeaderboardTables;
+  scope: LeaderboardScope;
+  /** Whether history holds any challenge run at all, in or out of scope. */
+  anyRuns: boolean;
   /** Whether match control has put it on the scoreboard TVs. */
   onTv: boolean;
 }
@@ -1952,6 +1964,11 @@ export function sendCastReceiverChecks(receiverId: string, checks: boolean) {
 
 export function sendCastReceiverView(receiverId: string, view: ScoreboardView) {
   ws?.send(JSON.stringify({ type: 'castReceiverView', receiverId, view } satisfies CastReceiverView));
+}
+
+/** Rank today's speed challenge runs, or every run in history. */
+export function sendChallengeLeaderboardScope(scope: LeaderboardScope) {
+  ws?.send(JSON.stringify({ type: 'challengeLeaderboardScope', scope } satisfies ChallengeLeaderboardScope));
 }
 
 /** Show or hide the speed challenge leaderboard on the scoreboard TVs. */

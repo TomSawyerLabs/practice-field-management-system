@@ -32,6 +32,7 @@ export function ChallengeLeaderboard({
   compact,
   limit,
   action,
+  emptyText,
 }: {
   tables: ChallengeLeaderboardTables;
   /** TV styling: bigger type, no card chrome. */
@@ -39,12 +40,16 @@ export function ChallengeLeaderboard({
   limit?: number;
   /** Under the title in card mode, e.g. the show-on-TVs switch. */
   action?: ReactNode;
+  /** In card mode, shown instead of the tables when there are none — keeps
+   *  the card (and its `action`) up on a day with no runs yet. Without it,
+   *  an empty leaderboard renders nothing. */
+  emptyText?: string;
 }) {
   const tables = (['window', 'stopwatch', 'relay'] as ChallengeTiming[])
     .map(timing => ({ timing, rows: byTiming[timing] ?? [] }))
     .filter(t => t.rows.length > 0);
 
-  if (tables.length === 0) return null;
+  if (tables.length === 0 && (compact || !emptyText)) return null;
 
   const body = (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: compact ? 2 : 3 }}>
@@ -132,7 +137,7 @@ export function ChallengeLeaderboard({
           Speed Challenge Leaderboard
         </Typography>
         {action && <Box sx={{ mb: 2 }}>{action}</Box>}
-        {body}
+        {tables.length === 0 ? <Typography sx={{ color: 'text.secondary' }}>{emptyText}</Typography> : body}
       </CardContent>
     </Card>
   );
