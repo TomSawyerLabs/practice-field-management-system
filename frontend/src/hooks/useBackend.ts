@@ -78,6 +78,8 @@ import {
   RobotWifiScanState,
   isSixGhzWatchState,
   SixGhzWatchState,
+  isSelfUpdateStatus,
+  SelfUpdateStatus,
   isWifiCardsState,
   WifiCardsState,
   RobotWifiTest,
@@ -920,6 +922,12 @@ function receiveMessage(detail: Message) {
   if (isSixGhzWatchState(detail)) {
     currentSixGhzWatch = detail;
     events.dispatchEvent(new CustomEvent('sixGhzWatch', { detail }));
+    return;
+  }
+
+  if (isSelfUpdateStatus(detail)) {
+    currentSelfUpdate = detail;
+    events.dispatchEvent(new CustomEvent('selfUpdate', { detail }));
     return;
   }
 
@@ -2203,6 +2211,35 @@ export function useRobotWifiScan(): RobotWifiScanState | null {
  *  its robot's network (rate-limited on the server). */
 export function sendRobotWifiTest(station: StationName) {
   ws?.send(JSON.stringify({ type: 'robotWifiTest', station } satisfies RobotWifiTest));
+}
+
+// ── Software update ─────────────────────────────────────────────────
+
+let currentSelfUpdate: SelfUpdateStatus | null = null;
+
+/** Installed version, newest published build, and the updater's progress.
+ *  Null until the server says (older servers never do). */
+export function useSelfUpdate(): SelfUpdateStatus | null {
+  const [state, setState] = useState(currentSelfUpdate);
+
+  useEffect(() => {
+    setState(currentSelfUpdate);
+    const handler = (e: Event) => setState((e as CustomEvent<SelfUpdateStatus>).detail);
+    events.addEventListener('selfUpdate', handler);
+    return () => events.removeEventListener('selfUpdate', handler);
+  }, []);
+
+  return state;
+}
+
+/** Look for a new build now (admin). */
+export function sendSelfUpdateCheck() {
+  ws?.send(JSON.stringify({ type: 'selfUpdateCheck' }));
+}
+
+/** Install the newest build and restart into it (admin). */
+export function sendSelfUpdateApply() {
+  ws?.send(JSON.stringify({ type: 'selfUpdateApply' }));
 }
 
 // ── 6 GHz watch ─────────────────────────────────────────────────────

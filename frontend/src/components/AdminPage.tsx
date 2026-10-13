@@ -9,6 +9,7 @@ import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import { MatchRecordingSection } from './MatchRecordingSection';
 import { TimelapseSettingsSection } from './TimelapseSection';
+import { SoftwareUpdateSection } from './SoftwareUpdateSection';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
@@ -1251,6 +1252,7 @@ const ADMIN_TABS = [
   { id: 'video', label: 'Video' },
   { id: 'scoring', label: 'Scoring & integrations' },
   { id: 'access', label: 'Access' },
+  { id: 'software', label: 'Software' },
 ] as const;
 type AdminTab = (typeof ADMIN_TABS)[number]['id'];
 
@@ -1301,6 +1303,8 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
       );
     case 'access':
       return <ExternalAccessSection />;
+    case 'software':
+      return <SoftwareUpdateSection />;
   }
 }
 
