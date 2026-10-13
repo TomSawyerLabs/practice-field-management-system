@@ -92,32 +92,46 @@ disabling itself…`, `…admin Disable right behind an admin Enable…` — whi
 - [x] 2. Production entry points — wizard (`--no-env-file`), steamboat unit
      in `.claude/skills/update-service/`, Dockerfile on `oven/bun:1-slim`
 - [x] 3. Verify under Bun — see findings; found the 1.4.2 floor
-- [ ] 4. Steamboat (needs yes) — exact sequence below
+- [x] 4. Steamboat — done 2026-10-13 13:42 PDT, approved by the user
+     ("do it. and bring the other threads' change along")
 - [x] 5. Docs — README, getting-started (system-wide bun install), setup,
      deployment, configuration, .env.example
 
-### Step 4 sequence (not run — needs explicit approval)
+### Step 4 as run
 
-1. Check the field is idle (`curl pfms.tsl/health` phase).
-2. `ssh steamboat '~/.bun/bin/bun upgrade'` (1.3.11 → latest ≥1.4.2).
-3. `.claude/skills/update-service/deploy.sh` — installs the new unit
-   (`ExecStart=/home/cameron/.bun/bin/bun --no-env-file src/index.ts`),
-   backs up the old one, daemon-reload. Doesn't restart.
-4. On steamboat: `./update.sh force` (pull, build, reload → bun). Reload
-   keeps the network.
-5. Watch the journal, `/health`, a scoreboard, a test enable.
-   Rollback: restore the `.bak.<timestamp>` unit and daemon-reload; check
-   out the commit before this change and `bun run build` (that version's
-   build still emits `dist/`); `systemctl restart`. Node 22 stays installed
-   on steamboat until we're confident.
+1. Field idle (`/health` phase `idle`, version `c6dfb5e`).
+2. `~/.bun/bin/bun upgrade` on steamboat: 1.3.11 → 1.4.3.
+3. Full suite on HEAD (all 39 unpushed commits, incl. other threads'
+   FMS_ENDPOINT removal and leaderboard work): 950 pass, 2 fail — a
+   Windows-reserved-port flake in `fmsServer.test.ts` (passes alone,
+   logged in ISSUES.md). Pushed `c6dfb5e..13c7a62` (fast-forward).
+4. `deploy.sh`: only the ExecStart line changed; backup
+   `/etc/systemd/system/practice-field-management-system.service.bak.20261013-134149`.
+5. `./update.sh` (no force): old node process logged "Graceful exit:
+   network rules preserved", bun started with `KEEP_NETWORK=true`. FMS
+   server TCP 1750 + UDP 1160, mDNS reflector, Slack, screens reconnected;
+   deploy announcement posted (40 changes). `bun.lock` clean on steamboat.
+6. After a minute: same PID, no restarts, RSS ~96 MB, `/health` idle on
+   `13c7a62`, cmdline `/home/cameron/.bun/bin/bun --no-env-file src/index.ts`.
+
+Rollback if needed: restore the `.bak.20261013-134149` unit and
+daemon-reload; check out `aabc14e` (last commit before the switch) and
+`bun run build` (that version still emits `dist/`); `systemctl restart`.
+Node 22 is still installed on steamboat.
+
+Left as is: `/etc/pfms/environment` still has `FMS_ENDPOINT=true`, which
+the code no longer reads (harmless). Stale `dist/` in the checkout is
+unused.
 
 ## Open questions for the user
 
-1. Go ahead with step 4 on steamboat (bun upgrade, new unit, update.sh)?
-   Recommendation: yes, at a quiet time — the field restarts once.
+(none)
 
 ## Things not to do
 
 - Don't test against the real radio / field (see memory: DRY_RUN still
   POSTs to RADIO_URL).
-- Don't apply the unit to steamboat without explicit per-change approval.
+- Don't apply unit changes to steamboat without explicit per-change approval.
+- Steamboat's service runs the same `~/.bun/bin/bun` that `update.sh`
+  builds with, so a `bun upgrade` there changes the field's runtime on the
+  next reload.
