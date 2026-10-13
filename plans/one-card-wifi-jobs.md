@@ -66,7 +66,7 @@ join, longer scan cycle) was judged a non-issue.
 6. Docs (`docs/robot-tester.md`), checks, commit.
 7. Deploy is a separate step — ask first.
 
-Current step: 7 — code committed (`af79f1a`); deploy waits for the user's OK.
+Current step: done — committed `af79f1a`, deployed `c6dfb5e` to steamboat 2026-10-12 23:38.
 
 ## Findings / gotchas
 
@@ -87,6 +87,10 @@ Current step: 7 — code committed (`af79f1a`); deploy waits for the user's OK.
   in a scratch worktree, then committed normally once the other thread
   landed `341c1ef`.
 
+- steamboat's `NRestarts` climbs by one per deploy: the graceful reload is
+  SIGHUP → exit → `Restart=always`. Not a crash; match each "Scheduled
+  restart job" with a "Deploy announcement posted" line.
+
 ## Progress log
 
 - [x] 1 `src/wifiCard.ts`: WifiCard + WifiCardPool, band helpers, tests (`src/wifiCard.test.ts`)
@@ -95,14 +99,12 @@ Current step: 7 — code committed (`af79f1a`); deploy waits for the user's OK.
 - [x] 4 wifiCards classify by jobs + bands, test joins via the card; index pool wiring
 - [x] 5 admin page: job chips, band notes, robot problem alert, channel per robot heard
 - [x] 6 docs (`docs/robot-tester.md` "One card or two", `docs/configuration.md`), typecheck, tests — committed `af79f1a`
-- [ ] 7 deploy (needs the user's OK); then on steamboat optionally move both jobs onto the MT7921AU
+- [x] 7 deployed `c6dfb5e` 2026-10-12 23:38: `wlp0s20f3` 38 channels (2.4: 13, 5: 25), `wlx90de80351083` 98 (2.4: 11, 5: 28, 6: 59), watch learned the field AP's addresses, no scan errors. Optional next: both jobs on `wlx90de80351083` (a setting change on steamboat — needs the user's OK)
 
 ## Open questions for the user
 
-1. Deploy now? Behaviour change on steamboat: the robot scan's card (AC 9560)
-   now also gets `set country US` (already host-wide while the watch runs)
-   and scans 5 GHz too. Recommendation: deploy; leave the two-card setup as
-   is, or try both jobs on `wlx90de80351083` to prove the one-card path.
+1. Try both jobs on the MT7921AU (`wlx90de80351083`) to prove the one-card
+   path on real hardware? Optional; the two-card setup works as is.
 
 ## Things not to do
 
