@@ -57,25 +57,3 @@ export async function checkInterfaceIps(iface: string, expectedIps: string[], ne
     }
   }
 }
-
-/** The tools in `tools` that aren't on the PATH. */
-export async function missingTools(tools: string[]): Promise<string[]> {
-  const { execFile } = await import('node:child_process');
-  const { promisify } = await import('node:util');
-  const exec = promisify(execFile);
-
-  const missing: string[] = [];
-  for (const tool of tools) {
-    try {
-      await exec('which', [tool]);
-    } catch {
-      missing.push(tool);
-    }
-  }
-  return missing;
-}
-
-/** The apt command that installs these tools. */
-export function aptInstallCommand(tools: string[]): string {
-  return `sudo apt install ${tools.map(t => (t === 'arping' ? 'iputils-arping' : t)).join(' ')}`;
-}

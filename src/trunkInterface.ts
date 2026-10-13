@@ -9,7 +9,8 @@
  * next commit; index.ts orchestrates the services that use the trunk.
  */
 import { isDryRun } from './dryRun.js';
-import { aptInstallCommand, checkInterfaceIps, missingTools } from './startupChecks.js';
+import { checkInterfaceIps } from './startupChecks.js';
+import { REQUIRED_TOOLS, aptInstallCommand, missingTools } from './hostTools.js';
 import {
   cleanupOldVlanInterfaces,
   clearEStopCuts,
@@ -19,9 +20,6 @@ import {
   removeStationInterfaces,
   stopAllDHCP,
 } from './networkManager.js';
-
-/** Tools pFMS needs to run the field network. */
-export const REQUIRED_TRUNK_TOOLS = ['iptables', 'arping', 'fping', 'dnsmasq', 'conntrack', 'tcpdump'];
 
 /** pFMS's address on field control, the trunk's untagged network. */
 export const FIELD_CONTROL_ADDRESS = '10.0.100.5';
@@ -38,7 +36,7 @@ export async function bringUpTrunk(iface: string, { keepNetwork }: { keepNetwork
   const net = networkBackend();
   // A dry run has no real NIC or tools to check.
   if (!isDryRun()) {
-    const missing = await missingTools(REQUIRED_TRUNK_TOOLS);
+    const missing = await missingTools(REQUIRED_TOOLS);
     if (missing.length > 0) {
       return { ok: false, reason: `missing required tools: ${missing.join(', ')} (${aptInstallCommand(missing)})` };
     }

@@ -127,6 +127,8 @@ import {
   StationChecksState,
   QueueAdmin,
   isQueueState,
+  isHostToolsInstallState,
+  type HostToolsInstallState,
   isChallengeLeaderboardState,
   type ChallengeLeaderboardOnTv,
   type ChallengeLeaderboardTables,
@@ -927,6 +929,11 @@ function receiveMessage(detail: Message) {
 
   if (isStationChecksState(detail)) {
     handleStationChecks(detail);
+    return;
+  }
+
+  if (isHostToolsInstallState(detail)) {
+    events.dispatchEvent(new CustomEvent('hostToolsInstallState', { detail }));
     return;
   }
 
@@ -2433,6 +2440,22 @@ function sendWhenOpen(payload: unknown) {
 
 export function sendRequestSetupProbe() {
   sendWhenOpen({ type: 'requestSetupProbe' });
+}
+
+/** Ask the server to install every missing host tool (setup wizard). */
+export function sendInstallHostTools() {
+  sendWhenOpen({ type: 'installHostTools' });
+}
+
+/** Progress of a tool install this page asked for. */
+export function useHostToolsInstall(): HostToolsInstallState | null {
+  const [state, setState] = useState<HostToolsInstallState | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setState((e as CustomEvent<HostToolsInstallState>).detail);
+    events.addEventListener('hostToolsInstallState', handler);
+    return () => events.removeEventListener('hostToolsInstallState', handler);
+  }, []);
+  return state;
 }
 
 /** `undefined` clears a setting; it goes over the wire as `null`, since

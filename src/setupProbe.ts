@@ -13,6 +13,7 @@
  * makes it safe to run this continuously.
  */
 import { execFile } from 'node:child_process';
+import { OPTIONAL_TOOLS, REQUIRED_TOOLS, aptInstallCommand, hasTool } from './hostTools.js';
 import { promisify } from 'node:util';
 import { platform } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
@@ -27,31 +28,6 @@ const execFileAsync = promisify(execFile);
 
 const SOUNDS_DIR = resolve(__dirname, '..', 'sounds');
 const AUDIO_CONFIG_FILE = 'audio-config.json';
-
-/** Tools the backend hard-exits without (see checkRequiredTools in index.ts). */
-const REQUIRED_TOOLS = ['iptables', 'arping', 'fping', 'dnsmasq', 'conntrack', 'tcpdump'];
-/** Tools that only degrade a feature, so they're warnings rather than failures. */
-const OPTIONAL_TOOLS: [tool: string, why: string][] = [
-  ['aplay', 'field match audio'],
-  ['dhcpcd', 'the robot tester'],
-];
-
-/** apt package names differ from binary names for a couple of these. */
-const APT_PACKAGES: Record<string, string> = {
-  arping: 'iputils-arping',
-  dnsmasq: 'dnsmasq-base',
-  dhcpcd: 'dhcpcd5',
-  aplay: 'alsa-utils',
-};
-
-async function hasTool(tool: string): Promise<boolean> {
-  try {
-    await execFileAsync('which', [tool]);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function pass(id: string, label: string, detail: string): SetupCheck {
   return { id, label, status: 'pass', detail };
@@ -107,8 +83,8 @@ async function probeHost(): Promise<SetupCheck[]> {
       : fail(
           'tools',
           'Required tools',
-          `Missing: ${missingRequired.join(', ')}. The backend exits with code 78 on startup without these.`,
-          `sudo apt install ${missingRequired.map(t => APT_PACKAGES[t] ?? t).join(' ')}`,
+          `Missing: ${missingRequired.join(', ')}. pFMS can't run the field network without these — install them below, or yourself with:`,
+          aptInstallCommand(missingRequired),
         ),
   );
 
@@ -121,8 +97,9 @@ async function probeHost(): Promise<SetupCheck[]> {
       warn(
         'optional-tools',
         'Optional tools',
-        missingOptional.map(([t, why]) => `${t} missing — ${why} won't work`).join('; '),
-        `sudo apt install ${missingOptional.map(([t]) => APT_PACKAGES[t] ?? t).join(' ')}`,
+        missingOptional.map(([t, why]) => `${t} missing — ${why} won't work`).join('; ') +
+          '. Install below, or yourself with:',
+        aptInstallCommand(missingOptional.map(([t]) => t)),
       ),
     );
   } else {

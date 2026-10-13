@@ -28,6 +28,8 @@ import {
   sendAdminSetPassphrase,
   sendCreateApiKey,
   useApiKeyCreatedEvent,
+  sendInstallHostTools,
+  useHostToolsInstall,
   ADMIN_TOKEN_KEY,
 } from '../hooks/useBackend';
 import { buildBugReportUrl } from '../utils/githubIssue';
@@ -136,6 +138,54 @@ function AdminPassphraseStep({ configured }: { configured: boolean }) {
   );
 }
 
+/** Install the missing tools from the wizard (apt, as root). The server
+ *  decides what to install; the commands shown in the checks are there for
+ *  anyone who would rather run them by hand. */
+function InstallToolsAction({ missing }: { missing: boolean }) {
+  const install = useHostToolsInstall();
+  const running = install?.status === 'running';
+  if (!missing && !install) return null;
+  return (
+    <Stack spacing={1}>
+      {missing && (
+        <Box>
+          <Button variant="contained" onClick={sendInstallHostTools} disabled={running}>
+            {running ? 'Installing…' : 'Install missing tools'}
+          </Button>
+        </Box>
+      )}
+      {install?.status === 'done' && (
+        <Typography variant="body2" color="success.main">
+          Installed. The field network starts on its own within 30 seconds.
+        </Typography>
+      )}
+      {install?.status === 'failed' && (
+        <Typography variant="body2" color="error">
+          {install.error}
+        </Typography>
+      )}
+      {install?.log && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            px: 1,
+            py: 0.5,
+            maxHeight: 240,
+            overflow: 'auto',
+            borderRadius: 1,
+            bgcolor: 'action.hover',
+            fontSize: '0.75rem',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {install.log}
+        </Box>
+      )}
+    </Stack>
+  );
+}
+
 /** Lock scoring with an API key without leaving the wizard. The key is
  *  shown once, here, for the operator to give to the scoring devices. */
 function ScoringKeyAction({ open }: { open: boolean }) {
@@ -189,6 +239,14 @@ function StepActions({ step }: { step: SetupStepId }) {
   useEffect(() => setRadioUrl(settings?.radioUrl ?? ''), [settings?.radioUrl]);
   useEffect(() => setVideoTarget(settings?.videoProxyTarget ?? ''), [settings?.videoProxyTarget]);
   useEffect(() => setPublicUrl(settings?.publicUrl ?? ''), [settings?.publicUrl]);
+
+  if (step === 'host') {
+    const host = probe?.steps.find(s => s.id === 'host');
+    const missing =
+      !probe?.dryRun &&
+      (host?.checks.some(c => (c.id === 'tools' || c.id === 'optional-tools') && c.status !== 'pass') ?? false);
+    return <InstallToolsAction missing={missing} />;
+  }
 
   if (step === 'admin') {
     return <AdminPassphraseStep configured={probe?.steps.find(s => s.id === 'admin')?.status === 'pass'} />;

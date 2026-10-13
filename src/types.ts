@@ -707,6 +707,29 @@ export function isRequestSetupProbe(msg: unknown): msg is RequestSetupProbe {
   return (msg as RequestSetupProbe)?.type === 'requestSetupProbe';
 }
 
+/** Setup wizard: install every missing host tool with apt. Carries no
+ *  package list — the server works out what's missing (src/hostTools.ts). */
+export interface InstallHostTools {
+  type: 'installHostTools';
+}
+
+export function isInstallHostTools(msg: unknown): msg is InstallHostTools {
+  return (msg as InstallHostTools)?.type === 'installHostTools';
+}
+
+/** Progress of a tool install, to the client that asked. */
+export interface HostToolsInstallState {
+  type: 'hostToolsInstallState';
+  status: 'running' | 'done' | 'failed';
+  /** The tail of apt's output. */
+  log: string;
+  error?: string;
+}
+
+export function isHostToolsInstallState(msg: unknown): msg is HostToolsInstallState {
+  return (msg as HostToolsInstallState)?.type === 'hostToolsInstallState';
+}
+
 /** Current persisted wizard state, pushed on connect and after every change. */
 export interface SetupConfigState {
   type: 'setupConfigState';

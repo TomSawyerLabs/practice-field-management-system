@@ -98,6 +98,8 @@ import {
   isAdminSetPassphrase,
   isSaveSlackConfig,
   isRequestSetupProbe,
+  isInstallHostTools,
+  type HostToolsInstallState,
   isUpdateSetupSettings,
   isTestRecordingStream,
   isMarkSetupStep,
@@ -142,6 +144,7 @@ import {
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
+import { installMissingTools } from './hostTools.js';
 import { isIPv6 } from 'node:net';
 import { handleVideoProxy } from './videoProxy.js';
 import CIDRMatcher from 'cidr-matcher';
@@ -1708,6 +1711,34 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         if (setup) {
           setupWatchers.add(ws);
           void runAndBroadcastProbe();
+        }
+      } else if (isInstallHostTools(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin authentication required to install tools' }));
+        } else {
+          // apt's output goes back to the asker as it arrives (last ~8 KB).
+          let log = '';
+          const send = (status: HostToolsInstallState['status'], error?: string) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
+            ws.send(
+              JSON.stringify({ type: 'hostToolsInstallState', status, log, error } satisfies HostToolsInstallState),
+            );
+          };
+          console.log(`Setup: installing missing host tools (${clientIp})`);
+          send('running');
+          void installMissingTools(text => {
+            log = (log + text).slice(-8192);
+            send('running');
+          }).then(result => {
+            if (result.ok) {
+              console.log(`Setup: installed ${result.installed.join(' ') || 'nothing (all present)'}`);
+              send('done');
+            } else {
+              console.warn(`Setup: tool install failed: ${result.error}`);
+              send('failed', result.error);
+            }
+            void runAndBroadcastProbe();
+          });
         }
       } else if (isUpdateSetupSettings(data)) {
         if (setup) {
