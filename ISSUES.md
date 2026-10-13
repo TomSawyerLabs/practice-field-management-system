@@ -148,3 +148,15 @@ listed 28020–28119). The file passes on its own (13/13, twice), so the
 "free port" picked by `freeTcpPort()` in `src/fmsServer.test.ts` was free
 when probed but refused when the server bound it. Matters because a red full
 run hides real regressions.
+
+## Robot tester's "one-shot" dhcpcd stays running
+
+On steamboat, the dhcpcd the robot tester spawns on `TEST_INTERFACE`
+(`eno1.99`) was still running (`dhcpcd: [manager] [ip4] [ip6]` plus its
+proxies and `[BPF BOOTP] eno1.99`, parent = the pFMS process) 14 minutes
+after the 2026-10-13 13:42 start, with no robot leasing. `startDhcp()` in
+`src/robotTestMonitor.ts` runs it with `--oneshot --nobackground --timeout 1`
+and retries from its `exit` handler, so it's expected to exit within seconds
+when nothing answers. Only one instance, so not a leak, but it means the
+tester sits in `dhcp_requesting` on a process that never times out, and the
+retry/timeout path described in the code isn't what happens.
