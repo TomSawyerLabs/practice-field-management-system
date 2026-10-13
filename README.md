@@ -3,6 +3,15 @@
 A web interface for configuring practice field access points, running
 self-service matches, and enabling team laptop ↔ robot routing.
 
+**Teams bring their robot exactly as it's set up at home.** There's no
+radio reprogramming and no kiosk: a team enters the SSID and WPA key its
+robot already uses, once, and the field AP serves that network. pFMS
+remembers it for the next visit. Laptops stay on the site's ordinary
+Wi-Fi with internet, and everything they use at home just works across
+the field's routed network: Driver Station by team number, code deploys,
+`roboRIO-TEAM-FRC.local`, `limelight-*.local` and other mDNS names,
+NetworkTables, dashboards, and device web pages.
+
 pFMS drives a VH-113 (or VH-109) field AP running
 [`PRACTICE` (recommended) or `OFFSEASON` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
 (see [Field AP firmware limitations](#field-ap-firmware-limitations)),
