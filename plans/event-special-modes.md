@@ -58,6 +58,13 @@ system.
    sets them once. Zero is allowed, meaning "tally fouls but don't score
    them". Each finished run records the cost it was scored under, so changing
    it mid-event applies from the next run rather than re-scoring the morning.
+7. **The TV leaderboard is opt-in** (2026-10-13, user: "a special display
+   mode only when we're on a day doing speed challenges"). A "Show on the
+   scoreboard TVs" switch on the `/match` leaderboard card, held in memory by
+   the server, off by default and off again after a restart. Before this it
+   showed whenever any challenge run existed in history — so once `556428c`
+   got it to the TVs at all, the 2026-09-26/27 event's results sat on every
+   idle TV.
 
 ## Findings that constrain the design
 
