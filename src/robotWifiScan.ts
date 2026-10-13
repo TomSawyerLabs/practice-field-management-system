@@ -1,8 +1,9 @@
 /**
  * Robot Wi-Fi scan: listen for the 2.4 GHz network a team's robot radio
- * broadcasts (`FRC-<team>` or `FRC-<team>-<suffix>`), compare it with the
- * robots the team has saved, and — when a team's robot is taking a while to
- * join the field — try the field's passphrase on it.
+ * broadcasts (`FRC-<team>` or `FRC-<team>-<suffix>`) — and on 5 and 6 GHz
+ * too, where the card has them, in case a radio broadcasts there — compare
+ * it with the robots the team has saved, and — when a team's robot is taking
+ * a while to join the field — try the field's passphrase on it.
  *
  * The field connects to the robot on 6 GHz with the SSID `<team>[-suffix]`,
  * which pFMS cannot hear from outside the field AP. The 2.4 GHz network
@@ -10,9 +11,10 @@
  * "what is this robot actually called". Teams most often get the
  * capitalization of the suffix wrong; that is the case this exists for.
  *
- * pFMS runs its own wpa_supplicant on one wireless interface (a spare card,
- * chosen on the admin page) and drives it with wpa_cli. Nothing else on the
- * host is touched. See plans/robot-wifi-scan.md.
+ * It runs as a job on a wireless card pFMS drives (see wifiCard.ts) — a
+ * spare card chosen on the admin page, which may also run the 6 GHz watch.
+ * Nothing else on the host is touched. See plans/robot-wifi-scan.md and
+ * plans/one-card-wifi-jobs.md.
  */
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
 import { createHash, pbkdf2Sync } from 'node:crypto';
@@ -20,12 +22,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { platform } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { WifiCard, WifiCardJob } from './wifiCard.js';
 import type {
   RobotWifiBroadcast,
   RobotWifiKeyCheck,
   RobotWifiScanState,
   RobotWifiStall,
   StationName,
+  WifiBand,
   WifiSecurity,
   WifiTestJoinResult,
 } from './types.js';
@@ -332,14 +336,14 @@ export class WpaSupplicantRunner implements WifiRunner {
   ) {}
 
   async start(onLine: (line: string) => void, onExit: (why: string) => void): Promise<void> {
-    if (platform() !== 'linux') throw new Error('the robot Wi-Fi scan needs Linux (wpa_supplicant)');
+    if (platform() !== 'linux') throw new Error("pFMS's Wi-Fi jobs need Linux (wpa_supplicant)");
     if (!listWirelessInterfaces().includes(this.iface))
       throw new Error(`${this.iface} is not a wireless interface here`);
     mkdirSync(CTRL_DIR, { recursive: true });
     this.restoreIpv6 ??= holdIpv6Autoconf(this.iface);
     // A socket left by a previous run (crash, kill -9) stops wpa_supplicant starting.
     rmSync(join(CTRL_DIR, this.iface), { force: true });
-    // One file per card: two cards can run at once (robot scan, 6 GHz watch).
+    // One file per card: several cards can run at once.
     const conf = join(CTRL_DIR, `wpa_supplicant-${this.iface}.conf`);
     // Forget networks not seen in two scans, so a robot that leaves drops out.
     writeFileSync(
@@ -432,9 +436,6 @@ export function findStalls(attempts: ConnectAttempt[], heard: Heard[], now: numb
   return stalls;
 }
 
-/** 2.4 GHz channels 1–13 and 14: robot radios only broadcast there. */
-const SCAN_FREQS = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472, 2484].join(',');
-
 /** A robot a team has saved. */
 export interface SavedRobot {
   ssid: string;
@@ -454,8 +455,8 @@ interface KeyCheckJob {
 }
 
 export interface RobotWifiScannerOptions {
-  iface: string;
-  runner: WifiRunner;
+  /** The card it listens on, maybe shared with the 6 GHz watch */
+  card: WifiCard;
   /** The robots teams have saved: names to match what is heard against,
    *  and passphrases to try on them */
   savedRobots: () => SavedRobot[];
@@ -463,9 +464,6 @@ export interface RobotWifiScannerOptions {
   connectAttempts: () => ConnectAttempt[];
   onChange: (state: RobotWifiScanState) => void;
   now?: () => number;
-  scanIntervalMs?: number;
-  /** How long after a scan to read its results. */
-  scanSettleMs?: number;
   /** A network not seen for this long drops off the list. */
   expireMs?: number;
   /** How long a join attempt may take before it counts as unreachable. */
@@ -480,10 +478,12 @@ type Seen = RobotWifiBroadcast & { flags: string };
 
 const keyHash = (key: string) => createHash('sha256').update(key).digest('hex').slice(0, 16);
 
+/** Robot radios broadcast on 2.4 GHz; 5 and 6 GHz in case one does there. */
+const ROBOT_BANDS: readonly WifiBand[] = ['2.4', '5', '6'];
+
 export class RobotWifiScanner {
   private readonly o: Required<Omit<RobotWifiScannerOptions, 'now'>> & { now: () => number };
-  private status: RobotWifiScanState['status'] = 'off';
-  private error: string | undefined;
+  private attached = false;
   private lastScanAt: number | undefined;
   private seen = new Map<string, Omit<Seen, 'match'>>();
   /** Results by `${broadcastSsid}\n${hash of the field's key}` — a changed
@@ -492,19 +492,24 @@ export class RobotWifiScanner {
   /** Stations whose team pressed "Test connection", waiting for the radio */
   private asked = new Set<StationName>();
   private checking: string | null = null;
-  private pendingEvents: ((e: WpaEvent) => void) | null = null;
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private stopped = false;
+  /** What it is to the card: wants the robot bands, reads every scan, and
+   *  tests a stalled connection after one. */
+  private readonly job: WifiCardJob = {
+    bands: () => (this.problem() ? [] : ROBOT_BANDS),
+    onScan: rows => {
+      if (!this.problem()) this.ingest(rows);
+    },
+    afterScan: () => this.checkNextKey(),
+    onCardChange: () => this.emit(),
+  };
 
   get iface(): string {
-    return this.o.iface;
+    return this.o.card.iface;
   }
 
   constructor(options: RobotWifiScannerOptions) {
     this.o = {
       now: Date.now,
-      scanIntervalMs: 20_000,
-      scanSettleMs: 5_000,
       expireMs: 90_000,
       keyCheckTimeoutMs: 20_000,
       stallMs: STALL_MS,
@@ -513,72 +518,38 @@ export class RobotWifiScanner {
     };
   }
 
+  /** Start listening; resolves once the card is up (or failed). */
   async start(): Promise<void> {
-    this.stopped = false;
-    this.setStatus('starting');
-    try {
-      await this.o.runner.start(
-        line => this.onLine(line),
-        why => {
-          if (this.stopped) return;
-          this.error = why;
-          this.setStatus('error');
-          this.clearTimer();
-        },
-      );
-    } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
-      this.setStatus('error');
-      return;
-    }
-    if (this.stopped) return;
-    this.error = undefined;
-    this.setStatus('running');
-    void this.scanOnce();
-    this.timer = setInterval(() => void this.scanOnce(), this.o.scanIntervalMs);
+    this.attached = true;
+    await this.o.card.attach(this.job);
   }
 
   stop(): void {
-    this.stopped = true;
-    this.clearTimer();
-    this.o.runner.stop();
+    this.attached = false;
+    this.o.card.detach(this.job);
     this.seen.clear();
-    this.setStatus('off');
-  }
-
-  private clearTimer() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  private setStatus(status: RobotWifiScanState['status']) {
-    this.status = status;
     this.emit();
+  }
+
+  private get status(): RobotWifiScanState['status'] {
+    return this.attached ? this.o.card.status : 'off';
+  }
+
+  /** A card without 2.4 GHz can't hear robots: the scan stays off. */
+  private problem(): string | undefined {
+    const bands = this.o.card.bands();
+    return bands && !bands.includes('2.4')
+      ? `${this.o.card.iface} has no 2.4 GHz radio, where robots broadcast — pick another card`
+      : undefined;
   }
 
   private emit() {
     this.o.onChange(this.getState());
   }
 
-  private onLine(line: string) {
-    const event = parseWpaEvent(line);
-    if (event) this.pendingEvents?.(event);
-  }
-
-  /** One scan: trigger it, give the card time to hop the channels, read the
-   *  results, then test any stalled connection that is due one. */
-  async scanOnce(): Promise<void> {
-    if (this.status !== 'running' || this.checking) return; // a join attempt owns the radio
-    try {
-      await this.o.runner.cli('scan', `freq=${SCAN_FREQS}`);
-      await new Promise(r => setTimeout(r, this.o.scanSettleMs));
-      if (this.status !== 'running') return;
-      this.ingest(parseScanResults(await this.o.runner.cli('scan_results')));
-    } catch (err) {
-      console.warn('Robot Wi-Fi scan failed:', err instanceof Error ? err.message : err);
-      return;
-    }
-    await this.checkNextKey();
+  /** One scan on the card (it scans by itself; tests drive it by hand). */
+  scanOnce(): Promise<void> {
+    return this.o.card.scanOnce();
   }
 
   /** Fold a scan into what has been seen, dropping networks gone quiet. */
@@ -709,12 +680,7 @@ export class RobotWifiScanner {
     this.emit();
     let result: RobotWifiKeyCheck['result'];
     try {
-      const r = await attemptJoin(
-        this.o.runner.cli.bind(this.o.runner),
-        h => (this.pendingEvents = h),
-        { ssid: seen.ssid, security, passphrase: wpaKey },
-        this.o.keyCheckTimeoutMs,
-      );
+      const r = await this.o.card.join({ ssid: seen.ssid, security, passphrase: wpaKey }, this.o.keyCheckTimeoutMs);
       if (r.outcome === 'failed') console.warn(`Robot Wi-Fi passphrase check for ${seen.ssid} failed: ${r.reason}`);
       result = r.outcome === 'connected' ? 'ok' : r.outcome === 'wrongKey' ? 'wrongKey' : 'unreachable';
     } finally {
@@ -723,23 +689,6 @@ export class RobotWifiScanner {
     console.log(`Robot Wi-Fi passphrase check: ${job.why} on ${seen.ssid}: ${result}`);
     this.keyChecks.set(id, { result, at: this.o.now(), fieldSsid });
     this.emit();
-  }
-
-  /** A staff test join through this scan's wpa_supplicant. The scan pauses
-   *  for it (and it waits for a passphrase check already under way). */
-  async testJoin(
-    request: { ssid: string; passphrase?: string },
-    opts: { settleMs: number; timeoutMs: number },
-  ): Promise<Omit<WifiTestJoinResult, 'id' | 'iface' | 'at'>> {
-    if (this.status !== 'running') throw new Error(`the robot scan on ${this.o.iface} is not running`);
-    for (let i = 0; this.checking && i < 60; i++) await new Promise(r => setTimeout(r, 500));
-    if (this.checking) throw new Error(`${this.o.iface} is busy`);
-    this.checking = `test:${request.ssid}`;
-    try {
-      return await testJoin(this.o.runner.cli.bind(this.o.runner), h => (this.pendingEvents = h), request, opts);
-    } finally {
-      this.checking = null;
-    }
   }
 
   getState(): RobotWifiScanState {
@@ -769,11 +718,14 @@ export class RobotWifiScanner {
         ...(keyCheck && { keyCheck }),
       };
     });
+    const error = this.status === 'error' ? this.o.card.error : undefined;
+    const problem = this.status === 'running' ? this.problem() : undefined;
     return {
       type: 'robotWifiScan',
       status: this.status,
-      iface: this.o.iface,
-      ...(this.error && { error: this.error }),
+      iface: this.o.card.iface,
+      ...(error && { error }),
+      ...(problem && { problem }),
       ...(this.lastScanAt !== undefined && { lastScanAt: this.lastScanAt }),
       interfaces: [],
       broadcasts,

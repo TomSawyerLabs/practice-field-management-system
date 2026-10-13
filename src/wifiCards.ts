@@ -1,7 +1,8 @@
 /**
  * Wireless cards on the pFMS host, for the admin page: what each is doing —
- * pFMS's robot Wi-Fi scan or 6 GHz watch, something else on the host, or
- * nothing — and a staff "test join" on the ones pFMS may use. A test join
+ * pFMS's robot Wi-Fi scan and/or 6 GHz watch, something else on the host, or
+ * nothing — which bands it has, and a staff "test join" on the ones pFMS may
+ * use. A test join
  * only associates (no DHCP, no address, no routes) and then leaves, so it
  * cannot disturb the host's networking. See plans/admin-wifi-cards.md.
  */
@@ -16,7 +17,8 @@ import {
   type WifiRunner,
   type WpaEvent,
 } from './robotWifiScan.js';
-import type { WifiCardInfo, WifiCardsState, WifiTestJoinResult } from './types.js';
+import type { WifiBand, WifiCardInfo, WifiCardJobName, WifiCardsState, WifiTestJoinResult } from './types.js';
+import { bandsOfCard } from './wifiCard.js';
 
 // ── Reading the host ────────────────────────────────────────────────
 
@@ -34,6 +36,8 @@ export interface WifiCardFacts {
   defaultRoute: boolean;
   /** Other programs holding a control socket for it (not pFMS's own) */
   controllers: string[];
+  /** Its bands, once pFMS has run it */
+  bands?: WifiBand[];
 }
 
 const readText = (path: string): string | undefined => {
@@ -108,25 +112,44 @@ export function readWifiCardFacts(
 
 // ── Deciding what a card is doing ───────────────────────────────────
 
+/** A card pFMS runs, and for what. */
+export interface PfmsCardUse {
+  iface: string;
+  status: 'off' | 'starting' | 'running' | 'error';
+  error?: string;
+  jobs: WifiCardJobName[];
+}
+
 /** What pFMS itself is doing with the cards. */
 export interface PfmsWifiUse {
-  /** The robot scan's card, and whether it is running */
-  robotScan?: { iface: string; status: 'off' | 'starting' | 'running' | 'error'; error?: string };
-  /** The 6 GHz watch's card, and whether it is running */
-  sixGhzWatch?: { iface: string; status: 'off' | 'starting' | 'running' | 'error'; error?: string };
+  /** The cards pFMS runs, each for one job or both */
+  cards?: PfmsCardUse[];
   /** The card a test join is running on */
   testIface?: string;
 }
 
+const JOB_NAME: Record<WifiCardJobName, string> = {
+  robotScan: 'robot Wi-Fi scan',
+  sixGhzWatch: '6 GHz watch',
+};
+
+/** "2.4/5 GHz", for a card's bands. */
+export const bandsLabel = (bands: readonly WifiBand[]): string =>
+  bands.length ? `${bands.join('/')} GHz` : 'no bands';
+
 export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo {
+  const pfmsCard = pfms.cards?.find(c => c.iface === f.iface && c.jobs.length);
+  const jobs = pfmsCard?.jobs ?? [];
   const base = {
     iface: f.iface,
     ...(f.mac && { mac: f.mac }),
     ...(f.driver && { driver: f.driver }),
     ...(f.operstate && { operstate: f.operstate }),
     addresses: f.addresses,
+    jobs,
+    ...(f.bands && { bands: f.bands }),
   };
-  if (pfms.testIface === f.iface) {
+  if (pfms.testIface === f.iface && !pfmsCard) {
     return {
       ...base,
       use: 'test',
@@ -144,10 +167,8 @@ export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo 
     ...(f.addresses.length ? [`it has an address (${f.addresses.join(', ')})`] : []),
     ...(f.defaultRoute ? ['the host routes through it'] : []),
   ];
-  const scan = pfms.robotScan?.iface === f.iface ? pfms.robotScan : undefined;
-  const watch = pfms.sixGhzWatch?.iface === f.iface ? pfms.sixGhzWatch : undefined;
   // Keep an existing choice selectable, so it can be turned off.
-  const kept = { canRobotScan: !!scan, canSixGhzWatch: !!watch };
+  const kept = { canRobotScan: jobs.includes('robotScan'), canSixGhzWatch: jobs.includes('sixGhzWatch') };
   if (hostReasons.length) {
     const detail = `In use by the host: ${hostReasons.join('; ')}`;
     return { ...base, use: 'host', detail, canTestJoin: false, ...kept };
@@ -156,35 +177,31 @@ export function classifyCard(f: WifiCardFacts, pfms: PfmsWifiUse): WifiCardInfo 
     const detail = `Radio blocked by rfkill (${f.rfkill === 'hard' ? 'hardware switch' : 'software'})`;
     return { ...base, use: 'blocked', detail, canTestJoin: false, ...kept };
   }
-  // One job per card: a card one of them owns can't be picked for the other.
-  if (scan) {
+  // A band the card lacks rules out the job that needs it: robots broadcast
+  // on 2.4 GHz; the watch listens on 6 GHz. Unknown bands rule out nothing.
+  const lacks = (band: WifiBand) => !!f.bands && !f.bands.includes(band);
+  const can = {
+    canRobotScan: kept.canRobotScan || !lacks('2.4'),
+    canSixGhzWatch: kept.canSixGhzWatch || !lacks('6'),
+  };
+  const missing = [...(lacks('2.4') ? ['no 2.4 GHz'] : []), ...(lacks('6') ? ['no 6 GHz'] : [])];
+  const bandNote = f.bands ? ` · ${bandsLabel(f.bands)}${missing.length ? ` (${missing.join(', ')})` : ''}` : '';
+  if (pfmsCard) {
+    const names = jobs.map(j => JOB_NAME[j]).join(' and ');
     const detail =
-      scan.status === 'running'
-        ? 'Listening for robots (robot Wi-Fi scan)'
-        : scan.status === 'starting'
-          ? 'Robot Wi-Fi scan starting'
-          : `Robot Wi-Fi scan stopped${scan.error ? `: ${scan.error}` : ''}`;
-    return {
-      ...base,
-      use: 'robotScan',
-      detail,
-      canTestJoin: scan.status === 'running',
-      canRobotScan: true,
-      canSixGhzWatch: false,
-    };
-  }
-  if (watch) {
-    const detail =
-      watch.status === 'running'
-        ? 'Listening on 6 GHz for other access points (6 GHz watch)'
-        : watch.status === 'starting'
-          ? '6 GHz watch starting'
-          : `6 GHz watch stopped${watch.error ? `: ${watch.error}` : ''}`;
-    // Scan only: its wpa_supplicant never joins, so no test joins here.
-    return { ...base, use: 'sixGhzWatch', detail, canTestJoin: false, canRobotScan: false, canSixGhzWatch: true };
+      pfms.testIface === f.iface
+        ? `Running a test join (${names} paused)`
+        : pfmsCard.status === 'running'
+          ? `Running the ${names}`
+          : pfmsCard.status === 'starting'
+            ? `Starting the ${names}`
+            : `The ${names} stopped${pfmsCard.error ? `: ${pfmsCard.error}` : ''}`;
+    // A test join borrows the radio; the jobs' scans wait for it.
+    const canTestJoin = pfmsCard.status === 'running' && pfms.testIface !== f.iface;
+    return { ...base, use: 'pfms', detail: detail + bandNote, canTestJoin, ...can };
   }
   const detail = f.operstate === 'up' ? 'Free (up, not connected)' : 'Free (switched off)';
-  return { ...base, use: 'free', detail, canTestJoin: true, canRobotScan: true, canSixGhzWatch: true };
+  return { ...base, use: 'free', detail: detail + bandNote, canTestJoin: true, ...can };
 }
 
 // ── The manager ─────────────────────────────────────────────────────
@@ -193,17 +210,15 @@ type TestResult = Omit<WifiTestJoinResult, 'id' | 'iface' | 'at'>;
 
 export interface WifiCardsOptions {
   onChange: (state: WifiCardsState) => void;
-  /** What pFMS's robot scan is doing, and a way to test-join through it */
-  robotScan: () =>
-    | (NonNullable<PfmsWifiUse['robotScan']> & {
-        testJoin: (request: { ssid: string; passphrase?: string }, opts: TestOpts) => Promise<TestResult>;
-      })
-    | null;
-  /** What pFMS's 6 GHz watch is doing */
-  sixGhzWatch?: () => PfmsWifiUse['sixGhzWatch'] | null;
+  /** The cards pFMS runs, what for, and a way to test-join through each */
+  pfmsCards: () => (PfmsCardUse & {
+    testJoin: (request: { ssid: string; passphrase?: string }, opts: TestOpts) => Promise<TestResult>;
+  })[];
   /** True while a match is running — no test joins then */
   matchRunning: () => boolean;
   readFacts?: () => WifiCardFacts[];
+  /** A card's bands, if known */
+  bandsOf?: (iface: string) => WifiBand[] | undefined;
   /** A wpa_supplicant for a free card, just for one test */
   makeRunner?: (iface: string) => WifiRunner;
   now?: () => number;
@@ -220,8 +235,7 @@ interface TestOpts {
 const TEST_HISTORY = 10;
 
 export class WifiCards {
-  private readonly o: Required<Omit<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning' | 'sixGhzWatch'>> &
-    Pick<WifiCardsOptions, 'robotScan' | 'onChange' | 'matchRunning' | 'sixGhzWatch'>;
+  private readonly o: Required<WifiCardsOptions>;
   private tests: WifiTestJoinResult[] = [];
   private testIface: string | undefined;
   private nextId = 1;
@@ -230,6 +244,7 @@ export class WifiCards {
   constructor(options: WifiCardsOptions) {
     this.o = {
       readFacts: () => readWifiCardFacts(),
+      bandsOf: bandsOfCard,
       makeRunner: iface => new WpaSupplicantRunner(iface),
       now: Date.now,
       settleMs: 5_000,
@@ -239,16 +254,18 @@ export class WifiCards {
   }
 
   getState(): WifiCardsState {
-    const scan = this.o.robotScan();
-    const watch = this.o.sixGhzWatch?.();
     const pfms: PfmsWifiUse = {
-      ...(scan && { robotScan: { iface: scan.iface, status: scan.status, ...(scan.error && { error: scan.error }) } }),
-      ...(watch && { sixGhzWatch: watch }),
+      cards: this.o
+        .pfmsCards()
+        .map(({ iface, status, error, jobs }) => ({ iface, status, jobs, ...(error && { error }) })),
       ...(this.testIface && { testIface: this.testIface }),
     };
     return {
       type: 'wifiCards',
-      cards: this.o.readFacts().map(f => classifyCard(f, pfms)),
+      cards: this.o.readFacts().map(f => {
+        const bands = f.bands ?? this.o.bandsOf(f.iface);
+        return classifyCard(bands ? { ...f, bands } : f, pfms);
+      }),
       tests: this.tests,
     };
   }
@@ -271,7 +288,7 @@ export class WifiCards {
     if (!card) throw new Error(`${iface} is not a wireless card on this host`);
     if (!card.canTestJoin) throw new Error(`${iface} can't be used: ${card.detail}`);
 
-    const scan = this.o.robotScan();
+    const pfmsCard = this.o.pfmsCards().find(c => c.iface === iface && c.jobs.length);
     const entry: WifiTestJoinResult = { id: this.nextId++, iface, ssid, at: this.o.now(), outcome: 'running' };
     this.testIface = iface;
     this.tests = [entry, ...this.tests].slice(0, TEST_HISTORY);
@@ -279,10 +296,9 @@ export class WifiCards {
     let result: TestResult;
     try {
       const opts = { settleMs: this.o.settleMs, timeoutMs: this.o.timeoutMs };
-      result =
-        scan?.iface === iface
-          ? await scan.testJoin({ ssid, passphrase }, opts)
-          : await this.testOnFreeCard(iface, { ssid, passphrase }, opts);
+      result = pfmsCard
+        ? await pfmsCard.testJoin({ ssid, passphrase }, opts)
+        : await this.testOnFreeCard(iface, { ssid, passphrase }, opts);
     } catch (err) {
       result = { ssid, outcome: 'failed', detail: err instanceof Error ? err.message : String(err) };
     } finally {

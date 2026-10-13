@@ -5,19 +5,19 @@
  * joins whichever it finds first, and the field may never see the robot.
  *
  * Robots join the field only on 6 GHz, and the field AP announces team
- * networks only there, so this needs a 6 GHz-capable card (the robot scan's
- * card may not be one). pFMS runs its own wpa_supplicant on the card and only
- * ever scans with it — it never joins anything. See
- * plans/competing-ap-6ghz-watch.md.
+ * networks only there, so this needs a 6 GHz-capable card. It runs as a job
+ * on a card pFMS drives (see wifiCard.ts), which may also run the robot scan;
+ * the watch itself only listens — it never joins anything. See
+ * plans/competing-ap-6ghz-watch.md and plans/one-card-wifi-jobs.md.
  */
-import { parseScanResults, type ScanRow, type WifiRunner } from './robotWifiScan.js';
+import type { ScanRow } from './robotWifiScan.js';
 import type { SixGhzClash, SixGhzNetwork, SixGhzWatchState, StationName } from './types.js';
 import { teamOfSsid } from './utils.js';
+import { isSixGhz, type WifiCard, type WifiCardJob } from './wifiCard.js';
+
+export { isSixGhz };
 
 // ── Pure helpers ────────────────────────────────────────────────────
-
-/** 6 GHz is 5925–7125 MHz; channel n is centred on 5950 + 5n MHz. */
-export const isSixGhz = (mhz: number): boolean => mhz > 5925 && mhz <= 7125;
 
 /** 5955 → 1, 6015 → 13. */
 export const sixGhzChannel = (mhz: number): number => (mhz - 5950) / 5;
@@ -29,19 +29,6 @@ export function inFieldChannel(mhz: number, field: { channel: number; bandwidthM
   const width = Math.max(1, Math.round(field.bandwidthMHz / 20));
   const block = (channel: number) => Math.floor((channel - 1) / 4 / width);
   return isSixGhz(mhz) && block(sixGhzChannel(mhz)) === block(field.channel);
-}
-
-/** The 6 GHz frequencies a card may use, from `wpa_cli get_capability freq`:
- *  `Mode[A] Channels:` then lines like ` 1 = 5955 MHz` (disabled channels
- *  are left out by wpa_supplicant; NO_IR ones are kept — they can still be
- *  listened on). */
-export function parseSixGhzFreqs(text: string): number[] {
-  const freqs = new Set<number>();
-  for (const m of text.matchAll(/^\s*\d+\s*=\s*(\d+)\s*MHz/gm)) {
-    const mhz = Number(m[1]);
-    if (isSixGhz(mhz)) freqs.add(mhz);
-  }
-  return [...freqs].sort((a, b) => a - b);
 }
 
 /** What the field AP is doing on 6 GHz, from its own status. */
@@ -143,20 +130,14 @@ export function classifySixGhz(
 // ── The watch ───────────────────────────────────────────────────────
 
 export interface SixGhzWatchOptions {
-  iface: string;
-  runner: WifiRunner;
-  /** Regulatory country, also written into the runner's config */
-  country: string;
+  /** The card it listens on, maybe shared with the robot scan */
+  card: WifiCard;
   /** The field AP's channel and the names it serves; null if unknown */
   field: () => FieldRadio | null;
   /** SSIDs of the robots teams have saved */
   savedSsids: () => string[];
   onChange: (state: SixGhzWatchState) => void;
   now?: () => number;
-  scanIntervalMs?: number;
-  /** How long after asking for a scan to read its results. Every 6 GHz
-   *  channel, listened to in turn, takes several seconds. */
-  scanSettleMs?: number;
   /** An access point not heard for this long drops off the list. */
   expireMs?: number;
 }
@@ -166,119 +147,55 @@ const MAX_OTHERS = 40;
 
 export class SixGhzWatch {
   private readonly o: Required<Omit<SixGhzWatchOptions, 'now'>> & { now: () => number };
-  private status: SixGhzWatchState['status'] = 'off';
-  private error: string | undefined;
-  private freqs: number[] = [];
-  private freqsAsked = false;
+  private attached = false;
   private lastScanAt: number | undefined;
   private seen = new Map<string, HeardBss>(); // by bssid
   /** The field AP's address families, kept once learned: when every station
    *  slot has a team there are no placeholders left to learn them from. */
   private fieldFamilies = new Set<string>();
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private scanning = false;
-  private stopped = false;
+  /** What it is to the card: wants 6 GHz, reads every scan. */
+  private readonly job: WifiCardJob = {
+    bands: () => ['6'],
+    onScan: rows => this.ingest(rows),
+    onCardChange: () => this.emit(),
+  };
 
   get iface(): string {
-    return this.o.iface;
-  }
-
-  get country(): string {
-    return this.o.country;
+    return this.o.card.iface;
   }
 
   constructor(options: SixGhzWatchOptions) {
     this.o = {
       now: Date.now,
-      scanIntervalMs: 30_000,
-      scanSettleMs: 12_000,
       expireMs: 120_000,
       ...options,
     };
   }
 
+  /** Start listening; resolves once the card is up (or failed). */
   async start(): Promise<void> {
-    this.stopped = false;
-    this.setStatus('starting');
-    try {
-      await this.o.runner.start(
-        () => {},
-        why => {
-          if (this.stopped) return;
-          this.error = why;
-          this.setStatus('error');
-          this.clearTimer();
-        },
-      );
-    } catch (err) {
-      this.error = err instanceof Error ? err.message : String(err);
-      this.setStatus('error');
-      return;
-    }
-    if (this.stopped) return;
-    // The config file sets it too; saying it again costs nothing and covers a
-    // wpa_supplicant that only applies it on request.
-    await this.o.runner.cli('set', 'country', this.o.country).catch(() => {});
-    this.error = undefined;
-    this.setStatus('running');
-    void this.scanOnce();
-    this.timer = setInterval(() => void this.scanOnce(), this.o.scanIntervalMs);
+    this.attached = true;
+    await this.o.card.attach(this.job);
   }
 
   stop(): void {
-    this.stopped = true;
-    this.clearTimer();
-    this.o.runner.stop();
+    this.attached = false;
+    this.o.card.detach(this.job);
     this.seen.clear();
-    this.setStatus('off');
-  }
-
-  private clearTimer() {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  private setStatus(status: SixGhzWatchState['status']) {
-    this.status = status;
     this.emit();
+  }
+
+  private get status(): SixGhzWatchState['status'] {
+    return this.attached ? this.o.card.status : 'off';
   }
 
   private emit() {
     this.o.onChange(this.getState());
   }
 
-  /** Which 6 GHz channels the card may use. Asked until there are some: a
-   *  country change reaches wpa_supplicant a moment after it starts. */
-  private async loadFreqs(): Promise<void> {
-    const before = this.freqs.length;
-    this.freqs = parseSixGhzFreqs(await this.o.runner.cli('get_capability', 'freq'));
-    this.freqsAsked = true;
-    if (this.freqs.length !== before)
-      console.log(
-        `6 GHz watch on ${this.o.iface}: ${this.freqs.length} channel${this.freqs.length === 1 ? '' : 's'} at country ${this.o.country}`,
-      );
-  }
-
-  /** One scan of every 6 GHz channel, then fold in what was heard. */
-  async scanOnce(): Promise<void> {
-    if (this.status !== 'running' || this.scanning) return;
-    this.scanning = true;
-    try {
-      if (!this.freqs.length) await this.loadFreqs();
-      if (!this.freqs.length) {
-        this.emit(); // shows the problem
-        return;
-      }
-      // non_coloc_6ghz: every channel, not only those a 2.4/5 GHz AP points to
-      await this.o.runner.cli('scan', 'non_coloc_6ghz=1', `freq=${this.freqs.join(',')}`);
-      await new Promise(r => setTimeout(r, this.o.scanSettleMs));
-      if (this.status !== 'running') return;
-      this.ingest(parseScanResults(await this.o.runner.cli('scan_results'), { keepHidden: true }));
-    } catch (err) {
-      console.warn('6 GHz watch scan failed:', err instanceof Error ? err.message : err);
-    } finally {
-      this.scanning = false;
-    }
+  /** One scan on the card (it scans by itself; tests drive it by hand). */
+  scanOnce(): Promise<void> {
+    return this.o.card.scanOnce();
   }
 
   /** Fold a scan into what has been heard, dropping access points gone quiet. */
@@ -315,18 +232,21 @@ export class SixGhzWatch {
     const field = this.o.field();
     const { networks, clashes } = this.classify();
     const others = networks.filter(n => n.kind === 'other').slice(0, MAX_OTHERS);
+    const { card } = this.o;
+    const channels = card.freqsIn('6').length;
     const problem =
-      this.status === 'running' && this.freqsAsked && !this.freqs.length
-        ? `${this.o.iface} offers no 6 GHz channels — the card may not do 6 GHz, or country ${this.o.country} doesn't allow it`
+      this.status === 'running' && card.bands() && !channels
+        ? `${card.iface} offers no 6 GHz channels — the card may not do 6 GHz, or country ${card.country} doesn't allow it`
         : undefined;
+    const error = this.status === 'error' ? card.error : undefined;
     return {
       type: 'sixGhzWatch',
       status: this.status,
-      iface: this.o.iface,
-      ...(this.error && { error: this.error }),
+      iface: card.iface,
+      ...(error && { error }),
       ...(problem && { problem }),
-      country: this.o.country,
-      channels: this.freqs.length,
+      country: card.country,
+      channels,
       ...(this.lastScanAt !== undefined && { lastScanAt: this.lastScanAt }),
       ...(field && { field: { channel: field.channel, bandwidthMHz: field.bandwidthMHz } }),
       networks: [...networks.filter(n => n.kind !== 'other'), ...others],

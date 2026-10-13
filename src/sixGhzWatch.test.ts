@@ -3,7 +3,6 @@ import {
   bssidFamily,
   classifySixGhz,
   inFieldChannel,
-  parseSixGhzFreqs,
   SixGhzWatch,
   sixGhzChannel,
   type FieldRadio,
@@ -11,6 +10,7 @@ import {
 } from './sixGhzWatch.js';
 import type { WifiRunner } from './robotWifiScan.js';
 import type { SixGhzWatchState } from './types.js';
+import { WifiCard } from './wifiCard.js';
 
 const ch = (n: number) => 5950 + 5 * n; // 6 GHz channel → MHz
 
@@ -33,21 +33,6 @@ describe('6 GHz channels', () => {
     expect(inFieldChannel(ch(17), { channel: 13, bandwidthMHz: 80 })).toBe(false);
     // Same channel number on another band is not the field
     expect(inFieldChannel(2472, field)).toBe(false);
-  });
-
-  test("the card's 6 GHz channels from get_capability", () => {
-    const text = [
-      'Mode[G] Channels:',
-      ' 1 = 2412 MHz',
-      'Mode[A] Channels:',
-      ' 36 = 5180 MHz',
-      ' 100 = 5500 MHz (DFS)',
-      ' 1 = 5955 MHz',
-      ' 5 = 5975 MHz (NO_IR)',
-      ' 233 = 7115 MHz',
-    ].join('\n');
-    expect(parseSixGhzFreqs(text)).toEqual([5955, 5975, 7115]);
-    expect(parseSixGhzFreqs('Mode[A] Channels:\n 36 = 5180 MHz\n')).toEqual([]);
   });
 });
 
@@ -230,16 +215,15 @@ afterEach(() => {
 function setup(overrides: { field?: FieldRadio | null; saved?: string[]; now?: () => number } = {}) {
   const runner = new FakeRunner();
   let state: SixGhzWatchState | null = null;
+  const now = overrides.now ?? (() => NOW);
+  // Tests drive scans by hand
+  const card = new WifiCard({ iface: 'wlx0', runner, country: 'US', now, scanGapMs: 1_000_000, settleMs: () => 0 });
   watch = new SixGhzWatch({
-    iface: 'wlx0',
-    runner,
-    country: 'US',
+    card,
     field: () => (overrides.field === undefined ? field : overrides.field),
     savedSsids: () => overrides.saved ?? [],
     onChange: s => (state = s),
-    scanIntervalMs: 1_000_000, // tests drive scans by hand
-    scanSettleMs: 0,
-    now: overrides.now ?? (() => NOW),
+    now,
   });
   return { runner, watch, state: () => state! };
 }

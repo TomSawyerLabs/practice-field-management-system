@@ -49,8 +49,9 @@ import { ScoringEngine } from './scoringEngine.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
-import { RobotWifiScanner, WpaSupplicantRunner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
+import { RobotWifiScanner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
 import { SixGhzWatch, type FieldRadio } from './sixGhzWatch.js';
+import { WifiCardPool } from './wifiCard.js';
 import { WifiCards } from './wifiCards.js';
 import { ApiKeyStore } from './apiKeyStore.js';
 import { PortBridgeManager, parseFieldPorts } from './portBridgeManager.js';
@@ -469,34 +470,38 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Initialize saved team store (server-side WiFi credential persistence)
   const savedTeamStore = new SavedTeamStore();
 
-  // Robot Wi-Fi scan: listen on a spare wireless card for robots' 2.4 GHz
-  // networks (FRC-<team>[-suffix]) and check saved passphrases against them.
-  // Off unless an admin picks the interface; switching it restarts the scan.
+  // pFMS's wireless cards: one wpa_supplicant and one scan loop per card,
+  // shared by the jobs below that pick it — the robot Wi-Fi scan and the
+  // 6 GHz watch can run on one tri-band card or on two. Every card gets the
+  // Wi-Fi country (6 GHz needs one; the kernel keeps one for the host).
+  const wifiCountry = () => setupConfigStore.resolveSetting('wifiCountry', 'WIFI_COUNTRY').value || 'US';
+  const wifiCardPool = new WifiCardPool(wifiCountry());
+  setupConfigStore.addListener(() => wifiCardPool.setCountry(wifiCountry()));
+  // Robot Wi-Fi scan: listen on a spare wireless card for robots' networks
+  // (FRC-<team>[-suffix], on 2.4 GHz and 5/6 GHz where the card has them) and
+  // check saved passphrases against them. Off unless an admin picks the
+  // interface; switching it restarts the scan.
   let robotWifi: RobotWifiScanner | null = null;
   let broadcastRobotWifi: (state: RobotWifiScanState) => void = () => {};
   // The 6 GHz watch (below), declared here because the card list asks after it.
   let sixGhzWatch: SixGhzWatch | null = null;
-  /** Why the chosen 6 GHz watch card can't be used, when it can't */
-  let sixGhzWatchRefused: { iface: string; error: string } | null = null;
   // Every wireless card on the host, for the admin page: what each is doing
-  // (the robot scan, the host, nothing) and staff test joins on the ones
-  // pFMS may use. Test joins only associate — no address, no routes.
+  // (pFMS's jobs, the host, nothing), its bands, and staff test joins on the
+  // ones pFMS may use. Test joins only associate — no address, no routes.
   let broadcastWifiCards: (state: WifiCardsState) => void = () => {};
   const wifiCards = new WifiCards({
     onChange: state => broadcastWifiCards(state),
-    robotScan: () => {
-      const scanner = robotWifi;
-      if (!scanner) return null;
-      const { status, error } = scanner.getState();
-      return { iface: scanner.iface, status, ...(error && { error }), testJoin: (r, o) => scanner.testJoin(r, o) };
-    },
-    sixGhzWatch: () => {
-      if (sixGhzWatchRefused)
-        return { iface: sixGhzWatchRefused.iface, status: 'error', error: sixGhzWatchRefused.error };
-      if (!sixGhzWatch) return null;
-      const { status, error } = sixGhzWatch.getState();
-      return { iface: sixGhzWatch.iface, status, ...(error && { error }) };
-    },
+    pfmsCards: () =>
+      wifiCardPool.inUse().map(card => ({
+        iface: card.iface,
+        status: card.status,
+        ...(card.error && { error: card.error }),
+        jobs: [
+          ...(robotWifi?.iface === card.iface ? (['robotScan'] as const) : []),
+          ...(sixGhzWatch?.iface === card.iface ? (['sixGhzWatch'] as const) : []),
+        ],
+        testJoin: (r, o) => card.testJoin(r, o),
+      })),
     matchRunning: () => matchEngine.isMatchActive(),
   });
   // Cards come and go (USB), and the host can take one over at any time.
@@ -542,8 +547,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if (iface) {
       appInfo(`Robot Wi-Fi scan starting on ${iface}`);
       robotWifi = new RobotWifiScanner({
-        iface,
-        runner: new WpaSupplicantRunner(iface),
+        card: wifiCardPool.get(iface),
         savedRobots: () => savedTeamStore.getTeams(),
         connectAttempts,
         onChange: () => {
@@ -569,7 +573,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // 6 GHz watch: listen on a 6 GHz-capable card for other access points
   // using a team's network name — a team's own AP left on, which their robot
   // may join instead of the field. Scan only; never joins. Off unless an
-  // admin picks the card; it can't be the robot scan's.
+  // admin picks the card, which may be the robot scan's.
   let broadcastSixGhzWatch: (state: SixGhzWatchState) => void = () => {};
   let lastRadioUpdate: RadioUpdate | undefined;
   radioManager.addStatusListener(entry => {
@@ -588,33 +592,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     };
   };
   const sixGhzWatchState = (): SixGhzWatchState =>
-    sixGhzWatch?.getState() ?? {
-      type: 'sixGhzWatch',
-      status: sixGhzWatchRefused ? 'error' : 'off',
-      ...(sixGhzWatchRefused && { iface: sixGhzWatchRefused.iface, error: sixGhzWatchRefused.error }),
-      channels: 0,
-      networks: [],
-      clashes: [],
-    };
+    sixGhzWatch?.getState() ?? { type: 'sixGhzWatch', status: 'off', channels: 0, networks: [], clashes: [] };
   const applySixGhzWatchSetting = () => {
     const iface = setupConfigStore.resolveSetting('sixGhzWatchInterface', 'SIX_GHZ_WATCH_INTERFACE').value || undefined;
-    const country = setupConfigStore.resolveSetting('wifiCountry', 'WIFI_COUNTRY').value || 'US';
-    const refused = iface && iface === robotWifi?.iface ? `${iface} is the robot Wi-Fi scan's card` : null;
-    if (
-      (sixGhzWatch?.iface ?? sixGhzWatchRefused?.iface) === iface &&
-      (sixGhzWatch?.country ?? country) === country &&
-      (sixGhzWatchRefused?.error ?? null) === refused
-    )
-      return;
+    if ((sixGhzWatch?.iface ?? undefined) === iface) return;
     sixGhzWatch?.stop();
     sixGhzWatch = null;
-    sixGhzWatchRefused = iface && refused ? { iface, error: refused } : null;
-    if (iface && !refused) {
-      appInfo(`6 GHz watch starting on ${iface} (country ${country})`);
+    if (iface) {
+      appInfo(
+        `6 GHz watch starting on ${iface}${iface === robotWifi?.iface ? ' (shared with the robot Wi-Fi scan)' : ''}`,
+      );
       sixGhzWatch = new SixGhzWatch({
-        iface,
-        country,
-        runner: new WpaSupplicantRunner(iface, { country }),
+        card: wifiCardPool.get(iface),
         field: fieldRadio,
         savedSsids: () => savedTeamStore.getTeams().map(t => t.ssid),
         onChange: () => {

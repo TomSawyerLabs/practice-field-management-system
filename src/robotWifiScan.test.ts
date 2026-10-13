@@ -22,6 +22,7 @@ import {
 } from './robotWifiScan.js';
 import type { RobotWifiScanState } from './types.js';
 import type { SavedRobot } from './robotWifiScan.js';
+import { WifiCard } from './wifiCard.js';
 
 const HEADER = 'bssid / frequency / signal level / flags / ssid';
 const row = (bssid: string, ssid: string, signal = -50, flags = '[WPA2-PSK-CCMP][ESS]') =>
@@ -183,6 +184,10 @@ type JoinOutcome = 'connect' | 'wrongKey' | 'silent';
 class FakeRunner implements WifiRunner {
   calls: string[][] = [];
   scanText = HEADER;
+  /** A 2.4/5 GHz card, like the AC 9560 */
+  capability = ['Mode[G] Channels:', ' 1 = 2412 MHz', ' 6 = 2437 MHz', 'Mode[A] Channels:', ' 36 = 5180 MHz'].join(
+    '\n',
+  );
   outcome: JoinOutcome = 'connect';
   private onLine: (line: string) => void = () => {};
 
@@ -195,6 +200,8 @@ class FakeRunner implements WifiRunner {
     switch (args[0]) {
       case 'scan_results':
         return this.scanText;
+      case 'get_capability':
+        return this.capability;
       case 'add_network':
         return '0\n';
       case 'status':
@@ -277,19 +284,19 @@ function setup(
   const { saved, ...rest } = overrides;
   const runner = new FakeRunner();
   let state: RobotWifiScanState | null = null;
+  const now = rest.now ?? (() => NOW);
+  // Tests drive scans by hand
+  const card = new WifiCard({ iface: 'wlan0', runner, country: 'US', now, scanGapMs: 1_000_000, settleMs: () => 0 });
   scanner = new RobotWifiScanner({
-    iface: 'wlan0',
-    runner,
+    card,
     savedRobots: () =>
       (saved ?? ['1234-Comp']).map(r => (typeof r === 'string' ? { ssid: r, wpaKey: 'passphrase1' } : r)),
     connectAttempts: () => attempts,
     onChange: s => (state = s),
-    scanIntervalMs: 1_000_000, // tests drive scans by hand
-    scanSettleMs: 0,
     now: () => NOW,
     ...rest,
   });
-  return { runner, scanner, state: () => state! };
+  return { runner, card, scanner, state: () => state! };
 }
 
 describe('the scanner', () => {

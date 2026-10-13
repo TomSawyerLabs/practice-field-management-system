@@ -46,6 +46,7 @@ import type {
   SixGhzNetwork,
   SixGhzWatchState,
   WifiCardInfo,
+  WifiCardJobName,
   WifiSecurity,
   WifiTestJoinResult,
 } from '../../../src/types';
@@ -495,12 +496,17 @@ const CARD_USE: Record<
   { label: string; color: 'default' | 'success' | 'info' | 'warning' | 'error' }
 > = {
   free: { label: 'Free', color: 'success' },
-  robotScan: { label: 'Robot scan', color: 'info' },
-  sixGhzWatch: { label: '6 GHz watch', color: 'info' },
+  pfms: { label: 'pFMS', color: 'info' },
   test: { label: 'Testing', color: 'info' },
   host: { label: 'In use by host', color: 'warning' },
   blocked: { label: 'Blocked', color: 'error' },
 };
+
+const JOB_LABEL: Record<WifiCardJobName, string> = { robotScan: 'Robot scan', sixGhzWatch: '6 GHz watch' };
+
+/** The chip for a card: what pFMS runs on it, else what it is doing. */
+const cardUseLabel = (c: WifiCardInfo): string =>
+  c.use === 'pfms' && c.jobs.length ? c.jobs.map(j => JOB_LABEL[j]).join(' + ') : CARD_USE[c.use].label;
 
 const TEST_OUTCOME: Record<
   WifiTestJoinResult['outcome'],
@@ -559,9 +565,9 @@ function WifiCardsSection() {
       <CardContent>
         <Typography variant="h6">Wireless cards</Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          Wi-Fi cards on the pFMS host. One can listen for robots, another on 6 GHz for other access points (below). Any
-          card the host isn&apos;t using can test-join a network: pFMS joins it, says whether that worked, and leaves —
-          it never takes an address, so the host&apos;s own networking is untouched.
+          Wi-Fi cards on the pFMS host. pFMS can listen for robots and on 6 GHz for other access points (below) — on one
+          tri-band card, or on two. Any card the host isn&apos;t using can test-join a network: pFMS joins it, says
+          whether that worked, and leaves — it never takes an address, so the host&apos;s own networking is untouched.
         </Typography>
         {cards.length === 0 ? (
           <Typography variant="body2" sx={{ color: 'text.secondary' }}>
@@ -592,7 +598,7 @@ function WifiCardsSection() {
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                        <Chip size="small" color={use.color} label={use.label} />
+                        <Chip size="small" color={use.color} label={cardUseLabel(c)} />
                         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
                           {c.detail}
                         </Typography>
@@ -724,8 +730,9 @@ function WifiCardsSection() {
 }
 
 /** Robot Wi-Fi scan: which wireless card pFMS may use to listen for robots'
- *  2.4 GHz networks and check saved passphrases, and what it hears. The card
- *  is dedicated to this — pFMS runs its own wpa_supplicant on it. */
+ *  networks (2.4 GHz, plus 5/6 GHz where the card has them) and check saved
+ *  passphrases, and what it hears. pFMS runs its own wpa_supplicant on the
+ *  card, which may also run the 6 GHz watch. */
 function RobotWifiScanSection() {
   const setupConfig = useSetupConfig();
   const scan = useRobotWifiScan();
@@ -751,10 +758,11 @@ function RobotWifiScanSection() {
           <Chip size="small" color={status.color} label={status.label} />
         </Box>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          Listens for the 2.4 GHz network every robot radio broadcasts (FRC-1234 or FRC-1234-Suffix) and tells the team,
-          and the CSA page, when it doesn&apos;t match what they saved — capitals included. The first time a saved
-          passphrase can be tried, pFMS joins that network briefly to check it. Needs a spare wireless card that nothing
-          else uses.
+          Listens for the 2.4 GHz network every robot radio broadcasts (FRC-1234 or FRC-1234-Suffix) — and on 5 and 6
+          GHz, where the card has them — and tells the team, and the CSA page, when it doesn&apos;t match what they
+          saved — capitals included. The first time a saved passphrase can be tried, pFMS joins that network briefly to
+          check it. Needs a spare wireless card with 2.4 GHz that the host doesn&apos;t use; it can be the 6 GHz
+          watch&apos;s.
         </Typography>
         <FormControl size="small" sx={{ minWidth: 220 }}>
           <InputLabel id="robot-wifi-iface">Wireless card</InputLabel>
@@ -792,6 +800,11 @@ function RobotWifiScanSection() {
             {scan.error}
           </Alert>
         )}
+        {scan?.problem && (
+          <Alert severity="warning" sx={{ mt: 1.5 }}>
+            {scan.problem}
+          </Alert>
+        )}
 
         {scan?.status === 'running' && (
           <Box sx={{ mt: 2 }}>
@@ -817,7 +830,12 @@ function RobotWifiScanSection() {
                     return (
                       <TableRow key={b.ssid}>
                         <TableCell sx={{ fontFamily: 'monospace' }}>{b.ssid}</TableCell>
-                        <TableCell>{b.signal} dBm</TableCell>
+                        <TableCell>
+                          {b.signal} dBm
+                          <Typography variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+                            {wifiChannel(b.frequency)}
+                          </Typography>
+                        </TableCell>
                         <TableCell>
                           {b.match.kind === 'exact' ? (
                             <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
@@ -921,8 +939,8 @@ function SixGhzWatchSection() {
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
           Listens on 6 GHz for other access points using a team&apos;s network name — usually a team&apos;s own AP or
           spare radio left on, which their robot may join instead of the field. Warns the team and the CSA page. Needs a
-          6 GHz-capable card that nothing else uses (not the robot scan&apos;s); it only listens, never joins. Sets the
-          host&apos;s Wi-Fi country, which 6 GHz needs.
+          6 GHz-capable card the host doesn&apos;t use — it can be the robot scan&apos;s; it only listens, never joins.
+          The Wi-Fi country applies to every card pFMS runs (6 GHz needs one).
         </Typography>
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <FormControl size="small" sx={{ minWidth: 220 }}>

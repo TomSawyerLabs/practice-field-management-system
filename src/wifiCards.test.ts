@@ -9,6 +9,8 @@ import {
   defaultRouteInterfaces,
   readWifiCardFacts,
   WifiCards,
+  type PfmsCardUse,
+  type PfmsWifiUse,
   type WifiCardFacts,
   type WifiCardsOptions,
 } from './wifiCards.js';
@@ -118,39 +120,63 @@ describe('classifying a card', () => {
     });
   });
 
-  test('the robot scan card can test-join through the scan while it runs', () => {
-    const running = classifyCard(card(), { robotScan: { iface: 'wlp0s20f3', status: 'running' } });
-    expect(running).toMatchObject({ use: 'robotScan', canTestJoin: true, canRobotScan: true });
-    const stopped = classifyCard(card(), { robotScan: { iface: 'wlp0s20f3', status: 'error', error: 'no card' } });
+  const runs = (jobs: PfmsCardUse['jobs'], over: Partial<PfmsCardUse> = {}): PfmsWifiUse => ({
+    cards: [{ iface: 'wlp0s20f3', status: 'running', jobs, ...over }],
+  });
+
+  test('a card pFMS runs can test-join while it runs (the join borrows the radio)', () => {
+    expect(classifyCard(card(), runs(['robotScan']))).toMatchObject({
+      use: 'pfms',
+      jobs: ['robotScan'],
+      canTestJoin: true,
+      canRobotScan: true,
+      detail: 'Running the robot Wi-Fi scan',
+    });
+    expect(classifyCard(card(), runs(['sixGhzWatch']))).toMatchObject({ use: 'pfms', canTestJoin: true });
+    const stopped = classifyCard(card(), runs(['robotScan'], { status: 'error', error: 'no card' }));
     expect(stopped).toMatchObject({
-      use: 'robotScan',
+      use: 'pfms',
       canTestJoin: false,
-      detail: 'Robot Wi-Fi scan stopped: no card',
+      detail: 'The robot Wi-Fi scan stopped: no card',
     });
   });
 
   test('a robot-scan choice on a host card stays selectable, so it can be turned off', () => {
-    const c = classifyCard(card({ addresses: ['10.0.0.9'] }), { robotScan: { iface: 'wlp0s20f3', status: 'error' } });
+    const c = classifyCard(card({ addresses: ['10.0.0.9'] }), runs(['robotScan'], { status: 'error' }));
     expect(c).toMatchObject({ use: 'host', canRobotScan: true, canTestJoin: false });
   });
 
-  test('one job per card: the robot scan card is not offered to the 6 GHz watch, nor the other way', () => {
-    expect(classifyCard(card(), { robotScan: { iface: 'wlp0s20f3', status: 'running' } })).toMatchObject({
-      canSixGhzWatch: false,
-    });
-    const watch = classifyCard(card(), { sixGhzWatch: { iface: 'wlp0s20f3', status: 'running' } });
-    expect(watch).toMatchObject({
-      use: 'sixGhzWatch',
+  test('one card can run both jobs', () => {
+    expect(classifyCard(card(), runs(['robotScan']))).toMatchObject({ canSixGhzWatch: true });
+    expect(classifyCard(card(), runs(['sixGhzWatch']))).toMatchObject({ canRobotScan: true });
+    expect(classifyCard(card({ bands: ['2.4', '5', '6'] }), runs(['robotScan', 'sixGhzWatch']))).toMatchObject({
+      use: 'pfms',
+      jobs: ['robotScan', 'sixGhzWatch'],
+      canRobotScan: true,
       canSixGhzWatch: true,
-      canRobotScan: false,
-      canTestJoin: false, // the watch never joins
-      detail: 'Listening on 6 GHz for other access points (6 GHz watch)',
+      detail: 'Running the robot Wi-Fi scan and 6 GHz watch · 2.4/5/6 GHz',
     });
-    expect(classifyCard(card(), {})).toMatchObject({ canSixGhzWatch: true });
+  });
+
+  test("a band the card lacks rules out the job that needs it; unknown bands don't", () => {
+    expect(classifyCard(card({ bands: ['2.4', '5'] }), {})).toMatchObject({
+      canRobotScan: true,
+      canSixGhzWatch: false,
+      detail: 'Free (switched off) · 2.4/5 GHz (no 6 GHz)',
+    });
+    expect(classifyCard(card({ bands: ['5', '6'] }), {})).toMatchObject({ canRobotScan: false, canSixGhzWatch: true });
+    expect(classifyCard(card(), {})).toMatchObject({ canRobotScan: true, canSixGhzWatch: true });
+    // Already chosen: stays selectable, so it can be turned off
+    expect(classifyCard(card({ bands: ['2.4', '5'] }), runs(['sixGhzWatch']))).toMatchObject({ canSixGhzWatch: true });
   });
 
   test('a card under test is busy', () => {
     expect(classifyCard(card(), { testIface: 'wlp0s20f3' })).toMatchObject({ use: 'test', canTestJoin: false });
+    expect(classifyCard(card(), { ...runs(['robotScan']), testIface: 'wlp0s20f3' })).toMatchObject({
+      use: 'pfms',
+      canTestJoin: false,
+      detail: 'Running a test join (robot Wi-Fi scan paused)',
+    });
   });
 });
 
@@ -198,7 +224,8 @@ function setup(over: Partial<WifiCardsOptions> = {}) {
   let state: WifiCardsState | null = null;
   const cards = new WifiCards({
     onChange: s => (state = s),
-    robotScan: () => null,
+    pfmsCards: () => [],
+    bandsOf: () => undefined,
     matchRunning: () => false,
     readFacts: () => [card(), card({ iface: 'wlan2', controllers: ['wpa_supplicant'] })],
     makeRunner: () => runner,
@@ -257,17 +284,20 @@ describe('test joins', () => {
     await first;
   });
 
-  test("on the robot scan's card it goes through the scan", async () => {
+  test("on a card pFMS runs it goes through that card's wpa_supplicant", async () => {
     const calls: string[] = [];
     const { runner, cards } = setup({
-      robotScan: () => ({
-        iface: 'wlp0s20f3',
-        status: 'running',
-        testJoin: async request => {
-          calls.push(request.ssid);
-          return { ssid: request.ssid, outcome: 'connected' };
+      pfmsCards: () => [
+        {
+          iface: 'wlp0s20f3',
+          status: 'running',
+          jobs: ['sixGhzWatch'],
+          testJoin: async request => {
+            calls.push(request.ssid);
+            return { ssid: request.ssid, outcome: 'connected' };
+          },
         },
-      }),
+      ],
     });
     expect((await cards.testJoin('wlp0s20f3', 'FRC-1234-Comp', 'passphrase1')).outcome).toBe('connected');
     expect(calls).toEqual(['FRC-1234-Comp']);

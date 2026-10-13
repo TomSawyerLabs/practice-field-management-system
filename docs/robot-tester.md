@@ -135,16 +135,22 @@ The links only answer from the robot's own subnet. A laptop on the guest Wi-Fi g
 
 Separate from `/test`, pFMS can listen for the network every robot radio
 broadcasts on 2.4 GHz — `FRC-1234` or `FRC-1234-Suffix` — and compare it
-with the robots each team has saved. The field joins the robot on 6 GHz as
+with the robots each team has saved. It listens on 5 GHz and 6 GHz too,
+where the card has them, in case a radio broadcasts there; `/admin` shows
+the band and channel each one was heard on. The field joins the robot on 6 GHz as
 `1234-Suffix`, the same name without `FRC-`, so this is the quickest way to
 catch a name typed with the wrong capitals, which otherwise just never
 connects.
 
 **Setup:** on `/admin` → _Robot Wi-Fi scan_, pick a spare wireless card
-(or set `ROBOT_WIFI_INTERFACE`). pFMS runs its own `wpa_supplicant` on that
-card, controlled from `/run/pfms-wifi` with `wpa_cli`, and scans 2.4 GHz
-every 20 seconds. Nothing else on the host is touched, and the card must
-not be used for anything else. Linux only.
+with 2.4 GHz (or set `ROBOT_WIFI_INTERFACE`). It can be the
+[6 GHz watch](#6-ghz-watch)'s card — one tri-band card can do both (see
+[One card or two](#one-card-or-two)). pFMS runs its own `wpa_supplicant` on
+that card, controlled from `/run/pfms-wifi` with `wpa_cli`, and scans every
+band it has, resting 10 seconds between scans. Nothing else on the host is
+touched, and the host must not use the card for anything else. A card
+without 2.4 GHz is reported on `/admin` and the scan stays off it. Linux
+only.
 
 **What teams see** on their page, per robot network heard for their team:
 
@@ -214,27 +220,30 @@ stalled robot; otherwise the saved one).
 `/admin` → _Wireless cards_ lists every Wi-Fi card on the pFMS host with
 its driver and MAC, and what it is doing:
 
-| Status         | Meaning                                                                                                                                                          |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Free           | Nothing uses it. It can be picked for the robot scan, or test-join a network.                                                                                    |
-| Robot scan     | The robot Wi-Fi scan owns it. Test joins go through the scan's own `wpa_supplicant` (the scan pauses for them).                                                  |
-| 6 GHz watch    | The [6 GHz watch](#6-ghz-watch) owns it. It only scans, so no test joins.                                                                                        |
-| Testing        | A test join is running on it.                                                                                                                                    |
-| In use by host | Another `wpa_supplicant` or `hostapd` controls it, it has an address (other than link-local), or the host's default route goes through it. pFMS leaves it alone. |
-| Blocked        | rfkill (software or the hardware switch) has its radio off.                                                                                                      |
+| Status                           | Meaning                                                                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Free                             | Nothing uses it. It can be picked for the robot scan or the 6 GHz watch, or test-join a network.                                                                 |
+| Robot scan, 6 GHz watch, or both | pFMS runs it for that job, or both. Test joins go through its own `wpa_supplicant` (scans pause for them).                                                       |
+| Testing                          | A test join is running on it.                                                                                                                                    |
+| In use by host                   | Another `wpa_supplicant` or `hostapd` controls it, it has an address (other than link-local), or the host's default route goes through it. pFMS leaves it alone. |
+| Blocked                          | rfkill (software or the hardware switch) has its radio off.                                                                                                      |
 
-The robot-scan and 6 GHz watch pickers show the same status per card and
-won't let you pick one the host or the other job is using (a card already picked stays selectable, so it
-can be switched off). The list refreshes every 10 seconds.
+Once pFMS has run a card it also shows the card's bands (e.g. `2.4/5 GHz
+(no 6 GHz)`). The robot-scan and 6 GHz watch pickers show the same status
+per card and won't let you pick one the host is using, or one missing the
+job's band — 2.4 GHz for the robot scan, 6 GHz for the watch. A card pFMS
+hasn't run yet can be picked for either; if it lacks the band, the job says
+so. A card already picked stays selectable, so it can be switched off. The
+list refreshes every 10 seconds.
 
-**Test join** (Free or Robot scan cards, admins only, not during a match,
+**Test join** (Free cards, or any card pFMS runs; admins only, not during a match,
 one at a time): enter an SSID — robot networks already heard are suggested
 — and a passphrase if it needs one. pFMS scans every band for it, joins its
 strongest access point once, and leaves: association only, no DHCP, no
 address, no routes, so the host's networking is untouched. It disconnects
 the instant `wpa_supplicant` says the join succeeded or was refused, and the
-result says how long that answer took. While pFMS has a card (for the robot
-scan or a test) it keeps the card's IPv6 autoconfiguration (`accept_ra`,
+result says how long that answer took. While pFMS has a card (for a job
+or a test) it keeps the card's IPv6 autoconfiguration (`accept_ra`,
 `autoconf`) off, and puts it back when it lets go, so a router advertisement
 heard in that moment can't leave the card with an address or a route. On a
 free card it starts a `wpa_supplicant` just for the test and stops it
@@ -256,18 +265,18 @@ radio — as a backup, and leave it on. Set up with the same network name and
 passphrase as the field, it competes with the field for the robot: the
 robot radio joins whichever it finds first, and when that is the team's
 own, the robot never shows up on the field. The field announces team
-networks only on 6 GHz, so this needs a card that can hear 6 GHz (the
-robot scan's card may not; an Intel AC 9560 can't).
+networks only on 6 GHz, so this needs a card that can hear 6 GHz (an Intel
+AC 9560 can't).
 
 **Setup:** on `/admin` → _6 GHz watch_, pick a 6 GHz-capable wireless card
-(or set `SIX_GHZ_WATCH_INTERFACE`) — not the robot scan's; one card does one
-job. pFMS runs its own `wpa_supplicant` on it and only ever scans: it never
-joins anything. Every 30 seconds it scans every 6 GHz channel the card
+(or set `SIX_GHZ_WATCH_INTERFACE`). It can be the robot scan's card (see
+[One card or two](#one-card-or-two)). The watch only listens — it never
+joins anything itself. Every scan covers every 6 GHz channel the card
 allows (including channels with no 2.4/5 GHz access point pointing at
-them). 6 GHz needs a Wi-Fi country: the watch sets the host's regulatory
-domain from _Wi-Fi country_ (`wifiCountry`, `WIFI_COUNTRY`, default `US`).
-The kernel keeps one for the whole host, so it applies to every card, and
-it stays set after the watch is switched off. Linux only.
+them). 6 GHz needs a Wi-Fi country: pFMS sets the host's regulatory domain
+from _Wi-Fi country_ (`wifiCountry`, `WIFI_COUNTRY`, default `US`) on every
+card it runs. The kernel keeps one for the whole host, so it applies to
+every card, and it stays set after pFMS lets go of the card. Linux only.
 
 **What it looks for** — names match exactly, capitals included, as the
 robot radio's do:
@@ -293,6 +302,21 @@ point, channel, signal, and what pFMS made of it — plus how many channels
 the card can scan and the field's channel. A card that offers no 6 GHz
 channels (it doesn't do 6 GHz, or the country doesn't allow it) is reported
 there and on `/csa`. Access points not heard for two minutes drop off.
+
+### One card or two
+
+Both jobs can run on one tri-band card (2.4, 5 and 6 GHz — e.g. a MediaTek
+MT7921AU USB adapter): pick it in both pickers. pFMS runs one
+`wpa_supplicant` and one scan loop per card. Each scan covers every band
+the card's jobs want, and both jobs read it: the robot scan wants 2.4, 5
+and 6 GHz, the watch 6 GHz. A join (a passphrase check or a staff test join)
+borrows the radio for its few seconds, and scans wait for it, so the watch
+is deaf for that moment. A scan of a tri-band card's ~100 channels takes
+about 20 seconds (pFMS allows 200 ms per channel, at least 5 seconds), then
+it rests 10. Two cards work the same way, each with its own loop: e.g. the
+robot scan on a built-in 2.4/5 GHz card and the watch on a 6 GHz adapter.
+The journal logs each card's channels as `Wi-Fi card <iface>: N channels
+(2.4 GHz: a, 5 GHz: b, 6 GHz: c) at country US`.
 
 ## Factory Default Radio Detection
 

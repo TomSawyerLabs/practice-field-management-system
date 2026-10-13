@@ -257,18 +257,19 @@ export interface SetupSettings {
    *  apply as they come in those phases. A running match always holds them.
    *  Flipped from the match page (`matchHoldWifi`) or the admin page. */
   holdRadioChangesForMatch?: boolean;
-  /** Wireless interface pFMS may use to listen for robots' 2.4 GHz networks
-   *  and check their passphrases (see robotWifiScan.ts). Absent / empty = the
-   *  robot Wi-Fi scan is off. The interface is dedicated to this: pFMS runs
-   *  its own wpa_supplicant on it. */
+  /** Wireless interface pFMS may use to listen for robots' networks (2.4 GHz,
+   *  and 5/6 GHz where the card has them) and check their passphrases (see
+   *  robotWifiScan.ts). Absent / empty = the robot Wi-Fi scan is off. pFMS
+   *  runs its own wpa_supplicant on it; it may be the 6 GHz watch's card. */
   robotWifiInterface?: string;
   /** Wireless interface pFMS may use to listen on 6 GHz for other access
    *  points using a team's network name — a team's own AP left on, which
    *  the robot may join instead of the field (see sixGhzWatch.ts). Needs a
-   *  6 GHz-capable card, not the robot scan's. Absent / empty = off. */
+   *  6 GHz-capable card; it may be the robot scan's. Absent / empty = off. */
   sixGhzWatchInterface?: string;
-  /** Two-letter country for pFMS's Wi-Fi cards' regulatory domain (the 6 GHz
-   *  watch sets it; the kernel keeps one for the whole host). Absent = `US`. */
+  /** Two-letter country for pFMS's Wi-Fi cards' regulatory domain (set on
+   *  every card pFMS runs — 6 GHz needs it; the kernel keeps one for the
+   *  whole host). Absent = `US`. */
   wifiCountry?: string;
   /** When a match ends, queue every robot on the field to leave unless it
    *  plays on (joins the next match, or its team presses Keep). Nothing
@@ -2322,6 +2323,9 @@ export interface RobotWifiScanState {
   status: 'off' | 'starting' | 'running' | 'error';
   iface?: string;
   error?: string;
+  /** Something keeps it from hearing robots although the card runs (no
+   *  2.4 GHz radio) */
+  problem?: string;
   lastScanAt?: number;
   /** Wireless interfaces on the host, for the admin picker. */
   interfaces: string[];
@@ -2409,6 +2413,9 @@ export function isSixGhzWatchState(msg: unknown): msg is SixGhzWatchState {
 /** How a network is secured, as far as joining it goes. */
 export type WifiSecurity = 'WPA-PSK' | 'SAE' | 'open';
 
+/** A Wi-Fi band, in GHz. */
+export type WifiBand = '2.4' | '5' | '6';
+
 /** A wireless card on the pFMS host, and what it is doing. */
 export interface WifiCardInfo {
   iface: string;
@@ -2419,10 +2426,14 @@ export interface WifiCardInfo {
   operstate?: string;
   /** Addresses on the card other than link-local ones */
   addresses: string[];
-  /** robotScan: pFMS's robot Wi-Fi scan owns it. sixGhzWatch: pFMS's 6 GHz
-   *  watch owns it. test: pFMS is running a test join on it. host: something
-   *  else on the host uses it. blocked: rfkill. free: nothing does. */
-  use: 'robotScan' | 'sixGhzWatch' | 'test' | 'host' | 'blocked' | 'free';
+  /** pfms: pFMS runs it for the jobs in `jobs`. test: pFMS is running a
+   *  test join on it. host: something else on the host uses it. blocked:
+   *  rfkill. free: nothing does. */
+  use: 'pfms' | 'test' | 'host' | 'blocked' | 'free';
+  /** What pFMS runs on it — one card can do both */
+  jobs: WifiCardJobName[];
+  /** The bands it has, once pFMS has run it (unknown before) */
+  bands?: WifiBand[];
   /** One line on what the card is doing, or why it can't be used */
   detail: string;
   /** Staff can have pFMS test-join a network on it */
@@ -2432,6 +2443,9 @@ export interface WifiCardInfo {
   /** It may be picked for the 6 GHz watch */
   canSixGhzWatch: boolean;
 }
+
+/** What pFMS can run on a wireless card. */
+export type WifiCardJobName = 'robotScan' | 'sixGhzWatch';
 
 /** One staff test join: pFMS joined a network briefly on a card to see
  *  whether it could — association only, no address — and left. */
