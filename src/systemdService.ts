@@ -45,8 +45,12 @@ WantedBy=multi-user.target
 }
 
 /** How this process was started: runtime and entry point. */
-export function currentExecStart(): string[] {
-  return [process.execPath, resolve(process.argv[1] ?? 'dist')];
+export function currentExecStart(argv = process.argv, execPath = process.execPath): string[] {
+  // A `bun build --compile` binary is its own entry point; argv[1] is the
+  // virtual path of the embedded script (`/$bunfs/root/pfms`, or
+  // `B:/~BUN/root/pfms.exe` on Windows), which doesn't exist on disk.
+  if (/^(\/\$bunfs\/|B:[\\/]~BUN[\\/])/.test(argv[1] ?? '')) return [execPath];
+  return [execPath, resolve(argv[1] ?? 'dist')];
 }
 
 export type ServiceInstallResult = { ok: true; unit: string } | { ok: false; error: string };

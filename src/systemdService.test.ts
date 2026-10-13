@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { unitFileFor } from './systemdService.js';
+import { currentExecStart, unitFileFor } from './systemdService.js';
+
+describe('how the wizard records the way pFMS was started', () => {
+  test('a packaged binary runs on its own, not with its embedded script path', () => {
+    expect(currentExecStart(['bun', '/$bunfs/root/pfms'], '/opt/pfms/pfms')).toEqual(['/opt/pfms/pfms']);
+    expect(currentExecStart(['bun', 'B:/~BUN/root/pfms.exe'], 'C:\\pfms\\pfms.exe')).toEqual(['C:\\pfms\\pfms.exe']);
+  });
+});
 
 describe('the systemd unit the wizard installs', () => {
   test('runs pFMS as it runs now, from its working directory, restarting and gracefully reloading', () => {
