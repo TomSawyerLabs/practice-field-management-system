@@ -44,7 +44,6 @@ service restart — no `systemctl daemon-reload` needed.
 
 | Variable                 | Default   | Description                                                                                                                                                                      |
 | ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FMS_ENDPOINT`           | `false`   | Set to `true` to enable the FMS server (TCP/1750 + UDP/1160)                                                                                                                     |
 | `FMS_TCP_REPLY_STATIONS` | _(none)_  | Experimental: stations whose DS gets the FMS TCP station-assignment reply outside a match (`slot1,slot2` or `all`). For testing whether a TCP-only reply locks out local enable. |
 | `FMS_LOG_DS_MESSAGES`    | _(unset)_ | Set to log verbose per-message DS TCP/UDP hex dumps (debugging)                                                                                                                  |
 | `SYSLOG_ENDPOINT`        | `false`   | Set to `true` to enable the syslog server (radio log collection)                                                                                                                 |

@@ -5,7 +5,9 @@ import { installDryRunFetchGuard, skippedInDryRun } from './dryRun.js';
 import RadioManager from './radioManager.js';
 import { runSyslogServer } from './runSyslogServer.js';
 import { setupWebSocket } from './websocketServer.js';
-import { runFMS, UdpSendPort } from './fmsServer.js';
+import { runFMS, UdpSendPort, type FmsEvents, type FmsServer } from './fmsServer.js';
+import { EventEmitter } from 'node:events';
+import dgram from 'node:dgram';
 import { startConfigurationScheduler } from './scheduler.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
@@ -168,7 +170,6 @@ const trunkSetting = () => setupConfigStore.resolveSetting('vlanInterface', 'VLA
  *  wizard's value, else FIELD_CONTROL_INTERFACE. Unset: the trunk itself. */
 const fieldControlSetting = () =>
   setupConfigStore.resolveSetting('fieldControlInterface', 'FIELD_CONTROL_INTERFACE').value || undefined;
-const StartFMS = process.env.FMS_ENDPOINT === 'true';
 // Experimental: stations whose DS gets the TCP station-assignment reply even
 // outside a match ("slot1,slot2" or "all") — for testing whether a TCP-only
 // reply locks the DS out of local enable before defaulting it on for everyone.
@@ -1343,7 +1344,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     });
   }
 
-  if (StartFMS) {
+  // The FMS server (DS handshakes on TCP 1750, status and control on UDP
+  // 1160) follows field control: it binds 10.0.100.5, which exists while the
+  // field network is up. startFms/stopFms are set below; the trunk rebuild
+  // calls them. Telemetry, drive sessions and the Wi-Fi commit deferral
+  // don't depend on it and always run. (FMS_ENDPOINT used to gate all of
+  // this; it's gone — there's no reason to run a field without it.)
+  let startFms = async (): Promise<void> => {};
+  let stopFms = async (): Promise<void> => {};
+  {
     const telemetryManager = new TelemetryManager(
       () => radioManager.getTeamMappings(),
       update => {
@@ -1583,7 +1592,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         ? driveSessions.stationDrivenBy(address, teamNumber)
         : radioManager.getStationForTeam(teamNumber);
 
-    runFMS({
+    const fmsOptions: Parameters<typeof runFMS>[0] = {
       // Station-assignment reply (0x19/0x1f): only for a station the field is
       // controlling. Joined stations get their slot. A station the field holds
       // out of a match — policy block, e-stop, or freeplay switched off by
@@ -1614,10 +1623,41 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         // even before the match starts and portToSlot is populated.
         return matchEngine.slotForStation(station);
       },
-    }).then(fms => {
-      if (!fms) return;
-      matchEngine.setUdpSocket(fms.udpSocket);
+    };
 
+    // `fms` outlives any one server: commands sent to it reach the running
+    // server (if any), and the running server's events come out of it, so
+    // everything below is wired once, not per server.
+    const fms = new EventEmitter<FmsEvents>();
+    let fmsServer: FmsServer | undefined;
+    fms.on('disconnectDS', arg => fmsServer?.emit('disconnectDS', arg));
+    fms.on('disconnectTeam', arg => fmsServer?.emit('disconnectTeam', arg));
+    startFms = async () => {
+      if (fmsServer) return;
+      const server = await runFMS(fmsOptions);
+      if (!server || fmsServer) {
+        void server?.close();
+        return;
+      }
+      fmsServer = server;
+      server.on('message', arg => fms.emit('message', arg));
+      server.on('dsConnected', arg => fms.emit('dsConnected', arg));
+      server.on('dsDisconnected', arg => fms.emit('dsDisconnected', arg));
+      matchEngine.setUdpSocket(server.udpSocket);
+    };
+    stopFms = async () => {
+      const server = fmsServer;
+      if (!server) return;
+      fmsServer = undefined;
+      // The match engine sends from the FMS socket; give it its own back.
+      matchEngine.setUdpSocket(dgram.createSocket('udp4'));
+      await server.close();
+      console.log('FMS server stopped');
+    };
+    void startFms();
+    afterTrunkRebuild.push(() => void startFms());
+
+    {
       // Robots the field holds out of a match — a blocked control system, an
       // e-stop, or the admin out-of-match switch turned off — stay under field
       // control: resolveTeamSlot above assigns them (so the DS cannot enable
@@ -1883,7 +1923,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // Drive sessions persist across DS TCP reconnects (the DS flaps every ~6s
       // when no match is running) and end when the laptop goes quiet or its
       // robot leaves the field.
-    });
+    }
   }
 
   // Broadcast iptables forwarding counters and mDNS activity to all clients every 5 seconds
@@ -1952,6 +1992,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     stopPacketCapture();
     stopMdnsReflector();
     if (previous) {
+      // 10.0.100.5 is about to go; the server comes back with the new trunk.
+      await stopFms();
       await portBridgeManager?.cleanupPortInterfaces();
       await tearDownTrunk(previous, { fieldControl: fieldControlInterface });
     }

@@ -222,3 +222,23 @@ describe('unparseable UDP status logging', () => {
     }
   });
 });
+
+describe('stopping the server (the field network went away)', () => {
+  test('drops every DS and frees both ports, so it can start again', async () => {
+    const tcp = await freeTcpPort();
+    const udp = await freeUdpPort();
+    const first = await startFMSServer({ address: ADDRESS, tcp, udp });
+    const ds = await new Promise<net.Socket>((resolve, reject) => {
+      const s = net.connect(tcp, ADDRESS, () => resolve(s));
+      s.on('error', reject);
+    });
+    await settle();
+
+    await first.close();
+    await closed(ds);
+
+    // The same address and ports bind again — what a trunk rebuild needs
+    const second = await startFMSServer({ address: ADDRESS, tcp, udp });
+    await second.close();
+  });
+});

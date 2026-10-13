@@ -470,7 +470,15 @@ type Events = {
  *  (Cheesy Arena shares one socket for receive and send for the same reason;
  *  pFMS sending from an ephemeral port left 5940's DS "connected" but never
  *  enabled on 2026-09-12). */
-export type FmsServer = EventEmitter<Events> & { udpSocket: Socket };
+export type FmsServer = EventEmitter<Events> & {
+  udpSocket: Socket;
+  /** Stop listening and drop every DS connection — the field network went
+   *  away, so 10.0.100.5 is about to. */
+  close(): Promise<void>;
+};
+
+/** What an FMS server emits and accepts. */
+export type FmsEvents = Events;
 
 export async function startFMSServer({
   address = DefaultAddress,
@@ -689,6 +697,16 @@ export async function startFMSServer({
           console.error('TCP server error:', err);
           error(err);
         });
+        emitter.close = () =>
+          new Promise<void>(done => {
+            for (const sockets of socketsByAddr.values()) for (const socket of sockets) socket.destroy();
+            try {
+              udpServer.close();
+            } catch {
+              // already closed (a send socket handed back by the match engine)
+            }
+            tcpServer.close(() => done());
+          });
         resolve(emitter);
       });
     });

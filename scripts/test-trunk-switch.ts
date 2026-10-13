@@ -87,6 +87,13 @@ try {
   check('choosing a trunk rebuilds the field network', await until('Trunk interface: none → eth9'));
   check('and it comes up on the new NIC', await until('Field network running on eth9'));
   check('without touching the host (dry run)', seen('[dry-run] Would'));
+  // The FMS server follows the field network. Here 10.0.100.5 can't be
+  // bound, so each try ends in the "Bind to …" line: one at startup, one per
+  // rebuild.
+  check(
+    'the FMS server is started again with the field network',
+    log.filter(l => l.includes('to enable FMS server')).length >= 2,
+  );
 
   save({ vlanInterface: 'eth7' });
   check('moving it tears down the old one', await until('Trunk interface: eth9 → eth7'));

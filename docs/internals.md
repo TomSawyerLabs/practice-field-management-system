@@ -51,11 +51,18 @@ the network model see [network.md](network.md).
    3000), broadcasts radio status to connected frontend clients.
 7. **Start subnet scanner** — periodic `fping` sweeps of each configured
    team's subnet (see [Device Discovery](network.md#device-discovery)).
-8. **Start optional services** — syslog server, FMS server, scheduled
-   configuration clearing (cron).
-9. **Restore in-memory state** — on graceful reload, restores DNAT rules
-   from kernel iptables, previous station config from the radio manager,
-   and route preferences from kernel `ip rule` entries.
+8. **Start the FMS server** (TCP 1750, UDP 1160 on `10.0.100.5`) — there is
+   no switch for it: it starts whenever field control's address is on this
+   machine, and follows the field network — stopped before a trunk
+   teardown, started again once the trunk is back. Without the address it
+   logs `Bind to 10.0.100.5 to enable FMS server` and pFMS carries on.
+   DS telemetry, drive sessions and holding Wi-Fi changes while robots are
+   enabled run either way.
+9. **Start optional services** — syslog server, scheduled configuration
+   clearing (cron).
+10. **Restore in-memory state** — on graceful reload, restores DNAT rules
+    from kernel iptables, previous station config from the radio manager,
+    and route preferences from kernel `ip rule` entries.
 
 ## When a Team is Configured
 

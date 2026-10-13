@@ -154,7 +154,6 @@ working field:
 ```bash
 WEBSOCKET_PORT=9005
 VLAN_INTERFACE=eno1
-FMS_ENDPOINT=true
 TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
