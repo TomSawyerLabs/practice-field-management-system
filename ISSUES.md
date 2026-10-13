@@ -32,6 +32,18 @@ connected DS IPs. Two accepted gaps (user decision 2026-07-24: fine for now):
   compute a per-connection DS flag server-side and reject operator/staff
   commands from flagged connections.
 
+## Admin-page actions the WebSocket accepts from anyone
+
+Seen 2026-10-13 in `src/websocketServer.ts` (~L1450–1490): `createApiKey`,
+`revokeApiKey`, `reactivateApiKey`, `deleteApiKey`, `approvePendingDevice`,
+`dismissPendingDevice`, `scoreReset` and `portBridgeRequest` run without
+checking `adminConnections` / `setupWritesAllowed`. Only the admin page's UI
+gate stands in the way, so any page on the field network (a team's laptop on
+guest Wi-Fi) could mint a scoring key, revoke the real ones, or reset the
+score. Other admin actions (clear the radio, restart, setup writes) are
+checked. Needs a pass over every message type to decide which need admin and
+which a staff or team page legitimately sends.
+
 ## Stop buttons
 
 Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make
