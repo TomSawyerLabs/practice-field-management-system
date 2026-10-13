@@ -132,8 +132,11 @@ bun run dev                    # backend (http://localhost:3000)
 cd frontend && bun run dev     # frontend (http://localhost:5173), in a second terminal
 ```
 
-`DRY_RUN` logs network operations instead of performing them. Without it,
-starting on a non-Linux host exits immediately with an explanation.
+`DRY_RUN` makes pFMS change nothing outside your machine: network
+operations, radio configurations, Driver Station packets and the like are
+logged instead of performed, while reads (the radio's status, scans) stay
+live ([details](docs/internals.md#dry-run-mode)). Without it, starting on a
+non-Linux host exits immediately with an explanation.
 
 ```bash
 bun run typecheck   # Type-check both backend and frontend

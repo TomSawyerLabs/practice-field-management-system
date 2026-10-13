@@ -43,6 +43,7 @@
  * pointer move. Chunks from before this existed
  * are finalized in the background, one at a time, never during a match.
  */
+import { skippedInDryRun } from './dryRun.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
@@ -739,6 +740,7 @@ export class FieldTimelapse {
   /** Fire one configured HTTP action. Failures are reported, never thrown at
    *  the scheduler — a light that would not turn on must not cost the frame. */
   private async runAction(action: TimelapseAction, connectAddress?: string): Promise<void> {
+    if (action.method !== 'GET' && skippedInDryRun(`${action.method} ${action.url} (field lights)`)) return;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ACTION_TIMEOUT_MS);
     try {

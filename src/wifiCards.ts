@@ -6,6 +6,7 @@
  * only associates (no DHCP, no address, no routes) and then leaves, so it
  * cannot disturb the host's networking. See plans/admin-wifi-cards.md.
  */
+import { skippedInDryRun } from './dryRun.js';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { networkInterfaces, platform } from 'node:os';
 import { join } from 'node:path';
@@ -282,6 +283,7 @@ export class WifiCards {
   /** Test-join a network on a card. Throws, with a message for staff, when
    *  it can't be tried at all; otherwise the result lands in the state. */
   async testJoin(iface: string, ssid: string, passphrase?: string): Promise<WifiTestJoinResult> {
+    if (skippedInDryRun(`join ${ssid} on ${iface}`)) throw new Error('Dry run: the test join was not attempted');
     if (this.o.matchRunning()) throw new Error('Not during a match');
     if (this.testIface) throw new Error(`A test join is already running on ${this.testIface}`);
     const card = this.getState().cards.find(c => c.iface === iface);

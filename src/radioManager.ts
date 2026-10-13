@@ -1,3 +1,4 @@
+import { skippedInDryRunUnlessLocal } from './dryRun.js';
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { configureNetwork, setInternetAccess } from './networkManager.js';
 import { appError } from './appLogger.js';
@@ -1020,6 +1021,13 @@ class RadioManager {
   }
 
   private async configureRadio(config: any): Promise<void> {
+    if (
+      skippedInDryRunUnlessLocal(
+        this.apiBaseUrl,
+        `send the radio at ${this.apiBaseUrl} a new configuration: ${JSON.stringify(redactKeys(config))}`,
+      )
+    )
+      return;
     if (!this.connected) {
       console.log('Radio not connected, skipping configuration');
       return;
@@ -1579,6 +1587,8 @@ class RadioManager {
   }
 
   private async doScan(): Promise<ReadyScanResults> {
+    if (skippedInDryRunUnlessLocal(this.apiBaseUrl, `start a channel scan on the radio at ${this.apiBaseUrl}`))
+      return { channels: [], additionalStatistics: [] };
     // Start the scan
     const startResponse = await fetch(`${this.apiBaseUrl}/scan/start`, {
       signal: AbortSignal.timeout(this.timeout),
@@ -1635,4 +1645,11 @@ export function describeLinkUp(
 /** "Robot dropped off the field radio: 5940-sigma on slot2 after 12m" */
 export function describeLinkDown(station: StationName, ssid: string, linkedAt: number | undefined): string {
   return `Robot dropped off the field radio: ${ssid} on ${station}${linkedAt ? ` after ${formatDuration(linkedAt)}` : ''}`;
+}
+
+/** A radio configuration with every WPA key masked, for logs. */
+function redactKeys(config: unknown): unknown {
+  return JSON.parse(JSON.stringify(config), (key, value) =>
+    /wpaKey/i.test(key) && typeof value === 'string' ? '***' : value,
+  );
 }

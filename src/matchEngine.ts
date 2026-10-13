@@ -1,3 +1,4 @@
+import { skippedInDryRunOnce } from './dryRun.js';
 import dgram from 'dgram';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { makeDSPacket, Control, UdpSendPort, type OutboundTag, type DsProtocol } from './fmsServer.js';
@@ -2265,6 +2266,7 @@ export class MatchEngine {
       protocol: endpoint.protocol,
     });
 
+    if (skippedInDryRunOnce(`control:${ip}`, `send Driver Station control packets to ${ip}`)) return;
     this.udpSocket.send(packet, 0, packet.length, endpoint.udpPort, ip, err => {
       if (err) appError(`Failed to send control packet to ${ip}: ${err.message}`);
     });
@@ -2342,6 +2344,7 @@ export class MatchEngine {
       protocol: endpoint.protocol,
     });
 
+    if (skippedInDryRunOnce(`ds:${station}:${ip}`, `send ${station}'s Driver Station (${ip}) control packets`)) return;
     this.udpSocket.send(packet, 0, packet.length, endpoint.udpPort, ip, err => {
       if (err) appError(`Failed to send DS packet to ${station} (${ip}): ${err.message}`);
     });

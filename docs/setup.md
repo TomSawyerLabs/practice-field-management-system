@@ -13,8 +13,8 @@ root privileges to manage VLAN interfaces and routing rules.
 Starting pFMS on a non-Linux host **exits immediately with code 78** and
 an explanation — there is no Windows or macOS networking layer yet.
 Development on any OS still works with
-[`DRY_RUN`](internals.md#dry-run-mode), which logs network operations
-instead of performing them.
+[`DRY_RUN`](internals.md#dry-run-mode), which changes nothing outside the
+machine: writes are logged instead of performed.
 
 For how to keep pFMS running across reboots — systemd or Docker — see
 [deployment.md](deployment.md).

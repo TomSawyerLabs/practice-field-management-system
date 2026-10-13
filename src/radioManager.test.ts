@@ -649,3 +649,49 @@ describe('robot link log lines', () => {
     );
   });
 });
+
+describe('in a dry run (2026-10-12: local dry runs wiped the field radio)', () => {
+  const realFetch = globalThis.fetch;
+  const savedDryRun = process.env.DRY_RUN;
+  let sent: string[];
+
+  beforeEach(() => {
+    sent = [];
+    process.env.DRY_RUN = '1';
+    // Stands in for the network: a radio at a non-local address, which a
+    // dry run must only ever read.
+    globalThis.fetch = Object.assign(async (input: string | URL | Request, init?: RequestInit) => {
+      sent.push(`${(init?.method ?? 'GET').toUpperCase()} ${String(input)}`);
+      const stations = { red1: null, red2: null, red3: null, blue1: null, blue2: null, blue3: null };
+      return new Response(
+        JSON.stringify({
+          channel: 13,
+          channelBandwidth: '40MHz',
+          redVlans: '10_20_30',
+          blueVlans: '40_50_60',
+          status: 'ACTIVE',
+          stationStatuses: stations,
+          syslogIpAddress: '10.0.100.40',
+          version: 'VH-113_AP_PRACTICE_TEST',
+        }),
+      );
+    }, realFetch);
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (savedDryRun === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = savedDryRun;
+  });
+
+  test('pFMS reads the real radio but never writes to it', async () => {
+    const rm = new RadioManagerClass('http://192.0.2.2');
+    rm.stopPolling();
+    await (rm as unknown as { updateStatus(): Promise<void> }).updateStatus();
+    await rm.commitConfiguration(); // the config-sync repair's path, with nothing configured here
+    await rm.setSyslogIP('10.0.100.5');
+    await rm.configure('slot1', robot);
+    await rm.scan();
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.filter(s => !s.startsWith('GET ') || s.includes('/scan/'))).toEqual([]);
+  });
+});

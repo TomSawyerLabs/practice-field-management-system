@@ -1,3 +1,4 @@
+import { skippedInDryRun } from './dryRun.js';
 import { WebClient } from '@slack/web-api';
 import { SocketModeClient } from '@slack/socket-mode';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -112,6 +113,7 @@ export class SlackBridge {
 
   private async connect(): Promise<void> {
     if (!this.config) return;
+    if (skippedInDryRun('connect to Slack (nothing will be posted)')) return;
 
     try {
       this.web = new WebClient(this.config.botToken);

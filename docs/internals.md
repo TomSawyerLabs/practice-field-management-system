@@ -282,12 +282,31 @@ All HTTP traffic shares the WebSocket server port:
 
 ## Dry-Run Mode
 
-With the `DRY_RUN` environment variable set:
+With the `DRY_RUN` environment variable set, pFMS changes **nothing
+outside the machine it runs on** (`src/dryRun.ts`). Reads stay live, so the
+UI shows real data; every write is logged as `[dry-run] Would …` and
+skipped:
 
-- Network operations log what they would do but make no OS changes
-- DHCP servers are not started _(OFFSEASON mode only — PRACTICE mode
-  relies on the AP for DHCP regardless)_
-- Radio communication still works normally (it's always live)
+- Host network: VLANs, bridges, addresses, iptables, routes, conntrack,
+  DHCP servers — logged, not run
+- The field radio: status is polled, but configurations and channel scans
+  are never sent
+- Robot radios on the test port: no configuration or firmware upload
+- Driver Stations: no control packets and no FMS station assignment
+- Host Wi-Fi cards: the robot Wi-Fi scan and 6 GHz watch don't start, and
+  test joins are refused
+- Field lights (timelapse), Slack, web push: nothing is sent; the mDNS
+  reflector doesn't start
+
+As a backstop, every non-GET HTTP request to another machine fails. Fakes on
+the same machine still get their writes, which is how
+`scripts/test-radio-reconcile.ts` exercises the radio against a stand-in on
+127.0.0.1.
+
+This matters on the field network: a dev machine there can reach the real
+radio, and before 2026-10-12 a dry run would push its own (usually empty)
+station config to it, taking every robot off Wi-Fi until the field server
+put it back.
 
 This allows development and testing on any OS without root access or a
 real network stack.

@@ -1,3 +1,4 @@
+import { skippedInDryRun } from './dryRun.js';
 import { spawn, execFile as execFileCb, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
@@ -533,6 +534,9 @@ export class RobotTestMonitor {
     wpaKey24: string | undefined,
     skipReconfigure = false,
   ): Promise<void> {
+    if (skippedInDryRun(`update the firmware on team ${this.teamNumber ?? '?'}'s robot radio`)) {
+      throw new Error('Dry run: the robot radio was not updated');
+    }
     if (this.firmwareUpdating) throw new Error('Firmware update already in progress');
     if (!this.teamNumber) throw new Error('No team number detected — plug in a robot first');
     if (!this.linkUp) throw new Error('Link is down — plug in a cable first');
@@ -573,6 +577,9 @@ export class RobotTestMonitor {
 
   /** Configure a radio in TEAM_ROBOT_RADIO mode directly from the test interface. */
   async configureTeamRadio(teamNumber: number, wpaKey6: string, wpaKey24?: string, ssidSuffix?: string): Promise<void> {
+    if (skippedInDryRun(`configure team ${teamNumber}'s robot radio`)) {
+      throw new Error('Dry run: the robot radio was not configured');
+    }
     if (this.radioConfiguring) throw new Error('Radio configuration already in progress');
     if (this.firmwareUpdating) throw new Error('Firmware update in progress — wait for it to finish');
     if (!this.linkUp && !this.skipLinkDetection) throw new Error('Link is down — plug in a cable first');

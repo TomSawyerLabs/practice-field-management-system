@@ -1,3 +1,4 @@
+import { skippedInDryRun } from './dryRun.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import webpush from 'web-push';
 import type { PushSubscriptionInput } from './types.js';
@@ -33,6 +34,7 @@ export class PushService {
 
   async send(subscription: PushSubscriptionInput, payload: PushPayload): Promise<PushOutcome> {
     if (!this.keys) return 'failed';
+    if (skippedInDryRun(`send a push notification: ${JSON.stringify(payload)}`)) return 'ok';
     const subject = this.subject();
     try {
       await webpush.sendNotification(subscription, JSON.stringify(payload), {

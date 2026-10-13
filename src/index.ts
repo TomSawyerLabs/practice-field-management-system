@@ -1,6 +1,7 @@
 // MUST come first: exits with a readable message on an unsupported platform
 // before networkManager tries to build a network backend at module load.
 import './platformGuard.js';
+import { installDryRunFetchGuard, skippedInDryRun } from './dryRun.js';
 import RadioManager from './radioManager.js';
 import { runSyslogServer } from './runSyslogServer.js';
 import { setupWebSocket } from './websocketServer.js';
@@ -132,6 +133,9 @@ const keepNetworkFlagExists = !CliMode && existsSync(KEEP_NETWORK_FLAG);
 if (keepNetworkFlagExists) rmSync(KEEP_NETWORK_FLAG, { force: true });
 const KeepNetwork = keepNetworkFlagExists || process.env.KEEP_NETWORK === 'true';
 
+// DRY_RUN changes nothing outside this machine — see src/dryRun.ts.
+installDryRunFetchGuard();
+
 // Configuration
 // Settings saved in the setup wizard win over the environment; env stays the
 // seed for a fresh install. Loaded here, at module scope, because these are
@@ -224,6 +228,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // Also flush per-station route tables — these aren't comment-tagged so
       // flushRulesByComment doesn't catch them.
       for (const vlanId of Object.values(vlanMap)) {
+        if (skippedInDryRun(`flush route table ${vlanId}`)) continue;
         try {
           await execFile('ip', ['route', 'flush', 'table', String(vlanId)]);
         } catch {
@@ -544,7 +549,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if ((robotWifi?.iface ?? undefined) === iface) return;
     robotWifi?.stop();
     robotWifi = null;
-    if (iface) {
+    // The scan takes over the card (wpa_supplicant), a change to the host.
+    if (iface && !skippedInDryRun(`start the robot Wi-Fi scan on ${iface}`)) {
       appInfo(`Robot Wi-Fi scan starting on ${iface}`);
       robotWifi = new RobotWifiScanner({
         card: wifiCardPool.get(iface),
@@ -598,7 +604,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if ((sixGhzWatch?.iface ?? undefined) === iface) return;
     sixGhzWatch?.stop();
     sixGhzWatch = null;
-    if (iface) {
+    if (iface && !skippedInDryRun(`start the 6 GHz watch on ${iface}`)) {
       appInfo(
         `6 GHz watch starting on ${iface}${iface === robotWifi?.iface ? ' (shared with the robot Wi-Fi scan)' : ''}`,
       );
@@ -1314,7 +1320,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // mDNS reflector — bridges .local queries between main network and team VLANs
   let mdnsReflector: MdnsReflector | undefined;
-  if (StartMdnsReflector && VlanInterface) {
+  if (StartMdnsReflector && VlanInterface && !skippedInDryRun('start the mDNS reflector')) {
     mdnsReflector = new MdnsReflector(
       s => radioManager.getTeamForStation(s),
       ip => getPreference(ip),
@@ -1325,7 +1331,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     mdnsReflector.start();
     // Refresh after commit — VLAN interfaces only exist after configureNetwork completes
     radioManager.addCommitCompleteListener(() => mdnsReflector!.refreshMemberships());
-  } else if (StartMdnsReflector) {
+  } else if (StartMdnsReflector && !VlanInterface) {
     console.log('MDNS_REFLECTOR=true but VLAN_INTERFACE is not set, skipping mDNS reflector');
   }
 
@@ -1444,6 +1450,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         // Without this, packets that arrived before the DNAT rule was inserted get
         // cached as local-delivery flows, and subsequent packets bypass the nat table entirely.
         const gatewayIp = teamGatewayIp(rule.team);
+        if (skippedInDryRun(`flush conntrack entries for UDP to ${gatewayIp}`)) return;
         try {
           const { stdout } = await execFile('conntrack', ['-D', '-p', 'udp', '-d', gatewayIp]);
           console.log(`conntrack flush: ${stdout.trim()}`);

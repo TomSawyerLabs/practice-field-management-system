@@ -1,3 +1,4 @@
+import { skippedInDryRunOnce } from './dryRun.js';
 import net from 'net';
 import dgram, { Socket } from 'dgram';
 import { EventEmitter } from 'events';
@@ -563,7 +564,8 @@ export async function startFMSServer({
           // dampener below keeps out of the logs.
           teamBySocket.set(socket, obj.teamNumber);
           const resolved = resolveTeamSlot?.(obj.teamNumber, addr);
-          if (resolved) socket.write(makeStationAssignment(obj, resolved));
+          if (resolved && !skippedInDryRunOnce(`assign:${addr}`, `assign ${addr}'s Driver Station a station`))
+            socket.write(makeStationAssignment(obj, resolved));
           const key = `${obj.teamNumber}|${obj.type}|${resolved ?? ''}`;
           if (lastLoggedHandshake.get(addr) !== key) {
             lastLoggedHandshake.set(addr, key);
