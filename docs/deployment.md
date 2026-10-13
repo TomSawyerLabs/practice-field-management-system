@@ -52,7 +52,7 @@ Notes:
   same way but haven't been exercised on a field host.
 
 For a permanent install, still use systemd or Docker below — point
-`ExecStart` at the binary instead of `/usr/bin/node dist`.
+`ExecStart` at the binary instead of `bun src/index.ts`.
 
 ## Which one?
 
@@ -83,7 +83,8 @@ After=network.target
 [Service]
 EnvironmentFile=/etc/pfms/environment
 WorkingDirectory=/path/to/practice-field-management-system
-ExecStart=/usr/bin/node dist
+# --no-env-file: settings come from EnvironmentFile, never a stray .env
+ExecStart=/usr/local/bin/bun --no-env-file src/index.ts
 # Graceful reload: preserve network rules across restarts
 ExecReload=/bin/sh -c 'touch /run/pfms-keep-network && kill -HUP $MAINPID'
 Restart=always
@@ -105,6 +106,12 @@ using is already running — so the service takes over from the next boot.
 
 There's no `User=`, so it runs as root — which it needs, for VLANs and
 iptables.
+
+`ExecStart` needs bun's absolute path: `/usr/local/bin/bun` if you
+installed it system-wide as in [getting started](getting-started.md#4-install-pfms),
+otherwise whatever `command -v bun` prints (e.g. `/home/you/.bun/bin/bun`).
+Use the same bun `update.sh` builds with — the build refuses a bun older
+than `engines.bun` in `package.json`.
 
 `systemctl reload` preserves iptables rules, route tables, and routing
 preferences, so robots stay connected through an update.
@@ -166,5 +173,5 @@ stored in `setup-config.json` and **takes precedence** over both. See the
 To start setup over:
 
 ```bash
-node dist/cli.js --clear-config    # refuses while the backend is running
+bun src/cli.ts --clear-config      # refuses while the backend is running
 ```

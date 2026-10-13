@@ -7,7 +7,7 @@
  * come from a stubbed resolver). The balls-counter e2e script connects to
  * this and exercises recording, review, and score report-back.
  *
- * Run: bun x tsx scripts/e2e-match-harness.ts
+ * Run: bun scripts/e2e-match-harness.ts
  * All state files go to a temp directory; nothing in the repo is touched.
  */
 import { mkdtempSync } from 'node:fs';

@@ -54,9 +54,8 @@ For how to keep pFMS running across reboots — systemd or Docker — see
    - `dhcpcd5` — required by the [robot tester](robot-tester.md) to lease
      an address on `TEST_INTERFACE`.
 
-2. Both **bun** and a system **node** are needed: bun builds and runs the
-   dev servers, while the systemd unit runs `/usr/bin/node dist` and
-   `update.sh` uses `node` to parse the health endpoint.
+2. [bun](https://bun.sh) is the only runtime needed — it builds, runs the
+   dev servers, and runs the service (`bun src/index.ts`). Node isn't used.
 
 3. JavaScript dependencies (the project uses [bun](https://bun.sh)):
 
@@ -66,10 +65,10 @@ For how to keep pFMS running across reboots — systemd or Docker — see
 
 ## Production Deployment
 
-1. `bun run build` — compiles the backend to `dist/` and builds the
-   frontend to `frontend/dist/`
-2. `bun run start` (or `node dist`) — starts the backend from the compiled
-   output
+1. `bun run build` — type-checks the backend and builds the frontend to
+   `frontend/dist/` (bun runs the backend's TypeScript directly; there is
+   no compiled backend)
+2. `bun run start` (or `bun src/index.ts`) — starts the backend
 3. Configure a web server to serve the static frontend and proxy `/ws` and
    `/api/*` to the backend (examples below)
 
@@ -92,7 +91,8 @@ After=network.target
 [Service]
 EnvironmentFile=/etc/pfms/environment
 WorkingDirectory=/path/to/practice-field-configurator
-ExecStart=/usr/bin/node dist
+# bun's absolute path (`command -v bun`); --no-env-file: never read a stray .env
+ExecStart=/usr/local/bin/bun --no-env-file src/index.ts
 # Graceful reload: preserve network rules across restarts
 ExecReload=/bin/sh -c 'touch /run/pfms-keep-network && kill -HUP $MAINPID'
 Restart=always

@@ -2,13 +2,13 @@
  * Manual smoke test for HostnameResolver — resolves a few IPs from the local
  * network and prints what each strategy + the combined resolver returns.
  *
- *   bunx tsx scripts/test-hostname-resolver.ts <ip> [ip...]
+ *   bun scripts/test-hostname-resolver.ts <ip> [ip...]
  */
 import { HostnameResolver } from '../src/hostnameResolver.js';
 
 const ips = process.argv.slice(2);
 if (ips.length === 0) {
-  console.error('Usage: tsx scripts/test-hostname-resolver.ts <ip> [ip...]');
+  console.error('Usage: bun scripts/test-hostname-resolver.ts <ip> [ip...]');
   process.exit(1);
 }
 

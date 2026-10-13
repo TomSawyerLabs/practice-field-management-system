@@ -1,11 +1,11 @@
 /**
  * Command-line entry points that run *instead of* starting the field.
  *
- * Kept deliberately small, and importing almost nothing: `node dist` pulls in
+ * Kept deliberately small, and importing almost nothing: `src/index.ts` pulls in
  * the whole app, and `networkManager` builds a platform network backend at
  * module load, which throws outright on a non-Linux host. Running this file
- * directly (`node dist/cli.js --clear-config`) therefore works everywhere,
- * while `node dist --clear-config` only works where the app itself can load.
+ * directly (`bun src/cli.ts --clear-config`) therefore works everywhere,
+ * while `bun src/index.ts --clear-config` only works where the app itself can load.
  */
 import { existsSync } from 'node:fs';
 import { clearSetupConfig, SETUP_CONFIG_DEFAULT_FILE } from './setupConfigStore.js';
@@ -43,9 +43,9 @@ function printHelp(): void {
   console.log(`pFMS — Practice Field Management System
 
 Usage:
-  node dist                          Start the field
-  node dist/cli.js --clear-config    Erase saved setup answers and exit
-  node dist/cli.js --help            Show this message
+  bun src/index.ts                   Start the field
+  bun src/cli.ts --clear-config      Erase saved setup answers and exit
+  bun src/cli.ts --help              Show this message
 
 Options for --clear-config:
   --all       Also erase the other config files listed in the output

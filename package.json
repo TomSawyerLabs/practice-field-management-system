@@ -2,6 +2,9 @@
   "name": "practice-field-configurator",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "bun": ">=1.4.2"
+  },
   "workspaces": [
     "frontend"
   ],
@@ -10,12 +13,12 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p frontend",
     "test": "bun test",
-    "build": "bun run fetch-native && tsc && cd frontend && bun run build",
+    "build": "bun scripts/check-bun-version.ts && bun run fetch-native && tsc --noEmit && cd frontend && bun run build",
     "fetch-native": "bun scripts/fetch-mdns-socket.ts",
     "package": "bun run build && bun scripts/package-binary.ts",
-    "dev": "tsx --watch src/index.ts",
-    "once": "tsx src/index.ts",
-    "start": "node dist"
+    "dev": "bun --watch src/index.ts",
+    "once": "bun src/index.ts",
+    "start": "bun src/index.ts"
   },
   "keywords": [
     "FMS",
@@ -54,7 +57,6 @@
     "eslint": "^9.23.0",
     "lefthook": "^2.1.4",
     "prettier": "^3.6.2",
-    "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   },
   "optionalDependencies": {

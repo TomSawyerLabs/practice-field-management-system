@@ -1,6 +1,6 @@
 /**
  * Populate the production scoreboard with six fake robots for layout checks
- * (`bun x tsx scripts/fake-six-teams.ts [cleanup]`).
+ * (`bun scripts/fake-six-teams.ts [cleanup]`).
  *
  * Run ON the field server, in the repo working directory (it reads
  * active-config.json from the cwd and talks to the local backend). It:

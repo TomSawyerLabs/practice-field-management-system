@@ -5,7 +5,7 @@
  * HTML — and getting that wrong is the single most common way a new install
  * half-works: the proxy serves a stale directory so updates never appear, or
  * `/sounds/*.wav` 404s so browsers are silent while the field speaker is fine.
- * Serving them here means `node dist` alone is a working field.
+ * Serving them here means `bun src/index.ts` alone is a working field.
  *
  * A reverse proxy is still worth having for TLS (casting the scoreboard needs
  * a secure origin) and for the internal/external split — it just isn't
@@ -26,15 +26,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
  * so a binary built here and copied elsewhere would happily read the build
  * machine's repo — appearing to work right up until it's on a different
  * computer. Looking next to the executable first fixes that; running
- * `node dist` falls through to the repo layout, because nothing named
- * `frontend/dist` sits beside the node binary.
+ * `bun src/index.ts` falls through to the repo layout, because nothing named
+ * `frontend/dist` sits beside the bun binary.
  */
 export function findAssetDir(names: string[], override?: string): string | undefined {
   const candidates = [
     override,
     // Packaged: unzipped next to the executable
     ...names.map(name => resolve(dirname(process.execPath), name)),
-    // Repo or deploy tree, relative to the compiled backend in dist/
+    // Repo or deploy tree, relative to the backend source in src/
     ...names.map(name => resolve(__dirname, '..', name)),
   ].filter((c): c is string => c !== undefined);
 

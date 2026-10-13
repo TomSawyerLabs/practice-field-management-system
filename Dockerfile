@@ -22,7 +22,8 @@ COPY . .
 RUN bun run build
 
 # ── Runtime ─────────────────────────────────────────────────────────
-FROM node:22-bookworm-slim
+# Same runtime as the build stage: Bun runs src/ directly, no Node needed.
+FROM oven/bun:1-slim
 
 # The tools checkRequiredTools() insists on, plus audio and the robot tester.
 # Without these the backend exits 78 on startup.
@@ -40,7 +41,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=build /build/dist ./dist
+COPY --from=build /build/src ./src
+COPY --from=build /build/tsconfig.json ./tsconfig.json
 # The mdns-socket addon, fetched by `bun run build` (scripts/fetch-mdns-socket.ts).
 COPY --from=build /build/native/mdns-socket/prebuilt ./native/mdns-socket/prebuilt
 COPY --from=build /build/node_modules ./node_modules
@@ -62,4 +64,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD curl -fsS "http://127.0.0.1:${WEBSOCKET_PORT}/health" || exit 1
 
 # Run from /app/data so state lands on the volume, but execute the app in /app.
-CMD ["node", "/app/dist"]
+# --no-env-file: settings come from the container environment, never a stray .env.
+CMD ["bun", "--no-env-file", "/app/src/index.ts"]

@@ -415,7 +415,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       return;
     }
 
-    // Built frontend + sounds, so `node dist` alone serves a working field.
+    // Built frontend + sounds, so `bun src/index.ts` alone serves a working field.
     // Last in the chain: API routes above always win, and in development
     // there's no build to serve so this is a no-op and Vite handles it.
     if (staticHandler?.(req, res)) return;

@@ -126,3 +126,14 @@ hardcoded `10.0.100.5` (`FIELD_CONTROL_ADDRESS` in `src/trunkInterface.ts`),
 and the FMS server, syslog and subnet scanner hardcode it too. A changed
 setting would make the wizard check for an address pFMS never assigns. Either
 apply it everywhere or drop the setting.
+
+## scripts/test-trunk-switch.ts connects its WebSocket before pFMS is listening
+
+`bun scripts/test-trunk-switch.ts` prints `PASS: pFMS came up`, then dies with
+`WebSocket connection to 'ws://127.0.0.1:<port>/ws' failed: Failed to connect`
+(Windows and Linux, 2026-10-13). It treats the `Radio connected at …` log line
+as "up" and connects straight away, but the HTTP/WebSocket server starts
+listening later in startup. Polling `/health` until it answers before
+connecting works (that's what a standalone boot check did). Matters because the
+script is the end-to-end check for live trunk switching and currently can't
+report anything past its first line.

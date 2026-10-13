@@ -2,7 +2,8 @@
   "compilerOptions": {
     "target": "es2022",
     "module": "NodeNext",
-    "outDir": "dist",
+    // Bun runs src/ directly; tsc only type-checks.
+    "noEmit": true,
     "rootDir": "src",
     "noImplicitAny": true,
     "strictNullChecks": true,

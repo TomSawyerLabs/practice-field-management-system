@@ -120,8 +120,14 @@ but leaves the field network down; the setup wizard's Host step lists what
 is missing and can install it for you (**Install missing tools**), after
 which the field network comes up on its own.
 
-You need **both** [bun](https://bun.sh) (to build) and a system **node**
-(the service runs `/usr/bin/node`).
+pFMS runs on [bun](https://bun.sh) — the only runtime it needs, for
+building and for running the service. Install it system-wide so root
+(and the service) find it at `/usr/local/bin/bun`:
+
+```bash
+sudo apt install unzip   # the bun installer needs it
+curl -fsSL https://bun.sh/install | sudo BUN_INSTALL=/usr/local bash
+```
 
 ```bash
 git clone https://github.com/TomSawyerLabs/practice-field-management-system.git
@@ -135,7 +141,7 @@ project's GitHub releases (`native/mdns-socket`, which lets the robot
 networks' mDNS work when one team runs two robots), so the host needs
 internet access for the build. No Rust toolchain is needed.
 
-**Check:** `bun run typecheck` passes, `dist/` exists, and
+**Check:** `bun run build` finishes, `frontend/dist/` exists, and
 `native/mdns-socket/prebuilt/` holds a `.node` file.
 
 ---

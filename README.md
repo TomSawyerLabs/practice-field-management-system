@@ -107,10 +107,11 @@ On a Linux host (network management needs Linux and root):
 ```bash
 sudo apt install iptables iputils-arping fping dnsmasq-base conntrack tcpdump
 sudo apt install alsa-utils dhcpcd5   # match audio + robot tester
+curl -fsSL https://bun.sh/install | sudo BUN_INSTALL=/usr/local bash   # bun, the only runtime
 
 bun install
 bun run build
-sudo node dist                        # then open http://<host>:3000/setup
+sudo bun src/index.ts                 # then open http://<host>:3000/setup
 ```
 
 That's a complete field — pFMS serves its own web interface, so no Caddy
@@ -144,7 +145,7 @@ non-Linux host exits immediately with an explanation.
 bun run typecheck   # Type-check both backend and frontend
 bun run test        # Unit tests (scoring timeline & attribution)
 bun run format      # Format all files with Prettier
-bun run build       # Compile backend + build frontend
+bun run build       # Type-check backend + build frontend
 ```
 
 ## Pages

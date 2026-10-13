@@ -2,7 +2,7 @@
  * Connect to a running pFMS backend and print the `hostnames` broadcasts —
  * quick post-deploy check that guest-host name resolution is working.
  *
- *   bunx tsx scripts/peek-hostnames.ts [ws://host:port/ws]
+ *   bun scripts/peek-hostnames.ts [ws://host:port/ws]
  */
 import WebSocket from 'ws';
 

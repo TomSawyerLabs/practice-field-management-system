@@ -76,7 +76,7 @@ cp frontend/src/public.html $DEPLOY_BASE/public/index.html
 # Helper: read one field of the backend's /health JSON ("unknown" if it's down)
 get_health_field() {
   curl -sf "http://localhost:$PORT/health" 2>/dev/null \
-    | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).$1 ?? 'unknown'" 2>/dev/null \
+    | bun -e "console.log(JSON.parse(await Bun.stdin.text()).$1 ?? 'unknown')" 2>/dev/null \
     || echo "unknown"
 }
 

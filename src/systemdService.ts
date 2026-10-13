@@ -50,7 +50,10 @@ export function currentExecStart(argv = process.argv, execPath = process.execPat
   // virtual path of the embedded script (`/$bunfs/root/pfms`, or
   // `B:/~BUN/root/pfms.exe` on Windows), which doesn't exist on disk.
   if (/^(\/\$bunfs\/|B:[\\/]~BUN[\\/])/.test(argv[1] ?? '')) return [execPath];
-  return [execPath, resolve(argv[1] ?? 'dist')];
+  // Bun loads .env from the working directory unless told not to. The
+  // service's settings come from /etc/pfms/environment and the wizard; a
+  // developer's .env (say DRY_RUN=1) left in the checkout must not apply.
+  return [execPath, '--no-env-file', resolve(argv[1] ?? 'src/index.ts')];
 }
 
 export type ServiceInstallResult = { ok: true; unit: string } | { ok: false; error: string };

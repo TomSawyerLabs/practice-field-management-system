@@ -6,8 +6,8 @@ service restart — no `systemctl daemon-reload` needed.
 
 > **`.env` is development-only.** A `.env` file in the repo root is picked
 > up by `bun run dev`/`bun run start` because bun loads it automatically.
-> The production systemd unit runs `/usr/bin/node dist`, which does **not**
-> read `.env` — the app has no dotenv dependency. Anything you need in
+> The production systemd unit runs `bun --no-env-file src/index.ts`, which
+> does **not** read `.env`. Anything you need in
 > production (including `FIRST_API_USERNAME` / `FIRST_API_AUTH_TOKEN`)
 > must go in `/etc/pfms/environment`, or team avatars will silently be
 > disabled.
@@ -180,12 +180,12 @@ To start setup over:
 
 ```bash
 sudo systemctl stop practice-field-management-system
-node dist/cli.js --clear-config          # add --all to also erase admin/API/Slack config
+bun src/cli.ts --clear-config            # add --all to also erase admin/API/Slack config
 ```
 
 It refuses (exit code 1) if anything is still answering `/health`, so it
 can't pull config out from under a running field. `--force` overrides that
-check. Run `node dist/cli.js --help` for the full list.
+check. Run `bun src/cli.ts --help` for the full list.
 
 ## Misc / Debug
 
