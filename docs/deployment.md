@@ -9,50 +9,44 @@ routing tables. There is no useful "isolated" deployment: an isolated
 network namespace just gives pFMS a private sandbox to configure while
 robots stay unreachable.
 
-## Standalone binary (no dependencies)
+## Single-file binary
 
-`bun run package` produces `release/pfms-<platform>/` containing a single
-executable plus the two directories it needs beside it:
-
-```
-pfms      the binary — no node, no bun, no npm install
-web/      the built frontend
-sounds/   match audio
-```
-
-Zip that directory, copy it to the field host, unzip, and run it:
+`bun run package` builds one executable, `release/pfms-<os>-<arch>`, with
+everything inside it: the backend and bun runtime, the built frontend,
+match sounds, the Driver Station Wi-Fi check script and (Linux) the
+mdns-socket addon. Nothing else to copy — no git, bun or build on the
+field host:
 
 ```bash
-sudo ./pfms          # then open http://<host>:3000/setup
+sudo ./pfms-linux-x64          # then open http://<host>:3000/setup
+./pfms-linux-x64 --version     # short commit, full commit, target, build time
 ```
+
+On first start of each version it unpacks its bundled files into
+`.pfms-assets/<version>/` beside itself (the field speaker's `aplay` and
+the addon loader need real files), or the temp directory if it can't
+write there. The previous version's copy is kept; older ones are removed.
+State files are written to the working directory, as with a checkout.
 
 The binary still needs the **system packages** (`iptables`, `arping`,
 `fping`, `dnsmasq`, `conntrack`, `tcpdump`) — it bundles the JavaScript
 runtime, not the networking tools. The setup wizard tells you which are
 missing and can install them with apt.
 
-Cross-compile with a bun target triple, e.g.:
+Cross-compile with a bun target (after `bun run build`):
 
 ```bash
-bun scripts/package-binary.ts bun-linux-x64
-bun scripts/package-binary.ts bun-linux-arm64      # Raspberry Pi
+bun scripts/build-binary.ts bun-linux-x64
+bun scripts/build-binary.ts bun-linux-arm64      # Raspberry Pi 4/5, 64-bit OS
 ```
 
 Notes:
 
-- **Keep the three items together.** The binary looks for `web/` and
-  `sounds/` next to itself. `bun build --compile` keeps each bundled
-  module's build-time paths, so assets are deliberately kept outside the
-  executable — a binary that read them from inside would appear to work on
-  the build machine and fail everywhere else.
-- **It's large** (~116 MB) — that's the embedded JavaScript runtime.
-- **No auto-update.** `update.sh` assumes a git checkout; re-package and
-  replace the directory instead.
-- Only the Windows build has actually been run. Linux targets compile the
-  same way but haven't been exercised on a field host.
-
-For a permanent install, still use systemd or Docker below — point
-`ExecStart` at the binary instead of `bun src/index.ts`.
+- **It's large** (~90 MB) — that's the embedded JavaScript runtime.
+- It ignores a `.env` or `bunfig.toml` in its working directory; settings
+  come from the environment and the setup wizard, as in production.
+- For a permanent install use systemd (below) with `ExecStart` pointing at
+  the binary, or let the setup wizard's Deployment step write the unit.
 
 ## Which one?
 

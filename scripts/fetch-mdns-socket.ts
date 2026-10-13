@@ -8,7 +8,9 @@
  * and the Docker build get it. Skipped off Linux (the addon is Linux only)
  * and when the right version is already there.
  *
- *   bun scripts/fetch-mdns-socket.ts
+ *   bun scripts/fetch-mdns-socket.ts          this machine's
+ *   bun scripts/fetch-mdns-socket.ts arm64    Linux arm64's, from any OS —
+ *                                             for building a binary for it
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -17,16 +19,18 @@ const REPO = 'TomSawyerLabs/practice-field-management-system';
 const crateDir = path.join(import.meta.dir, '..', 'native', 'mdns-socket');
 const prebuiltDir = path.join(crateDir, 'prebuilt');
 
-if (process.platform !== 'linux') {
+const wantedArch = process.argv[2];
+if (!wantedArch && process.platform !== 'linux') {
   console.log(`mdns-socket: skipped on ${process.platform} (the addon is Linux only)`);
   process.exit(0);
 }
+const arch = wantedArch ?? process.arch;
 
 const cargo = readFileSync(path.join(crateDir, 'Cargo.toml'), 'utf8');
 const version = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 if (!version) throw new Error('mdns-socket: no version in native/mdns-socket/Cargo.toml');
 
-const file = `mdns-socket.${process.platform}-${process.arch}-gnu.node`;
+const file = `mdns-socket.linux-${arch}-gnu.node`;
 const target = path.join(prebuiltDir, file);
 const stamp = path.join(prebuiltDir, `${file}.version`);
 if (existsSync(target) && existsSync(stamp) && readFileSync(stamp, 'utf8').trim() === version) {

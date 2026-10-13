@@ -16,27 +16,21 @@
  * control page.
  */
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { normalize, resolve, sep, extname, join, dirname } from 'node:path';
+import { normalize, resolve, sep, extname, join } from 'node:path';
+import { bundledPath } from './assetRoot.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /**
- * Find a bundled asset directory, whichever way pFMS was packaged.
+ * Find a bundled asset directory (repo-relative names, first that exists).
  *
- * `bun build --compile` keeps each bundled module's *build-time* `__dirname`,
- * so a binary built here and copied elsewhere would happily read the build
- * machine's repo — appearing to work right up until it's on a different
- * computer. Looking next to the executable first fixes that; running
- * `bun src/index.ts` falls through to the repo layout, because nothing named
- * `frontend/dist` sits beside the bun binary.
+ * Never via `__dirname` alone: `bun build --compile` keeps each module's
+ * *build-time* `__dirname`, so a binary built here and copied elsewhere
+ * would read the build machine's repo — appearing to work right up until it
+ * runs on a different computer. `bundledPath` looks in the binary's
+ * unpacked bundle when there is one, else the checkout.
  */
 export function findAssetDir(names: string[], override?: string): string | undefined {
-  const candidates = [
-    override,
-    // Packaged: unzipped next to the executable
-    ...names.map(name => resolve(dirname(process.execPath), name)),
-    // Repo or deploy tree, relative to the backend source in src/
-    ...names.map(name => resolve(__dirname, '..', name)),
-  ].filter((c): c is string => c !== undefined);
+  const candidates = [override, ...names.map(name => bundledPath(name))].filter((c): c is string => c !== undefined);
 
   return candidates.find(c => existsSync(c));
 }

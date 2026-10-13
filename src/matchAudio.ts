@@ -1,13 +1,14 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
+import { bundledPath } from './assetRoot.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { MatchEngine } from './matchEngine.js';
 import type { AudioDeviceInfo, AudioDeviceState } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
-const SOUNDS_DIR = resolve(__dirname, '..', 'sounds');
+const SOUNDS_DIR = bundledPath('sounds');
 const CONFIG_FILE = 'audio-config.json';
 
 /** Every sound the engine can ask for. Files are `sounds/<name>.wav`; any that

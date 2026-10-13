@@ -19,6 +19,7 @@ import { promisify } from 'node:util';
 import { platform } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { bundledPath } from './assetRoot.js';
 import { SOUND_NAMES } from './matchAudio.js';
 import { isValidRawRadioUpdate, translateRadioUpdate } from './types.js';
 import { detectFirmwareMode } from './startupChecks.js';
@@ -27,7 +28,7 @@ import type { SetupCheck, SetupProbeState, SetupStepId, SetupStep, DeploymentMod
 
 const execFileAsync = promisify(execFile);
 
-const SOUNDS_DIR = resolve(__dirname, '..', 'sounds');
+const SOUNDS_DIR = bundledPath('sounds');
 const AUDIO_CONFIG_FILE = 'audio-config.json';
 
 function pass(id: string, label: string, detail: string): SetupCheck {

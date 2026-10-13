@@ -15,7 +15,7 @@
     "test": "bun test",
     "build": "bun scripts/check-bun-version.ts && bun run fetch-native && tsc --noEmit && cd frontend && bun run build",
     "fetch-native": "bun scripts/fetch-mdns-socket.ts",
-    "package": "bun run build && bun scripts/package-binary.ts",
+    "package": "bun run build && bun scripts/build-binary.ts",
     "dev": "bun --watch src/index.ts",
     "once": "bun src/index.ts",
     "start": "bun src/index.ts"

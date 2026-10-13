@@ -1,6 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { buildInfo, PFMS_REPO } from './buildInfo.js';
 
 const execFile = promisify(execFileCb);
 
@@ -149,6 +150,30 @@ async function readCommits(last: string, current: string): Promise<DeployCommit[
     .reverse(); // oldest first — reads like a story
 }
 
+/**
+ * The same, from GitHub, for the packaged binary (no git checkout to ask).
+ * The compare API has no per-commit file lists, so untagged commits are
+ * guessed from their subject alone — every commit carries a Changelog
+ * trailer anyway (see CLAUDE.md).
+ */
+async function readCommitsFromGitHub(last: string, current: string): Promise<DeployCommit[]> {
+  const res = await fetch(`https://api.github.com/repos/${PFMS_REPO}/compare/${last}...${current}`, {
+    headers: { Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`GitHub compare: ${res.status}`);
+  const body = (await res.json()) as { commits?: { commit: { message: string } }[] };
+  return (body.commits ?? []).map(({ commit }) => {
+    const [subject = '', ...rest] = commit.message.split('\n');
+    const trailer = rest
+      .reverse()
+      .find(line => /^Changelog:/i.test(line))
+      ?.replace(/^Changelog:\s*/i, '')
+      .trim();
+    return { subject: subject.trim(), trailer: trailer || undefined, files: [] };
+  }); // GitHub lists oldest first already
+}
+
 function readLastAnnounced(): string | null {
   try {
     const parsed = JSON.parse(readFileSync(StateFile, 'utf-8')) as { lastAnnounced?: unknown };
@@ -170,13 +195,8 @@ function readLastAnnounced(): string | null {
  * restarts without a version change post nothing.
  */
 export async function announceDeploy(post: (text: string) => Promise<boolean>): Promise<void> {
-  let current: string;
-  try {
-    current = (await execFile('git', ['rev-parse', 'HEAD'])).stdout.trim();
-  } catch {
-    return; // not running from a git checkout — nothing to announce
-  }
-  if (!current) return;
+  const current = buildInfo()?.commit;
+  if (!current) return; // neither a packaged build nor a checkout — nothing to announce
 
   const last = readLastAnnounced();
   if (last === current) return;
@@ -190,7 +210,13 @@ export async function announceDeploy(post: (text: string) => Promise<boolean>): 
   try {
     commits = await readCommits(last, current);
   } catch {
-    // Previous commit unknown locally (e.g. history rewrite) — announce without a list.
+    try {
+      // The packaged binary has no git; nor does a checkout that lost the
+      // previous commit (history rewrite). GitHub may still know both.
+      commits = await readCommitsFromGitHub(last, current);
+    } catch {
+      // Announce without a list.
+    }
   }
 
   const text = formatAnnouncement(commits, last, current);

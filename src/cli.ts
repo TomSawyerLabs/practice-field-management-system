@@ -8,6 +8,7 @@
  * while `bun src/index.ts --clear-config` only works where the app itself can load.
  */
 import { existsSync } from 'node:fs';
+import { versionLine } from './buildInfo.js';
 import { clearSetupConfig, SETUP_CONFIG_DEFAULT_FILE } from './setupConfigStore.js';
 
 /** Config written by the app that a "start over" might reasonably keep. */
@@ -45,7 +46,10 @@ function printHelp(): void {
 Usage:
   bun src/index.ts                   Start the field
   bun src/cli.ts --clear-config      Erase saved setup answers and exit
+  bun src/cli.ts --version           Show which pFMS this is
   bun src/cli.ts --help              Show this message
+
+The single-file binary takes the same options: pfms, pfms --clear-config, …
 
 Options for --clear-config:
   --all       Also erase the other config files listed in the output
@@ -61,6 +65,11 @@ Configuration lives in /etc/pfms/environment; see docs/configuration.md.`);
 export async function maybeRunCli(argv: string[] = process.argv.slice(2)): Promise<number | null> {
   if (argv.includes('--help') || argv.includes('-h')) {
     printHelp();
+    return 0;
+  }
+
+  if (argv.includes('--version')) {
+    console.log(versionLine());
     return 0;
   }
 

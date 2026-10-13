@@ -115,12 +115,12 @@ import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCb);
 
-// CLI commands (--clear-config, --help) run instead of starting the field.
+// CLI commands (--clear-config, --help, --version) run instead of starting the field.
 // Detected synchronously here so module-level side effects below (notably
 // consuming the keep-network flag) don't fire for a command that never starts
 // the field. The command itself runs at the top of main().
 const CliArgs = process.argv.slice(2);
-const CliMode = CliArgs.some(arg => arg === '--clear-config' || arg === '--help' || arg === '-h');
+const CliMode = CliArgs.some(arg => ['--clear-config', '--help', '-h', '--version'].includes(arg));
 
 const IPTABLES_COMMENT_PREFIX = process.env.IPTABLES_COMMENT_PREFIX || 'pfms-';
 

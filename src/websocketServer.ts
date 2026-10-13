@@ -1,6 +1,6 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { execFileSync } from 'node:child_process';
+import { buildInfo } from './buildInfo.js';
 import { SiteHealthChecker } from './siteHealth.js';
 import RadioManager from './radioManager.js';
 import {
@@ -345,12 +345,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     hostnameResolver,
     setup,
   } = opts;
-  let serverVersion = 'unknown';
-  try {
-    serverVersion = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf-8' }).trim();
-  } catch {
-    // Not a git repo or git not available — fall back to unknown
-  }
+  const serverVersion = buildInfo()?.version ?? 'unknown';
 
   const serverStartTime = Date.now();
 

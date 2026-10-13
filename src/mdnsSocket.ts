@@ -10,7 +10,7 @@
  * Linux only, like everything else pFMS does to the network.
  * MDNS_SOCKET_NODE points at another build (a local one, for testing).
  */
-import path from 'node:path';
+import { bundledPath } from './assetRoot.js';
 
 export interface InterfaceSocket {
   readonly ifname: string;
@@ -28,8 +28,8 @@ type InterfaceSocketCtor = new (ifname: string, port: number, onPacket: OnPacket
 export function mdnsSocketAddonPath(): string {
   if (process.env.MDNS_SOCKET_NODE) return process.env.MDNS_SOCKET_NODE;
   const file = `mdns-socket.${process.platform}-${process.arch}-gnu.node`;
-  // src/ (bun test) and dist/ (built) both sit next to native/.
-  return path.join(__dirname, '..', 'native', 'mdns-socket', 'prebuilt', file);
+  // The checkout's prebuilt/, or the packaged binary's unpacked copy.
+  return bundledPath('native', 'mdns-socket', 'prebuilt', file);
 }
 
 let loaded: { ctor: InterfaceSocketCtor } | { error: string } | undefined;
