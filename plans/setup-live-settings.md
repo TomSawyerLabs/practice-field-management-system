@@ -105,6 +105,9 @@ index.ts orchestrates the services.
 - Local fakes are exempt: writes to a loopback URL still go through in a
   dry run, because `scripts/test-radio-reconcile.ts` runs with `DRY_RUN=1`
   (to avoid the Linux network backend) against a fake radio on 127.0.0.1.
+- **Commit race in the shared tree:** another thread's `git commit` takes
+  whatever is staged at that instant — twice on 2026-10-13 my staged files
+  went into its commits. Commit with `git commit -- <paths>`.
 - Staging two features that share files: `stage-hunks.py` (scratch, in
   `%TEMP%\pfms-scratch`) selects hunks by regex; Python text-mode pipes on
   Windows turn LF into CRLF, so send `git apply` bytes. Check the staged
@@ -139,20 +142,15 @@ index.ts orchestrates the services.
 - [x] Inline "Lock scoring with a key" (`42f299b`)
 - [x] Logged: several admin-page WebSocket actions have no admin check
       (`fedb4f2`, ISSUES.md) — not fixed, needs a per-message decision
-- [ ] **Install missing tools** button (`src/hostTools.ts`) — coded,
-      unit-tested, typechecked alone; NOT committed ← blocked
-- [ ] **Install and enable the service** (`src/systemdService.ts`) — coded,
-      unit-tested; NOT committed ← blocked
-- [x] Browser check of the wizard against a fake pFMS (2026-10-13): admin
-      step sets the passphrase and stores the token, steps auto-mark done,
-      scoring key created and shown once, probe flips to Locked
-- Blocked on: the other thread's uncommitted scoreboard work shares
-  `types.ts`, `websocketServer.ts`, `useBackend.ts`; the pre-commit hook
-  typechecks my staged half without its unstaged half and fails on its
-  other files. Commit after it lands (my hunks are separate; stage with
-  `stage-hunks.py`, regexes `InstallHostTools|HostToolsInstallState|
-InstallSystemdService|SystemdServiceInstallResult|hostTools\.js|systemdService\.js`).
-  Docs for both are edited too (getting-started.md, deployment.md).
+- [x] **Install missing tools** (`821df11`) and **Install and enable the
+      service** (`7d3e65d`), each committed on its own: built from HEAD by
+      re-running my edit scripts in a temp tree (`build-split.py`), staged
+      with `git update-index`, the other thread's files held at HEAD only
+      while the hook ran, then restored and verified byte-identical
+- [x] Wizard docs (getting-started.md, deployment.md) — landed inside the
+      other thread's `353e9fa` (commit race, see Findings)
+- [x] Item 7: custom sounds noted under multi-site Stage 2 — landed inside
+      the other thread's `1640b9b` (same race)
 
 ## Open questions for the user
 
@@ -179,8 +177,8 @@ recommendation for each:
    `FMS_ENDPOINT=false` as an off switch. Waiting on the user.
 7. **Sounds** — user suggested making it part of the "theme" setup. No
    theme setup exists yet (Stage 2 of plans/multi-site-adoption.md).
-   Proposed: leave sounds out of this work, note custom sound sets there.
-   Waiting on the user.
+   Decided (user, 2026-10-13): sounds belong to the theme; noted in
+   plans/multi-site-adoption.md.
 8. Not automatable, keep as instructions: OS/root, switch native VLAN,
    radio firmware flash, hearing the test sound, casting to a TV, Docker
    restart policy, HTTPS/domain.
