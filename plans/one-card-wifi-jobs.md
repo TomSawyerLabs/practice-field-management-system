@@ -66,7 +66,7 @@ join, longer scan cycle) was judged a non-issue.
 6. Docs (`docs/robot-tester.md`), checks, commit.
 7. Deploy is a separate step — ask first.
 
-Current step: 7 — code done, committed; deploy waits for the user's OK.
+Current step: 7 — code committed (`af79f1a`); deploy waits for the user's OK.
 
 ## Findings / gotchas
 
@@ -81,9 +81,11 @@ Current step: 7 — code done, committed; deploy waits for the user's OK.
   Known bands are in-memory only (re-learned at startup from configured cards).
 - `fmsServer.test.ts` fails on this Windows machine with `listen EACCES
 127.0.0.1:28038` (excluded port range) — environmental, unrelated.
-- Another thread had staged work (Cancel Match / E-stop) in `src/index.ts`
-  and `src/types.ts` while this landed; waited for their commit rather than
-  committing around their index.
+- The pre-commit hook typechecks the whole worktree, so two threads with
+  half-staged work in one tree block each other's commits. Here the E-stop
+  thread's staged work and this one's deadlocked; it was verified standalone
+  in a scratch worktree, then committed normally once the other thread
+  landed `341c1ef`.
 
 ## Progress log
 
@@ -92,7 +94,7 @@ Current step: 7 — code done, committed; deploy waits for the user's OK.
 - [x] 3 types (`WifiBand`, `WifiCardJobName`, `WifiCardInfo.use: 'pfms'` + `jobs` + `bands`, robot `problem`)
 - [x] 4 wifiCards classify by jobs + bands, test joins via the card; index pool wiring
 - [x] 5 admin page: job chips, band notes, robot problem alert, channel per robot heard
-- [x] 6 docs (`docs/robot-tester.md` "One card or two", `docs/configuration.md`), typecheck, tests
+- [x] 6 docs (`docs/robot-tester.md` "One card or two", `docs/configuration.md`), typecheck, tests — committed `af79f1a`
 - [ ] 7 deploy (needs the user's OK); then on steamboat optionally move both jobs onto the MT7921AU
 
 ## Open questions for the user
