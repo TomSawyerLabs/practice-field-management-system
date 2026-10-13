@@ -12,6 +12,9 @@
  * screens reload when their build version differs from the server's.
  *
  * When the target is this machine, the binary is smoke-run with --version.
+ *
+ * PFMS_BUILD_VERSION overrides the version it reports — only for testing
+ * self-update between builds of one commit (scripts/test-self-update.ts).
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -57,7 +60,7 @@ for (const asset of assets) cpSync(join(ROOT, asset), join(bundle, asset), { rec
 
 const build: BuildInfo = {
   commit: git('rev-parse', 'HEAD'),
-  version: git('rev-parse', '--short', 'HEAD'),
+  version: process.env.PFMS_BUILD_VERSION ?? git('rev-parse', '--short', 'HEAD'),
   builtAt: new Date().toISOString(),
   target,
 };

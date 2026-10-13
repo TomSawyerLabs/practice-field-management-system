@@ -9,6 +9,10 @@
  * there (src/assetRoot.ts). Then it imports src/index.ts, the same app a
  * checkout runs.
  *
+ * Before that it handles self-update's bookkeeping (src/updateRollback.ts):
+ * waiting for the process it replaces, and rolling back a new build that
+ * doesn't come up.
+ *
  * Run from a checkout (`bun src/binaryMain.ts`) nothing is embedded, so it
  * just starts the app.
  */
@@ -17,6 +21,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setAssetRoot } from './assetRoot.js';
 import { setPackagedBuild, versionLine, type BuildInfo } from './buildInfo.js';
+import { isSupervised, restartSelf, waitForPredecessor } from './restart.js';
+import {
+  readUpdateState,
+  restorePreviousBinary,
+  revertedState,
+  startupDecision,
+  watchNewBuild,
+  writeUpdateState,
+} from './updateRollback.js';
 
 const PREFIX = 'bundle/';
 const BUILD_INFO = 'build-info.json';
@@ -74,6 +87,9 @@ async function main(): Promise<void> {
       console.log(versionLine());
       process.exit(0);
     }
+    await waitForPredecessor();
+    checkPendingUpdate(build.version);
+
     const root = await unpack(
       files.filter(f => f !== info),
       build.version,
@@ -89,6 +105,45 @@ async function main(): Promise<void> {
     if (!process.env.MDNS_SOCKET_NODE && existsSync(addon)) process.env.MDNS_SOCKET_NODE = addon;
   }
   await import('./index.js');
+}
+
+/**
+ * Count this start against a pending self-update: put the previous binary
+ * back and exit (to be restarted into it) when this build keeps failing to
+ * start, else watch whether it comes up healthy.
+ */
+function checkPendingUpdate(version: string): void {
+  const exe = process.execPath;
+  const before = readUpdateState();
+  const decision = startupDecision(before, version);
+  if (decision.state !== before) writeUpdateState(decision.state);
+
+  if (decision.revert) {
+    console.error(`Self-update to ${version} failed: ${decision.state.reverted?.reason}`);
+    if (!restorePreviousBinary(exe)) {
+      console.error(`No ${exe}.prev to go back to — carrying on with ${version}`);
+      return;
+    }
+    console.error(`Put the previous pFMS back in ${exe}; restarting into it`);
+    // The app never loaded, so there's nothing to shut down gracefully.
+    if (!isSupervised()) {
+      Bun.spawn([exe, ...process.argv.slice(2)], { stdio: ['inherit', 'inherit', 'inherit'] }).unref();
+    }
+    process.exit(1);
+  }
+
+  if (decision.watch) {
+    watchNewBuild({
+      version,
+      port: Number(process.env.WEBSOCKET_PORT) || 3000,
+      revert: reason => {
+        console.error(`Self-update to ${version} failed: ${reason}`);
+        writeUpdateState(revertedState(readUpdateState(), reason));
+        if (restorePreviousBinary(exe)) restartSelf(exe);
+        else console.error(`No ${exe}.prev to go back to — carrying on with ${version}`);
+      },
+    });
+  }
 }
 
 main().catch(err => {

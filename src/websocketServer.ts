@@ -10,6 +10,9 @@ import {
   isAdminStopMatch,
   isAdminClearAllStations,
   isAdminRestart,
+  isSelfUpdateApply,
+  isSelfUpdateCheck,
+  type SelfUpdateStatus,
   isCancelPendingChange,
   ConfigureResult,
   isQueueJoinLine,
@@ -312,6 +315,14 @@ export interface SetupWebSocketOptions {
     wifiCards?: {
       getState: () => WifiCardsState;
       testJoin: (iface: string, ssid: string, passphrase?: string) => Promise<unknown>;
+    };
+    /** Software update: newest build, install it (src/updateManager.ts). */
+    selfUpdate?: {
+      getState: () => SelfUpdateStatus;
+      check: () => Promise<void>;
+      /** Why an install can't start now, or null. */
+      refusal: () => string | null;
+      apply: (who: string) => Promise<void>;
     };
   };
 }
@@ -1034,6 +1045,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     if (setup?.wifiCards) {
       ws.send(JSON.stringify(setup.wifiCards.getState()));
     }
+    // Software update (admin page)
+    if (setup?.selfUpdate) {
+      ws.send(JSON.stringify(setup.selfUpdate.getState()));
+    }
 
     ws.on('close', () => {
       wsToIp.delete(ws);
@@ -1289,6 +1304,27 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         } else {
           console.log(`Admin requested a pFMS restart (${clientIp})`);
           setup.restart();
+        }
+      } else if (isSelfUpdateCheck(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin login required to check for updates' }));
+        } else {
+          setup?.selfUpdate?.check().catch(err => {
+            ws.send(JSON.stringify({ error: 'Could not check for updates', details: (err as Error).message }));
+          });
+        }
+      } else if (isSelfUpdateApply(data)) {
+        const refused = !setupWritesAllowed(ws)
+          ? 'Admin login required to update pFMS'
+          : !setup?.selfUpdate
+            ? 'Updating is not available here'
+            : setup.selfUpdate.refusal();
+        if (refused) {
+          ws.send(JSON.stringify({ error: refused }));
+        } else {
+          setup!.selfUpdate!.apply(`the admin page (${clientIp})`).catch(err => {
+            ws.send(JSON.stringify({ error: 'Update failed', details: (err as Error).message }));
+          });
         }
       } else if (isMatchCreate(data)) {
         matchEngine.createMatch();

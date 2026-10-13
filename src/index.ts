@@ -99,6 +99,7 @@ import {
   RobotWifiScanState,
   RadioUpdate,
   SixGhzWatchState,
+  SelfUpdateStatus,
   WifiCardsState,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -109,6 +110,8 @@ import { setVideoProxyTargetResolver } from './videoProxy.js';
 import { runSetupProbe } from './setupProbe.js';
 import { StationChecksTracker } from './stationChecks.js';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { KEEP_NETWORK_FLAG, isSupervised, restartSelf } from './restart.js';
+import { UpdateManager } from './updateManager.js';
 import { join } from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -127,7 +130,6 @@ const IPTABLES_COMMENT_PREFIX = process.env.IPTABLES_COMMENT_PREFIX || 'pfms-';
 // When true, skip flushing iptables/ip rules on startup and restore preferences from the kernel.
 // Set automatically by a graceful reload (systemctl reload writes /run/pfms-keep-network before
 // sending SIGHUP). Can also be forced via KEEP_NETWORK=true env var for manual overrides.
-const KEEP_NETWORK_FLAG = '/run/pfms-keep-network';
 const keepNetworkFlagExists = !CliMode && existsSync(KEEP_NETWORK_FLAG);
 if (keepNetworkFlagExists) rmSync(KEEP_NETWORK_FLAG, { force: true });
 const KeepNetwork = keepNetworkFlagExists || process.env.KEEP_NETWORK === 'true';
@@ -543,6 +545,27 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   process.on('exit', () => robotWifi?.stop());
 
+  // Software update (src/updateManager.ts): the packaged binary installs new
+  // builds when an admin asks, or on its own per the admin's policy — only
+  // once the field has been idle (no match set up, running or just over).
+  let fieldIdleSince: number | null = matchEngine.getState().phase === 'idle' ? Date.now() : null;
+  matchEngine.addStateListener(state => {
+    if (state.phase !== 'idle') fieldIdleSince = null;
+    else fieldIdleSince ??= Date.now();
+  });
+  let broadcastSelfUpdate: (state: SelfUpdateStatus) => void = () => {};
+  const updateManager = new UpdateManager({
+    policy: () => setupConfigStore.get().settings.autoUpdate,
+    fieldIdleForMs: () => (fieldIdleSince === null ? null : Date.now() - fieldIdleSince),
+    broadcast: state => broadcastSelfUpdate(state),
+    restart: exe => restartSelf(exe),
+    supervised: isSupervised(),
+  });
+  if (!CliMode) updateManager.start();
+  process.on('exit', () => updateManager.stop());
+  // A policy change changes the admin page's note about when it installs.
+  setupConfigStore.addListener(() => broadcastSelfUpdate(updateManager.status()));
+
   // 6 GHz watch: listen on a 6 GHz-capable card for other access points
   // using a team's network name — a team's own AP left on, which their robot
   // may join instead of the field. Scan only; never joins. Off unless an
@@ -934,18 +957,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       matchRecorder,
       timelapse: fieldTimelapse,
       // "Restart pFMS" on the admin page: the same graceful path as
-      // `systemctl reload` (flag file, then SIGHUP), so network rules and
-      // routing survive and systemd's Restart=always brings the service
-      // back. A full stop/start is the path that raced the VLAN bridges and
-      // crashed on 2026-09-27.
-      restart: () => {
-        try {
-          writeFileSync(KEEP_NETWORK_FLAG, '');
-        } catch (err) {
-          console.error('Could not write the keep-network flag before restarting:', err);
-        }
-        process.kill(process.pid, 'SIGHUP');
-      },
+      // `systemctl reload` (flag file, then SIGHUP — src/restart.ts), so
+      // network rules and routing survive and systemd's Restart=always brings
+      // the service back. A full stop/start is the path that raced the VLAN
+      // bridges and crashed on 2026-09-27.
+      restart: () => restartSelf(),
       // Where this field is reachable from the internet, for the post-match
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
@@ -953,6 +969,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       robotWifi: { getState: robotWifiState, test: station => robotWifi?.test(station) },
       sixGhzWatch: { getState: sixGhzWatchState },
       wifiCards,
+      selfUpdate: {
+        getState: () => updateManager.status(),
+        check: () => updateManager.check(),
+        refusal: () => updateManager.refusal(),
+        apply: who => updateManager.apply(who),
+      },
       teamPrefs: {
         store: teamPrefsStore,
         vapidPublicKey: () => pushService.publicKey,
@@ -990,6 +1012,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   broadcastRobotWifi = broadcast;
   broadcastSixGhzWatch = broadcast;
   broadcastWifiCards = broadcast;
+  broadcastSelfUpdate = broadcast;
 
   // Starts listening to match phases; verifies ffmpeg first and says so in
   // the log if recording can't work on this host.

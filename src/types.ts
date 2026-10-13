@@ -284,6 +284,44 @@ export interface SetupSettings {
   /** Long-term timelapse of the field: a few archival frames a day, plus a
    *  fast timelapse while robots are here. Absent = off. */
   timelapse?: TimelapseConfig;
+  /** Whether the single-file binary updates itself, and when (see
+   *  src/updateManager.ts). Absent = off. A checkout ignores it. */
+  autoUpdate?: AutoUpdatePolicy;
+}
+
+/** How the packaged binary handles new builds on its own.
+ *  - `off` — only when an admin presses Update (checks only when asked)
+ *  - `notify` — checks hourly and says so on the admin page; never installs
+ *  - `window` — installs inside the daily window, once the field has been
+ *    idle (no match set up or running) for `idleMinutes`
+ *  - `idle` — installs whenever the field has been idle for `idleMinutes` */
+export interface AutoUpdatePolicy {
+  mode: 'off' | 'notify' | 'window' | 'idle';
+  /** Local time, `HH:MM`. The window may cross midnight. */
+  windowStart?: string;
+  windowEnd?: string;
+  idleMinutes?: number;
+}
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isAutoUpdatePolicy(v: unknown): v is AutoUpdatePolicy {
+  const p = v as AutoUpdatePolicy;
+  if (typeof p !== 'object' || !p) return false;
+  if (!['off', 'notify', 'window', 'idle'].includes(p.mode)) return false;
+  if (p.windowStart !== undefined && !(typeof p.windowStart === 'string' && HHMM.test(p.windowStart))) return false;
+  if (p.windowEnd !== undefined && !(typeof p.windowEnd === 'string' && HHMM.test(p.windowEnd))) return false;
+  if (
+    p.idleMinutes !== undefined &&
+    !(
+      typeof p.idleMinutes === 'number' &&
+      Number.isInteger(p.idleMinutes) &&
+      p.idleMinutes >= 0 &&
+      p.idleMinutes <= 24 * 60
+    )
+  )
+    return false;
+  return true;
 }
 
 /** One video source pFMS records during matches. Anything ffmpeg can read
@@ -852,6 +890,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
   timelapse: isTimelapseConfig,
+  autoUpdate: isAutoUpdatePolicy,
 };
 
 export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings {
@@ -1596,6 +1635,55 @@ export function isAdminRestart(msg: unknown): msg is AdminRestart {
   if (typeof msg !== 'object') return false;
   if (!msg) return false;
   return (msg as AdminRestart).type === 'adminRestart';
+}
+
+// ── Software update (admin) ─────────────────────────────────────────
+
+/** Where this pFMS's updates come from, its newest available build, and
+ *  what the updater is doing. Sent to every page on connect and on change;
+ *  the admin page shows it (src/updateManager.ts). */
+export interface SelfUpdateStatus {
+  type: 'selfUpdate';
+  /** `binary`: updates itself. `checkout`: a git checkout, updated with
+   *  update.sh. `unsupported`: a binary for a platform with no builds. */
+  install: 'binary' | 'checkout' | 'unsupported';
+  current: { version: string; builtAt?: string };
+  /** Restarts come back on their own (systemd), or the binary hands over to
+   *  its successor itself. */
+  supervised: boolean;
+  latest: { tag: string; version: string; publishedAt: string; notes: string; url: string } | null;
+  /** This build failed here before; automatic updates skip it. */
+  latestSkipped: boolean;
+  checkedAt?: string;
+  checkError?: string;
+  activity:
+    | { stage: 'idle' }
+    | { stage: 'checking' | 'verifying' | 'testing' | 'installing' | 'restarting' }
+    | { stage: 'downloading'; received: number; total: number };
+  /** Why the last install attempt stopped (signature, checksum, …). */
+  lastError?: { at: string; message: string };
+  lastUpdate?: { from: string; to: string; at: string };
+  reverted?: { from: string; to: string; at: string; reason: string };
+  /** When an automatic update would next be considered, if one is due. */
+  autoNote?: string;
+}
+
+export function isSelfUpdateStatus(msg: unknown): msg is SelfUpdateStatus {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as SelfUpdateStatus).type === 'selfUpdate';
+}
+
+/** Admin: look for a new build now. */
+export type SelfUpdateCheck = { type: 'selfUpdateCheck' };
+export function isSelfUpdateCheck(msg: unknown): msg is SelfUpdateCheck {
+  return typeof msg === 'object' && !!msg && (msg as SelfUpdateCheck).type === 'selfUpdateCheck';
+}
+
+/** Admin: install the newest build and restart into it. Refused while the
+ *  field is in use. */
+export type SelfUpdateApply = { type: 'selfUpdateApply' };
+export function isSelfUpdateApply(msg: unknown): msg is SelfUpdateApply {
+  return typeof msg === 'object' && !!msg && (msg as SelfUpdateApply).type === 'selfUpdateApply';
 }
 
 /** Field E-Stop: latch a stop on every robot on the field, in a match or

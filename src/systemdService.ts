@@ -38,6 +38,9 @@ ExecStart=${opts.execStart.map(quote).join(' ')}
 # Graceful reload: preserve network rules across restarts
 ExecReload=/bin/sh -c 'touch /run/pfms-keep-network && kill -HUP $MAINPID'
 Restart=always
+# Slow enough that a crash-looping self-update reaches its rollback (4th
+# start) before systemd's start limit (5 in 10 s) gives up on the service.
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target

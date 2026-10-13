@@ -26,6 +26,7 @@ describe('the systemd unit the wizard installs', () => {
     expect(unit).toContain('WorkingDirectory=/opt/pfms\n');
     expect(unit).toContain('ExecStart=/usr/local/bin/bun --no-env-file /opt/pfms/src/index.ts\n');
     expect(unit).toContain('Restart=always');
+    expect(unit).toContain('RestartSec=2');
     expect(unit).toContain("ExecReload=/bin/sh -c 'touch /run/pfms-keep-network && kill -HUP $MAINPID'");
     expect(unit).toContain('WantedBy=multi-user.target');
     // No User=: it needs root for VLANs and iptables
