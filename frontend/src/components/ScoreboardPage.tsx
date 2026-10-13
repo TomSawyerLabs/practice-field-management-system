@@ -608,6 +608,8 @@ export function ScoreboardPage() {
       {/* Match sounds — unmounted entirely while this display is muted */}
       {!muted && <MatchAudioBridge />}
 
+      {matchState?.fieldEStop && <FieldEStopBand />}
+
       {/* Freeplay score-reactive glow backgrounds (skipped in lite mode) */}
       {isFreePlay && !LITE && (
         <FreeplayGlow
@@ -2072,6 +2074,37 @@ function ZeroSplit({
       <Box component="span" ref={rightRef} sx={glyph}>
         0
       </Box>
+    </Box>
+  );
+}
+
+/** The field E-Stop, across the middle of the TV over everything else, so
+ *  every team on the field sees that all robots are stopped — and that it's
+ *  the field's stop, not theirs. */
+function FieldEStopBand() {
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 4,
+        pointerEvents: 'none',
+        bgcolor: 'rgba(183,28,28,0.94)',
+        borderTop: '6px solid #fff',
+        borderBottom: '6px solid #fff',
+        py: '2vh',
+        textAlign: 'center',
+      }}
+    >
+      <Typography sx={{ fontSize: '12vh', fontWeight: 900, lineHeight: 1, letterSpacing: '0.05em', color: '#fff' }}>
+        E-STOPPED
+      </Typography>
+      <Typography sx={{ fontSize: '4vh', fontWeight: 700, color: '#fff', mt: '1vh' }}>
+        Field E-Stop — every robot is stopped until field staff clear it
+      </Typography>
     </Box>
   );
 }

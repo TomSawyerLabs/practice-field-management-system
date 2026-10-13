@@ -82,7 +82,7 @@ await waitFor('auto', () => phase() === 'auto');
 check('slot3 enabled in auto', station('slot3').enabled && station('slot3').mode === 'auto');
 
 // ── The 1678 incident: console E-Stop 10s into auto ──────────────────
-engine.stationEStop('slot3');
+engine.stationEStop('slot3', 'staff');
 check('e-stop latched, robot disabled', station('slot3').eStop && !station('slot3').enabled);
 
 // A-Stop on the other robot: must not be bypassable via re-enable

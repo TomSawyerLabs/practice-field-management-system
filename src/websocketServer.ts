@@ -28,6 +28,7 @@ import {
   SixGhzWatchState,
   WifiCardsState,
   isAdminGlobalEStop,
+  isAdminClearFieldEStop,
   isAdminStationEStop,
   isAdminStationDisable,
   isAdminClearEStop,
@@ -38,7 +39,6 @@ import {
   isStationStartMatch,
   isStationPauseMatch,
   isStationResumeMatch,
-  isStationAbandonMatch,
   isUpdateMatchConfig,
   isRoutePreferenceMsg,
   isDriveAction,
@@ -1202,8 +1202,6 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         matchEngine.pauseMatch();
       } else if (isStationResumeMatch(data)) {
         matchEngine.resumeMatch();
-      } else if (isStationAbandonMatch(data)) {
-        matchEngine.abandonMatch();
       } else if (isStationClearEmptyMatch(data)) {
         const who = data.team ? `team ${data.team}'s page` : `a team page (${clientIp})`;
         if (!matchEngine.clearEmptySetup(who)) {
@@ -1218,9 +1216,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isAdminStopMatch(data)) {
         matchEngine.stopMatch();
       } else if (isAdminGlobalEStop(data)) {
-        matchEngine.globalEStop();
+        matchEngine.fieldEStop();
+      } else if (isAdminClearFieldEStop(data)) {
+        matchEngine.clearFieldEStop();
       } else if (isAdminStationEStop(data)) {
-        matchEngine.stationEStop(data.station);
+        matchEngine.stationEStop(data.station, 'staff');
       } else if (isAdminStationDisable(data)) {
         matchEngine.stationDisable(data.station, 'admin');
       } else if (isAdminStationEnable(data)) {
@@ -1303,7 +1303,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isStationSelfUndisable(data)) {
         matchEngine.undisable(data.station, false);
       } else if (isStationSelfEStop(data)) {
-        matchEngine.stationEStop(data.station);
+        matchEngine.stationEStop(data.station, 'team');
       } else if (isStationTeamStop(data)) {
         matchEngine.teamStop(data.station, data.stop);
       } else if (isStationSelfAStop(data)) {

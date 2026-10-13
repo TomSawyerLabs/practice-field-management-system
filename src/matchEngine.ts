@@ -8,6 +8,7 @@ import {
   MatchSlot,
   MatchState,
   MatchEndReason,
+  EStopSource,
   ChallengeTally,
   challengePenalties,
   CHALLENGE_DEFAULT_DURATION,
@@ -209,6 +210,10 @@ export class MatchEngine {
   /** Share token for the current match's public summary page (see publicMatchApi). */
   private shareToken: string | null = null;
   private endReason: MatchEndReason | undefined;
+  /** When the field E-Stop was latched (epoch ms), or null. Independent of
+   *  the match: only staff clearing it (clearFieldEStop / clearEStop()) lets
+   *  it go. While set, every station counts as e-stopped (isEStopped). */
+  private fieldEStopSince: number | null = null;
   private teamResolver: TeamResolver;
   /** The team a station is about to be configured for once held Wi-Fi
    *  changes apply — a match holds them, so this is who actually presses
@@ -458,7 +463,7 @@ export class MatchEngine {
       state.alliance = null;
       state.matchSlot = null;
       state.enabled = false;
-      state.eStop = false;
+      releaseEStop(state);
       state.aStop = false;
       state.disabledBy = null;
     }
@@ -768,8 +773,8 @@ export class MatchEngine {
       console.log(`Not enabling ${station}: ${blocked}`);
       return false;
     }
-    if (!state.joined || state.eStop || state.aStop) {
-      if (state.joined) console.log(`Not enabling ${station}: ${state.eStop ? 'e-stop' : 'a-stop'} is latched`);
+    if (!state.joined || this.isEStopped(station) || state.aStop) {
+      if (state.joined) console.log(`Not enabling ${station}: ${this.eStopLabel(station) ?? 'a-stop'} is latched`);
       return false;
     }
     state.enabled = true;
@@ -1166,6 +1171,10 @@ export class MatchEngine {
       appWarn('Match start is held for a moment while the get-ready announcement finishes');
       return;
     }
+    if (this.fieldEStopSince !== null) {
+      appWarn('Cannot start match: the field E-Stop is latched — clear it first');
+      return;
+    }
 
     if (!this.readyRequested) {
       appWarn('Cannot start match: the host has not opened the ready check');
@@ -1256,7 +1265,7 @@ export class MatchEngine {
         state.robot = this.robotResolver(station);
       }
       state.enabled = false;
-      state.eStop = false;
+      releaseEStop(state);
       state.disabledBy = null;
       // Keep pre-armed A-Stops for participating stations — teams that know
       // their auto won't run can A-Stop during match setup.
@@ -1301,6 +1310,10 @@ export class MatchEngine {
     this.broadcast();
   }
 
+  /** Cancel Match: end a running or paused match early. Only the robots in
+   *  the match are affected — they're disabled and the match goes to
+   *  post-match (auto-clearing as usual); a robot free-driving outside the
+   *  match never had FMS control, so it keeps driving. */
   stopMatch() {
     if (!this.isMatchActive()) return;
     this.cancelResumeCountdown();
@@ -1311,7 +1324,7 @@ export class MatchEngine {
     this.stopTick();
     this.schedulePostMatchAutoClear();
     this.sendPacketsToAll();
-    console.log(`Match ${this.matchNumber} stopped early`);
+    console.log(`Match ${this.matchNumber} cancelled`);
     this.broadcast();
   }
 
@@ -1383,49 +1396,47 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  abandonMatch() {
-    if (this.phase !== 'paused') {
-      appWarn('Cannot abandon: match is not paused');
-      return;
+  /** The field E-Stop: latch a stop on every robot on the field — in a match
+   *  or free-driving — until staff clear it. Separate from the match: a
+   *  running match ends (reason `estop`), but ending, clearing or creating a
+   *  match leaves the latch on, and no match can start until it's cleared.
+   *  Out of a match, index.ts cuts each station's DS→robot control traffic
+   *  and takes its DS under field control (both keyed off isEStopped). */
+  fieldEStop() {
+    if (this.fieldEStopSince === null) {
+      this.fieldEStopSince = Date.now();
+      console.log('Field E-Stop latched — every robot stopped');
     }
     this.cancelResumeCountdown();
     this.disableAll();
-    this.endReason = 'abandoned';
-    this.prePausePhase = null;
-    this.config = null;
-    this.phase = 'idle';
-    this.portToSlot.clear();
-    this.autoWinnerAlliance = null;
-    this.resetReadyCheckAndStaff();
-    for (const state of this.stationStates.values()) {
-      state.joined = false;
-      state.ready = false;
-      state.alliance = null;
-      state.matchSlot = null;
+    if (this.isMatchActive()) {
+      this.endReason = 'estop';
+      this.prePausePhase = null;
+      this.phase = 'postMatch';
+      this.remainingTime = 0;
+      this.stopTick();
+      this.schedulePostMatchAutoClear();
+      console.log(`Match ${this.matchNumber} ended by the field E-Stop`);
     }
-    console.log(`Match ${this.matchNumber} abandoned`);
+    // Disable packets to every station whose DS address is known, not just
+    // joined ones; the hold loop in index.ts keeps them coming.
+    for (const station of StationNameList) {
+      if (this.dsConnections.has(station)) this.sendDSPacket(station);
+    }
     this.broadcast();
   }
 
-  globalEStop() {
-    this.cancelResumeCountdown();
-    for (const station of StationNameList) {
-      const state = this.stationStates.get(station)!;
-      state.eStop = true;
-      state.enabled = false;
-    }
-    this.endReason = 'estop';
-    this.phase = 'postMatch';
-    this.remainingTime = 0;
-    this.stopTick();
-    // E-stop endings must be cleared by a human — cancel any pending auto-clear
-    this.cancelPostMatchAutoClear();
-    // Send e-stop packets to ALL stations with known DS addresses, not just joined
-    for (const station of StationNameList) {
-      this.sendDSPacket(station);
-    }
-    console.log('Global E-Stop triggered');
+  /** Release the field E-Stop latch. Robots e-stopped on their own stay
+   *  stopped until their own e-stop is cleared. */
+  clearFieldEStop() {
+    if (this.fieldEStopSince === null) return;
+    this.fieldEStopSince = null;
+    console.log('Field E-Stop cleared');
     this.broadcast();
+  }
+
+  isFieldEStopped(): boolean {
+    return this.fieldEStopSince !== null;
   }
 
   /** Stop (or release) a robot that is NOT in a match, from the team's page.
@@ -1443,11 +1454,15 @@ export class MatchEngine {
     this.broadcast();
   }
 
-  stationEStop(station: StationName) {
+  /** E-stop one robot. Its alliance partners and every other robot are
+   *  untouched. `by` is shown to the team so they know where it came from;
+   *  a second e-stop keeps the first one's source. */
+  stationEStop(station: StationName, by: EStopSource) {
     const state = this.stationStates.get(station)!;
+    if (!state.eStop) state.eStopBy = by;
     state.eStop = true;
     state.enabled = false;
-    console.log(`E-Stop: ${station}`);
+    console.log(`E-Stop: ${station} (${by})`);
     this.sendDSPacket(station);
     this.broadcast();
   }
@@ -1545,8 +1560,8 @@ export class MatchEngine {
       appWarn(`Cannot re-enable ${station}: station has not joined the match`);
       return;
     }
-    if (state.eStop || state.aStop) {
-      appWarn(`Cannot re-enable ${station}: ${state.eStop ? 'e-stop' : 'a-stop'} is latched`);
+    if (this.isEStopped(station) || state.aStop) {
+      appWarn(`Cannot re-enable ${station}: ${this.eStopLabel(station) ?? 'a-stop'} is latched`);
       return;
     }
     if (state.disabledBy === 'admin' && !byAdmin) {
@@ -1638,6 +1653,7 @@ export class MatchEngine {
     let handedOff = false;
     if (dsEStop && !state.eStop) {
       state.eStop = true;
+      state.eStopBy = 'ds';
       state.enabled = false;
       console.log(`DS e-stop reported: ${station}`);
       changed = true;
@@ -1687,24 +1703,32 @@ export class MatchEngine {
     if (handedOff) this.relayHandoffFromDisable(station);
   }
 
+  /** Clear one station's own e-stop, or with no station every e-stop on the
+   *  field, the field E-Stop latch included. Clearing one station leaves the
+   *  field latch alone. */
   clearEStop(station?: StationName) {
     if (station) {
-      const state = this.stationStates.get(station)!;
-      state.eStop = false;
+      releaseEStop(this.stationStates.get(station)!);
       console.log(`E-Stop cleared: ${station}`);
     } else {
-      for (const s of StationNameList) {
-        this.stationStates.get(s)!.eStop = false;
-      }
-      console.log('All E-Stops cleared');
+      for (const s of StationNameList) releaseEStop(this.stationStates.get(s)!);
+      this.fieldEStopSince = null;
+      console.log('All E-Stops cleared (field E-Stop included)');
     }
     this.broadcast();
   }
 
-  /** Whether this station is e-stopped (field or its own DS). Cheap — safe to
-   *  call from the hold resolvers that getState() itself consults. */
+  /** Whether this station is e-stopped: its own e-stop or the field E-Stop.
+   *  Cheap — safe to call from the hold resolvers that getState() itself
+   *  consults. */
   isEStopped(station: StationName): boolean {
-    return this.stationStates.get(station)!.eStop;
+    return this.fieldEStopSince !== null || this.stationStates.get(station)!.eStop;
+  }
+
+  /** For log lines: which e-stop holds this station, or null. */
+  private eStopLabel(station: StationName): string | null {
+    if (this.fieldEStopSince !== null) return 'the field E-Stop';
+    return this.stationStates.get(station)!.eStop ? 'e-stop' : null;
   }
 
   isMatchActive(): boolean {
@@ -1739,6 +1763,7 @@ export class MatchEngine {
       const connectedAt = this.connectedAtResolver?.(station) ?? undefined;
       const state = {
         ...this.stationStates.get(station)!,
+        eStop: this.isEStopped(station),
         dsAttached: this.isDsAttached(station),
         ...(blockedReason ? { blockedReason } : {}),
         ...(heldReason && heldReason !== blockedReason ? { heldReason } : {}),
@@ -1805,6 +1830,7 @@ export class MatchEngine {
         [...this.dsConnections].map(([station, conn]) => [station, { ...conn, ...this.endpointFor(conn.ip) }]),
       ),
       endReason: this.phase === 'postMatch' ? this.endReason : undefined,
+      fieldEStop: this.fieldEStopSince !== null ? { since: this.fieldEStopSince } : undefined,
       portToSlot: this.portToSlot.size > 0 ? Object.fromEntries(this.portToSlot) : undefined,
       autoWinnerAlliance: this.autoWinnerAlliance,
       awaitingAutoWinner: awaitingAutoWinner || undefined,
@@ -2003,10 +2029,11 @@ export class MatchEngine {
     }
   }
 
-  /** Schedule the automatic postMatch → idle transition. No-op for e-stop endings. */
+  /** Schedule the automatic postMatch → idle transition. A match the field
+   *  E-Stop ended clears like any other: the latch, not the match, is what
+   *  keeps the robots stopped. */
   private schedulePostMatchAutoClear() {
     this.cancelPostMatchAutoClear();
-    if (this.endReason === 'estop') return;
     this.autoClearTimer = setTimeout(() => {
       this.autoClearTimer = null;
       if (this.phase === 'postMatch') {
@@ -2038,19 +2065,20 @@ export class MatchEngine {
     this.autoWinnerAlliance = null;
     this.endReason = undefined;
     this.resetReadyCheckAndStaff();
-    // Clearing the match is staff ending it, so its e-stops go with it, as
-    // creating the next match already did. Kept, they held every e-stopped
-    // robot under field control, disabled, with no match on the field and
-    // no Clear E-Stop button left on the match page (the participant rows
-    // go with the match). After a Global E-Stop that was every robot: 1967,
-    // 2026-10-12, until someone created and cancelled a match.
+    // Clearing the match is staff ending it, so its robots' own e-stops go
+    // with it, as creating the next match already did. Kept, they held every
+    // e-stopped robot under field control, disabled, with no match on the
+    // field and no Clear E-Stop button left on the match page (the
+    // participant rows go with the match): 1967, 2026-10-12. The field
+    // E-Stop latch is different: it isn't the match's, it has its own Clear
+    // on /match and /admin in every phase, and it stays.
     const eStopped = StationNameList.filter(s => this.stationStates.get(s)!.eStop);
     for (const state of this.stationStates.values()) {
       state.joined = false;
       state.ready = false;
       state.alliance = null;
       state.matchSlot = null;
-      state.eStop = false;
+      releaseEStop(state);
       state.aStop = false;
     }
     console.log(`Match cleared${eStopped.length ? ` (e-stops cleared: ${eStopped.join(', ')})` : ''}`);
@@ -2180,7 +2208,7 @@ export class MatchEngine {
 
     // Never send the e-stop or a-stop bits to the DS — always use disable.
     // Both are backend-only states that prevent re-enabling.
-    const control = new Control(false, state.enabled && !state.eStop && !state.aStop, state.mode);
+    const control = new Control(false, state.enabled && !this.isEStopped(station) && !state.aStop, state.mode);
 
     // Alliance station byte — which side of the field the DS shows. Derived from
     // the joined alliance before the match starts, then the assigned match slot
@@ -2233,4 +2261,10 @@ export class MatchEngine {
       }
     }
   }
+}
+
+/** Drop a station's own e-stop and who latched it. */
+function releaseEStop(state: StationControlState) {
+  state.eStop = false;
+  delete state.eStopBy;
 }

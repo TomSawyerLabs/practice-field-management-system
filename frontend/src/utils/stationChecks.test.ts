@@ -73,7 +73,11 @@ describe('robotAlert', () => {
   });
 
   test('stops outrank lost comms', () => {
-    expect(robotAlert(control({ eStop: true, dsAttached: false }), 'teleop', 'bad')?.label).toBe('E-STOPPED');
+    expect(robotAlert(control({ eStop: true, eStopBy: 'ds', dsAttached: false }), 'teleop', 'bad')?.label).toBe(
+      'E-STOPPED',
+    );
+    // No source of its own: the field E-Stop is holding it
+    expect(robotAlert(control({ eStop: true }), 'teleop', 'ok')?.label).toBe('FIELD E-STOP');
     expect(robotAlert(control({ aStop: true, enabled: false }), 'auto', 'ok')?.label).toBe('A-STOPPED');
   });
 

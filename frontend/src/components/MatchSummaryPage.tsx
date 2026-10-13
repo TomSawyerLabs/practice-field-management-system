@@ -80,8 +80,8 @@ export function MatchSummaryPage({ token }: { token: string }) {
   const endLabels: Record<string, string> = {
     normal: 'Completed',
     completed: 'Completed',
-    stopped: 'Stopped early',
-    estop: 'Emergency stopped',
+    stopped: 'Cancelled',
+    estop: 'Ended by the field E-Stop',
     abandoned: 'Abandoned',
     empty: 'All teams left',
   };

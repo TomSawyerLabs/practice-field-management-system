@@ -950,7 +950,7 @@ describe('a team Stop out of a match', () => {
   test('e-stop is visible cheaply to the hold resolvers', () => {
     const engine = new MatchEngine(() => 8);
     expect(engine.isEStopped('slot1')).toBe(false);
-    engine.globalEStop();
+    engine.fieldEStop();
     expect(engine.isEStopped('slot1')).toBe(true);
     engine.clearEStop();
     expect(engine.isEStopped('slot1')).toBe(false);
@@ -972,18 +972,126 @@ describe('two robots of one team', () => {
   });
 });
 
-describe('ending a match with an e-stop', () => {
-  test('clearing the match clears the e-stops, so robots are released', () => {
+/** slot1 (red) joins, readies and starts: the match is in its countdown. */
+function startedWithSlot1(): MatchEngine {
+  const engine = new MatchEngine(() => 1967);
+  engine.createMatch();
+  engine.joinStationAlliance('slot1', 'red');
+  for (const role of ['headRef', 'scorekeeper', 'safety'] as const) engine.setStaffIgnored(role, true);
+  engine.setReadyRequested(true);
+  dsAttached(engine, 'slot1');
+  engine.setReady('slot1', true);
+  engine.startMatch();
+  expect(engine.getState().phase).toBe('countdown');
+  return engine;
+}
+
+describe('Cancel Match', () => {
+  test('ends the match for the robots in it and leaves everyone else alone', () => {
+    const engine = startedWithSlot1();
+    engine.stopMatch();
+    const state = engine.getState();
+    expect(state.phase).toBe('postMatch');
+    expect(state.endReason).toBe('stopped');
+    expect(state.stationStates.slot1?.enabled).toBe(false);
+    // Nobody is e-stopped and there is no field latch: a free-driving robot
+    // on slot4 never had FMS control, and still doesn't.
+    expect(state.fieldEStop).toBeUndefined();
+    for (const s of ['slot1', 'slot4'] as const) expect(engine.isEStopped(s)).toBe(false);
+    expect(state.stationStates.slot4?.joined).toBe(false);
+  });
+
+  test('works from a paused match too', () => {
+    const engine = startedWithSlot1();
+    (engine as unknown as { phase: string }).phase = 'teleop';
+    engine.pauseMatch();
+    expect(engine.getState().phase).toBe('paused');
+    engine.stopMatch();
+    expect(engine.getState().phase).toBe('postMatch');
+    expect(engine.getState().endReason).toBe('stopped');
+  });
+});
+
+describe('the field E-Stop', () => {
+  test('ends a running match and stops every station, joined or not', () => {
+    const engine = startedWithSlot1();
+    engine.fieldEStop();
+    const state = engine.getState();
+    expect(state.phase).toBe('postMatch');
+    expect(state.endReason).toBe('estop');
+    expect(state.fieldEStop?.since).toBeGreaterThan(0);
+    expect(state.stationStates.slot1?.eStop).toBe(true);
+    expect(state.stationStates.slot4?.eStop).toBe(true);
+    // Field-wide, not any one robot's own e-stop
+    expect(state.stationStates.slot4?.eStopBy).toBeUndefined();
+  });
+
+  test('is a latch: clearing or creating a match leaves it on, and no match can start', () => {
+    const engine = startedWithSlot1();
+    engine.fieldEStop();
+    engine.clearMatch();
+    expect(engine.getState().phase).toBe('idle');
+    expect(engine.isEStopped('slot4')).toBe(true);
+    engine.createMatch();
+    expect(engine.getState().fieldEStop).toBeDefined();
+    engine.joinStationAlliance('slot1', 'red');
+    engine.setReadyRequested(true);
+    dsAttached(engine, 'slot1');
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('created');
+
+    engine.clearFieldEStop();
+    expect(engine.getState().fieldEStop).toBeUndefined();
+    expect(engine.isEStopped('slot4')).toBe(false);
+    engine.setReady('slot1', true);
+    engine.startMatch();
+    expect(engine.getState().phase).toBe('countdown');
+    engine.stopMatch();
+  });
+
+  test('pressed during setup keeps the set-up match', () => {
     const engine = new MatchEngine(() => 1967);
     engine.createMatch();
     engine.joinStationAlliance('slot1', 'blue');
-    engine.globalEStop();
-    expect(engine.getState().phase).toBe('postMatch');
-    expect(engine.isEStopped('slot1')).toBe(true);
-    expect(engine.isEStopped('slot4')).toBe(true);
+    engine.fieldEStop();
+    expect(engine.getState().phase).toBe('created');
+    expect(engine.getState().stationStates.slot1?.joined).toBe(true);
+  });
+
+  test("clearing one robot's e-stop leaves the field latch; clearing all releases both", () => {
+    const engine = new MatchEngine(() => 1967);
+    engine.stationEStop('slot2', 'team');
+    engine.fieldEStop();
+    engine.clearEStop('slot2');
+    expect(engine.isEStopped('slot2')).toBe(true);
+    expect(engine.getState().stationStates.slot2?.eStopBy).toBeUndefined();
+    engine.stationEStop('slot2', 'staff');
+    engine.clearEStop();
+    expect(engine.getState().fieldEStop).toBeUndefined();
+    expect(engine.isEStopped('slot2')).toBe(false);
+  });
+});
+
+describe("one robot's e-stop", () => {
+  test('records who latched it, and touches no other robot', () => {
+    const engine = new MatchEngine(() => 1967);
+    engine.stationEStop('slot1', 'team');
+    engine.stationEStop('slot1', 'staff');
+    engine.dsReportedStatus('slot3', false, true, false, 0xb8, true);
+    const state = engine.getState();
+    expect(state.stationStates.slot1?.eStopBy).toBe('team'); // the first source sticks
+    expect(state.stationStates.slot3?.eStopBy).toBe('ds');
+    expect(state.stationStates.slot2?.eStop).toBe(false);
+    expect(state.fieldEStop).toBeUndefined();
+  });
+
+  test("clearing the match clears the robots' own e-stops", () => {
+    const engine = startedWithSlot1();
+    engine.stationEStop('slot1', 'staff');
+    engine.stopMatch();
     engine.clearMatch();
-    expect(engine.getState().phase).toBe('idle');
     expect(engine.isEStopped('slot1')).toBe(false);
-    expect(engine.isEStopped('slot4')).toBe(false);
+    expect(engine.getState().stationStates.slot1?.eStopBy).toBeUndefined();
   });
 });

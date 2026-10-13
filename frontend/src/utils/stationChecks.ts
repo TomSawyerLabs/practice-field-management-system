@@ -70,7 +70,8 @@ export function robotAlert(
   robotComms: SetupCheckLevel | undefined,
 ): RobotAlert | null {
   if (!control?.joined || !phase || !LIVE_PHASES.has(phase)) return null;
-  if (control.eStop) return { label: 'E-STOPPED', tone: 'bad' };
+  // No eStopBy: the field E-Stop holds it, not an e-stop of its own.
+  if (control.eStop) return { label: control.eStopBy ? 'E-STOPPED' : 'FIELD E-STOP', tone: 'bad' };
   if (control.aStop) return { label: 'A-STOPPED', tone: 'warn' };
   if (control.dsAttached === false) return { label: 'NO DS', tone: 'bad' };
   if (robotComms === 'bad') return { label: 'NO ROBOT', tone: 'bad' };

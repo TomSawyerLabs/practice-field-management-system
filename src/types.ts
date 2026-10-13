@@ -1219,6 +1219,10 @@ export type MatchSlot = `${Alliance}${StationNumber}`;
 
 export type DisabledBy = 'ds' | 'self' | 'admin' | 'relay';
 
+/** Who e-stopped one robot: its Driver Station's own E-Stop, the team's page
+ *  (station page or match window), or field staff (`/match` or `/admin`). */
+export type EStopSource = 'ds' | 'team' | 'staff';
+
 export type StationControlState = {
   /** The robot on this station. Unjoined: the team on the radio's active
    *  config. Joined: the team that pressed Join (held Wi-Fi changes count),
@@ -1228,7 +1232,13 @@ export type StationControlState = {
    *  `teamNumber`. Tells apart two robots of one team. */
   robot?: string | null;
   enabled: boolean;
+  /** E-stopped: this robot's own e-stop, or the field E-Stop (see
+   *  `MatchState.fieldEStop`). Either way the field cuts its Driver Station's
+   *  control of the robot until staff clear it. */
   eStop: boolean;
+  /** Who latched this robot's own e-stop. Absent when it has none — a station
+   *  that is e-stopped only by the field E-Stop has no `eStopBy`. */
+  eStopBy?: EStopSource;
   /** A-Stop: robot stopped for the remainder of the autonomous period, auto-released at teleop */
   aStop: boolean;
   mode: Mode;
@@ -1279,6 +1289,8 @@ export type StationControlState = {
   lastEnabledAt?: number;
 };
 
+/** How a match ended. `stopped` is a match staff cancelled (Cancel Match);
+ *  `estop` one the field E-Stop ended; `abandoned` one every team left. */
 export type MatchEndReason = 'normal' | 'stopped' | 'estop' | 'abandoned';
 
 /** Non-team field staff who ready up digitally alongside the driver stations
@@ -1367,6 +1379,11 @@ export type MatchState = {
   /** Map of station → DS connection info for stations with a connected Driver Station */
   connectedStations: Partial<Record<StationName, DSConnectionInfo>>;
   endReason?: MatchEndReason;
+  /** Present while the field E-Stop is latched: every robot on the field is
+   *  stopped — in a match or not — until staff clear it. Separate from any
+   *  match: ending, clearing or creating a match leaves it latched, and no
+   *  match can start while it is. `since` is epoch ms on the server clock. */
+  fieldEStop?: { since: number };
   /** Maps physical station names to their assigned alliance match slots during a match */
   portToSlot?: Partial<Record<StationName, MatchSlot>>;
   /** Which alliance won the auto period (set after auto ends, null before or if not determined) */
@@ -1462,12 +1479,6 @@ export function isStationResumeMatch(msg: unknown): msg is StationResumeMatch {
   return (msg as StationResumeMatch).type === 'stationResumeMatch';
 }
 
-export type StationAbandonMatch = { type: 'stationAbandonMatch' };
-export function isStationAbandonMatch(msg: unknown): msg is StationAbandonMatch {
-  if (typeof msg !== 'object' || !msg) return false;
-  return (msg as StationAbandonMatch).type === 'stationAbandonMatch';
-}
-
 export type UpdateMatchConfig = { type: 'updateMatchConfig'; config: MatchConfig };
 export function isUpdateMatchConfig(msg: unknown): msg is UpdateMatchConfig {
   if (typeof msg !== 'object' || !msg) return false;
@@ -1493,6 +1504,8 @@ export function isUpdateMatchConfig(msg: unknown): msg is UpdateMatchConfig {
 
 // ── Admin match messages ─────────────────────────────────────────────
 
+/** Cancel Match: end a running or paused match early. Only the robots in
+ *  the match are disabled; free-driving robots are untouched. */
 export type AdminStopMatch = { type: 'adminStopMatch' };
 
 export function isAdminStopMatch(msg: unknown): msg is AdminStopMatch {
@@ -1521,12 +1534,24 @@ export function isAdminRestart(msg: unknown): msg is AdminRestart {
   return (msg as AdminRestart).type === 'adminRestart';
 }
 
+/** Field E-Stop: latch a stop on every robot on the field, in a match or
+ *  not, until staff clear it (adminClearFieldEStop). Ends a running match. */
 export type AdminGlobalEStop = { type: 'adminGlobalEStop' };
 
 export function isAdminGlobalEStop(msg: unknown): msg is AdminGlobalEStop {
   if (typeof msg !== 'object') return false;
   if (!msg) return false;
   return (msg as AdminGlobalEStop).type === 'adminGlobalEStop';
+}
+
+/** Release the field E-Stop latch. Robots e-stopped on their own stay
+ *  stopped; those are cleared per station (adminClearEStop). */
+export type AdminClearFieldEStop = { type: 'adminClearFieldEStop' };
+
+export function isAdminClearFieldEStop(msg: unknown): msg is AdminClearFieldEStop {
+  if (typeof msg !== 'object') return false;
+  if (!msg) return false;
+  return (msg as AdminClearFieldEStop).type === 'adminClearFieldEStop';
 }
 
 export type AdminStationEStop = { type: 'adminStationEStop'; station: StationName };
@@ -1565,6 +1590,8 @@ export function isAdminStationEnable(msg: unknown): msg is AdminStationEnable {
   return true;
 }
 
+/** Clear one station's own e-stop, or with no station every e-stop on the
+ *  field — the field E-Stop latch included. */
 export type AdminClearEStop = { type: 'adminClearEStop'; station?: StationName };
 
 export function isAdminClearEStop(msg: unknown): msg is AdminClearEStop {

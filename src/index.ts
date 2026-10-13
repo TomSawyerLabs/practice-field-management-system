@@ -377,7 +377,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   function outOfMatchHoldReason(station: StationName): string | null {
     return (
       policyBlockReason(station) ??
-      (matchEngine.isEStopped(station) ? 'E-stopped. Field staff clear the e-stop.' : null) ??
+      (matchEngine.isFieldEStopped()
+        ? 'Field E-Stop: every robot is stopped. Field staff clear it.'
+        : matchEngine.isEStopped(station)
+          ? 'E-stopped. Field staff clear the e-stop.'
+          : null) ??
       (outOfMatchControlOff() ? 'Field staff have turned off freeplay outside matches.' : null)
     );
   }
@@ -1674,7 +1678,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             // What the DS shows in its game data field. The 2027 DS reads at
             // most 8 characters, so it gets a shorter spelling.
             const ds2027 = matchEngine.dsProtocolFor(dsIp) === 'ds2027';
-            const gameData = blocked ? 'Blocked' : eStopped ? 'E-Stop' : ds2027 ? 'AdminOff' : 'Admin disabled';
+            const gameData = blocked
+              ? 'Blocked'
+              : eStopped
+                ? matchEngine.isFieldEStopped()
+                  ? ds2027
+                    ? 'FieldES'
+                    : 'Field E-Stop'
+                  : 'E-Stop'
+                : ds2027
+                  ? 'AdminOff'
+                  : 'Admin disabled';
             matchEngine.sendRawControlPacket(dsIp, station, [{ type: 'gameData', data: gameData }]);
           }
           const local = !joined && !held && !tcpReplyAll && !tcpReplyOptIn.has(station);

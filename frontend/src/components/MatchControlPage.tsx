@@ -28,6 +28,7 @@ import {
   MatchHistoryEntry,
   StationName,
   StationControlState,
+  EStopSource,
   StaffRole,
   StaffRoleList,
   StaffRoleLabels,
@@ -54,11 +55,10 @@ import {
   sendStationStartMatch,
   sendStationPauseMatch,
   sendStationResumeMatch,
-  sendStationAbandonMatch,
   sendAdminStationDisable,
   sendAdminStationEnable,
   sendAdminStationEStop,
-  sendAdminGlobalEStop,
+  sendAdminStopMatch,
   sendAdminClearEStop,
   sendClearMatchHistory,
   useMatchRecordingState,
@@ -76,6 +76,7 @@ import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
+import { FieldEStopControl } from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
 import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
@@ -150,7 +151,7 @@ function computeBarProgress(
  * The dedicated match controller page at /match.
  *
  * Manages the full match lifecycle: create → setup → start → control → post-match.
- * Only this page has access to start/pause/resume/abandon/e-stop/disable controls.
+ * Only this page has access to start/pause/resume/cancel/e-stop/disable controls.
  */
 // ── Hold-to-start ───────────────────────────────────────────────────
 // The start button must be held for the whole 3-2-1 countdown. Releasing
@@ -507,6 +508,10 @@ export function MatchControlPage() {
           />
         </Box>
 
+        {/* The field E-Stop latch: in every phase, so once pressed its Clear
+            is always on screen. */}
+        <FieldEStopControl />
+
         {/* Teams' Wi-Fi requests wait while a match exists; this is where the
             match manager sees them and applies them between matches. */}
         <PendingRadioChangesPanel />
@@ -755,12 +760,14 @@ function CreatedView({
                   Retract Ready Check
                 </Button>
                 <HoldToStartButton
-                  canStart={allReady && !getReadyHold && cooldownLeftMs === 0}
+                  canStart={allReady && !getReadyHold && cooldownLeftMs === 0 && !matchState.fieldEStop}
                   holdDisabledReason={
-                    cooldownLeftMs > 0
-                      ? `Countdown cancelled — you can start again in ${Math.ceil(cooldownLeftMs / 1000)} s`
-                      : (holdDisabledReason ??
-                        (getReadyHold ? 'Get-ready announcement playing — a moment…' : undefined))
+                    matchState.fieldEStop
+                      ? 'The field E-Stop is latched — clear it above before starting.'
+                      : cooldownLeftMs > 0
+                        ? `Countdown cancelled — you can start again in ${Math.ceil(cooldownLeftMs / 1000)} s`
+                        : (holdDisabledReason ??
+                          (getReadyHold ? 'Get-ready announcement playing — a moment…' : undefined))
                   }
                 />
               </>
@@ -1174,8 +1181,7 @@ function ActiveMatchView({
             {/* Pause — stays put through the whole running match so it doesn't
                 jump around; just disabled when you can't pause yet (during the
                 start countdown) or when auto is already paused for the
-                transition. Hidden only while paused, where Resume/Abandon
-                replace it. */}
+                transition. Hidden only while paused, where Resume replaces it. */}
             {!isPaused && !isResuming && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                 <Button
@@ -1194,16 +1200,11 @@ function ActiveMatchView({
               </Box>
             )}
 
-            {/* Paused: resume / abandon */}
+            {/* Paused: resume */}
             {isPaused && !isResuming && (
-              <>
-                <Button variant="contained" color="success" onClick={sendStationResumeMatch}>
-                  Resume
-                </Button>
-                <Button variant="outlined" color="error" onClick={sendStationAbandonMatch}>
-                  Abandon Match
-                </Button>
-              </>
+              <Button variant="contained" color="success" onClick={sendStationResumeMatch}>
+                Resume
+              </Button>
             )}
 
             {/* Resume countdown running — robots are still disabled until it ends */}
@@ -1216,14 +1217,50 @@ function ActiveMatchView({
               </Box>
             )}
 
-            {/* Global E-Stop — always available during active match */}
-            <Button variant="contained" color="error" onClick={sendAdminGlobalEStop} sx={{ fontWeight: 'bold' }}>
-              E-Stop All
-            </Button>
+            {/* Cancel Match — the way to end a match early, running or paused.
+                The countdown has Abort Countdown instead, which keeps the
+                match set up. The field E-Stop is at the top of the page. */}
+            {phase !== 'countdown' && <CancelMatchButton />}
           </Box>
         </CardContent>
       </Card>
     </>
+  );
+}
+
+/** Ends the match for the robots in it — disabled, then post-match as
+ *  usual. Robots free-driving outside the match are untouched. Asks once:
+ *  a stray tap would throw away a match the teams were in the middle of. */
+function CancelMatchButton() {
+  const [confirm, setConfirm] = useState(false);
+  if (!confirm) {
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+        <Button variant="outlined" color="error" onClick={() => setConfirm(true)}>
+          Cancel Match
+        </Button>
+        <Typography variant="caption" color="text.secondary">
+          Stops only the robots in this match.
+        </Typography>
+      </Box>
+    );
+  }
+  return (
+    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+      <Button
+        variant="contained"
+        color="error"
+        onClick={() => {
+          sendAdminStopMatch();
+          setConfirm(false);
+        }}
+      >
+        Yes, cancel the match
+      </Button>
+      <Button variant="outlined" onClick={() => setConfirm(false)}>
+        Keep playing
+      </Button>
+    </Box>
   );
 }
 
@@ -1233,6 +1270,9 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
   const phase = useMatchState()?.phase;
   const isEnabled = state?.enabled ?? false;
   const isEStopped = state?.eStop ?? false;
+  // A robot's own e-stop records who latched it; without one, the field
+  // E-Stop is what holds it, and that clears from the banner up top.
+  const ownEStop = isEStopped && state?.eStopBy !== undefined;
   // Re-enable is only meaningful while robots run; A-Stop latches through auto
   const canEnable =
     (phase === 'auto' || phase === 'teleop' || phase === 'endgame') && !state?.aStop && (state?.joined ?? false);
@@ -1258,7 +1298,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
         </Typography>
         {isEStopped && (
           <Chip
-            label="E-STOPPED"
+            label={ownEStop ? `E-STOPPED (${ESTOP_BY_LABEL[state!.eStopBy!]})` : 'FIELD E-STOP'}
             color="error"
             size="small"
             sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
@@ -1283,9 +1323,11 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
       </Box>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         {isEStopped ? (
-          <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
-            Clear
-          </Button>
+          ownEStop && (
+            <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
+              Clear
+            </Button>
+          )
         ) : (
           <>
             {/* Both buttons stay put: one that swapped Enable for Disable as soon
@@ -1319,6 +1361,8 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
   );
 }
 
+const ESTOP_BY_LABEL: Record<EStopSource, string> = { ds: 'its DS', team: 'team page', staff: 'staff' };
+
 // ── Post-match view ─────────────────────────────────────────────────
 
 function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<typeof useMatchState>> }) {
@@ -1338,8 +1382,8 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
   const endReasonLabels: Record<string, string> = {
     normal: 'Match Completed',
     completed: 'Match Completed',
-    stopped: 'Match Stopped',
-    estop: 'Emergency Stopped',
+    stopped: 'Match Cancelled',
+    estop: 'Ended by the Field E-Stop',
     abandoned: 'Match Abandoned',
     empty: 'All Teams Left',
   };
@@ -1582,8 +1626,8 @@ function formatTimeAgo(timestamp: number): string {
 
 const endReasonChip: Record<string, { label: string; color: 'success' | 'warning' | 'error' | 'default' }> = {
   normal: { label: 'Completed', color: 'success' },
-  stopped: { label: 'Stopped', color: 'warning' },
-  estop: { label: 'E-Stopped', color: 'error' },
+  stopped: { label: 'Cancelled', color: 'warning' },
+  estop: { label: 'Field E-Stop', color: 'error' },
   abandoned: { label: 'Abandoned', color: 'default' },
 };
 

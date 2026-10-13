@@ -25,7 +25,7 @@ no way to change it.
 | `postMatch` | —        | 3 s counting window (balls in flight), then holds until cleared (see below) |
 
 Other phases: `idle` (no match), `created` (match set up, teams joining),
-`paused` (clock frozen, robots disabled — resume or abandon).
+`paused` (clock frozen, robots disabled — resume or cancel).
 
 ## Match Flow
 
@@ -82,7 +82,10 @@ un-readied: the field stopped hearing from its Driver Station`). A DS the
    trigger. Phases then run automatically: countdown → auto → pause → teleop → endgame →
    post-match.
 5. **During the match** — only the match controller can pause, resume, or
-   abandon. Teams can self-service disable, e-stop, or leave mid-match.
+   **Cancel Match** (running or paused; it asks once). Cancelling ends the
+   match for the robots in it only — they're disabled and the match goes to
+   post-match as usual; a robot free-driving outside the match keeps
+   driving. Teams can self-service disable, e-stop, or leave mid-match.
    **Resuming runs a 3-second "3… 2… 1…" countdown** before robots
    re-enable, so drive teams get the same warning they do at match start.
    Robots stay disabled — and the field keeps actively streaming that
@@ -91,8 +94,9 @@ un-readied: the field stopped hearing from its Driver Station`). A DS the
 6. **Post-match** — a short 3-second counting period runs after the buzzer
    (balls in flight). The match then stays in post-match until the
    controller clears it, creates a new match, or **2 minutes** pass — then
-   it auto-clears back to free play (scoring included). Matches ended by
-   e-stop **never** auto-clear; a human must clear them.
+   it auto-clears back to free play (scoring included). A match the field
+   E-Stop ended auto-clears too — the field E-Stop latch, not the match, is
+   what keeps robots stopped.
 
 ## Field Staff Ready-Up
 
@@ -156,13 +160,34 @@ E-Stop and A-Stop are latched **backend-only** states — the FMS never
 sends the e-stop or a-stop bit to the DS, only disable packets — so a DS
 can never get stuck in a hardware-latched stop from an FMS action.
 
-### E-Stop
+### Field E-Stop
 
-- Emergency stop for the rest of the match. Triggered from the station
-  page or match window (a single tap — field staff can clear a mistake),
-  from the DS itself, or by field staff from `/admin`.
-- Requires a human to clear from the admin console; matches ended by
-  e-stop never auto-clear.
+The big **E-STOP** at the top of `/match` (and above the tabs on `/admin`)
+is a field-wide **latch** for emergencies:
+
+- It stops every robot on the field — in a match or free-driving — and ends
+  a running match (reason `estop`; a match being set up stays set up).
+- It is separate from the match: ending, clearing, or creating a match
+  leaves it latched, and no match can start until staff clear it. Once
+  pressed it becomes a **FIELD E-STOPPED** banner on `/match` and `/admin`
+  with **Clear field E-Stop** (which asks whether the field is safe), so the
+  way to clear it is on screen in every phase.
+- Every team's page shows a big **E-STOPPED — Field E-Stop** notice (even a
+  team with no robot on the field), the scoreboard shows an **E-STOPPED**
+  band across the screen, and a Driver Station held out of a match shows
+  `Field E-Stop` (`FieldES` on a 2027 DS) as its game data.
+
+### E-Stop (one robot)
+
+- Emergency stop for one robot for the rest of the match. Triggered from
+  the station page or match window (a single tap — field staff can clear a
+  mistake), from the DS itself, or by field staff from `/match` or `/admin`.
+  Its alliance partners and every other robot are untouched.
+- The team's page shows **E-STOPPED — your robot only**, with who latched it
+  (its Driver Station, the team's page, or field staff) and what to do, so
+  the team can tell their own stop from the field's.
+- Requires a human to clear (per robot on `/match`, or on `/admin`);
+  clearing the match clears it too.
 - After staff clear it, the team (or staff) can re-enable the robot
   mid-match.
 
@@ -213,9 +238,9 @@ reported` has been logged from one — but nobody is known to have pressed
 ### Admin Overrides
 
 The `/admin` page provides safety overrides independent of the
-self-service system: **E-STOP ALL** sits above the page's tabs (Match,
-Wi-Fi, Video, Scoring & integrations, Access; each has its own URL, e.g.
-`/admin#video`), and next to it, while a match runs, **Force stop match**
+self-service system: the field **E-STOP** sits above the page's tabs
+(Match, Wi-Fi, Video, Scoring & integrations, Access; each has its own URL,
+e.g. `/admin#video`), and below it, while a match runs, **Cancel match**
 ends it early without e-stopping anyone. The match itself is run and watched
 on `/match`. Per-team rows
 manage the slot, not the robot: **Release** takes the robot off the field
@@ -232,9 +257,10 @@ or when the field last enabled that robot. "Connected" counts from the
 moment the team's SSID became the slot's active radio config, so it
 survives a robot dropping and coming back.
 
-**Global e-stop is field-wide in the strongest sense**: it e-stops all six
-stations and sends E-Stop packets to every station whose Driver Station
-address is known — including robots merely free-driving outside the match.
+**The field E-Stop is field-wide in the strongest sense**: it e-stops all
+six stations — including a team that takes a slot after it was pressed —
+and sends disable packets to every station whose Driver Station address is
+known, including robots merely free-driving outside the match.
 It is the only path in pFMS that stops robots across alliances. A
 per-station E-Stop touches only that station; there is no code path by
 which one team's E-Stop reaches their alliance partners.
@@ -418,17 +444,17 @@ Sound effects play on phase transitions via a detected system audio player
 (`aplay`, `paplay`, `ffplay`, `mpv`, `play`, or `afplay`). Place `.wav`
 files in `sounds/`:
 
-| Sound            | Played on                                                 |
-| ---------------- | --------------------------------------------------------- |
-| `countdown1`–`4` | Start of the 3-second countdown (see below)               |
-| `start`          | Auto begins without a countdown (e.g. after pause)        |
-| `end`            | End of auto, and normal match end                         |
-| `resume`         | autoPause → teleop                                        |
-| `resume321`      | Resume countdown — tones at 0/1/2 s, "live" tone at 3 s   |
-| `warning`        | Teleop → endgame                                          |
-| `pause`          | Match paused, or a resume countdown cancelled             |
-| `abort`          | Match stopped, e-stopped, abandoned, or countdown aborted |
-| `getready`       | Ready-check announcement                                  |
+| Sound            | Played on                                                       |
+| ---------------- | --------------------------------------------------------------- |
+| `countdown1`–`4` | Start of the 3-second countdown (see below)                     |
+| `start`          | Auto begins without a countdown (e.g. after pause)              |
+| `end`            | End of auto, and normal match end                               |
+| `resume`         | autoPause → teleop                                              |
+| `resume321`      | Resume countdown — tones at 0/1/2 s, "live" tone at 3 s         |
+| `warning`        | Teleop → endgame                                                |
+| `pause`          | Match paused, or a resume countdown cancelled                   |
+| `abort`          | Match cancelled, field e-stopped, emptied, or countdown aborted |
+| `getready`       | Ready-check announcement                                        |
 
 A spoken "3… 2… 1…" announcer plays when the countdown begins:
 `countdown1.wav`–`countdown4.wav` are pre-timed clips (four different
@@ -1112,13 +1138,14 @@ Match control happens over the app WebSocket. The main message types
   `deleteRecordingsBefore`.
 - **Station self-service:** `stationJoinAlliance`, `stationLeave`,
   `stationReady`, `stationStartMatch`, `stationPauseMatch`,
-  `stationResumeMatch`, `stationAbandonMatch`, `stationSelfDisable`,
+  `stationResumeMatch`, `stationSelfDisable`,
   `stationSelfEStop`, `stationSelfAStop`, `stationSelfUndisable`,
   `stationClearAStop`
 - **Controller:** `matchCreate`, `matchCancel`, `matchAbortCountdown`,
   `matchSwapStation`, `matchKickStation`, `matchSetAutoWinner`,
   `matchRequestReady`, `matchStaffIgnore`, `matchClear`,
   `updateMatchConfig`
-- **Admin:** `adminStopMatch`, `adminGlobalEStop`, `adminStationEStop`,
+- **Admin:** `adminStopMatch` (Cancel Match), `adminGlobalEStop` (field
+  E-Stop latch), `adminClearFieldEStop`, `adminStationEStop`,
   `adminStationDisable`, `adminStationEnable`, `adminClearEStop`
 - **Staff:** `staffReady`, `staffHeartbeat`

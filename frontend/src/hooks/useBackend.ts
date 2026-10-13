@@ -1364,10 +1364,6 @@ export function sendStationResumeMatch() {
   ws?.send(JSON.stringify({ type: 'stationResumeMatch' }));
 }
 
-export function sendStationAbandonMatch() {
-  ws?.send(JSON.stringify({ type: 'stationAbandonMatch' }));
-}
-
 export function sendUpdateMatchConfig(config: MatchConfig) {
   ws?.send(JSON.stringify({ type: 'updateMatchConfig', config }));
 }
@@ -1481,12 +1477,18 @@ export function sendStationClearAStop(station: StationName) {
   ws?.send(JSON.stringify({ type: 'stationClearAStop', station }));
 }
 
+/** Cancel Match: end the running or paused match. Only its robots stop. */
 export function sendAdminStopMatch() {
   ws?.send(JSON.stringify({ type: 'adminStopMatch' }));
 }
 
+/** Latch the field E-Stop: every robot on the field stops until cleared. */
 export function sendAdminGlobalEStop() {
   ws?.send(JSON.stringify({ type: 'adminGlobalEStop' }));
+}
+
+export function sendAdminClearFieldEStop() {
+  ws?.send(JSON.stringify({ type: 'adminClearFieldEStop' }));
 }
 
 export function sendAdminStationEStop(station: StationName) {

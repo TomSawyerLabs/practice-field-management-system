@@ -12,6 +12,7 @@ import { TimelapseSettingsSection } from './TimelapseSection';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
+import { FieldEStopControl } from './FieldEStop';
 
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -57,7 +58,6 @@ import {
   useSlackConfigState,
   useSlackTestResult,
   sendAdminStopMatch,
-  sendAdminGlobalEStop,
   sendAdminClearEStop,
   sendAdminClearAllStations,
   sendAdminRestart,
@@ -103,43 +103,26 @@ import InputLabel from '@mui/material/InputLabel';
 import Autocomplete from '@mui/material/Autocomplete';
 import CircularProgress from '@mui/material/CircularProgress';
 
-// ── Global E-Stop ───────────────────────────────────────────────────
+// ── Field E-Stop ────────────────────────────────────────────────────
 
-/** E-STOP ALL stops every robot on the field — in a match or not (out of a
- *  match the field cuts its Driver Station's control traffic and takes the DS
- *  under field control). Stopped robots stay held until staff clear it here
- *  or per station on the match page. */
+/** The field E-Stop (shared with /match) stops every robot on the field — in
+ *  a match or not — until staff clear it. Below it: Cancel match while one
+ *  runs (only its robots stop), and any robots e-stopped on their own. */
 function GlobalEStopSection() {
   const matchState = useMatchState();
-  const stopped = StationNameList.filter(s => matchState?.stationStates[s]?.eStop);
+  // Robots e-stopped on their own; the field latch is FieldEStopControl's.
+  const stopped = StationNameList.filter(s => matchState?.stationStates[s]?.eStopBy);
   const [confirmClear, setConfirmClear] = useState(false);
   const phase = matchState?.phase;
-  const matchRunning = phase !== undefined && phase !== 'idle' && phase !== 'postMatch';
+  const matchRunning = phase !== undefined && phase !== 'idle' && phase !== 'created' && phase !== 'postMatch';
   return (
     <Box sx={{ mb: 2 }}>
-      <Box sx={{ display: 'flex', gap: 1 }}>
-        <Button
-          variant="contained"
-          color="error"
-          fullWidth
-          sx={{ fontSize: '1.5rem', py: 2.5, fontWeight: 'bold' }}
-          onClick={() => sendAdminGlobalEStop()}
-        >
-          E-STOP ALL
+      <FieldEStopControl />
+      {matchRunning && (
+        <Button variant="outlined" color="error" sx={{ fontWeight: 'bold', mb: 1 }} onClick={sendAdminStopMatch}>
+          Cancel match (stops only the robots in it)
         </Button>
-        {/* The one way to end a running match early without e-stopping
-            anyone: /match only aborts a countdown. */}
-        {matchRunning && (
-          <Button
-            variant="outlined"
-            color="error"
-            sx={{ fontWeight: 'bold', flexShrink: 0, px: 3 }}
-            onClick={sendAdminStopMatch}
-          >
-            Force stop match
-          </Button>
-        )}
-      </Box>
+      )}
       {stopped.length > 0 && (
         <Alert
           severity="error"
@@ -151,7 +134,7 @@ function GlobalEStopSection() {
                   color="inherit"
                   size="small"
                   onClick={() => {
-                    sendAdminClearEStop();
+                    for (const s of stopped) sendAdminClearEStop(s);
                     setConfirmClear(false);
                   }}
                 >
@@ -163,13 +146,13 @@ function GlobalEStopSection() {
               </Box>
             ) : (
               <Button color="inherit" size="small" onClick={() => setConfirmClear(true)}>
-                Clear all e-stops
+                Clear these e-stops
               </Button>
             )
           }
         >
-          E-stopped: {stopped.map(s => prettyStationName(s)).join(', ')}. These robots stay stopped until the e-stop is
-          cleared; teams then enable again from their Driver Station.
+          E-stopped on their own: {stopped.map(s => prettyStationName(s)).join(', ')}. These robots stay stopped until
+          the e-stop is cleared; teams then enable again from their Driver Station.
         </Alert>
       )}
     </Box>
@@ -1305,7 +1288,7 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
 // ── Admin Page ──────────────────────────────────────────────────────
 
 /**
- * /admin#<tab>. E-STOP ALL (and Force stop while a match runs) sits above
+ * /admin#<tab>. The field E-STOP (and Cancel match while one runs) sits above
  * the tabs, so it is on screen whichever tab is open. The match itself is
  * run and watched on /match.
  */

@@ -125,7 +125,7 @@ policy-blocked control system (`Blocked`). Flipping the switch re-handshakes
 every unjoined DS so it takes effect at once. Joining a match lifts the hold.
 
 **E-stop** reaches robots out of a match too. While a station is e-stopped
-(E-STOP ALL, the station's e-stop, or its DS's own), pFMS drops every DS→robot
+(the field E-Stop, the station's e-stop, or its DS's own), pFMS drops every DS→robot
 control packet (UDP 1110) going into that station's bridge
 (`FORWARD -o br-slotN -p udp --dport 1110 -j DROP`, comment
 `pfms-estop-slotN`). A robot disables its outputs ~100 ms after its control

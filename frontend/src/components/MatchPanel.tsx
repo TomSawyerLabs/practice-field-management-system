@@ -107,7 +107,7 @@ function computeBarProgress(
  * - With `station` prop: per-station view with join/leave/ready buttons (for station pages)
  * - Without `station` prop: master overview (for main page)
  *
- * NOTE: Start/Pause/Resume/Abandon are NOT available from station views.
+ * NOTE: Start/Pause/Resume/Cancel are NOT available from station views.
  * Those controls are only on the /match controller page.
  */
 /** Self-service controls while a match is running: disable / re-enable,
@@ -197,7 +197,11 @@ function SelfServiceControls({
           </Button>
         ))}
       {myState?.eStop ? (
-        <Chip label="E-Stopped — field staff can clear it" size="small" color="error" />
+        <Chip
+          label={myState.eStopBy ? 'E-Stopped — field staff clear it' : 'Field E-Stop — every robot stopped'}
+          size="small"
+          color="error"
+        />
       ) : (
         <Button
           variant={aStopPhase ? 'outlined' : 'contained'}
@@ -259,13 +263,8 @@ export function FreeplayControl({ station }: { station: StationName }) {
   const myState = useFreeplayState(station);
   if (!myState) return null;
 
-  if (myState.eStop) {
-    return (
-      <Alert severity="error" sx={{ mb: 2 }}>
-        Your robot is e-stopped. Field staff clear the e-stop; then enable again from your Driver Station.
-      </Alert>
-    );
-  }
+  // TeamEStopBanner, at the top of the page, says why and what to do.
+  if (myState.eStop) return null;
   if (myState.teamStopped) {
     return (
       <Alert
@@ -525,7 +524,7 @@ function controlChipLabel(
  * Shows "Join Red" / "Join Blue" buttons instead of "Join Match".
  * Does not reference station names like "Blue 1" or "Red 2".
  *
- * NOTE: Start/Pause/Resume/Abandon are NOT available here.
+ * NOTE: Start/Pause/Resume/Cancel are NOT available here.
  * Those controls are only on the /match controller page.
  */
 export function MatchPanelForControl({ station }: { station: StationName; ssid: string }) {

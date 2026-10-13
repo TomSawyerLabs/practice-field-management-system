@@ -305,10 +305,14 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
   let label: string;
   let why: string | undefined;
   if (control?.eStop) {
+    // No eStopBy: the field E-Stop holds every robot, not this one's own.
+    const field = !control.eStopBy;
     kind = 'estop';
-    short = 'E-STOP';
-    label = 'E-stopped';
-    why = 'The field is cutting the Driver Station’s control of the robot until staff clear the e-stop.';
+    short = field ? 'FIELD E-STOP' : 'E-STOP';
+    label = field ? 'Field E-Stop: every robot stopped' : 'E-stopped';
+    why = field
+      ? 'Staff pressed the field E-Stop. The field is cutting every Driver Station’s control of its robot until staff clear it.'
+      : 'The field is cutting the Driver Station’s control of the robot until staff clear the e-stop.';
   } else if (!joined && control?.teamStopped) {
     kind = 'stopped';
     short = 'Stopped';

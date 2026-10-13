@@ -100,6 +100,8 @@ type ConsoleState = {
   ready: boolean;
   aStop: boolean;
   eStop: boolean;
+  /** The field E-Stop holds it (every robot), rather than its own e-stop. */
+  fieldEStop: boolean;
   enabled: boolean;
   disabledBy: DisabledBy | null;
   robots: ConsoleRobot[];
@@ -283,7 +285,7 @@ function updateConsole(state: ConsoleState) {
   if (!popupIsOpen() || !phaseEl || !timerEl || !robotsEl || !readyBtn || !astopBtn || !reenableBtn || !estopBtn)
     return;
   const doc = popupWin!.document;
-  const { phase, pausedFrom, readyRequested, ready, aStop, eStop, enabled, disabledBy, robots } = state;
+  const { phase, pausedFrom, readyRequested, ready, aStop, eStop, fieldEStop, enabled, disabledBy, robots } = state;
 
   const setup = phase === 'created';
   // The giant A-Stop is live during countdown/auto and a pause taken during auto
@@ -402,7 +404,9 @@ function updateConsole(state: ConsoleState) {
 
   // E-Stop — always present, fires on the first tap, latched once tripped
   if (eStop) {
-    estopBtn.textContent = 'E-STOPPED — see field staff to clear';
+    estopBtn.textContent = fieldEStop
+      ? 'FIELD E-STOP — every robot stopped; staff clear it'
+      : 'E-STOPPED (your robot) — see field staff to clear';
     estopBtn.disabled = true;
     estopBtn.style.background = '#b71c1c';
     estopBtn.style.border = 'none';
@@ -449,6 +453,7 @@ function consoleStateFrom(match: MatchState, station: StationName): ConsoleState
     ready: my?.ready ?? false,
     aStop: my?.aStop ?? false,
     eStop: my?.eStop ?? false,
+    fieldEStop: match.fieldEStop !== undefined,
     enabled: my?.enabled ?? false,
     disabledBy: my?.disabledBy ?? null,
     robots,
