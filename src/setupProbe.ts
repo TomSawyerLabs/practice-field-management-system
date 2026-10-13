@@ -443,8 +443,7 @@ async function probeScoreboard(
       ? warn(
           'scoring-auth',
           'Scoring access',
-          'Open: any device on the network can submit or reset scores. Fine for a friendly practice field; create an API key from /admin when the numbers matter.',
-          'Create an API key in /admin, or set SCORING_REQUIRE_KEY=true to refuse unauthenticated writes outright',
+          'Open: any device on the network can submit or reset scores. Fine for a friendly practice field; create a key below when the numbers matter, and only devices given it can score.',
         )
       : pass('scoring-auth', 'Scoring access', 'Locked: scoring writes require an API key'),
   );

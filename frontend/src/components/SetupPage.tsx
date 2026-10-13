@@ -26,6 +26,8 @@ import {
   useServerVersion,
   useAdminAuth,
   sendAdminSetPassphrase,
+  sendCreateApiKey,
+  useApiKeyCreatedEvent,
   ADMIN_TOKEN_KEY,
 } from '../hooks/useBackend';
 import { buildBugReportUrl } from '../utils/githubIssue';
@@ -134,6 +136,44 @@ function AdminPassphraseStep({ configured }: { configured: boolean }) {
   );
 }
 
+/** Lock scoring with an API key without leaving the wizard. The key is
+ *  shown once, here, for the operator to give to the scoring devices. */
+function ScoringKeyAction({ open }: { open: boolean }) {
+  const [created, setCreated] = useState<{ key: string; label: string } | null>(null);
+  useApiKeyCreatedEvent(msg => {
+    if (msg.label === SCORING_KEY_LABEL) setCreated({ key: msg.key, label: msg.label });
+  });
+
+  if (created) {
+    return (
+      <Box>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          Scoring key — copy it now, it isn&apos;t shown again
+        </Typography>
+        <Box
+          component="pre"
+          sx={{ mt: 0.5, mb: 0.5, px: 1, py: 0.5, borderRadius: 1, bgcolor: 'action.hover', fontSize: '0.85rem' }}
+        >
+          {created.key}
+        </Box>
+        <Typography variant="caption" color="text.secondary">
+          Give it to each scoring device. Keys are managed on the admin page.
+        </Typography>
+      </Box>
+    );
+  }
+  if (!open) return null;
+  return (
+    <Box>
+      <Button variant="outlined" onClick={() => sendCreateApiKey(SCORING_KEY_LABEL)}>
+        Lock scoring with a key
+      </Button>
+    </Box>
+  );
+}
+
+const SCORING_KEY_LABEL = 'Scoring (setup wizard)';
+
 /** Per-step controls. Everything here writes through to the server immediately. */
 function StepActions({ step }: { step: SetupStepId }) {
   const config = useSetupConfig();
@@ -241,8 +281,11 @@ function StepActions({ step }: { step: SetupStepId }) {
 
   if (step === 'scoreboard') {
     const secure = typeof window !== 'undefined' && window.isSecureContext;
+    const scoringOpen =
+      probe?.steps.find(s => s.id === 'scoreboard')?.checks.find(c => c.id === 'scoring-auth')?.status !== 'pass';
     return (
       <Stack spacing={1.5}>
+        <ScoringKeyAction open={scoringOpen} />
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
           <Box sx={{ pt: '2px' }}>
             <StatusIcon status={secure ? 'pass' : 'warn'} />
