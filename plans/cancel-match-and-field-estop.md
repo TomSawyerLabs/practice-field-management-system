@@ -82,6 +82,42 @@ So:
 - `bun test` also picks up stale compiled tests in the gitignored `dist/`;
   `dist/fmsServer.test.js` fails on a port bind. Not related.
 
+## Part 2: coming out of an e-stop starts disabled
+
+The user (2026-10-12, follow-up): "Ignoring the single robot e-stops/disable,
+E-STOPPED is a field level flag. For now, it's all software buttons that are
+easy to sync state. In not too long, we'll have more permanent e-stop
+buttons and will need to physically clear those presses before things can be
+run again. In any case, as soon as any robot comes out of e-stopped, it needs
+to start 'disabled' and a click of 'enable' (either on DS or team page
+depending on active mode) is needed before it can run again."
+
+Gaps found in what part 1 shipped:
+
+- **In a match**, `enableParticipating` (start, auto→teleop, resume) calls
+  `enableStation`, which enables every joined robot regardless of
+  `disabledBy`. A robot whose e-stop was cleared mid-match would come back
+  on at the next phase change by itself.
+- **Out of a match**, clearing lifts the DS→robot cut at once. A DS that
+  never noticed (not under field control, still set to Enabled) would
+  re-enable the robot with no click. Whether the FRC DS drops to disabled
+  when the cut starts was asserted in `535f015` but never verified.
+
+Design:
+
+- New `DisabledBy` value `'estop'`: set on every joined station when its
+  e-stop ends during a match. `enableStation` skips it; only the team page's
+  Re-enable (or staff Enable) clears it (`undisable`).
+- Out of a match: after an e-stop ends, the station is **re-arming**. The
+  cut stays on until pFMS sees the DS command the robot _disabled_ (the
+  capture already reads DS→robot control packets on UDP 1110 at ingress, even
+  while the FORWARD rule drops them), or sees no DS→robot traffic for 2 s
+  (nothing is commanding the robot; a DS that starts later starts disabled).
+  The team page says to press Disable and then Enable on the DS.
+- Future (not now): physical e-stop buttons will be inputs to the field
+  latch, and clearing will require every pressed button to be released first.
+  Shape the latch so it can get more sources later; don't build it yet.
+
 ## Progress log
 
 - [x] 1 backend — `fieldEStopSince` latch, `eStopBy`, `adminClearFieldEStop`,
@@ -98,10 +134,23 @@ So:
 - [x] Verified in a DRY_RUN dev server: latch → /match banner, team page
       banner, scoreboard band; confirm-clear releases it.
 
+- [x] Part 2 — `disabledBy: 'estop'` (phase changes skip it; team Re-enable
+      lifts it); out-of-match re-arm cut until the DS shows Disabled or 2 s
+      quiet (`REARM_QUIET_MS`); capture feeds `noteDsControl`; e-stops latched
+      in setup survive the start; team-page notices; docs; tests
+
 ## Not verified
 
 - Cancel Match on a real running match (needs a DS); covered by engine
   tests only.
+- The re-arm cut on the field: that the capture sees DS→robot control
+  packets for a station whose DS routes through pFMS (it already reads them
+  for joysticks), and what the real FRC DS does when the cut starts (does it
+  drop to Disabled by itself?). Check on steamboat: field E-Stop, clear, and
+  watch the journal for `re-armed (its Driver Station shows Disabled)` vs.
+  the robot staying cut while the DS says Enabled.
+- The re-arm notice on the team page (in DRY_RUN there is no capture, so
+  re-arming always ends by the 2 s quiet rule).
 
 ## Open questions for the user
 
