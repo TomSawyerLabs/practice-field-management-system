@@ -622,6 +622,7 @@ async function probeDeployment(mode: DeploymentMode | undefined): Promise<SetupC
 
 const STEP_LABELS: Record<SetupStepId, { label: string; blurb: string }> = {
   host: { label: 'Host', blurb: 'Can this machine run a field at all?' },
+  admin: { label: 'Admin passphrase', blurb: 'Who may change this field from here on?' },
   interfaces: { label: 'Interfaces', blurb: 'Which NIC carries the VLAN trunk?' },
   fieldControl: { label: 'Field control', blurb: 'Can we talk to the field-control network?' },
   radio: { label: 'Radio', blurb: 'Is the access point reachable and running supported firmware?' },
@@ -652,6 +653,22 @@ export interface SetupProbeOptions {
   scoringOpen?: boolean;
   /** The trunk pFMS is actually running on, and why not the chosen one. */
   trunk?: TrunkRuntime;
+  /** An admin passphrase has been set. */
+  adminConfigured?: boolean;
+}
+
+/** Until a passphrase is set, anyone who can open the page can change setup
+ *  (and the radio, and every setting) — the trust-on-first-use window. */
+function probeAdmin(configured: boolean): SetupCheck[] {
+  return [
+    configured
+      ? pass('passphrase', 'Admin passphrase', 'Set — only admins can change setup and field settings now')
+      : fail(
+          'passphrase',
+          'Admin passphrase',
+          'Not set yet: anyone who can open this page can change the field. Set one below before going further.',
+        ),
+  ];
 }
 
 /** Run every probe once and return a full report. */
@@ -681,6 +698,7 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
 
   const byId: [SetupStepId, SetupCheck[]][] = [
     ['host', host],
+    ['admin', probeAdmin(opts.adminConfigured ?? false)],
     ['interfaces', interfaces],
     ['fieldControl', fieldControl],
     ['radio', radio],

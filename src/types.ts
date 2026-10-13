@@ -192,6 +192,7 @@ export function translateRadioUpdate(raw: RawRadioUpdate): RadioUpdate {
  *  sit on top of it. */
 export const SetupStepOrder = [
   'host',
+  'admin',
   'interfaces',
   'fieldControl',
   'radio',

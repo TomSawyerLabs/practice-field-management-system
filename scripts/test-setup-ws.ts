@@ -11,7 +11,7 @@
  */
 import WebSocket from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
-import type { SetupConfigState, SetupProbeState } from '../src/types.js';
+import { SetupStepOrder, type SetupConfigState, type SetupProbeState } from '../src/types.js';
 
 const PORT = process.env.WEBSOCKET_PORT ?? '3000';
 const CONFIG_FILE = process.env.SETUP_CONFIG_FILE ?? 'setup-config.json';
@@ -53,7 +53,7 @@ ws.send(JSON.stringify({ type: 'requestSetupProbe' }));
 await sleep(2500);
 const probe = latest<SetupProbeState>('setupProbeState');
 check('probe returned after request', probe !== undefined);
-check('probe covers every step', probe?.steps.length === 8, `got ${probe?.steps.length}`);
+check('probe covers every step', probe?.steps.length === SetupStepOrder.length, `got ${probe?.steps.length}`);
 check('probe reports the deployment step', probe?.steps.some(s => s.id === 'deployment') ?? false);
 
 // ── Settings round-trip ─────────────────────────────────────────────
@@ -78,7 +78,7 @@ ws.send(JSON.stringify({ type: 'markSetupStep', step: 'host', status: 'done' }))
 await sleep(800);
 const marked = latest<SetupConfigState>('setupConfigState');
 check('step marked done', marked?.config.steps.host?.status === 'done');
-check('advances to the next step', marked?.nextStep === 'interfaces', `got ${marked?.nextStep}`);
+check('advances to the next step', marked?.nextStep === 'admin', `got ${marked?.nextStep}`);
 
 // ── Persisted to disk, so a restart resumes ─────────────────────────
 check('config file written', existsSync(CONFIG_FILE));

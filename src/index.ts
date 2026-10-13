@@ -971,6 +971,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           castVerified: settings.castVerified,
           deploymentMode: settings.deploymentMode,
           scoringOpen: !apiKeyStore.hasAnyActiveKeys() && !scoringRequiresKey(),
+          adminConfigured: adminAuth.isConfigured(),
         });
       },
     },

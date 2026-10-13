@@ -25,6 +25,7 @@ check('fresh install is not complete', !first.isComplete());
 
 // ── Answer a couple of steps, then "die" ────────────────────────────
 first.markStep('host', 'done');
+first.markStep('admin', 'done');
 first.updateSettings({ vlanInterface: 'eno1', radioUrl: 'http://10.0.100.2' });
 first.markStep('interfaces', 'done');
 check('advances to the next unfinished step', first.nextStep() === 'fieldControl');

@@ -24,6 +24,9 @@ import {
   sendSaveAudioDeviceConfig,
   sendTestAudioDevice,
   useServerVersion,
+  useAdminAuth,
+  sendAdminSetPassphrase,
+  ADMIN_TOKEN_KEY,
 } from '../hooks/useBackend';
 import { buildBugReportUrl } from '../utils/githubIssue';
 
@@ -77,6 +80,60 @@ function CheckRow({ check }: { check: SetupCheck }) {
   );
 }
 
+/** Set the admin passphrase without leaving the wizard. Until one exists
+ *  anyone can change setup; once it's set, this browser is the one logged in
+ *  (its token is kept, as the admin page does). */
+function AdminPassphraseStep({ configured }: { configured: boolean }) {
+  const auth = useAdminAuth();
+  const [passphrase, setPassphrase] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (auth?.authenticated && auth.token) localStorage.setItem(ADMIN_TOKEN_KEY, auth.token);
+  }, [auth?.authenticated, auth?.token]);
+
+  if (configured) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        Set. Change it from the admin page.
+      </Typography>
+    );
+  }
+
+  const submit = () => {
+    if (passphrase.length < 4) return setError('At least 4 characters');
+    if (passphrase !== confirm) return setError("The two don't match");
+    setError('');
+    sendAdminSetPassphrase(passphrase);
+  };
+
+  return (
+    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="flex-start">
+      <TextField
+        size="small"
+        type="password"
+        label="Admin passphrase"
+        value={passphrase}
+        onChange={e => setPassphrase(e.target.value)}
+        error={!!error}
+        helperText={error || 'At least 4 characters'}
+      />
+      <TextField
+        size="small"
+        type="password"
+        label="Again"
+        value={confirm}
+        onChange={e => setConfirm(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && submit()}
+      />
+      <Button variant="contained" onClick={submit} disabled={!passphrase} sx={{ mt: 0.25 }}>
+        Set passphrase
+      </Button>
+    </Stack>
+  );
+}
+
 /** Per-step controls. Everything here writes through to the server immediately. */
 function StepActions({ step }: { step: SetupStepId }) {
   const config = useSetupConfig();
@@ -92,6 +149,10 @@ function StepActions({ step }: { step: SetupStepId }) {
   useEffect(() => setRadioUrl(settings?.radioUrl ?? ''), [settings?.radioUrl]);
   useEffect(() => setVideoTarget(settings?.videoProxyTarget ?? ''), [settings?.videoProxyTarget]);
   useEffect(() => setPublicUrl(settings?.publicUrl ?? ''), [settings?.publicUrl]);
+
+  if (step === 'admin') {
+    return <AdminPassphraseStep configured={probe?.steps.find(s => s.id === 'admin')?.status === 'pass'} />;
+  }
 
   if (step === 'interfaces') {
     // The probe's value is the one in effect (the wizard's, else VLAN_INTERFACE).
