@@ -117,3 +117,12 @@ hardware or a real deployment:
 ## Flaky under load: robotWifiScan "capitals-only difference is still tested automatically"
 
 `src/robotWifiScan.test.ts` › `the scanner > capitals-only difference is still tested automatically` failed once in a full `bun test` run (2026-10-13, 941 pass / 1 fail, while another thread's uncommitted work was in the tree) and passes on its own (`bun test src/robotWifiScan.test.ts`, 29/29). Looks timing-dependent under the full suite's load. Matters because a red full run hides real regressions.
+
+## The wizard's FMS address setting isn't applied
+
+`SetupSettings.fmsAddress` (`src/types.ts`) is only read by the setup probe
+(`src/index.ts` passes it to `runSetupProbe`). Startup always adds the
+hardcoded `10.0.100.5` (`FIELD_CONTROL_ADDRESS` in `src/trunkInterface.ts`),
+and the FMS server, syslog and subnet scanner hardcode it too. A changed
+setting would make the wizard check for an address pFMS never assigns. Either
+apply it everywhere or drop the setting.
