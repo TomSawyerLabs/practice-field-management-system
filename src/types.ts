@@ -730,6 +730,26 @@ export function isHostToolsInstallState(msg: unknown): msg is HostToolsInstallSt
   return (msg as HostToolsInstallState)?.type === 'hostToolsInstallState';
 }
 
+/** Setup wizard: install and enable the systemd service (src/systemdService.ts). */
+export interface InstallSystemdService {
+  type: 'installSystemdService';
+}
+
+export function isInstallSystemdService(msg: unknown): msg is InstallSystemdService {
+  return (msg as InstallSystemdService)?.type === 'installSystemdService';
+}
+
+/** How the service install went, to the client that asked. */
+export interface SystemdServiceInstallResult {
+  type: 'systemdServiceInstallResult';
+  ok: boolean;
+  error?: string;
+}
+
+export function isSystemdServiceInstallResult(msg: unknown): msg is SystemdServiceInstallResult {
+  return (msg as SystemdServiceInstallResult)?.type === 'systemdServiceInstallResult';
+}
+
 /** Current persisted wizard state, pushed on connect and after every change. */
 export interface SetupConfigState {
   type: 'setupConfigState';

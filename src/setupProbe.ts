@@ -14,6 +14,7 @@
  */
 import { execFile } from 'node:child_process';
 import { OPTIONAL_TOOLS, REQUIRED_TOOLS, aptInstallCommand, hasTool } from './hostTools.js';
+import { SYSTEMD_UNIT } from './systemdService.js';
 import { promisify } from 'node:util';
 import { platform } from 'node:os';
 import { existsSync, readFileSync } from 'node:fs';
@@ -464,8 +465,6 @@ async function probeScoreboard(
   return checks;
 }
 
-const SYSTEMD_UNIT = '/etc/systemd/system/practice-field-management-system.service';
-
 /** Are we inside a container right now? */
 function detectContainer(): string | null {
   if (existsSync('/.dockerenv')) return 'Docker';
@@ -538,8 +537,8 @@ async function probeDeployment(mode: DeploymentMode | undefined): Promise<SetupC
         fail(
           'unit',
           'Service unit',
-          `${SYSTEMD_UNIT} does not exist, so pFMS will not come back after a reboot.`,
-          'Install the unit from docs/deployment.md, then: sudo systemctl enable --now practice-field-management-system',
+          `${SYSTEMD_UNIT} does not exist, so pFMS will not come back after a reboot. Install it below, or yourself from docs/deployment.md and then:`,
+          'sudo systemctl daemon-reload && sudo systemctl enable practice-field-management-system',
         ),
       );
       return checks;

@@ -129,6 +129,8 @@ import {
   isQueueState,
   isHostToolsInstallState,
   type HostToolsInstallState,
+  isSystemdServiceInstallResult,
+  type SystemdServiceInstallResult,
   isChallengeLeaderboardState,
   type ChallengeLeaderboardOnTv,
   type ChallengeLeaderboardTables,
@@ -929,6 +931,11 @@ function receiveMessage(detail: Message) {
 
   if (isStationChecksState(detail)) {
     handleStationChecks(detail);
+    return;
+  }
+
+  if (isSystemdServiceInstallResult(detail)) {
+    events.dispatchEvent(new CustomEvent('systemdServiceInstallResult', { detail }));
     return;
   }
 
@@ -2440,6 +2447,22 @@ function sendWhenOpen(payload: unknown) {
 
 export function sendRequestSetupProbe() {
   sendWhenOpen({ type: 'requestSetupProbe' });
+}
+
+/** Ask the server to install and enable the systemd service (setup wizard). */
+export function sendInstallSystemdService() {
+  sendWhenOpen({ type: 'installSystemdService' });
+}
+
+/** The answer to this page's service install, once it comes. */
+export function useSystemdServiceInstallResult(): SystemdServiceInstallResult | null {
+  const [state, setState] = useState<SystemdServiceInstallResult | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setState((e as CustomEvent<SystemdServiceInstallResult>).detail);
+    events.addEventListener('systemdServiceInstallResult', handler);
+    return () => events.removeEventListener('systemdServiceInstallResult', handler);
+  }, []);
+  return state;
 }
 
 /** Ask the server to install every missing host tool (setup wizard). */

@@ -30,6 +30,8 @@ import {
   useApiKeyCreatedEvent,
   sendInstallHostTools,
   useHostToolsInstall,
+  sendInstallSystemdService,
+  useSystemdServiceInstallResult,
   ADMIN_TOKEN_KEY,
 } from '../hooks/useBackend';
 import { buildBugReportUrl } from '../utils/githubIssue';
@@ -181,6 +183,42 @@ function InstallToolsAction({ missing }: { missing: boolean }) {
         >
           {install.log}
         </Box>
+      )}
+    </Stack>
+  );
+}
+
+/** Install and enable the systemd service from the wizard — offered when
+ *  the unit is missing; the manual steps stay visible next to it. */
+function InstallServiceAction({ missing }: { missing: boolean }) {
+  const result = useSystemdServiceInstallResult();
+  const [asked, setAsked] = useState(false);
+  if (result?.ok) {
+    return (
+      <Typography variant="body2" color="success.main">
+        Installed and enabled: pFMS starts as a service from the next boot. This copy keeps running until then.
+      </Typography>
+    );
+  }
+  if (!missing) return null;
+  return (
+    <Stack spacing={1}>
+      <Box>
+        <Button
+          variant="contained"
+          disabled={asked && !result}
+          onClick={() => {
+            setAsked(true);
+            sendInstallSystemdService();
+          }}
+        >
+          Install and enable the service
+        </Button>
+      </Box>
+      {result && !result.ok && (
+        <Typography variant="body2" color="error">
+          {result.error}
+        </Typography>
       )}
     </Stack>
   );
@@ -430,6 +468,13 @@ function StepActions({ step }: { step: SetupStepId }) {
   }
 
   if (step === 'deployment') {
+    const unitMissing =
+      settings?.deploymentMode === 'systemd' &&
+      !probe?.dryRun &&
+      (probe?.steps
+        .find(s => s.id === 'deployment')
+        ?.checks.some(c => c.id === 'unit' && c.status === 'fail' && c.detail.includes('does not exist')) ??
+        false);
     return (
       <Stack spacing={1.5}>
         <Stack direction="row" spacing={1}>
@@ -447,9 +492,10 @@ function StepActions({ step }: { step: SetupStepId }) {
           {settings?.deploymentMode === 'docker'
             ? 'Use the Dockerfile and docker-compose.yml in the repo. Both need host networking and NET_ADMIN.'
             : settings?.deploymentMode === 'systemd'
-              ? 'Install the unit file, then: sudo systemctl enable --now practice-field-management-system'
+              ? 'pFMS can install and enable the service for you, or follow the instructions below to do it yourself.'
               : 'systemd is recommended on a dedicated field host — it is the only mode supporting the graceful reload that keeps robots connected across an update.'}
         </Typography>
+        <InstallServiceAction missing={unitMissing} />
         <Button
           variant="text"
           component="a"

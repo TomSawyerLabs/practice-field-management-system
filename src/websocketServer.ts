@@ -100,6 +100,8 @@ import {
   isRequestSetupProbe,
   isInstallHostTools,
   type HostToolsInstallState,
+  isInstallSystemdService,
+  type SystemdServiceInstallResult,
   isUpdateSetupSettings,
   isTestRecordingStream,
   isMarkSetupStep,
@@ -145,6 +147,7 @@ import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscript
 import { getRealClientIp, normalizeIp } from './utils.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { installMissingTools } from './hostTools.js';
+import { installSystemdService } from './systemdService.js';
 import { isIPv6 } from 'node:net';
 import { handleVideoProxy } from './videoProxy.js';
 import CIDRMatcher from 'cidr-matcher';
@@ -1711,6 +1714,26 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         if (setup) {
           setupWatchers.add(ws);
           void runAndBroadcastProbe();
+        }
+      } else if (isInstallSystemdService(data)) {
+        if (!setupWritesAllowed(ws)) {
+          ws.send(JSON.stringify({ error: 'Admin authentication required to install the service' }));
+        } else {
+          console.log(`Setup: installing the systemd service (${clientIp})`);
+          void installSystemdService().then(result => {
+            if (result.ok) console.log('Setup: systemd service installed and enabled');
+            else console.warn(`Setup: service install failed: ${result.error}`);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: 'systemdServiceInstallResult',
+                  ok: result.ok,
+                  ...(result.ok ? {} : { error: result.error }),
+                } satisfies SystemdServiceInstallResult),
+              );
+            }
+            void runAndBroadcastProbe();
+          });
         }
       } else if (isInstallHostTools(data)) {
         if (!setupWritesAllowed(ws)) {
