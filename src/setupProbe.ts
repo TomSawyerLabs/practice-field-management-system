@@ -147,7 +147,18 @@ function trunkCandidates(interfaces: InterfaceLike[]): InterfaceLike[] {
 
 type InterfaceLike = Awaited<ReturnType<NetworkBackend['listInterfaces']>>[number];
 
-async function probeInterfaces(net: NetworkBackend, vlanInterface: string | undefined): Promise<SetupCheck[]> {
+/** What pFMS is actually running the field network on, as opposed to the
+ *  setting — they differ while a change is applied, or when it failed. */
+export interface TrunkRuntime {
+  active?: string;
+  problem?: string | null;
+}
+
+async function probeInterfaces(
+  net: NetworkBackend,
+  vlanInterface: string | undefined,
+  runtime: TrunkRuntime,
+): Promise<SetupCheck[]> {
   const checks: SetupCheck[] = [];
 
   let interfaces: InterfaceLike[];
@@ -171,10 +182,9 @@ async function probeInterfaces(net: NetworkBackend, vlanInterface: string | unde
       fail(
         'selected',
         'Trunk interface',
-        'VLAN_INTERFACE is not set, so no VLAN or routing management happens at all.',
         candidates.length > 0
-          ? `Add VLAN_INTERFACE=${candidates[0].name} to /etc/pfms/environment`
-          : 'Add VLAN_INTERFACE=<nic> to /etc/pfms/environment',
+          ? `No trunk interface chosen yet, so pFMS isn't running the field network. Pick one below (${candidates[0].name} is the likeliest).`
+          : "No trunk interface chosen yet, so pFMS isn't running the field network.",
       ),
     );
     return checks;
@@ -186,22 +196,35 @@ async function probeInterfaces(net: NetworkBackend, vlanInterface: string | unde
       fail(
         'selected',
         'Trunk interface',
-        `VLAN_INTERFACE is "${vlanInterface}" but no such interface exists.`,
-        `Set VLAN_INTERFACE to one of: ${candidates.map(i => i.name).join(', ')}`,
+        `${vlanInterface} isn't an interface on this host.` +
+          (candidates.length > 0 ? ` Pick one of: ${candidates.map(i => i.name).join(', ')}.` : ''),
       ),
     );
     return checks;
   }
 
+  // pFMS sets the link up itself when it sets up the field network, so a
+  // link still down means no cable or no carrier — nothing to run.
   checks.push(
     selected.state === 'UP'
       ? pass('selected', 'Trunk interface', `${selected.name} is up`)
       : warn(
           'selected',
           'Trunk interface',
-          `${selected.name} is ${selected.state} — nothing will reach the radio while it's down`,
-          `ip link set ${selected.name} up`,
+          `${selected.name} is ${selected.state}: check its cable to the switch — nothing reaches the radio while it's down`,
         ),
+  );
+
+  checks.push(
+    runtime.active === vlanInterface
+      ? pass('running', 'Field network', `pFMS is running the field network on ${vlanInterface}`)
+      : runtime.problem
+        ? fail(
+            'running',
+            'Field network',
+            `pFMS couldn't set up the field network on ${vlanInterface}: ${runtime.problem}. It retries every 30 seconds.`,
+          )
+        : warn('running', 'Field network', `pFMS is setting up the field network on ${vlanInterface}…`),
   );
 
   return checks;
@@ -245,16 +268,15 @@ async function probeFieldControl(
     ];
   }
 
-  // Deliberately not offering `ip addr add` here: pFMS assigns this itself at
-  // startup (checkInterfaceIps). If it's missing, the cause is upstream — the
-  // wrong interface, no root, or the app hasn't restarted since the interface
-  // was chosen — and adding it by hand would just paper over that.
+  // Deliberately not offering `ip addr add` here: pFMS assigns this itself
+  // when it sets up the field network (checkInterfaceIps). If it's missing,
+  // the cause is upstream — the field network isn't up (see the step above)
+  // or pFMS isn't running as root — and adding it by hand would paper over it.
   return [
     fail(
       'address',
       'Field control address',
-      `${fmsAddress} is not on ${vlanInterface}. pFMS adds this itself at startup, so if it's missing the interface is probably wrong, pFMS isn't running as root, or it hasn't been restarted since the trunk interface was chosen.`,
-      `Check the trunk interface above, then restart pFMS`,
+      `${fmsAddress} is not on ${vlanInterface}. pFMS adds it when it sets up the field network, so if it's missing the field network isn't up yet (see Interfaces) or pFMS isn't running as root.`,
     ),
   ];
 }
@@ -630,6 +652,8 @@ export interface SetupProbeOptions {
   deploymentMode?: DeploymentMode;
   /** True when the scoring API currently accepts unauthenticated writes. */
   scoringOpen?: boolean;
+  /** The trunk pFMS is actually running on, and why not the chosen one. */
+  trunk?: TrunkRuntime;
 }
 
 /** Run every probe once and return a full report. */
@@ -647,7 +671,7 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
 
   const [host, interfaces, fieldControl, radio, teamVlans, audio, scoreboard, deployment] = await Promise.all([
     probeHost(),
-    net ? probeInterfaces(net, opts.vlanInterface) : unavailable('selected', 'Trunk interface'),
+    net ? probeInterfaces(net, opts.vlanInterface, opts.trunk ?? {}) : unavailable('selected', 'Trunk interface'),
     net ? probeFieldControl(net, opts.vlanInterface, opts.fmsAddress) : unavailable('address', 'Field control address'),
     // Reaching the radio is plain HTTP, so it's worth trying from anywhere.
     probeRadio(opts.radioUrl),
@@ -668,6 +692,13 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
     ['deployment', deployment],
   ];
 
+  let trunkCandidateNames: string[] = [];
+  try {
+    trunkCandidateNames = net ? trunkCandidates(await net.listInterfaces()).map(i => i.name) : [];
+  } catch {
+    // The Interfaces step already reports why the list is unavailable.
+  }
+
   const steps: SetupStep[] = byId.map(([id, checks]) => ({
     id,
     label: STEP_LABELS[id].label,
@@ -680,6 +711,7 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
     type: 'setupProbeState',
     checkedAt: Date.now(),
     vlanInterface: opts.vlanInterface,
+    trunkCandidates: trunkCandidateNames,
     radioUrl: opts.radioUrl,
     dryRun: opts.dryRun ?? false,
     steps,

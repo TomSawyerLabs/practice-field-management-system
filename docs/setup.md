@@ -27,10 +27,11 @@ For how to keep pFMS running across reboots — systemd or Docker — see
    sudo apt install iptables iputils-arping fping dnsmasq-base conntrack tcpdump
    ```
 
-   **All six are required whenever `VLAN_INTERFACE` is set** — the backend
-   checks for them at startup and exits with code 78
-   (`Missing required tools: …`) if any is absent, regardless of which AP
-   firmware you run. See `checkRequiredTools` in `src/index.ts`.
+   **All six are required to run the field network**, regardless of which
+   AP firmware you run. If any is missing, pFMS still starts (so the setup
+   wizard can say which) but doesn't set up the field network, and retries
+   every 30 seconds — installing the tools is enough, no restart. See
+   `bringUpTrunk` in `src/trunkInterface.ts`.
    - `iptables` — MASQUERADE rules for site network ↔ robot routing
    - `iputils-arping` — duplicate address detection (used in OFFSEASON
      firmware mode)

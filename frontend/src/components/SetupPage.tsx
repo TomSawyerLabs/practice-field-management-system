@@ -80,6 +80,7 @@ function CheckRow({ check }: { check: SetupCheck }) {
 /** Per-step controls. Everything here writes through to the server immediately. */
 function StepActions({ step }: { step: SetupStepId }) {
   const config = useSetupConfig();
+  const probe = useSetupProbe();
   const audio = useAudioDeviceState();
   const settings = config?.config.settings;
 
@@ -93,16 +94,28 @@ function StepActions({ step }: { step: SetupStepId }) {
   useEffect(() => setPublicUrl(settings?.publicUrl ?? ''), [settings?.publicUrl]);
 
   if (step === 'interfaces') {
+    // The probe's value is the one in effect (the wizard's, else VLAN_INTERFACE).
+    const current = probe?.vlanInterface ?? '';
+    const options = [...new Set([...(probe?.trunkCandidates ?? []), ...(current ? [current] : [])])];
     return (
       <TextField
+        select
         size="small"
         label="Trunk interface"
-        placeholder="eno1"
-        defaultValue={settings?.vlanInterface ?? ''}
-        onBlur={e => sendUpdateSetupSettings({ vlanInterface: e.target.value || undefined })}
-        helperText="The NIC carrying VLANs 10–60. Saved when you click away; restart pFMS for it to take effect."
-        sx={{ maxWidth: 360 }}
-      />
+        value={current}
+        onChange={e => sendUpdateSetupSettings({ vlanInterface: e.target.value || undefined })}
+        helperText="The NIC carrying VLANs 10–60. pFMS sets up the field network on it as soon as you pick it."
+        sx={{ minWidth: 240, maxWidth: 360 }}
+      >
+        <MenuItem value="">
+          <em>None</em>
+        </MenuItem>
+        {options.map(name => (
+          <MenuItem key={name} value={name}>
+            {name}
+          </MenuItem>
+        ))}
+      </TextField>
     );
   }
 
@@ -389,8 +402,7 @@ export function SetupPage() {
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
         pFMS configures the host&apos;s VLAN interfaces, bridges and addresses itself, so most steps are about telling
-        it what it&apos;s working with rather than running commands. The trunk interface and radio URL are read at
-        startup — restart pFMS after changing them.
+        it what it&apos;s working with rather than running commands. Changes take effect as soon as you make them.
       </Typography>
 
       <Box sx={{ my: 2 }}>

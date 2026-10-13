@@ -253,6 +253,17 @@ export class DriveSessions {
     this.touch();
   }
 
+  /**
+   * The kernel rules were flushed behind our back — the trunk interface was
+   * rebuilt (src/trunkInterface.ts). Forget what sync() thought was
+   * installed and put the sessions' rules back.
+   */
+  kernelFlushed(): void {
+    this.installedDnat.clear();
+    this.installedBlocks.clear();
+    void this.sync();
+  }
+
   // ── Views (slot-shaped, derived now) ───────────────────────────────
 
   /** The laptop driving whatever robot is on `station`. */

@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 import { StationName, StationNameList } from './types.js';
 import { appError, appInfo, appWarn } from './appLogger.js';
+import { skippedInDryRun } from './dryRun.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 
@@ -430,6 +431,43 @@ export async function cleanupOldVlanInterfaces(physicalInterface: string): Promi
       // Interface doesn't exist — nothing to do
     }
   }
+}
+
+/**
+ * Remove every iptables rule pFMS added (they all carry the comment prefix)
+ * and empty the per-station route tables, which aren't comment-tagged. What
+ * a full start does first, a trunk teardown, and a clean shutdown.
+ */
+export async function flushManagedNetworkState(): Promise<void> {
+  await net().flushRulesByComment(commentPrefix);
+  for (const vlanId of Object.values(vlanMap)) {
+    if (skippedInDryRun(`flush route table ${vlanId}`)) continue;
+    try {
+      await execFileAsync('ip', ['route', 'flush', 'table', String(vlanId)]);
+    } catch {
+      // Table may not exist yet — that's fine.
+    }
+  }
+}
+
+/**
+ * Delete the station VLAN sub-interfaces on a trunk (`<nic>.slot1`…) and the
+ * station bridges, and forget what was configured on them, so the next
+ * commit builds every station from scratch. For moving pFMS off a trunk.
+ */
+export async function removeStationInterfaces(physicalInterface: string): Promise<void> {
+  for (const station of StationNameList) {
+    for (const name of [`${physicalInterface}.${station}`, bridgeName(station)]) {
+      try {
+        if ((await net().listInterfaces(name)).length === 0) continue;
+        await net().setInterfaceDown(name);
+        await net().deleteInterface(name);
+      } catch (err) {
+        appWarn(`Could not remove ${name}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  restorePreviousStations(() => null);
 }
 
 /** Enable or disable internet access (NAT + forwarding) for a team subnet. */

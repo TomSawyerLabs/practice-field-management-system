@@ -7,9 +7,7 @@ import { runSyslogServer } from './runSyslogServer.js';
 import { setupWebSocket } from './websocketServer.js';
 import { runFMS, UdpSendPort } from './fmsServer.js';
 import { startConfigurationScheduler } from './scheduler.js';
-import { checkInterfaceIps, checkRequiredTools } from './startupChecks.js';
-import { createBackend, createDryRunBackend } from './node-ip/index.js';
-import type { NetworkBackend } from './node-ip/index.js';
+import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
 import { teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
@@ -19,11 +17,10 @@ import {
   vlanMap,
   bridgeName,
   restorePreviousStations,
-  cleanupOldVlanInterfaces,
-  dropHairpinForwarding,
   setEStopCut,
-  clearEStopCuts,
   migrateAllBridgeNat,
+  networkBackend,
+  flushManagedNetworkState,
 } from './networkManager.js';
 import {
   onConfigChange as onRouteConfigChange,
@@ -34,7 +31,7 @@ import {
   getPreference,
 } from './routePreferenceManager.js';
 import { buildNetworkStats } from './networkStats.js';
-import { setBroadcast, appInfo, appWarn } from './appLogger.js';
+import { setBroadcast, appInfo, appWarn, appError } from './appLogger.js';
 import { TelemetryManager } from './telemetryManager.js';
 import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
@@ -164,7 +161,9 @@ function parseRecordingStreamsEnv(raw: string | undefined): RecordingStreamConfi
 /** Where the radio's API is — the wizard's value, else RADIO_URL. Read
  *  live: a change saved in the wizard is applied at once (see below). */
 const radioUrl = () => setupConfigStore.resolveSetting('radioUrl', 'RADIO_URL').value ?? 'http://10.0.100.2';
-const VlanInterface = setupConfigStore.resolveSetting('vlanInterface', 'VLAN_INTERFACE').value; // 'eno1', or undefined
+/** The trunk interface ('eno1') the wizard chose, else VLAN_INTERFACE, else
+ *  none. Read live: a change rebuilds the field network (applyTrunkSetting). */
+const trunkSetting = () => setupConfigStore.resolveSetting('vlanInterface', 'VLAN_INTERFACE').value || undefined;
 const StartFMS = process.env.FMS_ENDPOINT === 'true';
 // Experimental: stations whose DS gets the TCP station-assignment reply even
 // outside a match ("slot1,slot2" or "all") — for testing whether a TCP-only
@@ -201,86 +200,32 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     process.exit((await maybeRunCli(CliArgs)) ?? 0);
   }
 
-  // Verify expected IPs on the VLAN interface
-  let net: NetworkBackend | undefined;
-  if (VlanInterface) {
-    await checkRequiredTools(['iptables', 'arping', 'fping', 'dnsmasq', 'conntrack', 'tcpdump']);
-    net = process.env.DRY_RUN ? createDryRunBackend() : createBackend();
-    // pFMS serves multiple roles on this interface:
-    const expectedIps = [
-      '10.0.100.5', // FMS
-      // We reconfigure the radio to use our IP instead of listening on an extra interface
-      // '10.0.100.40', // Syslog server
-    ];
-    await checkInterfaceIps(VlanInterface, expectedIps, net);
-
-    // Always remove legacy VLAN interfaces from the previous version that used
-    // radio-native station names (eno1.red1, eno1.blue3). These hold VLAN IDs
-    // that conflict with the current eno1.slot1-slot6 names, so they must be
-    // cleaned up even during graceful restarts.
-    await cleanupOldVlanInterfaces(VlanInterface);
-
-    if (KeepNetwork) {
-      // Preserve existing rules — this is a graceful restart. Preferences are
-      // restored from the kernel below, after the WebSocket server is up.
-      console.log('KEEP_NETWORK=true: skipping iptables flush');
-    } else {
-      // Clean up stale iptables rules from a previous run (e.g., after a crash)
-      await net.flushRulesByComment(IPTABLES_COMMENT_PREFIX);
-      // Also flush per-station route tables — these aren't comment-tagged so
-      // flushRulesByComment doesn't catch them.
-      for (const vlanId of Object.values(vlanMap)) {
-        if (skippedInDryRun(`flush route table ${vlanId}`)) continue;
-        try {
-          await execFile('ip', ['route', 'flush', 'table', String(vlanId)]);
-        } catch {
-          // Table may not exist yet on first run — that's fine.
-        }
-      }
-    }
-
-    // Enable IP forwarding once at startup (required for inter-VLAN routing)
-    await net.setSysctl({ key: 'net.ipv4.ip_forward', value: '1' });
-
-    // …but never straight back out the uplink (the gateway ping-pong for team
-    // subnets that have no station here). Done here as well as on every radio
-    // commit, so a graceful restart with KEEP_NETWORK — which skips the flush
-    // and does not touch the radio — still gets the rule (2026-09-27: the
-    // first deploy of it installed nothing until the next radio change).
-    await dropHairpinForwarding(VlanInterface);
-
-    // No station starts e-stopped, so no e-stop cut may survive a graceful
-    // restart (KEEP_NETWORK keeps rules but not the engine state behind them).
-    await clearEStopCuts();
-
-    // Size the kernel neighbor (ARP/NDP) table for what this host does: the
-    // subnet scanner sweeps every configured team /24 every 10 s, and each
-    // sweep parks ~250 INCOMPLETE/FAILED entries per slot for ~60 s. Ubuntu's
-    // default gc_thresh3 of 1024 overflowed with the 4th team at the
-    // 2026-09-13 scrimmage ("neighbour: arp_cache: neighbor table overflow!"),
-    // and a full table black-holes packets to any host without an entry —
-    // three Driver Stations lost their robots in the same second mid-match.
-    // 6 slots × 254 + guest network + headroom comfortably fits in 8192.
-    for (const family of ['ipv4', 'ipv6']) {
-      for (const [key, value] of [
-        ['gc_thresh1', '2048'],
-        ['gc_thresh2', '4096'],
-        ['gc_thresh3', '8192'],
-      ] as const) {
-        await net.setSysctl({ key: `net.${family}.neigh.default.${key}`, value }).catch(err => {
-          console.warn(`Could not set net.${family}.neigh.default.${key}: ${(err as Error).message}`);
-        });
-      }
+  // The trunk interface pFMS runs the field network on, once it is up. A
+  // change in the setup wizard rebuilds it in place (applyTrunkSetting).
+  let vlanInterface: string | undefined;
+  /** Why the chosen trunk isn't up — shown by the setup wizard. */
+  let trunkProblem: string | null = null;
+  /** Run after the trunk is rebuilt: everything pFMS had in the kernel was
+   *  flushed, so whoever owns rules puts them back. */
+  const afterTrunkRebuild: (() => void)[] = [];
+  const startupTrunk = trunkSetting();
+  if (startupTrunk) {
+    const result = await bringUpTrunk(startupTrunk, { keepNetwork: KeepNetwork });
+    if (result.ok) vlanInterface = startupTrunk;
+    else {
+      trunkProblem = result.reason;
+      appError(`Field network not started on ${startupTrunk}: ${result.reason}`);
     }
   }
 
   // Initialize port bridge manager (physical Ethernet port → station bridge mapping)
   let portBridgeManager: PortBridgeManager | undefined;
-  if (VlanInterface && FieldPorts.length > 0) {
-    const portNet = net ?? (process.env.DRY_RUN ? createDryRunBackend() : createBackend());
-    portBridgeManager = new PortBridgeManager(portNet, VlanInterface, FieldPorts);
+  if (FieldPorts.length > 0) {
+    portBridgeManager = new PortBridgeManager(networkBackend(), vlanInterface, FieldPorts);
 
-    if (KeepNetwork) {
+    if (!vlanInterface) {
+      // Nothing to restore or clean until a trunk is set up.
+    } else if (KeepNetwork) {
       // Graceful restart — try to restore port bridge state from kernel
       await portBridgeManager.restoreFromKernel();
     } else {
@@ -292,7 +237,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   // Initialize radio manager — firmware mode will be set when the radio connects
-  const radioManager = new RadioManager(radioUrl(), VlanInterface);
+  const radioManager = new RadioManager(radioUrl(), vlanInterface);
   // The wizard's radio URL takes effect the moment it's saved.
   setupConfigStore.addListener(() => radioManager.setApiBaseUrl(radioUrl()));
 
@@ -306,14 +251,14 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
     // Re-apply config to rebuild network rules if needed.
     const teamMappings = radioManager.getTeamMappings();
-    if (VlanInterface && Object.keys(teamMappings).length > 0) {
+    if (vlanInterface && Object.keys(teamMappings).length > 0) {
       if (KeepNetwork) {
         // Graceful reload — verify team bridges actually exist and have IPs.
         // If a commit was staged but never applied before the restart,
         // the bridges may be missing even though active-config.json has teams.
         let vlansOk = true;
         try {
-          const interfaces = await (net ?? createBackend()).listInterfaces();
+          const interfaces = await networkBackend().listInterfaces();
           const ifaceIps = new Set<string>();
           for (const iface of interfaces) {
             for (const addr of iface.addresses) {
@@ -413,7 +358,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       const want = (st?.eStop ?? false) || (st?.reArming ?? false) || (!st?.joined && (st?.teamStopped ?? false));
       if (want === (eStopCut.get(station) ?? false)) continue;
       eStopCut.set(station, want);
-      if (!VlanInterface || process.env.DRY_RUN) continue;
+      if (!vlanInterface || process.env.DRY_RUN) continue;
       eStopCutChain = eStopCutChain
         .then(() => setEStopCut(station, want))
         .then(
@@ -421,6 +366,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             appInfo(`${station}: ${want ? 'cut DS→robot control traffic (stop)' : 'stop cleared, traffic restored'}`),
           err => console.error(`${station}: failed to ${want ? 'apply' : 'lift'} the stop cut:`, err),
         );
+    }
+  });
+  // A trunk rebuild flushed the cuts; a station still stopped needs its back.
+  afterTrunkRebuild.push(() => {
+    if (!vlanInterface || process.env.DRY_RUN) return;
+    for (const [station, want] of eStopCut) {
+      if (!want) continue;
+      eStopCutChain = eStopCutChain
+        .then(() => setEStopCut(station, true))
+        .catch(err => console.error(`${station}: failed to re-apply the stop cut:`, err));
     }
   });
 
@@ -1006,7 +961,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       runProbe: () => {
         const settings = setupConfigStore.get().settings;
         return runSetupProbe({
-          vlanInterface: settings.vlanInterface ?? VlanInterface,
+          vlanInterface: trunkSetting(),
+          trunk: { active: vlanInterface, problem: trunkProblem },
           radioUrl: radioUrl(),
           fmsAddress: settings.fmsAddress ?? '10.0.100.5',
           dryRun: process.env.DRY_RUN !== undefined,
@@ -1112,7 +1068,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       const scan = subnetScanner.getResults();
       return scan.stations[s]?.hosts.filter(h => h.alive) ?? [];
     },
-    VlanInterface ? bridgeName : undefined,
+    station => (vlanInterface ? bridgeName(station) : undefined),
   );
   const latestCheckResults = new Map<StationName, TeamCheckResults>();
   // Snapshot of alive IPs when checks last ran, so we can re-trigger when new devices appear
@@ -1172,7 +1128,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Robot test monitor — CSA tool for diagnosing individual robots
   let robotTestMonitor: RobotTestMonitor | undefined;
   if (TestInterface) {
-    const testNet = process.env.DRY_RUN ? createDryRunBackend() : (net ?? createBackend());
+    const testNet = networkBackend();
     robotTestMonitor = new RobotTestMonitor(
       TestInterface,
       testNet,
@@ -1188,7 +1144,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Station test port mode — per-station robot diagnostics via a bridged physical port
   if (portBridgeManager?.enabled) {
-    const testNet = process.env.DRY_RUN ? createDryRunBackend() : (net ?? createBackend());
+    const testNet = networkBackend();
     stationTestManager = new StationTestManager(
       portBridgeManager,
       testNet,
@@ -1234,10 +1190,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
 
   // Passive robot packet capture — sniff robot→DS UDP to extract battery voltage
-  // and robot status without taking FMS control of the Driver Station.
-  if (VlanInterface && !process.env.DRY_RUN) {
+  // and robot status without taking FMS control of the Driver Station. Runs
+  // on the trunk, so it follows a trunk change.
+  const startPacketCapture = () => {
+    if (!vlanInterface || process.env.DRY_RUN || robotPacketCapture) return;
     robotPacketCapture = new RobotPacketCapture(
-      VlanInterface,
+      vlanInterface,
       () => radioManager.getTeamMappings(),
       update => {
         stationChecks.noteRobotPacket(update.station, update.batteryVoltage);
@@ -1255,7 +1213,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (station, enabled) => matchEngine.noteDsControl(station, enabled),
     );
     robotPacketCapture.start();
-  }
+  };
+  const stopPacketCapture = () => {
+    robotPacketCapture?.stop();
+    robotPacketCapture = undefined;
+  };
+  startPacketCapture();
 
   // Broadcast the setup checks when they change (at most twice a second —
   // they're for people watching a TV, not for control).
@@ -1323,20 +1286,30 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // mDNS reflector — bridges .local queries between main network and team VLANs
   let mdnsReflector: MdnsReflector | undefined;
-  if (StartMdnsReflector && VlanInterface && !skippedInDryRun('start the mDNS reflector')) {
-    mdnsReflector = new MdnsReflector(
+  const startMdnsReflector = () => {
+    if (!StartMdnsReflector || mdnsReflector) return;
+    if (!vlanInterface) {
+      console.log('MDNS_REFLECTOR=true but no trunk interface is set up, skipping mDNS reflector');
+      return;
+    }
+    if (skippedInDryRun('start the mDNS reflector')) return;
+    const reflector = new MdnsReflector(
       s => radioManager.getTeamForStation(s),
       ip => getPreference(ip),
       bridgeName,
       process.env.MDNS_EXCLUDE_REQUESTERS,
       process.env.MDNS_LISTEN_INTERFACES?.split(/[,\s]+/).filter(Boolean) ?? [],
     );
-    mdnsReflector.start();
-    // Refresh after commit — VLAN interfaces only exist after configureNetwork completes
-    radioManager.addCommitCompleteListener(() => mdnsReflector!.refreshMemberships());
-  } else if (StartMdnsReflector && !VlanInterface) {
-    console.log('MDNS_REFLECTOR=true but VLAN_INTERFACE is not set, skipping mDNS reflector');
-  }
+    reflector.start();
+    mdnsReflector = reflector;
+  };
+  const stopMdnsReflector = () => {
+    mdnsReflector?.stop();
+    mdnsReflector = undefined;
+  };
+  // Refresh after commit — VLAN interfaces only exist after configureNetwork completes
+  radioManager.addCommitCompleteListener(() => mdnsReflector?.refreshMemberships());
+  startMdnsReflector();
 
   // Initialize scheduled configuration clearing
   if (RadioClearSchedule) {
@@ -1447,8 +1420,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     const driveSessions = new DriveSessions({
       robotOn: station => radioManager.getStationConfig(station)?.ssid || null,
       async addDnat(rule) {
-        if (!net || !VlanInterface) return;
-        await net.iptables({ action: '-A', ...dnatOptions(rule) });
+        if (!vlanInterface) return;
+        await networkBackend().iptables({ action: '-A', ...dnatOptions(rule) });
         // Flush any stale conntrack entries for UDP traffic to the gateway IP.
         // Without this, packets that arrived before the DNAT rule was inserted get
         // cached as local-delivery flows, and subsequent packets bypass the nat table entirely.
@@ -1469,18 +1442,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         }
       },
       async removeDnat(rule, copies) {
-        if (!net) return;
+        if (!vlanInterface) return;
         // The backend deletes one matching rule per call.
-        for (let i = 0; i < copies; i++) await net.iptables({ action: '-D', ...dnatOptions(rule) });
+        for (let i = 0; i < copies; i++) await networkBackend().iptables({ action: '-D', ...dnatOptions(rule) });
       },
       async addBlock(rule) {
-        if (!net || !VlanInterface) return;
-        await net.iptables({ action: '-I', ...blockOptions(rule) });
+        if (!vlanInterface) return;
+        await networkBackend().iptables({ action: '-I', ...blockOptions(rule) });
         startBlockedDsControlLoop();
       },
       async removeBlock(rule) {
-        if (!net) return;
-        await net.iptables({ action: '-D', ...blockOptions(rule) });
+        if (!vlanInterface) return;
+        await networkBackend().iptables({ action: '-D', ...blockOptions(rule) });
       },
       routeOf: dsIp => getPreference(dsIp),
       setRoute: (dsIp, station, team) => setRoutePreference(dsIp, station, team),
@@ -1496,6 +1469,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       error: (message, err) => console.error(`${message}:`, err),
       now: Date.now,
     });
+
+    // A trunk rebuild flushed the DNAT and duplicate-DS rules: put them back.
+    afterTrunkRebuild.push(() => driveSessions.kernelFlushed());
 
     // After a graceful restart the kernel still holds the previous process's
     // rules. Hand them to the drive sessions: DNAT rules that still match the
@@ -1901,14 +1877,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   // Broadcast iptables forwarding counters and mDNS activity to all clients every 5 seconds
-  if (net) {
+  {
     let latestNetworkStats: Awaited<ReturnType<typeof buildNetworkStats>> | null = null;
     let latestMdnsActivity: ReturnType<MdnsReflector['getActivity']> | null = null;
 
     async function refreshNetworkStats() {
       try {
-        latestNetworkStats = await buildNetworkStats(net!, IPTABLES_COMMENT_PREFIX);
-        broadcast(latestNetworkStats);
+        if (vlanInterface) {
+          latestNetworkStats = await buildNetworkStats(networkBackend(), IPTABLES_COMMENT_PREFIX);
+          broadcast(latestNetworkStats);
+        }
       } catch (err) {
         console.error('Error polling network stats:', err);
       }
@@ -1936,18 +1914,108 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     setInterval(refreshNetworkStats, 5000);
   }
 
+  // ── Trunk interface changes (setup wizard) ─────────────────────────
+  //
+  // Saving a different trunk interface rebuilds the field network in place:
+  // stop what runs on the trunk, tear the old one down, bring the new one
+  // up, start everything again and re-commit the stations. Every robot's
+  // network drops while that happens, so it never runs during a match — it
+  // waits for the match to end. One rebuild at a time.
+
+  /** The setting the field network was last built for (whether or not that
+   *  worked — trunkProblem says). */
+  let trunkTarget = startupTrunk;
+  let trunkRebuild: Promise<void> = Promise.resolve();
+  let trunkWaitingForMatch = false;
+
+  const rebuildTrunk = async (next: string | undefined) => {
+    const previous = vlanInterface;
+    if (previous !== next) {
+      appInfo(`Trunk interface: ${previous ?? 'none'} → ${next ?? 'none'} — rebuilding the field network`);
+    }
+    stopPacketCapture();
+    stopMdnsReflector();
+    if (previous) {
+      await portBridgeManager?.cleanupPortInterfaces();
+      await tearDownTrunk(previous);
+    }
+    vlanInterface = undefined;
+    radioManager.setManagementInterface(undefined);
+    portBridgeManager?.setPhysicalInterface(undefined);
+    if (!next) {
+      trunkProblem = null;
+      appInfo('Field network stopped: no trunk interface is set');
+      return;
+    }
+    const result = await bringUpTrunk(next, { keepNetwork: false });
+    if (!result.ok) {
+      // Said once per distinct reason; the retry below keeps trying quietly.
+      if (result.reason !== trunkProblem) appError(`Field network not started on ${next}: ${result.reason}`);
+      trunkProblem = result.reason;
+      return;
+    }
+    trunkProblem = null;
+    vlanInterface = next;
+    radioManager.setManagementInterface(next);
+    portBridgeManager?.setPhysicalInterface(next);
+    startPacketCapture();
+    startMdnsReflector();
+    for (const fn of afterTrunkRebuild) fn();
+    appInfo(`Field network running on ${next}`);
+    // Put the stations back on the new trunk. A radio that won't take the
+    // push is a radio problem, not a trunk one — the config sync check keeps
+    // retrying it.
+    await radioManager.commitConfiguration().catch(err => {
+      appError(
+        `Field network is up on ${next}, but pushing the stations to the radio failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  };
+
+  const queueTrunkRebuild = (next: string | undefined) => {
+    trunkTarget = next;
+    trunkRebuild = trunkRebuild
+      .then(() => rebuildTrunk(next))
+      .catch(err => {
+        trunkProblem = err instanceof Error ? err.message : String(err);
+        appError(`Rebuilding the field network failed: ${trunkProblem}`);
+      });
+  };
+
+  /** The settings changed (any of them): rebuild if the trunk is different. */
+  const applyTrunkSetting = () => {
+    const next = trunkSetting();
+    if (next === trunkTarget && !trunkWaitingForMatch) return;
+    if (matchEngine.isMatchActive()) {
+      if (!trunkWaitingForMatch) appWarn(`The trunk interface change to ${next ?? 'none'} waits until the match ends`);
+      trunkWaitingForMatch = true;
+      return;
+    }
+    trunkWaitingForMatch = false;
+    if (next !== trunkTarget) queueTrunkRebuild(next);
+  };
+  setupConfigStore.addListener(applyTrunkSetting);
+  matchEngine.addStateListener(() => {
+    if (trunkWaitingForMatch && !matchEngine.isMatchActive()) applyTrunkSetting();
+  });
+  // A trunk that couldn't come up (a tool missing, the NIC not there yet)
+  // comes up on its own once the problem is fixed — no restart, no re-save.
+  setInterval(() => {
+    if (trunkProblem && trunkTarget && !vlanInterface && !matchEngine.isMatchActive()) {
+      queueTrunkRebuild(trunkTarget);
+    }
+  }, 30_000);
+
   // Shutdown signal handlers
-  if (net) {
+  {
     const fullCleanup = () => {
       robotTestMonitor?.stop();
       stationTestManager?.stopAll();
       robotPacketCapture?.stop();
       stopAllDHCP();
+      if (!vlanInterface) process.exit(0);
       console.log('Cleaning up network rules...');
-      const flushRouteTables = Promise.all(
-        Object.values(vlanMap).map(id => execFile('ip', ['route', 'flush', 'table', String(id)]).catch(() => {})),
-      );
-      Promise.all([net!.flushRulesByComment(IPTABLES_COMMENT_PREFIX), cleanupAllPreferences(), flushRouteTables]).then(
+      Promise.all([flushManagedNetworkState(), cleanupAllPreferences()]).then(
         () => process.exit(0),
         err => {
           console.error('Error during cleanup:', err);
@@ -1975,7 +2043,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // After a graceful restart, restore in-memory state from the kernel so it
   // stays in sync with rules that were left in place.
-  if (net && KeepNetwork) {
+  if (vlanInterface && KeepNetwork) {
     // Tell networkManager which teams are already configured so future config
     // changes properly tear down old routes and iptables rules.
     restorePreviousStations(s => radioManager.getTeamForStation(s));

@@ -1066,13 +1066,14 @@ export class TeamChecker {
   constructor(
     private readonly getAliveHosts: HostLookup,
     /** A station's bridge interface, when pFMS runs the station networks. */
-    private readonly bridgeOf?: (station: StationName) => string,
+    private readonly bridgeOf?: (station: StationName) => string | undefined,
   ) {}
 
   async runChecks(station: StationName, team: number): Promise<TeamCheckResults> {
     const hosts = this.getAliveHosts(station);
     const extraIps = hosts.filter(h => h.alive && !h.ip.endsWith('.1') && !h.ip.endsWith('.254')).map(h => h.ip);
-    const mdnsSource: MdnsSource | undefined = this.bridgeOf ? { ifname: this.bridgeOf(station) } : undefined;
+    const bridge = this.bridgeOf?.(station);
+    const mdnsSource: MdnsSource | undefined = bridge ? { ifname: bridge } : undefined;
     // Detect the controller first (roboRIO or SystemCore) so the radio's
     // SystemCore-mode verdict is judged against what actually answered — the
     // station checks used to assume a roboRIO and reported SystemCore robots

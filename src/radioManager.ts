@@ -119,7 +119,7 @@ class RadioManager {
 
   constructor(
     private apiBaseUrl: string,
-    private readonly radioManagementInterface?: string,
+    private radioManagementInterface?: string,
     private firmwareMode?: string,
   ) {
     this.loadActiveConfig();
@@ -139,6 +139,12 @@ class RadioManager {
    *  until a radio has answered. */
   getFirmwareMode(): string | undefined {
     return this.firmwareMode;
+  }
+
+  /** The trunk NIC the station VLANs hang off, or none — set when the setup
+   *  wizard moves pFMS to another NIC (see src/trunkInterface.ts). */
+  setManagementInterface(iface: string | undefined): void {
+    this.radioManagementInterface = iface;
   }
 
   /** Where the radio's API is. */

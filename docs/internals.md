@@ -6,43 +6,52 @@ the network model see [network.md](network.md).
 
 ## Startup Sequence
 
-1. **Check system tools** — if `VLAN_INTERFACE` is set, verifies
-   `iptables`, `arping`, `fping`, `dnsmasq`, `conntrack`, and `tcpdump`
-   are on the PATH. **All six are required regardless of firmware mode**
-   (the check runs before the radio is reached, so firmware mode isn't
-   known yet); any missing tool prints `Missing required tools: …` with an
-   `apt install` hint and exits with code 78.
-2. **Check interface IPs** — if `VLAN_INTERFACE` is set, verify the
-   physical interface carries `10.0.100.5` (the FMS address) and **adds
-   it if missing**. Note this is added to the bare parent interface, so
-   field control must be the native/untagged VLAN on the trunk. If the
-   interface doesn't exist at all, this logs an error and continues.
-3. **Flush or preserve network rules** — on a fresh start, flush stale
-   iptables rules and per-station route tables from a previous run. On a
-   graceful reload, skip the flush to preserve existing rules (see
-   [Graceful Reload](#graceful-reload)).
-4. **Enable IP forwarding** — `sysctl -w net.ipv4.ip_forward=1` so the
-   kernel routes packets between interfaces.
-5. **Connect to radio (background)** — fetch `GET /status` from the radio
-   at `10.0.100.2`, retrying every 10 s. Does **not** block startup. When
-   the radio responds, firmware mode is detected and set on the
-   RadioManager.
-6. **Start RadioManager** — begins polling `GET /status` every 100 ms to
+1. **Bring up the trunk** (`bringUpTrunk`, `src/trunkInterface.ts`) — if
+   a trunk interface is set (setup wizard, else `VLAN_INTERFACE`):
+   - **Check system tools** — `iptables`, `arping`, `fping`, `dnsmasq`,
+     `conntrack` and `tcpdump` must be on the PATH, **regardless of
+     firmware mode** (firmware mode isn't known yet). A missing tool, or
+     a NIC that doesn't exist, doesn't stop pFMS: it starts without a
+     field network, the setup wizard shows why, and the bring-up is
+     retried every 30 s.
+   - **Set the link up and check interface IPs** — the NIC must carry
+     `10.0.100.5` (the FMS address); it is **added if missing**, on the
+     bare interface, so field control must be the native/untagged VLAN on
+     the trunk.
+   - **Flush or preserve network rules** — on a fresh start, flush stale
+     iptables rules and per-station route tables from a previous run. On
+     a graceful reload, skip the flush to preserve existing rules (see
+     [Graceful Reload](#graceful-reload)).
+   - **Enable IP forwarding**, the no-hairpin rule, and neighbour-table
+     sizing.
+
+   Changing the trunk in the setup wizard tears the old one down
+   (`tearDownTrunk`: station VLANs and bridges, the field-control address,
+   every pFMS rule) and runs the same bring-up on the new NIC, then
+   restarts the packet capture and mDNS reflector and re-commits the
+   stations — no restart. It waits while a match is running.
+
+2. **Connect to radio (background)** — poll `GET /status` on the radio
+   URL (setup wizard, else `RADIO_URL`, else `10.0.100.2`). Does **not**
+   block startup. The RadioManager detects the firmware mode from the
+   status `version`, again whenever it changes; a radio URL changed in
+   the wizard is switched to at once.
+3. **Start RadioManager** — begins polling `GET /status` every 100 ms to
    track radio state and station connections.
-7. **Start match engine** — initializes the match state machine with a
+4. **Start match engine** — initializes the match state machine with a
    200 ms heartbeat for joined stations.
-8. **Start match audio** — detects an available audio player (aplay,
+5. **Start match audio** — detects an available audio player (aplay,
    paplay, ffplay, mpv, play, afplay) and loads sound files from
    `sounds/`.
-9. **Start WebSocket server** — listens on `WEBSOCKET_PORT` (default
+6. **Start WebSocket server** — listens on `WEBSOCKET_PORT` (default
    3000), broadcasts radio status to connected frontend clients.
-10. **Start subnet scanner** — periodic `fping` sweeps of each configured
-    team's subnet (see [Device Discovery](network.md#device-discovery)).
-11. **Start optional services** — syslog server, FMS server, scheduled
-    configuration clearing (cron).
-12. **Restore in-memory state** — on graceful reload, restores DNAT rules
-    from kernel iptables, previous station config from the radio manager,
-    and route preferences from kernel `ip rule` entries.
+7. **Start subnet scanner** — periodic `fping` sweeps of each configured
+   team's subnet (see [Device Discovery](network.md#device-discovery)).
+8. **Start optional services** — syslog server, FMS server, scheduled
+   configuration clearing (cron).
+9. **Restore in-memory state** — on graceful reload, restores DNAT rules
+   from kernel iptables, previous station config from the radio manager,
+   and route preferences from kernel `ip rule` entries.
 
 ## When a Team is Configured
 

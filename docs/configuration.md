@@ -162,11 +162,14 @@ remain the seed for a fresh install and still own everything the wizard
 doesn't manage, so an existing deployment is unaffected until someone uses
 the wizard. The UI shows which source a value came from.
 
-`VLAN_INTERFACE` and `RADIO_URL` are read **once at startup**, so changing
-them in the setup UI takes effect on the next restart.
+Changes made in the setup UI take effect as soon as they are saved — no
+restart. A new radio URL switches the radio pFMS polls and configures; a new
+trunk interface (`VLAN_INTERFACE`) rebuilds the field network on that NIC
+(src/trunkInterface.ts), which drops every robot's network for a moment, so
+during a match it waits for the match to end.
 
-Note that pFMS configures the host's networking itself — it assigns the
-field-control address to the trunk interface at startup, and creates every
+Note that pFMS configures the host's networking itself — it brings the trunk
+interface up and assigns it the field-control address, and creates every
 VLAN sub-interface and bridge when a station config is committed. The
 setup UI reports on that rather than duplicating it, so there is nothing
 to apply by hand.

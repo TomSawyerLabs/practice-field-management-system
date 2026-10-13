@@ -685,6 +685,8 @@ export interface SetupProbeState {
   type: 'setupProbeState';
   checkedAt: number;
   vlanInterface?: string;
+  /** NICs that could carry the trunk, for the wizard's picker. */
+  trunkCandidates?: string[];
   radioUrl: string;
   dryRun: boolean;
   steps: SetupStep[];

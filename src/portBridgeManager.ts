@@ -16,7 +16,7 @@ import { appInfo, appWarn } from './appLogger.js';
  */
 export class PortBridgeManager {
   private readonly net: NetworkBackend;
-  private readonly physicalInterface: string;
+  private physicalInterface: string | undefined;
   private readonly portConfigs: PortConfig[];
   /** portVlanId → station currently bridged to */
   private readonly activeBridges = new Map<number, StationName>();
@@ -26,10 +26,22 @@ export class PortBridgeManager {
   private readonly busy = new Set<number>();
   private onChange: (() => void) | null = null;
 
-  constructor(net: NetworkBackend, physicalInterface: string, portConfigs: PortConfig[]) {
+  constructor(net: NetworkBackend, physicalInterface: string | undefined, portConfigs: PortConfig[]) {
     this.net = net;
     this.physicalInterface = physicalInterface;
     this.portConfigs = portConfigs;
+  }
+
+  /** The trunk the port VLANs hang off moved (setup wizard) — or went away.
+   *  The caller removes the old port interfaces first (cleanupPortInterfaces). */
+  setPhysicalInterface(iface: string | undefined): void {
+    this.physicalInterface = iface;
+  }
+
+  /** The trunk NIC; ports can't be bridged without one. */
+  private trunk(): string {
+    if (!this.physicalInterface) throw new Error('No trunk interface is set up, so field ports are unavailable');
+    return this.physicalInterface;
   }
 
   /** Register a callback to be called whenever the bridge state changes. */
@@ -57,7 +69,7 @@ export class PortBridgeManager {
 
   /** Interface name for a port VLAN. */
   private portIfName(vlanId: number): string {
-    return `${this.physicalInterface}.p${vlanId}`;
+    return `${this.trunk()}.p${vlanId}`;
   }
 
   /**
@@ -95,7 +107,7 @@ export class PortBridgeManager {
 
     // Create the port VLAN sub-interface and add it to the station's bridge
     appInfo(`Bridging port "${port.name}": creating ${portIf} (VLAN ${portVlanId}) → ${brName}`);
-    await this.net.createVlan({ parent: this.physicalInterface, vlanId: portVlanId, name: portIf });
+    await this.net.createVlan({ parent: this.trunk(), vlanId: portVlanId, name: portIf });
     await this.net.addBridgeMember(brName, portIf);
     await this.net.setInterfaceUp(portIf);
     // Record it now that the kernel side is in place: this is what the UI
@@ -108,7 +120,7 @@ export class PortBridgeManager {
     // VLAN interface. Both are sub-interfaces of the same physical NIC, so
     // bridged traffic needs to exit the same port it entered (different VLAN).
     // Without hairpin, the bridge silently drops these frames.
-    const stationIf = `${this.physicalInterface}.${station}`;
+    const stationIf = `${this.trunk()}.${station}`;
     try {
       await this.net.setBridgeHairpin(portIf, true);
       await this.net.setBridgeHairpin(stationIf, true);
@@ -189,7 +201,7 @@ export class PortBridgeManager {
 
     const portIf = this.portIfName(portVlanId);
     appInfo(`Creating standalone port interface ${portIf} (VLAN ${portVlanId}) for test mode`);
-    await this.net.createVlan({ parent: this.physicalInterface, vlanId: portVlanId, name: portIf });
+    await this.net.createVlan({ parent: this.trunk(), vlanId: portVlanId, name: portIf });
     await this.net.setInterfaceUp(portIf);
     return portIf;
   }
@@ -211,6 +223,10 @@ export class PortBridgeManager {
    * Called on non-KEEP_NETWORK restarts to remove stale port interfaces.
    */
   async cleanupPortInterfaces(): Promise<void> {
+    if (!this.physicalInterface) {
+      this.activeBridges.clear();
+      return;
+    }
     for (const port of this.portConfigs) {
       const portIf = this.portIfName(port.vlanId);
       try {
