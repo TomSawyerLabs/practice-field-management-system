@@ -33,8 +33,9 @@ Team laptops ── site network ── [ pFMS host ] ══ VLAN trunk ══ [
 
 - [ ] **A Vivid-Hosting VH-113 or VH-109 field AP.** This is the only
       supported radio.
-- [ ] **A Linux host.** Anything that can run Node — a NUC, a small
-      server, a Pi 4/5. It must have:
+- [ ] **A Linux host.** Anything that runs 64-bit Linux (x64 or arm64,
+      which is what bun supports) — a NUC, a small server, a Pi 4/5 on a
+      64-bit OS. It must have:
   - [ ] **A NIC that can carry a VLAN trunk.** This is the main
         requirement, and it's easy to overlook. The host tags traffic for
         VLANs 10–60 (one per station) plus your field-control network.
@@ -121,8 +122,10 @@ is missing and can install it for you (**Install missing tools**), after
 which the field network comes up on its own.
 
 pFMS runs on [bun](https://bun.sh) — the only runtime it needs, for
-building and for running the service. Install it system-wide so root
-(and the service) find it at `/usr/local/bin/bun`:
+building and for running the service. Node isn't supported: there is no
+compiled JavaScript to run, and the build requires a minimum bun version
+(`engines.bun` in `package.json`). Install bun system-wide so root (and
+the service) find it at `/usr/local/bin/bun`:
 
 ```bash
 sudo apt install unzip   # the bun installer needs it

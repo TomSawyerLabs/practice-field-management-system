@@ -55,7 +55,8 @@ For how to keep pFMS running across reboots — systemd or Docker — see
      an address on `TEST_INTERFACE`.
 
 2. [bun](https://bun.sh) is the only runtime needed — it builds, runs the
-   dev servers, and runs the service (`bun src/index.ts`). Node isn't used.
+   dev servers, and runs the service (`bun src/index.ts`). Node isn't
+   supported — there's no compiled JavaScript for it to run.
 
 3. JavaScript dependencies (the project uses [bun](https://bun.sh)):
 

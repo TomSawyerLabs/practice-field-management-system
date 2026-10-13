@@ -203,7 +203,7 @@ in-flight task notes live in [`plans/`](plans/).
 
 ## Project Structure
 
-- `src/` — backend (TypeScript, Node.js)
+- `src/` — backend (TypeScript, run directly by bun)
 - `frontend/` — React frontend (Vite multi-page app)
 - `docs/` — documentation
 - `sounds/` — match audio WAV files (charge horn, buzzers, countdowns)
