@@ -68,9 +68,11 @@ and provides:
 pFMS works around several limits of the Vivid-Hosting field AP firmware.
 They're worth knowing before you set up a field:
 
-- **Use `PRACTICE` firmware.** pFMS supports `OFFSEASON` too, but its
-  firewalls stop most teams from uploading code to their robots — too
-  much friction for a practice field.
+- **Use `PRACTICE` firmware.** pFMS supports `OFFSEASON` too, and on
+  networking alone it's the better fit: pFMS serves DHCP itself, so routing
+  is simple, needs no DNAT, and supports more. But `OFFSEASON`'s firewalls
+  stop most teams from uploading code to their robots. That's the bigger
+  impediment, and too much friction for a practice field.
 - **`PRACTICE` serves DHCP on the team VLANs itself.** That's a cost, not
   a convenience: robots get addresses pFMS didn't hand out, so the host
   has to NAT (MASQUERADE plus per-DS DNAT) to route laptop ↔ robot traffic
