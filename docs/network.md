@@ -44,8 +44,11 @@ graph TD
 
 ## pFMS Host Network Responsibilities
 
-1. **VLAN interfaces** — trunk port carries VLANs 10–60 + 100; the OS
-   creates sub-interfaces (e.g. `eth0.10`, `eth0.20`)
+1. **VLAN interfaces** — trunk port carries the team station VLANs
+   (10–60) tagged; pFMS creates their sub-interfaces and bridges. Field
+   control is the trunk's untagged VLAN by default, or any interface you
+   name as the field-control interface (`FIELD_CONTROL_INTERFACE` /
+   setup wizard), e.g. a tagged `eth0.100` that pFMS creates if it's missing
 2. **VLAN IP** — assigns itself `10.TE.AM.254` (configurable via
    `VLAN_HOST_OCTET`) on each active team's VLAN as a routing anchor
 3. **Inter-VLAN routing** — IP forwarding + MASQUERADE rules between team

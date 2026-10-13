@@ -36,6 +36,7 @@ services:
       # which stores it in data/setup-config.json and takes precedence.
       WEBSOCKET_PORT: 9005
       VLAN_INTERFACE: eno1 # ← the NIC carrying your VLAN trunk
+      # FIELD_CONTROL_INTERFACE: eno1.100 # only if field control is tagged on that port
       FMS_ENDPOINT: 'true'
       TRUSTED_PROXIES: 127.0.0.1,::1
       # RADIO_URL: http://10.0.100.2

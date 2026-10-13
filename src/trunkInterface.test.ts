@@ -26,6 +26,10 @@ function fakeHost(existing: Record<string, string[]>) {
     async setInterfaceDown(name) {
       calls.push(`down ${name}`);
     },
+    async createVlan(o) {
+      calls.push(`vlan ${o.name} ${o.parent} ${o.vlanId}`);
+      if (!addresses.has(o.name)) addresses.set(o.name, []);
+    },
     async deleteInterface(name) {
       calls.push(`delete ${name}`);
       addresses.delete(name);
@@ -85,6 +89,61 @@ describe('bringing up a trunk', () => {
     await bringUpTrunk('eno1', { keepNetwork: true });
     expect(host.calls).not.toContain('flush pfms-');
     expect(host.calls.filter(c => c.startsWith('add '))).toEqual([]); // address already there
+  });
+});
+
+describe('field control on its own interface', () => {
+  test('a tagged sub-interface that does not exist yet is created on the trunk', async () => {
+    const host = fakeHost({ eno1: [] });
+    useNetworkBackend(host.backend);
+    expect(await bringUpTrunk('eno1', { keepNetwork: false, fieldControl: 'eno1.100' })).toEqual({ ok: true });
+    expect(host.calls).toContain('vlan eno1.100 eno1 100');
+    expect(host.calls).toContain('up eno1.100');
+    expect(host.addresses.get('eno1.100')).toEqual([FIELD_CONTROL_ADDRESS]);
+    // Not on the bare trunk: its native VLAN is something else now
+    expect(host.addresses.get('eno1')).toEqual([]);
+  });
+
+  test('an interface that already exists is used as it is', async () => {
+    const host = fakeHost({ eno1: [], eno2: [] });
+    useNetworkBackend(host.backend);
+    expect(await bringUpTrunk('eno1', { keepNetwork: false, fieldControl: 'eno2' })).toEqual({ ok: true });
+    expect(host.calls.some(c => c.startsWith('vlan '))).toBe(false);
+    expect(host.addresses.get('eno2')).toEqual([FIELD_CONTROL_ADDRESS]);
+  });
+
+  test('refuses a VLAN a team station uses', async () => {
+    const host = fakeHost({ eno1: [] });
+    useNetworkBackend(host.backend);
+    const result = await bringUpTrunk('eno1', { keepNetwork: false, fieldControl: 'eno1.30' });
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.reason).toContain('team station VLAN');
+    expect(host.calls).toEqual([]);
+  });
+
+  test('the same VLAN ID on another NIC is no conflict', async () => {
+    const host = fakeHost({ eno1: [], eno2: [] });
+    useNetworkBackend(host.backend);
+    expect(await bringUpTrunk('eno1', { keepNetwork: false, fieldControl: 'eno2.30' })).toEqual({ ok: true });
+    expect(host.addresses.get('eno2.30')).toEqual([FIELD_CONTROL_ADDRESS]);
+  });
+
+  test('refuses a name it cannot make', async () => {
+    const host = fakeHost({ eno1: [] });
+    useNetworkBackend(host.backend);
+    for (const fieldControl of ['fc0', 'eno9.100', 'eno1.5000']) {
+      const result = await bringUpTrunk('eno1', { keepNetwork: false, fieldControl });
+      expect(result.ok).toBe(false);
+    }
+    expect(host.calls).toEqual([]);
+  });
+
+  test('teardown takes the address off but leaves the interface', async () => {
+    const host = fakeHost({ eno1: [], 'eno1.100': [FIELD_CONTROL_ADDRESS] });
+    useNetworkBackend(host.backend);
+    await tearDownTrunk('eno1', { fieldControl: 'eno1.100' });
+    expect(host.addresses.get('eno1.100')).toEqual([]);
+    expect(host.calls).not.toContain('delete eno1.100');
   });
 });
 

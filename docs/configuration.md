@@ -27,6 +27,7 @@ service restart — no `systemctl daemon-reload` needed.
 | Variable                  | Default  | Description                                                                                                                                                         |
 | ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VLAN_INTERFACE`          | _(none)_ | Physical network interface for VLAN configuration (e.g., `eno1`). Required for routing.                                                                             |
+| `FIELD_CONTROL_INTERFACE` | _(none)_ | Where field control (`10.0.100.5/24`) lives when it isn't the trunk's untagged VLAN: `eno1.100` (created if missing) or a separate NIC. Unset: the trunk interface. |
 | `VLAN_HOST_OCTET`         | `254`    | Host octet for the pFMS host's IP on each team VLAN (range: 220–254)                                                                                                |
 | `FIELD_PORTS`             | _(none)_ | Physical port bridging config: `VLANID:Name,...` (e.g., `201:Port A,202:Port B`). Requires `VLAN_INTERFACE`.                                                        |
 | `IPTABLES_COMMENT_PREFIX` | `pfms-`  | Prefix for iptables rule comments (used to identify and flush rules)                                                                                                |
@@ -164,12 +165,13 @@ the wizard. The UI shows which source a value came from.
 
 Changes made in the setup UI take effect as soon as they are saved — no
 restart. A new radio URL switches the radio pFMS polls and configures; a new
-trunk interface (`VLAN_INTERFACE`) rebuilds the field network on that NIC
-(src/trunkInterface.ts), which drops every robot's network for a moment, so
+trunk interface (`VLAN_INTERFACE`) or field-control interface
+(`FIELD_CONTROL_INTERFACE`) rebuilds the field network (src/trunkInterface.ts), which drops every robot's network for a moment, so
 during a match it waits for the match to end.
 
 Note that pFMS configures the host's networking itself — it brings the trunk
-interface up and assigns it the field-control address, and creates every
+interface up and assigns the field-control address (to the trunk, or to the
+field-control interface, creating a `<nic>.<VLAN ID>` one if needed), and creates every
 VLAN sub-interface and bridge when a station config is committed. The
 setup UI reports on that rather than duplicating it, so there is nothing
 to apply by hand.

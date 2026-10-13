@@ -218,6 +218,9 @@ export interface SetupSettings {
   /** Chosen way to run pFMS permanently — drives which walkthrough is shown. */
   deploymentMode?: DeploymentMode;
   vlanInterface?: string;
+  /** Where field control lives when it isn't the trunk's native VLAN: a
+   *  tagged sub-interface (`eno1.100`) or a separate NIC. */
+  fieldControlInterface?: string;
   radioUrl?: string;
   fmsAddress?: string;
   /** Base URL of a WHEP server for the scoreboard's video view. */
@@ -686,6 +689,8 @@ export interface SetupProbeState {
   type: 'setupProbeState';
   checkedAt: number;
   vlanInterface?: string;
+  /** The field-control interface setting; unset means the trunk itself. */
+  fieldControlInterface?: string;
   /** NICs that could carry the trunk, for the wizard's picker. */
   trunkCandidates?: string[];
   radioUrl: string;
@@ -825,6 +830,7 @@ export function isPrivateHostUrl(value: string): boolean {
 /** Per-key validation. Unknown keys are rejected rather than merged blindly. */
 const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => boolean> = {
   vlanInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{1,32}$/.test(v),
+  fieldControlInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{1,15}$/.test(v),
   radioUrl: v => typeof v === 'string' && isPrivateHostUrl(v),
   fmsAddress: v => typeof v === 'string' && /^\d{1,3}(\.\d{1,3}){3}$/.test(v),
   videoProxyTarget: v => typeof v === 'string' && isPrivateHostUrl(v),

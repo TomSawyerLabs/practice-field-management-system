@@ -211,11 +211,14 @@ async function probeInterfaces(
 async function probeFieldControl(
   net: NetworkBackend,
   vlanInterface: string | undefined,
+  fieldControlInterface: string | undefined,
   fmsAddress: string,
 ): Promise<SetupCheck[]> {
   if (!vlanInterface) {
     return [warn('address', 'Field control address', 'Waiting on a trunk interface selection')];
   }
+  // Field control is the trunk's native VLAN unless it has its own interface.
+  const expected = fieldControlInterface ?? vlanInterface;
 
   let interfaces: InterfaceLike[];
   try {
@@ -226,22 +229,26 @@ async function probeFieldControl(
     ];
   }
 
-  const bare = interfaces.find(i => i.name === vlanInterface);
-  const onBare = bare?.addresses.some(a => a.address === fmsAddress) ?? false;
-  if (onBare) {
-    return [pass('address', 'Field control address', `${fmsAddress} is on ${vlanInterface}`)];
+  const target = interfaces.find(i => i.name === expected);
+  if (target?.addresses.some(a => a.address === fmsAddress)) {
+    return [pass('address', 'Field control address', `${fmsAddress} is on ${expected}`)];
   }
 
-  // The address landing on a tagged sub-interface is the classic misconfig:
-  // startup adds it to the bare NIC, so field control has to be the native VLAN.
-  const elsewhere = interfaces.find(i => i.name !== vlanInterface && i.addresses.some(a => a.address === fmsAddress));
+  // The address on some other interface: someone (netplan, an earlier
+  // setting) put it there, and it will fight the one pFMS adds.
+  const elsewhere = interfaces.find(i => i.name !== expected && i.addresses.some(a => a.address === fmsAddress));
   if (elsewhere) {
     return [
       fail(
         'address',
         'Field control address',
-        `${fmsAddress} is on ${elsewhere.name}, not on ${vlanInterface}. pFMS puts it on the bare trunk interface, so field control must be the native (untagged) VLAN on that switch port.`,
-        `Make field control the native VLAN on the ${vlanInterface} switch port`,
+        `${fmsAddress} is on ${elsewhere.name}, not on ${expected}. ` +
+          (fieldControlInterface
+            ? `pFMS puts it on the field-control interface, ${expected}.`
+            : `pFMS puts it on the bare trunk interface, so field control is the native (untagged) VLAN there. If your switch tags field control on that port, set the field-control interface to ${elsewhere.name}.`),
+        fieldControlInterface
+          ? `Remove ${fmsAddress} from ${elsewhere.name}`
+          : `Set the field-control interface to ${elsewhere.name}, or make field control the native VLAN on the ${vlanInterface} switch port`,
       ),
     ];
   }
@@ -254,7 +261,7 @@ async function probeFieldControl(
     fail(
       'address',
       'Field control address',
-      `${fmsAddress} is not on ${vlanInterface}. pFMS adds it when it sets up the field network, so if it's missing the field network isn't up yet (see Interfaces) or pFMS isn't running as root.`,
+      `${fmsAddress} is not on ${expected}. pFMS adds it when it sets up the field network, so if it's missing the field network isn't up yet (see Interfaces) or pFMS isn't running as root.`,
     ),
   ];
 }
@@ -616,6 +623,8 @@ function rollUp(checks: SetupCheck[]): SetupStep['status'] {
 
 export interface SetupProbeOptions {
   vlanInterface?: string;
+  /** Where field control lives, when it isn't the trunk's native VLAN. */
+  fieldControlInterface?: string;
   radioUrl: string;
   fmsAddress: string;
   dryRun?: boolean;
@@ -662,7 +671,9 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
   const [host, interfaces, fieldControl, radio, teamVlans, audio, scoreboard, deployment] = await Promise.all([
     probeHost(),
     net ? probeInterfaces(net, opts.vlanInterface, opts.trunk ?? {}) : unavailable('selected', 'Trunk interface'),
-    net ? probeFieldControl(net, opts.vlanInterface, opts.fmsAddress) : unavailable('address', 'Field control address'),
+    net
+      ? probeFieldControl(net, opts.vlanInterface, opts.fieldControlInterface, opts.fmsAddress)
+      : unavailable('address', 'Field control address'),
     // Reaching the radio is plain HTTP, so it's worth trying from anywhere.
     probeRadio(opts.radioUrl),
     net ? probeTeamVlans(net, opts.vlanInterface) : unavailable('vlans', 'Team VLANs'),
@@ -702,6 +713,7 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
     type: 'setupProbeState',
     checkedAt: Date.now(),
     vlanInterface: opts.vlanInterface,
+    fieldControlInterface: opts.fieldControlInterface,
     trunkCandidates: trunkCandidateNames,
     radioUrl: opts.radioUrl,
     dryRun: opts.dryRun ?? false,

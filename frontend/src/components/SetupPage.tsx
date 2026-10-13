@@ -270,11 +270,14 @@ function StepActions({ step }: { step: SetupStepId }) {
   const settings = config?.config.settings;
 
   const [radioUrl, setRadioUrl] = useState('');
+  const [fieldControl, setFieldControl] = useState('');
   const [videoTarget, setVideoTarget] = useState('');
   const [publicUrl, setPublicUrl] = useState('');
 
   // Keep local fields in step with the server, but don't fight the user's typing.
   useEffect(() => setRadioUrl(settings?.radioUrl ?? ''), [settings?.radioUrl]);
+  // The probe's value is the one in effect (the wizard's, else FIELD_CONTROL_INTERFACE).
+  useEffect(() => setFieldControl(probe?.fieldControlInterface ?? ''), [probe?.fieldControlInterface]);
   useEffect(() => setVideoTarget(settings?.videoProxyTarget ?? ''), [settings?.videoProxyTarget]);
   useEffect(() => setPublicUrl(settings?.publicUrl ?? ''), [settings?.publicUrl]);
 
@@ -294,25 +297,53 @@ function StepActions({ step }: { step: SetupStepId }) {
     // The probe's value is the one in effect (the wizard's, else VLAN_INTERFACE).
     const current = probe?.vlanInterface ?? '';
     const options = [...new Set([...(probe?.trunkCandidates ?? []), ...(current ? [current] : [])])];
+    const fieldControlChanged = fieldControl !== (probe?.fieldControlInterface ?? '');
     return (
-      <TextField
-        select
-        size="small"
-        label="Trunk interface"
-        value={current}
-        onChange={e => sendUpdateSetupSettings({ vlanInterface: e.target.value || undefined })}
-        helperText="The NIC carrying VLANs 10–60. pFMS sets up the field network on it as soon as you pick it."
-        sx={{ minWidth: 240, maxWidth: 360 }}
-      >
-        <MenuItem value="">
-          <em>None</em>
-        </MenuItem>
-        {options.map(name => (
-          <MenuItem key={name} value={name}>
-            {name}
+      <Stack spacing={2}>
+        <TextField
+          select
+          size="small"
+          label="Trunk interface"
+          value={current}
+          onChange={e => sendUpdateSetupSettings({ vlanInterface: e.target.value || undefined })}
+          helperText="The NIC carrying the team station VLANs. pFMS sets up the field network on it as soon as you pick it."
+          sx={{ minWidth: 240, maxWidth: 360 }}
+        >
+          <MenuItem value="">
+            <em>None</em>
           </MenuItem>
-        ))}
-      </TextField>
+          {options.map(name => (
+            <MenuItem key={name} value={name}>
+              {name}
+            </MenuItem>
+          ))}
+        </TextField>
+        <Stack direction="row" spacing={1} alignItems="flex-start">
+          <TextField
+            size="small"
+            label="Field-control interface"
+            placeholder={current ? `${current} (native VLAN)` : 'Same as the trunk'}
+            value={fieldControl}
+            onChange={e => setFieldControl(e.target.value.trim())}
+            helperText={
+              <>
+                Leave empty when field control is the trunk&apos;s untagged VLAN. If your switch tags it, enter{' '}
+                <code>{current || 'eno1'}.&lt;VLAN&nbsp;ID&gt;</code> and pFMS creates that VLAN interface; a separate
+                NIC or an existing VLAN interface works too.
+              </>
+            }
+            sx={{ minWidth: 240, maxWidth: 420 }}
+          />
+          <Button
+            variant="outlined"
+            disabled={!fieldControlChanged}
+            onClick={() => sendUpdateSetupSettings({ fieldControlInterface: fieldControl || undefined })}
+            sx={{ mt: 0.25 }}
+          >
+            Save
+          </Button>
+        </Stack>
+      </Stack>
     );
   }
 

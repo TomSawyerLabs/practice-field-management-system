@@ -164,6 +164,10 @@ const radioUrl = () => setupConfigStore.resolveSetting('radioUrl', 'RADIO_URL').
 /** The trunk interface ('eno1') the wizard chose, else VLAN_INTERFACE, else
  *  none. Read live: a change rebuilds the field network (applyTrunkSetting). */
 const trunkSetting = () => setupConfigStore.resolveSetting('vlanInterface', 'VLAN_INTERFACE').value || undefined;
+/** Where field control lives when it isn't the trunk's native VLAN — the
+ *  wizard's value, else FIELD_CONTROL_INTERFACE. Unset: the trunk itself. */
+const fieldControlSetting = () =>
+  setupConfigStore.resolveSetting('fieldControlInterface', 'FIELD_CONTROL_INTERFACE').value || undefined;
 const StartFMS = process.env.FMS_ENDPOINT === 'true';
 // Experimental: stations whose DS gets the TCP station-assignment reply even
 // outside a match ("slot1,slot2" or "all") — for testing whether a TCP-only
@@ -208,9 +212,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   /** Run after the trunk is rebuilt: everything pFMS had in the kernel was
    *  flushed, so whoever owns rules puts them back. */
   const afterTrunkRebuild: (() => void)[] = [];
+  /** The field-control interface the running trunk was built with. */
+  let fieldControlInterface: string | undefined;
   const startupTrunk = trunkSetting();
+  const startupFieldControl = fieldControlSetting();
   if (startupTrunk) {
-    const result = await bringUpTrunk(startupTrunk, { keepNetwork: KeepNetwork });
+    const result = await bringUpTrunk(startupTrunk, { keepNetwork: KeepNetwork, fieldControl: startupFieldControl });
+    fieldControlInterface = startupFieldControl;
     if (result.ok) vlanInterface = startupTrunk;
     else {
       trunkProblem = result.reason;
@@ -962,6 +970,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         const settings = setupConfigStore.get().settings;
         return runSetupProbe({
           vlanInterface: trunkSetting(),
+          fieldControlInterface: fieldControlSetting(),
           trunk: { active: vlanInterface, problem: trunkProblem },
           radioUrl: radioUrl(),
           fmsAddress: settings.fmsAddress ?? '10.0.100.5',
@@ -1923,23 +1932,30 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // network drops while that happens, so it never runs during a match — it
   // waits for the match to end. One rebuild at a time.
 
-  /** The setting the field network was last built for (whether or not that
+  /** The settings the field network was last built for (whether or not that
    *  worked — trunkProblem says). */
-  let trunkTarget = startupTrunk;
+  type TrunkTarget = { trunk: string | undefined; fieldControl: string | undefined };
+  let trunkTarget: TrunkTarget = { trunk: startupTrunk, fieldControl: startupFieldControl };
+  const sameTarget = (a: TrunkTarget, b: TrunkTarget) => a.trunk === b.trunk && a.fieldControl === b.fieldControl;
   let trunkRebuild: Promise<void> = Promise.resolve();
   let trunkWaitingForMatch = false;
 
-  const rebuildTrunk = async (next: string | undefined) => {
+  const rebuildTrunk = async ({ trunk: next, fieldControl }: TrunkTarget) => {
     const previous = vlanInterface;
     if (previous !== next) {
       appInfo(`Trunk interface: ${previous ?? 'none'} → ${next ?? 'none'} — rebuilding the field network`);
+    } else if (fieldControlInterface !== fieldControl) {
+      appInfo(
+        `Field-control interface: ${fieldControlInterface ?? previous ?? 'none'} → ${fieldControl ?? next ?? 'none'} — rebuilding the field network`,
+      );
     }
     stopPacketCapture();
     stopMdnsReflector();
     if (previous) {
       await portBridgeManager?.cleanupPortInterfaces();
-      await tearDownTrunk(previous);
+      await tearDownTrunk(previous, { fieldControl: fieldControlInterface });
     }
+    fieldControlInterface = undefined;
     vlanInterface = undefined;
     radioManager.setManagementInterface(undefined);
     portBridgeManager?.setPhysicalInterface(undefined);
@@ -1948,7 +1964,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       appInfo('Field network stopped: no trunk interface is set');
       return;
     }
-    const result = await bringUpTrunk(next, { keepNetwork: false });
+    const result = await bringUpTrunk(next, { keepNetwork: false, fieldControl });
+    // Whatever bringUpTrunk got to, the next teardown cleans it up.
+    fieldControlInterface = fieldControl;
     if (!result.ok) {
       // Said once per distinct reason; the retry below keeps trying quietly.
       if (result.reason !== trunkProblem) appError(`Field network not started on ${next}: ${result.reason}`);
@@ -1973,7 +1991,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     });
   };
 
-  const queueTrunkRebuild = (next: string | undefined) => {
+  const queueTrunkRebuild = (next: TrunkTarget) => {
     trunkTarget = next;
     trunkRebuild = trunkRebuild
       .then(() => rebuildTrunk(next))
@@ -1983,17 +2001,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       });
   };
 
-  /** The settings changed (any of them): rebuild if the trunk is different. */
+  /** The settings changed (any of them): rebuild if the trunk or the
+   *  field-control interface is different. */
   const applyTrunkSetting = () => {
-    const next = trunkSetting();
-    if (next === trunkTarget && !trunkWaitingForMatch) return;
+    const next: TrunkTarget = { trunk: trunkSetting(), fieldControl: fieldControlSetting() };
+    if (sameTarget(next, trunkTarget) && !trunkWaitingForMatch) return;
     if (matchEngine.isMatchActive()) {
-      if (!trunkWaitingForMatch) appWarn(`The trunk interface change to ${next ?? 'none'} waits until the match ends`);
+      if (!trunkWaitingForMatch) appWarn('The field network change waits until the match ends');
       trunkWaitingForMatch = true;
       return;
     }
     trunkWaitingForMatch = false;
-    if (next !== trunkTarget) queueTrunkRebuild(next);
+    if (!sameTarget(next, trunkTarget)) queueTrunkRebuild(next);
   };
   setupConfigStore.addListener(applyTrunkSetting);
   matchEngine.addStateListener(() => {
@@ -2002,7 +2021,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // A trunk that couldn't come up (a tool missing, the NIC not there yet)
   // comes up on its own once the problem is fixed — no restart, no re-save.
   setInterval(() => {
-    if (trunkProblem && trunkTarget && !vlanInterface && !matchEngine.isMatchActive()) {
+    if (trunkProblem && trunkTarget.trunk && !vlanInterface && !matchEngine.isMatchActive()) {
       queueTrunkRebuild(trunkTarget);
     }
   }, 30_000);

@@ -14,10 +14,14 @@ the network model see [network.md](network.md).
      a NIC that doesn't exist, doesn't stop pFMS: it starts without a
      field network, the setup wizard shows why, and the bring-up is
      retried every 30 s.
-   - **Set the link up and check interface IPs** — the NIC must carry
-     `10.0.100.5` (the FMS address); it is **added if missing**, on the
-     bare interface, so field control must be the native/untagged VLAN on
-     the trunk.
+   - **Set the link up and check interface IPs** — field control must
+     carry `10.0.100.5` (the FMS address); it is **added if missing**. By
+     default that's the bare trunk interface (field control is the
+     native/untagged VLAN). With a field-control interface set (setup
+     wizard, else `FIELD_CONTROL_INTERFACE`), it goes there instead. A
+     missing `<nic>.<VLAN ID>` is created as an 802.1Q sub-interface,
+     unless the VLAN ID is a team station's on the trunk. Teardown takes
+     the address off but leaves that interface in place.
    - **Flush or preserve network rules** — on a fresh start, flush stale
      iptables rules and per-station route tables from a previous run. On
      a graceful reload, skip the flush to preserve existing rules (see

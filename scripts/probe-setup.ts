@@ -10,6 +10,7 @@ import { runSetupProbe } from '../src/setupProbe.js';
 
 const state = await runSetupProbe({
   vlanInterface: process.env.VLAN_INTERFACE,
+  fieldControlInterface: process.env.FIELD_CONTROL_INTERFACE || undefined,
   radioUrl: process.env.RADIO_URL ?? 'http://10.0.100.2',
   fmsAddress: '10.0.100.5',
   dryRun: process.env.DRY_RUN !== undefined,
@@ -21,7 +22,9 @@ const state = await runSetupProbe({
 const icon = { pass: '✅', warn: '⚠️ ', fail: '❌' } as const;
 
 console.log(`\nSetup probe — ${new Date(state.checkedAt).toISOString()}`);
-console.log(`  trunk: ${state.vlanInterface ?? '(unset)'}   radio: ${state.radioUrl}   dryRun: ${state.dryRun}\n`);
+console.log(
+  `  trunk: ${state.vlanInterface ?? '(unset)'}   field control: ${state.fieldControlInterface ?? '(trunk)'}   radio: ${state.radioUrl}   dryRun: ${state.dryRun}\n`,
+);
 
 for (const step of state.steps) {
   console.log(`${icon[step.status]} ${step.label} — ${step.blurb}`);

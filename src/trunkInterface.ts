@@ -1,6 +1,6 @@
 /**
- * The trunk interface: the NIC carrying field control (native) and the team
- * VLANs 10–60 (tagged). Bringing one up is what pFMS does at startup; tearing
+ * The trunk interface: the NIC carrying the team station VLANs (tagged) and,
+ * unless a separate field-control interface is set, field control (native). Bringing one up is what pFMS does at startup; tearing
  * one down is what it does when the setup wizard moves it to another NIC (or
  * to none), so a change takes effect without a restart.
  *
@@ -19,20 +19,63 @@ import {
   networkBackend,
   removeStationInterfaces,
   stopAllDHCP,
+  vlanMap,
 } from './networkManager.js';
+import type { NetworkBackend } from './node-ip/index.js';
 
-/** pFMS's address on field control, the trunk's untagged network. */
+/** pFMS's address on field control: the trunk's untagged network, or the
+ *  field-control interface when one is set. */
 export const FIELD_CONTROL_ADDRESS = '10.0.100.5';
 
 export type TrunkResult = { ok: true } | { ok: false; reason: string };
 
+export interface TrunkOptions {
+  /** A graceful restart, whose rules are still in the kernel and are
+   *  adopted rather than flushed. */
+  keepNetwork: boolean;
+  /** Where field control lives, when it isn't the trunk's native VLAN: a
+   *  separate NIC, or a tagged sub-interface (`eno1.100`). Unset: the trunk. */
+  fieldControl?: string;
+}
+
+/**
+ * Get the field-control interface ready to take pFMS's address. One that
+ * exists is used as it is (the operator's netplan VLAN, a second NIC). One
+ * that doesn't but is named `<parent>.<vlan id>` is created as an 802.1Q
+ * sub-interface — unless that would land on a station VLAN of the trunk.
+ */
+async function prepareFieldControl(
+  iface: string,
+  trunk: string,
+  net: NetworkBackend,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if ((await net.listInterfaces(iface)).length > 0) return { ok: true };
+
+  const vlan = /^(.+)\.(\d{1,4})$/.exec(iface);
+  const parent = vlan?.[1];
+  const vlanId = Number(vlan?.[2]);
+  if (!parent || !(vlanId >= 1 && vlanId <= 4094)) {
+    return { ok: false, reason: `field-control interface ${iface} does not exist on this host` };
+  }
+  if (parent === trunk && Object.values(vlanMap).includes(vlanId)) {
+    return {
+      ok: false,
+      reason: `field-control interface ${iface} would use VLAN ${vlanId}, which is a team station VLAN on ${trunk}`,
+    };
+  }
+  if ((await net.listInterfaces(parent)).length === 0) {
+    return { ok: false, reason: `field-control interface ${iface}: ${parent} does not exist on this host` };
+  }
+  await net.createVlan({ parent, vlanId, name: iface });
+  return { ok: true };
+}
+
 /**
  * Make `iface` the trunk. Refuses — leaving pFMS running without a field
- * network, so the setup wizard can say why — when a tool is missing or the
- * NIC doesn't exist. `keepNetwork`: a graceful restart, whose rules are
- * still in the kernel and are adopted rather than flushed.
+ * network, so the setup wizard can say why — when a tool is missing, the
+ * NIC doesn't exist, or the field-control interface can't be had.
  */
-export async function bringUpTrunk(iface: string, { keepNetwork }: { keepNetwork: boolean }): Promise<TrunkResult> {
+export async function bringUpTrunk(iface: string, { keepNetwork, fieldControl }: TrunkOptions): Promise<TrunkResult> {
   const net = networkBackend();
   // A dry run has no real NIC or tools to check.
   if (!isDryRun()) {
@@ -45,9 +88,16 @@ export async function bringUpTrunk(iface: string, { keepNetwork }: { keepNetwork
     }
   }
 
+  const fieldControlIface = fieldControl ?? iface;
+  if (fieldControlIface !== iface) {
+    const prepared = await prepareFieldControl(fieldControlIface, iface, net);
+    if (!prepared.ok) return prepared;
+  }
+
   // Nothing reaches the radio over a link that is administratively down.
   await net.setInterfaceUp(iface);
-  await checkInterfaceIps(iface, [FIELD_CONTROL_ADDRESS], net);
+  if (fieldControlIface !== iface) await net.setInterfaceUp(fieldControlIface);
+  await checkInterfaceIps(fieldControlIface, [FIELD_CONTROL_ADDRESS], net);
 
   // Always remove legacy VLAN interfaces from the previous version that used
   // radio-native station names (eno1.red1, eno1.blue3). These hold VLAN IDs
@@ -102,16 +152,22 @@ export async function bringUpTrunk(iface: string, { keepNetwork }: { keepNetwork
 
 /**
  * Take pFMS off `iface`: stop the station DHCP servers, delete the station
- * VLANs and bridges, drop pFMS's field-control address from the NIC, and
- * flush every rule and route pFMS added. The NIC itself is left up.
+ * VLANs and bridges, drop pFMS's field-control address, and flush every rule
+ * and route pFMS added. The NIC is left up, and a separate field-control
+ * interface is left in place — pFMS can't tell whether the operator made it.
  */
-export async function tearDownTrunk(iface: string): Promise<void> {
+export async function tearDownTrunk(iface: string, { fieldControl }: { fieldControl?: string } = {}): Promise<void> {
   stopAllDHCP();
   await removeStationInterfaces(iface);
+  const fieldControlIface = fieldControl ?? iface;
   try {
-    await networkBackend().removeAddress({ interfaceName: iface, address: FIELD_CONTROL_ADDRESS, prefixLength: 24 });
+    await networkBackend().removeAddress({
+      interfaceName: fieldControlIface,
+      address: FIELD_CONTROL_ADDRESS,
+      prefixLength: 24,
+    });
   } catch (err) {
-    console.warn(`Could not remove ${FIELD_CONTROL_ADDRESS} from ${iface}: ${(err as Error).message}`);
+    console.warn(`Could not remove ${FIELD_CONTROL_ADDRESS} from ${fieldControlIface}: ${(err as Error).message}`);
   }
   await flushManagedNetworkState();
 }

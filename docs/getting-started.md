@@ -68,16 +68,21 @@ pFMS uses three kinds of network:
 Team subnets come from the team number: team 1234 → `10.12.34.0/24`, with
 the robot radio at `.1`, the roboRIO at `.2`, and the pFMS host at `.254`.
 
-> **The one trap that bites everyone:** pFMS adds `10.0.100.5/24` to the
-> **bare** trunk interface (e.g. `eno1`), not to a tagged sub-interface.
-> So **field control must be the native/untagged VLAN** on the host's
-> trunk port. If you tag it instead, the AP is simply unreachable and the
-> app waits forever for the radio with no error message.
+> **Where field control lives:** by default pFMS adds `10.0.100.5/24` to
+> the **bare** trunk interface (e.g. `eno1`), so field control is the
+> native/untagged VLAN on the host's trunk port. If your switch tags field
+> control on that port instead, set the **field-control interface** (setup
+> wizard, or `FIELD_CONTROL_INTERFACE`) to `eno1.<VLAN ID>`, and pFMS
+> creates that VLAN interface and puts the address there. A separate NIC,
+> or a VLAN interface you already manage with netplan, works too. If the
+> two disagree, the setup wizard's _Field control address_ check says so.
 
-- [ ] Decide the host's field-control interface name (`ip link` — commonly
+- [ ] Decide the host's trunk interface name (`ip link` — commonly
       `eno1`, `enp1s0`, `eth0`).
-- [ ] Configure the switch: host port = trunk, native VLAN = field
-      control, tagged VLANs 10–60. AP port likewise.
+- [ ] Configure the switch: host port = trunk with the team station VLANs
+      (10–60 by default) tagged, and field control either native or tagged
+      (then set the field-control interface). The AP port carries field
+      control untagged and the station VLANs tagged.
 - [ ] **On your site router, add a static route: `10.0.0.0/8` → the pFMS
       host's site-network IP.** Without this, laptops can't reach robots.
       This is a one-time, team-agnostic change.

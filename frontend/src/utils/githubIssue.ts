@@ -41,6 +41,7 @@ function diagnosticsBlock(ctx: BugReportContext): string {
   if (probe) {
     lines.push(`- Radio URL: ${probe.radioUrl}`);
     lines.push(`- Trunk interface: ${probe.vlanInterface ?? '(unset)'}`);
+    lines.push(`- Field-control interface: ${probe.fieldControlInterface ?? '(the trunk, native VLAN)'}`);
     lines.push(`- Dry run: ${probe.dryRun ? 'yes' : 'no'}`);
 
     // Only the problems — a wall of passing checks helps nobody.
