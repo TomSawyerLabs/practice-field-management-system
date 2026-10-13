@@ -185,11 +185,6 @@ export function translateRadioUpdate(raw: RawRadioUpdate): RadioUpdate {
   return { ...raw, stationStatuses };
 }
 
-/** @deprecated Use isValidRawRadioUpdate + translateRadioUpdate instead. */
-export function isValidRadioUpdate(update: unknown): update is RadioUpdate {
-  return isValidRawRadioUpdate(update);
-}
-
 // ── Setup wizard probe ──────────────────────────────────────────────
 
 /** Ordered setup stages — each one only makes sense once the prior one passes.

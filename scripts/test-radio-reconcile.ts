@@ -21,6 +21,9 @@
  *     the debounce window.
  *  6. setSyslogIP and a clear-all arriving while a commit is mid-reconfigure
  *     queue behind it — every push reaches the radio, none is dropped.
+ *  7. The radio URL changes (setup wizard): polling follows it, the firmware
+ *     mode is re-detected from the new radio, and the active config is
+ *     pushed to it.
  */
 import { createServer } from 'node:http';
 import { writeFileSync, rmSync } from 'node:fs';
@@ -202,9 +205,64 @@ check(
   JSON.stringify(stationStatuses.red1 ?? null),
 );
 
+// ── Scenario 7: the radio URL changes ───────────────────────────────
+await radioManager.configure('slot2', { ssid: '5940-Vikings', wpaKey: '59405940' });
+await sleep(500);
+const secondPosts: any[] = [];
+const second = createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/status') {
+    res.setHeader('Content-Type', 'application/json');
+    res.end(
+      JSON.stringify({
+        channel: 13,
+        channelBandwidth: '40MHz',
+        redVlans: '10_20_30',
+        blueVlans: '40_50_60',
+        status: 'ACTIVE',
+        stationStatuses: Object.fromEntries(RADIO_STATIONS.map(s => [s, null])),
+        syslogIpAddress: '10.0.100.5',
+        version: 'VH-113_AP_OFFSEASON_TEST',
+      }),
+    );
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/configuration') {
+    let body = '';
+    req.on('data', c => (body += c));
+    req.on('end', () => {
+      secondPosts.push(JSON.parse(body));
+      res.end('{}');
+    });
+    return;
+  }
+  res.statusCode = 404;
+  res.end();
+});
+await new Promise<void>(r => second.listen(0, '127.0.0.1', r));
+const secondUrl = `http://127.0.0.1:${(second.address() as { port: number }).port}`;
+const firstPostsBefore = configPosts.length;
+
+radioManager.setApiBaseUrl(secondUrl);
+await radioManager.whenConnected();
+await sleep(300);
+check('polling follows the new URL', radioManager.getApiBaseUrl() === secondUrl);
+check(
+  'firmware mode re-detected from the new radio',
+  radioManager.getFirmwareMode() === 'OFFSEASON',
+  String(radioManager.getFirmwareMode()),
+);
+await sleep(2500); // reconcile debounce + push
+check(
+  'the active config is pushed to the new radio',
+  secondPosts.some(p => p.stationConfigurations?.red2?.ssid === '5940-Vikings'),
+  JSON.stringify(secondPosts),
+);
+check('the old radio is left alone', configPosts.length === firstPostsBefore, `posts=${configPosts.length}`);
+
 // ── Cleanup ──────────────────────────────────────────────────────────
 radioManager.stopPolling();
 server.close();
+second.close();
 rmSync(activeConfigPath, { force: true });
 rmSync(stagedConfigPath, { force: true });
 

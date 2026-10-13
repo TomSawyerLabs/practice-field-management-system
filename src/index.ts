@@ -7,7 +7,7 @@ import { runSyslogServer } from './runSyslogServer.js';
 import { setupWebSocket } from './websocketServer.js';
 import { runFMS, UdpSendPort } from './fmsServer.js';
 import { startConfigurationScheduler } from './scheduler.js';
-import { waitForRadio, detectFirmwareMode, checkInterfaceIps, checkRequiredTools } from './startupChecks.js';
+import { checkInterfaceIps, checkRequiredTools } from './startupChecks.js';
 import { createBackend, createDryRunBackend } from './node-ip/index.js';
 import type { NetworkBackend } from './node-ip/index.js';
 import CIDRMatcher from 'cidr-matcher';
@@ -161,7 +161,9 @@ function parseRecordingStreamsEnv(raw: string | undefined): RecordingStreamConfi
 
 // resolveSetting() is the single precedence rule (saved value, then env), so
 // it's also what the tests exercise — see scripts/test-setup-config.ts.
-const RadioUrl = setupConfigStore.resolveSetting('radioUrl', 'RADIO_URL').value ?? 'http://10.0.100.2';
+/** Where the radio's API is — the wizard's value, else RADIO_URL. Read
+ *  live: a change saved in the wizard is applied at once (see below). */
+const radioUrl = () => setupConfigStore.resolveSetting('radioUrl', 'RADIO_URL').value ?? 'http://10.0.100.2';
 const VlanInterface = setupConfigStore.resolveSetting('vlanInterface', 'VLAN_INTERFACE').value; // 'eno1', or undefined
 const StartFMS = process.env.FMS_ENDPOINT === 'true';
 // Experimental: stations whose DS gets the TCP station-assignment reply even
@@ -290,16 +292,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   // Initialize radio manager — firmware mode will be set when the radio connects
-  const radioManager = new RadioManager(RadioUrl, VlanInterface);
+  const radioManager = new RadioManager(radioUrl(), VlanInterface);
+  // The wizard's radio URL takes effect the moment it's saved.
+  setupConfigStore.addListener(() => radioManager.setApiBaseUrl(radioUrl()));
 
   // Connect to the radio in the background — don't block startup.
   // After a full restart (iptables were flushed), re-apply the restored activeConfig
   // once firmware mode is known, so configureNetwork knows whether to start dnsmasq.
   (async () => {
-    const status = await waitForRadio(RadioUrl);
-    if (status) {
-      radioManager.setFirmwareMode(detectFirmwareMode(status.version));
-    }
+    // Whichever radio answers first — the URL may be corrected in the setup
+    // wizard while we wait. RadioManager detects the firmware mode itself.
+    await radioManager.whenConnected();
 
     // Re-apply config to rebuild network rules if needed.
     const teamMappings = radioManager.getTeamMappings();
@@ -1004,7 +1007,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         const settings = setupConfigStore.get().settings;
         return runSetupProbe({
           vlanInterface: settings.vlanInterface ?? VlanInterface,
-          radioUrl: settings.radioUrl ?? RadioUrl,
+          radioUrl: radioUrl(),
           fmsAddress: settings.fmsAddress ?? '10.0.100.5',
           dryRun: process.env.DRY_RUN !== undefined,
           videoProxyTarget: settings.videoProxyTarget ?? process.env.VIDEO_PROXY_TARGET,

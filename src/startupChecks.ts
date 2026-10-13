@@ -1,43 +1,5 @@
-import { isValidRadioUpdate, type RadioUpdate } from './types.js';
 import { appWarn } from './appLogger.js';
 import type { NetworkBackend } from './node-ip/index.js';
-
-/**
- * Try to reach the radio, retrying up to maxAttempts times.
- * Returns the radio status if reachable, or null if all attempts fail.
- */
-export async function waitForRadio(url: string, maxAttempts = Infinity): Promise<RadioUpdate | null> {
-  const statusUrl = `${url}/status`;
-  let attempt = 0;
-
-  while (attempt < maxAttempts) {
-    try {
-      const response = await fetch(statusUrl, {
-        signal: AbortSignal.timeout(3000),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data: RadioUpdate = await response.json();
-
-      if (!isValidRadioUpdate(data)) {
-        throw new Error('Invalid radio status response');
-      }
-
-      console.log(`Radio connected (version: ${data.version})`);
-      return data;
-    } catch (err) {
-      attempt++;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.log(`Waiting for radio at ${url} (attempt ${attempt}: ${msg}) — retrying in 10s`);
-      await delay(10_000);
-    }
-  }
-
-  return null;
-}
 
 /**
  * Parse the firmware mode from the radio version string.
@@ -121,8 +83,4 @@ export async function checkRequiredTools(tools: string[]): Promise<void> {
     );
     process.exit(78); // EX_CONFIG per sysexits.h
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

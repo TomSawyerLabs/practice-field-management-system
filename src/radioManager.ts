@@ -1,7 +1,8 @@
 import { skippedInDryRunUnlessLocal } from './dryRun.js';
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { configureNetwork, setInternetAccess } from './networkManager.js';
-import { appError } from './appLogger.js';
+import { appError, appInfo } from './appLogger.js';
+import { detectFirmwareMode } from './startupChecks.js';
 import { formatDuration, teamOfSsid } from './utils.js';
 import {
   AdditionalChannelStatistic,
@@ -107,8 +108,17 @@ class RadioManager {
   private linkedSince = new Map<StationName, { at: number; ssid: string }>();
   private lastLinkedListeners: ((timestamps: Partial<Record<StationName, number>>) => void)[] = [];
 
+  /** The radio's firmware version from its last status, so a change of
+   *  radio (or of the URL pointing at one) re-detects the firmware mode. */
+  private radioVersion?: string;
+  /** Resolved by the first successful status poll after a (re)connect. */
+  private connectWaiters: (() => void)[] = [];
+  /** URL already logged as not answering, so a dead radio isn't logged
+   *  every poll. */
+  private reportedUnreachable?: string;
+
   constructor(
-    private readonly apiBaseUrl: string,
+    private apiBaseUrl: string,
     private readonly radioManagementInterface?: string,
     private firmwareMode?: string,
   ) {
@@ -123,6 +133,43 @@ class RadioManager {
   setFirmwareMode(mode: string): void {
     this.firmwareMode = mode;
     console.log(`Firmware mode updated: ${mode}`);
+  }
+
+  /** PRACTICE / OFFSEASON / FRC / UNKNOWN, from the radio's version; unset
+   *  until a radio has answered. */
+  getFirmwareMode(): string | undefined {
+    return this.firmwareMode;
+  }
+
+  /** Where the radio's API is. */
+  getApiBaseUrl(): string {
+    return this.apiBaseUrl;
+  }
+
+  /**
+   * Point at a radio somewhere else — the setup wizard's radio URL, applied
+   * the moment it's saved. Status polling switches straight over; the
+   * firmware mode is re-detected from the new radio's first status, and
+   * the config sync check pushes the active config to it if it differs.
+   */
+  setApiBaseUrl(url: string): void {
+    if (url === this.apiBaseUrl) return;
+    appInfo(`Radio URL changed: ${this.apiBaseUrl} → ${url}`);
+    this.apiBaseUrl = url;
+    // Not connected until the new radio answers (whenConnected waits for it).
+    this.connected = false;
+    this.radioVersion = undefined;
+    this.reportedUnreachable = undefined;
+    this.mismatchSince = null;
+    this.reconcileAttempts = 0;
+    void this.updateStatus().catch(() => {});
+  }
+
+  /** Resolves once the radio answers a status poll (at once if it already
+   *  is). Follows URL changes: it waits for whichever radio answers. */
+  whenConnected(): Promise<void> {
+    if (this.connected) return Promise.resolve();
+    return new Promise(resolve => this.connectWaiters.push(resolve));
   }
 
   private saveStagedConfig(): void {
@@ -416,8 +463,6 @@ class RadioManager {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      this.connected = true;
-
       const rawUpdate = await response.json();
 
       if (!isValidRawRadioUpdate(rawUpdate)) {
@@ -425,6 +470,17 @@ class RadioManager {
 
         throw new Error('Invalid radio status');
       }
+
+      if (!this.connected) console.log(`Radio connected at ${this.apiBaseUrl} (version: ${rawUpdate.version})`);
+      this.connected = true;
+      this.reportedUnreachable = undefined;
+      // The firmware mode decides whether a commit runs dnsmasq (OFFSEASON),
+      // so it follows the radio actually answering, not the one at startup.
+      if (rawUpdate.version !== this.radioVersion) {
+        this.radioVersion = rawUpdate.version;
+        this.setFirmwareMode(detectFirmwareMode(rawUpdate.version));
+      }
+      for (const resolve of this.connectWaiters.splice(0)) resolve();
 
       // Translate radio-native station names (red1-blue3) to internal slot names (slot1-slot6)
       const radioUpdate: RadioUpdate = translateRadioUpdate(rawUpdate);
@@ -468,6 +524,11 @@ class RadioManager {
         appError('Error fetching radio status: ' + (error instanceof Error ? error.message : String(error)));
         this.connected = false;
         submit();
+      } else if (this.reportedUnreachable !== this.apiBaseUrl) {
+        this.reportedUnreachable = this.apiBaseUrl;
+        console.log(
+          `Waiting for the radio at ${this.apiBaseUrl}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       throw error;
     } finally {
