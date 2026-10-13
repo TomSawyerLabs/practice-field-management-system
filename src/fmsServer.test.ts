@@ -3,11 +3,34 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import { parseIncomingUdpMessage, startFMSServer, type FmsServer } from './fmsServer.js';
 
-// Loopback, on ports nothing else on a dev box should hold. The real server
-// binds 10.0.100.5:1750/1160, which a test cannot.
+// Loopback, on ports the OS says are free. The real server binds
+// 10.0.100.5:1750/1160, which a test cannot. Not a fixed or random range:
+// Windows reserves port ranges (Hyper-V, WinNAT) that move between boots,
+// and a random pick inside one fails with EACCES.
 const ADDRESS = '127.0.0.1';
-const TCP = 27_750 + Math.floor(Math.random() * 1000);
-const UDP = 27_160 + Math.floor(Math.random() * 1000);
+
+async function freeTcpPort(): Promise<number> {
+  const server = net.createServer();
+  await new Promise<void>(r => server.listen(0, ADDRESS, r));
+  const { port } = server.address() as net.AddressInfo;
+  await new Promise(r => server.close(r));
+  return port;
+}
+
+async function freeUdpPort(): Promise<number> {
+  const socket = dgram.createSocket('udp4');
+  await new Promise<void>(r => socket.bind(0, ADDRESS, r));
+  const { port } = socket.address();
+  await new Promise<void>(r => socket.close(() => r()));
+  return port;
+}
+
+let TCP = 0;
+let UDP = 0;
+beforeAll(async () => {
+  TCP = await freeTcpPort();
+  UDP = await freeUdpPort();
+});
 
 /** Legacy NI DS team handshake: [size:2=3] [0x18] [team:2]. */
 function handshake(team: number) {
@@ -84,15 +107,16 @@ describe('disconnectTeam closes the sessions of one team only', () => {
 
 describe('handshake reply follows the resolver', () => {
   let fms: FmsServer;
-  const TCP2 = TCP + 1;
+  let TCP2 = 0;
   const answers: Record<number, 'red2'> = { 254: 'red2' };
   const askedFrom: string[] = [];
 
   beforeAll(async () => {
+    TCP2 = await freeTcpPort();
     fms = await startFMSServer({
       address: ADDRESS,
       tcp: TCP2,
-      udp: UDP + 1,
+      udp: await freeUdpPort(),
       resolveTeamSlot: (team, address) => {
         askedFrom.push(address);
         return answers[team];
@@ -169,10 +193,11 @@ describe('DS UDP status parsing', () => {
 
 describe('unparseable UDP status logging', () => {
   let fms: FmsServer;
-  const UDP3 = UDP + 2;
+  let UDP3: number;
 
   beforeAll(async () => {
-    fms = await startFMSServer({ address: ADDRESS, tcp: TCP + 2, udp: UDP3 });
+    UDP3 = await freeUdpPort();
+    fms = await startFMSServer({ address: ADDRESS, tcp: await freeTcpPort(), udp: UDP3 });
   });
   afterAll(() => {
     fms.udpSocket.close();
