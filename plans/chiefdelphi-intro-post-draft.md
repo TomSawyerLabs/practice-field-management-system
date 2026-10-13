@@ -54,8 +54,12 @@ pFMS is built for that:
   phones. Hold-to-start, official timing (2026 REBUILT), field audio, and
   E-Stop/A-Stop. 1v1, 2v2 and 3v3 all work, with a queue for busy days.
 - **E-stop works outside matches too.** Robots in free drive can still be
-  stopped from the field. E-stop doesn't rely on the DS: the host drops the
-  control packets going to the robot.
+  stopped from the field. The field takes the DS under control and sends it
+  the e-stop, the same way a real field does. As a backstop, in case a DS
+  misbehaves, the host also holds back that DS's control packets until the
+  DS reports the robot disabled. The robot then disables itself within about
+  100 ms. Nothing else is touched: cameras, NetworkTables and telemetry keep
+  flowing.
 - **Multiple robots per team, all active at once.** Bring your comp bot and
   your practice bot and drive both together, each from its own laptop. Each
   laptop's DS link, routing, `.local` names (Limelights, roboRIO) and E-stop
@@ -104,33 +108,26 @@ poke at it.
 
 [SCREENSHOTS: team page · /scores on the TV · /csa · a /timelapse frame]
 
-### Honest limitations
+### Limitations
 
-- Linux only for real hardware, and it needs root to manage networking.
-- VH-113/VH-109 only. The six stations are fixed to VLANs 10–60 for now.
-- **The field AP firmware has limits of its own**, and pFMS works around
-  them rather than hiding them:
-  - pFMS supports both images, but `OFFSEASON`'s firewalls stop most teams
-    from uploading code, so we recommend `PRACTICE`.
-  - `PRACTICE` runs its own DHCP on the team VLANs, so pFMS has to NAT
-    laptop ↔ robot traffic. The DS ↔ roboRIO UDP ports are asymmetric, so
-    that takes per-laptop DNAT on top of MASQUERADE.
-  - Any Wi-Fi change reconfigures the whole radio: about 30 s with
-    **every** robot's Wi-Fi down. pFMS schedules changes for when no robot
-    is enabled and no match is set up, but on a busy day you'll still
-    notice it.
-  - Each team gets one subnet (`10.TE.AM.0/24`), so a team's two robots
-    sit on identical subnets. That's the reason two-robot support took real
-    work.
-  - Given all that, **we'd be very happy to support field APs other than the
-    VH-109/VH-113.** If you've got other hardware in mind, or want to help
-    add it, let's talk.
-- It's built for practice fields, not for running an official-style event.
-  For a full offseason event with schedules, alliance selection and playoffs,
-  [Cheesy Arena](https://github.com/Team254/cheesy-arena) /
+- **It's for practice fields, not events.** There's no event schedule,
+  alliance selection or playoffs. For a full offseason event,
+  [Cheesy Arena](https://github.com/Team254/cheesy-arena) and
   [Freezy Arena](https://github.com/Freezy-Arena/freezy-arena) are still the
-  right tools. We see pFMS as the
-  thing running on the other 360 days of the year.
+  right tools. pFMS is for the rest of the year.
+- **Linux host only**, and it needs root to manage the networking. (The UI
+  runs anywhere in dry-run mode.)
+- **Only the VH-113/VH-109 field radio for now**, with the six stations on
+  VLANs 10–60. That radio's firmware is the biggest source of friction:
+  - Every Wi-Fi change reconfigures the whole radio. That means about 30 s
+    with **every** robot's Wi-Fi down, even when only one team is joining
+    or leaving. pFMS waits until no robot is enabled and no match is set
+    up, but on a busy day you'll still notice it.
+  - The `OFFSEASON` image's firewalls stop most teams from uploading code,
+    so we recommend `PRACTICE`. pFMS does a fair amount of routing work to
+    make that image behave like an ordinary network.
+
+  We'd be very happy to support other field APs (see below).
 
 ### What we'd love from you
 
