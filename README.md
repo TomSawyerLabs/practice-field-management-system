@@ -114,6 +114,18 @@ bun run build
 sudo bun src/index.ts                 # then open http://<host>:3000/setup
 ```
 
+Or skip git and bun entirely: every push to `master` publishes a
+single-file pFMS for Linux (x64 and arm64) that carries everything,
+including its web interface, and can update itself from the admin page:
+
+```bash
+curl -fLO https://github.com/TomSawyerLabs/practice-field-management-system/releases/latest/download/pfms-linux-x64
+chmod +x pfms-linux-x64 && sudo ./pfms-linux-x64
+```
+
+See [docs/deployment.md](docs/deployment.md#single-file-binary) for
+signature checks, self-update and automatic updates.
+
 That's a complete field — pFMS serves its own web interface, so no Caddy
 or nginx is required to get started. Add a reverse proxy later for HTTPS
 (casting the scoreboard needs it) and a friendly hostname.
