@@ -3143,6 +3143,14 @@ export function isStopCast(msg: unknown): msg is StopCast {
   return (msg as StopCast).type === 'stopCast';
 }
 
+/** What a scoreboard TV shows: the match scoreboard, or the speed challenge
+ *  leaderboard full screen. Chosen per display, like swap and mute. */
+export type ScoreboardView = 'scoreboard' | 'leaderboard';
+
+export function isScoreboardView(value: unknown): value is ScoreboardView {
+  return value === 'scoreboard' || value === 'leaderboard';
+}
+
 /** Sent by a cast receiver (TV) to register itself with the backend. */
 export interface CastReceiverRegister {
   type: 'castReceiverRegister';
@@ -3153,6 +3161,8 @@ export interface CastReceiverRegister {
   muted?: boolean;
   /** True if this display shows the robot setup checks (optional for old clients). */
   checks?: boolean;
+  /** What this display shows (optional for old clients: the scoreboard). */
+  view?: ScoreboardView;
 }
 
 export function isCastReceiverRegister(msg: unknown): msg is CastReceiverRegister {
@@ -3207,10 +3217,31 @@ export function isCastReceiverChecks(msg: unknown): msg is CastReceiverChecks {
   return (msg as CastReceiverChecks).type === 'castReceiverChecks';
 }
 
+/** Sent by admin to switch a specific receiver between the scoreboard and
+ *  the leaderboard. */
+export interface CastReceiverView {
+  type: 'castReceiverView';
+  receiverId: string;
+  view: ScoreboardView;
+}
+
+export function isCastReceiverView(msg: unknown): msg is CastReceiverView {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as CastReceiverView;
+  return m.type === 'castReceiverView' && isScoreboardView(m.view);
+}
+
 /** Broadcast to all clients: current state of all cast receivers. */
 export interface CastReceiverList {
   type: 'castReceiverList';
-  receivers: { id: string; name: string; swapped: boolean; muted: boolean; checks: boolean }[];
+  receivers: {
+    id: string;
+    name: string;
+    swapped: boolean;
+    muted: boolean;
+    checks: boolean;
+    view: ScoreboardView;
+  }[];
 }
 
 export function isCastReceiverList(msg: unknown): msg is CastReceiverList {

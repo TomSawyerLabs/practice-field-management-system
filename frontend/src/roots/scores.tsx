@@ -5,6 +5,8 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { ScoreboardPage } from '../components/ScoreboardPage';
 import { MatchSummaryPage } from '../components/MatchSummaryPage';
 import { PracticeDayPage } from '../components/PracticeDayPage';
+import { LeaderboardTvPage } from '../components/LeaderboardTvPage';
+import { SCOREBOARD_VIEW } from '../utils/scoreboardView';
 
 // `/matches/<token>` is the post-match summary a team scanned off the TV. It
 // shares this bundle (the server maps that path to scores.html); the older
@@ -35,6 +37,8 @@ createRoot(document.getElementById('root')!).render(
           <PracticeDayPage token={practiceToken} />
         ) : summaryToken ? (
           <MatchSummaryPage token={summaryToken} />
+        ) : SCOREBOARD_VIEW === 'leaderboard' ? (
+          <LeaderboardTvPage />
         ) : (
           <ScoreboardPage />
         )}

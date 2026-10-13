@@ -109,9 +109,11 @@ sudo apt install iptables iputils-arping fping dnsmasq-base conntrack tcpdump
 sudo apt install alsa-utils dhcpcd5   # audio + robot tester
 ```
 
-All six in the first line are checked at startup — **the app exits
-immediately with code 78 if any is missing**, regardless of which firmware
-you run.
+All six in the first line are needed to run the field network,
+regardless of which firmware you run. If any is missing pFMS still starts
+but leaves the field network down; the setup wizard's Host step lists what
+is missing and can install it for you (**Install missing tools**), after
+which the field network comes up on its own.
 
 You need **both** [bun](https://bun.sh) (to build) and a system **node**
 (the service runs `/usr/bin/node`).
@@ -176,7 +178,9 @@ sudo chown -R "$USER" /opt/practice-field-management-system
 ```
 
 Install the unit file from [setup.md](setup.md#systemd-service), adjusting
-`WorkingDirectory` to your checkout. Then:
+`WorkingDirectory` to your checkout — or let the setup wizard's Deployment
+step write and enable it for you (**Install and enable the service**).
+Then:
 
 ```bash
 sudo systemctl daemon-reload
@@ -222,16 +226,18 @@ box.
 ## 8. First run
 
 > **There's a guided version of the rest of this.** Open **`/setup`** and
-> it walks the same ground with live checks — host, trunk NIC, field
-> control, radio, team VLANs, audio, scoreboard, and how to keep it
-> running. Checks re-run every few seconds, so a step turns green the
-> moment you fix it, and your answers are saved: stop partway, come back,
-> and it picks up at the next unfinished step. Everything below is the
-> manual equivalent.
+> it walks the same ground with live checks — host, admin passphrase,
+> trunk NIC, field control, radio, team VLANs, audio, scoreboard, and how
+> to keep it running. Checks re-run every few seconds, a step whose checks
+> pass marks itself done, and settings take effect the moment you save
+> them — no restart. Your answers are saved: stop partway, come back, and
+> it picks up at the next unfinished step. Everything below is the manual
+> equivalent.
 
-1. **Set the admin passphrase.** Visit `/admin`. The first visit prompts
-   you to create one (minimum 4 characters). Anyone can claim it while
-   none is set, so do this before opening the field up.
+1. **Set the admin passphrase.** The setup wizard asks for it second, or
+   visit `/admin`: the first visit prompts you to create one (minimum 4
+   characters). Anyone can claim it — and change the field — while none
+   is set, so do this before opening the field up.
 2. **Assign a team to a station.** From the home page, enter a team
    number to open its control page, then add the robot's SSID and WPA key
    and press **Enable Robot**. The AP reconfigures in ~30 seconds — later

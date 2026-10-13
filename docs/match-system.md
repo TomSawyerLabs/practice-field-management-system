@@ -593,12 +593,24 @@ One row per set of teams showing their best attempt, with the number of
 runs they've had. Window, stopwatch and relay runs are ranked in separate
 tables — they aren't comparable. Ties go to whoever got there first.
 
-It appears on `/match` while the field is idle. Its **Show on the scoreboard
-TVs** switch puts it on the bottom of the scoreboard between runs (top 5), so
-the TV is the leaderboard while the next team lines up. The switch is off by
-default and turns itself off when pFMS restarts: history keeps every past
-event's runs, so a leaderboard that showed whenever one existed would sit on
-the TVs through ordinary practice days.
+It appears on `/match` while the field is idle, and a TV can show it two
+ways — both opt-in, because history keeps every past event's runs and a
+leaderboard that showed whenever one existed would sit on the TVs through
+ordinary practice days:
+
+- **A leaderboard TV.** Set a display to the leaderboard view and the whole
+  screen is the leaderboard: every table in its own column (top 10), with a
+  strip across the top following the run on the field — who's up, the
+  clock, each alliance's laps or time. On a browser, use the **🏆
+  leaderboard** chip on the scoreboard (or open `/scores?view=leaderboard`,
+  over https — the http→https redirect drops query strings), and **📊
+  scoreboard** to go back; the choice is remembered per browser. For a Cast
+  TV, use its **scoreboard / leaderboard** chip under **Admin → Scoring →
+  Displays**, or switch view before casting.
+- **Between runs on the scoreboard.** The **Show on the scoreboard TVs**
+  switch on `/match` puts the top 5 on the bottom of every scoreboard
+  between runs, so a single TV is the leaderboard while the next team lines
+  up. It is off by default and turns itself off when pFMS restarts.
 
 ## Match History
 

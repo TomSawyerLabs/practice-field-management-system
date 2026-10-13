@@ -37,6 +37,7 @@ import {
   isCastReceiverSwap,
   isCastReceiverMute,
   isCastReceiverChecks,
+  isCastReceiverView,
   isPlayGetReady,
   isSupportState,
   isSupportChatIncoming,
@@ -92,6 +93,8 @@ import {
   CastReceiverSwap,
   CastReceiverMute,
   CastReceiverChecks,
+  CastReceiverView,
+  type ScoreboardView,
   PlayGetReady,
   StopCast,
   RoutePreferenceState,
@@ -868,6 +871,11 @@ function receiveMessage(detail: Message) {
 
   if (isCastReceiverChecks(detail)) {
     handleCastReceiverChecks(detail);
+    return;
+  }
+
+  if (isCastReceiverView(detail)) {
+    handleCastReceiverView(detail);
     return;
   }
 
@@ -1909,6 +1917,14 @@ function handleCastReceiverChecks(msg: CastReceiverChecks) {
   }
 }
 
+function handleCastReceiverView(msg: CastReceiverView) {
+  // On receiver: switch between the scoreboard and the leaderboard
+  if (window.__isCastReceiver) {
+    localStorage.setItem('scoreboard-view', msg.view);
+    window.location.reload();
+  }
+}
+
 export function useCastReceivers(): CastReceiverList['receivers'] {
   const [receivers, setReceivers] = useState(currentCastReceivers);
 
@@ -1934,6 +1950,10 @@ export function sendCastReceiverChecks(receiverId: string, checks: boolean) {
   ws?.send(JSON.stringify({ type: 'castReceiverChecks', receiverId, checks } satisfies CastReceiverChecks));
 }
 
+export function sendCastReceiverView(receiverId: string, view: ScoreboardView) {
+  ws?.send(JSON.stringify({ type: 'castReceiverView', receiverId, view } satisfies CastReceiverView));
+}
+
 /** Show or hide the speed challenge leaderboard on the scoreboard TVs. */
 export function sendChallengeLeaderboardOnTv(show: boolean) {
   ws?.send(JSON.stringify({ type: 'challengeLeaderboardOnTv', show } satisfies ChallengeLeaderboardOnTv));
@@ -1951,10 +1971,8 @@ export function onPlayGetReady(fn: () => void): () => void {
   return () => events.removeEventListener('playGetReady', handler);
 }
 
-export function sendCastReceiverRegister(name: string, swapped: boolean, muted: boolean, checks: boolean) {
-  ws?.send(
-    JSON.stringify({ type: 'castReceiverRegister', name, swapped, muted, checks } satisfies CastReceiverRegister),
-  );
+export function sendCastReceiverRegister(display: Omit<CastReceiverRegister, 'type'>) {
+  ws?.send(JSON.stringify({ type: 'castReceiverRegister', ...display } satisfies CastReceiverRegister));
 }
 
 // ── Server Responses ─────────────────────────────────────────────────

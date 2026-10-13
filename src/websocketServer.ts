@@ -52,6 +52,9 @@ import {
   isCastReceiverMute,
   isCastReceiverChecks,
   isChallengeLeaderboardOnTv,
+  isCastReceiverView,
+  isScoreboardView,
+  type ScoreboardView,
   isPlayGetReady,
   isRadioConfigureRequest,
   isRemoveSavedTeam,
@@ -460,7 +463,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   let nextReceiverId = 1;
   const castReceivers = new Map<
     WebSocket,
-    { id: string; name: string; swapped: boolean; muted: boolean; checks: boolean }
+    { id: string; name: string; swapped: boolean; muted: boolean; checks: boolean; view: ScoreboardView }
   >();
 
   function broadcastReceiverList() {
@@ -875,6 +878,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
               swapped: data.swapped,
               muted: !!data.muted,
               checks: !!data.checks,
+              view: isScoreboardView(data.view) ? data.view : 'scoreboard',
             });
             ws.send(JSON.stringify({ type: 'castReceiverId', id }));
             broadcastReceiverList();
@@ -1368,6 +1372,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           swapped: data.swapped,
           muted: !!data.muted,
           checks: !!data.checks,
+          view: isScoreboardView(data.view) ? data.view : 'scoreboard',
         });
         // Send the assigned ID back to the receiver
         ws.send(JSON.stringify({ type: 'castReceiverId', id }));
@@ -1431,6 +1436,18 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         for (const [rws, info] of castReceivers) {
           if (info.id === data.receiverId) {
             info.muted = data.muted;
+            if (rws.readyState === WebSocket.OPEN) {
+              rws.send(JSON.stringify(data));
+            }
+            break;
+          }
+        }
+        broadcastReceiverList();
+      } else if (isCastReceiverView(data)) {
+        // Find the target receiver and switch what it shows
+        for (const [rws, info] of castReceivers) {
+          if (info.id === data.receiverId) {
+            info.view = data.view;
             if (rws.readyState === WebSocket.OPEN) {
               rws.send(JSON.stringify(data));
             }

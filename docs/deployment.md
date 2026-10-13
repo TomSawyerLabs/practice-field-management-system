@@ -29,7 +29,7 @@ sudo ./pfms          # then open http://<host>:3000/setup
 The binary still needs the **system packages** (`iptables`, `arping`,
 `fping`, `dnsmasq`, `conntrack`, `tcpdump`) — it bundles the JavaScript
 runtime, not the networking tools. The setup wizard tells you which are
-missing.
+missing and can install them with apt.
 
 Cross-compile with a bun target triple, e.g.:
 
@@ -96,6 +96,12 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now practice-field-management-system
 ```
+
+Or let the setup wizard do it: on a systemd host, the Deployment step's
+**Install and enable the service** writes this unit (with the runtime,
+entry point and working directory pFMS is running with now), reloads
+systemd and enables it for boot. It doesn't start it — the copy you're
+using is already running — so the service takes over from the next boot.
 
 There's no `User=`, so it runs as root — which it needs, for VLANs and
 iptables.

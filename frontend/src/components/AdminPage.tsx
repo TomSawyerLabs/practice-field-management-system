@@ -70,6 +70,7 @@ import {
   sendCastReceiverSwap,
   sendCastReceiverMute,
   sendCastReceiverChecks,
+  sendCastReceiverView,
   useFirmwareStore,
   sendCreateApiKey,
   sendRevokeApiKey,
@@ -1879,6 +1880,13 @@ function ScoringSection() {
                     variant={r.checks ? 'filled' : 'outlined'}
                     color={r.checks ? 'info' : 'default'}
                     onClick={() => sendCastReceiverChecks(r.id, !r.checks)}
+                  />
+                  <Chip
+                    label={r.view === 'leaderboard' ? '🏆 leaderboard' : '📊 scoreboard'}
+                    size="small"
+                    variant={r.view === 'leaderboard' ? 'filled' : 'outlined'}
+                    color={r.view === 'leaderboard' ? 'secondary' : 'default'}
+                    onClick={() => sendCastReceiverView(r.id, r.view === 'leaderboard' ? 'scoreboard' : 'leaderboard')}
                   />
                 </Box>
               ))}

@@ -26,14 +26,15 @@
               }
               if (data && data.swap !== undefined && data.mute !== undefined) {
                 // Combined session-start state: apply it all, reload once if
-                // anything changed. `checks` is absent from older senders.
-                var settings = { 'scoreboard-swap': data.swap, 'scoreboard-muted': data.mute };
-                if (data.checks !== undefined) settings['scoreboard-checks'] = data.checks;
+                // anything changed. `checks` and `view` are absent from older
+                // senders.
+                var settings = { 'scoreboard-swap': data.swap ? '1' : '0', 'scoreboard-muted': data.mute ? '1' : '0' };
+                if (data.checks !== undefined) settings['scoreboard-checks'] = data.checks ? '1' : '0';
+                if (data.view === 'scoreboard' || data.view === 'leaderboard') settings['scoreboard-view'] = data.view;
                 var changed = false;
                 for (var key in settings) {
-                  var value = settings[key] ? '1' : '0';
-                  if (localStorage.getItem(key) !== value) changed = true;
-                  localStorage.setItem(key, value);
+                  if (localStorage.getItem(key) !== settings[key]) changed = true;
+                  localStorage.setItem(key, settings[key]);
                 }
                 if (changed) window.location.reload();
               } else if (data && data.swap !== undefined) {
@@ -44,6 +45,9 @@
                 window.location.reload();
               } else if (data && data.checks !== undefined) {
                 localStorage.setItem('scoreboard-checks', data.checks ? '1' : '0');
+                window.location.reload();
+              } else if (data && (data.view === 'scoreboard' || data.view === 'leaderboard')) {
+                localStorage.setItem('scoreboard-view', data.view);
                 window.location.reload();
               }
             } catch (e) {}
@@ -71,7 +75,7 @@
             receiverApplicationId: (window.__PFMS_CAST && window.__PFMS_CAST.appId) || '260A23F5',
             autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
           });
-          // When a Cast session starts, send the current swap + mute + checks state to the receiver
+          // When a Cast session starts, send the current swap + mute + checks + view state to the receiver
           ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, function (event) {
             if (
               event.sessionState === cast.framework.SessionState.SESSION_STARTED ||
@@ -80,6 +84,11 @@
               var swap = localStorage.getItem('scoreboard-swap') === '1';
               var mute = localStorage.getItem('scoreboard-muted') === '1';
               var checks = localStorage.getItem('scoreboard-checks') === '1';
+              // The view on screen, which a ?view= URL may override
+              var view =
+                new URLSearchParams(window.location.search).get('view') ||
+                localStorage.getItem('scoreboard-view') ||
+                'scoreboard';
               var session = ctx.getCurrentSession();
               if (session) {
                 var deviceName = '';
@@ -88,7 +97,7 @@
                 } catch (e) {}
                 session.sendMessage(
                   CAST_NAMESPACE,
-                  JSON.stringify({ swap: swap, mute: mute, checks: checks, deviceName: deviceName }),
+                  JSON.stringify({ swap: swap, mute: mute, checks: checks, view: view, deviceName: deviceName }),
                 );
               }
             }
@@ -120,6 +129,14 @@
           var session = cast.framework.CastContext.getInstance().getCurrentSession();
           if (session) {
             session.sendMessage(CAST_NAMESPACE, JSON.stringify({ checks: checks }));
+          }
+        } catch (e) {}
+      };
+      window.__castSendView = function (view) {
+        try {
+          var session = cast.framework.CastContext.getInstance().getCurrentSession();
+          if (session) {
+            session.sendMessage(CAST_NAMESPACE, JSON.stringify({ view: view }));
           }
         } catch (e) {}
       };

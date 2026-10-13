@@ -14,8 +14,6 @@ import {
   useMatchState,
   useChallengeLeaderboard,
   useTelemetryCallback,
-  useWsConnected,
-  sendCastReceiverRegister,
   usePublicUrl,
   matchSummaryUrl,
   useStationChecks,
@@ -23,6 +21,7 @@ import {
 import type {
   Alliance,
   ScoreBatch,
+  ScoreboardView,
   SetupCheckLevel,
   StationChecksState,
   StationName,
@@ -40,6 +39,9 @@ import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { MatchTimer, getActiveColor } from './MatchTimer';
 import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
 import { MatchAudioBridge, stopAllSounds } from '../hooks/useMatchAudio';
+import { useCastReceiverRegistration } from '../hooks/useCastReceiverRegistration';
+import { switchScoreboardView } from '../utils/scoreboardView';
+import { ControlChip } from './ControlChip';
 
 // Cast initialization happens in scores.html before this module loads.
 declare global {
@@ -48,6 +50,7 @@ declare global {
     __castSendSwap?: (swap: boolean) => void;
     __castSendMute?: (mute: boolean) => void;
     __castSendChecks?: (checks: boolean) => void;
+    __castSendView?: (view: ScoreboardView) => void;
     __isCastReceiver?: boolean;
   }
 }
@@ -342,24 +345,7 @@ export function ScoreboardPage() {
     }, []),
   );
 
-  // Register as a cast receiver whenever the socket (re)connects — the server
-  // tracks receivers per-connection, so a reconnected socket must re-register
-  const wsUp = useWsConnected();
-  const swappedRef = useRef(swapped);
-  swappedRef.current = swapped;
-  const mutedRef = useRef(muted);
-  mutedRef.current = muted;
-  const checksRef = useRef(checksMode);
-  checksRef.current = checksMode;
-  useEffect(() => {
-    if (!window.__isCastReceiver || !wsUp) return;
-    // Small delay so the register lands after the state replay settles
-    const timer = setTimeout(() => {
-      const name = localStorage.getItem('scoreboard-device-name') || document.title || 'Cast Display';
-      sendCastReceiverRegister(name, swappedRef.current, mutedRef.current, checksRef.current);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [wsUp]);
+  useCastReceiverRegistration({ swapped, muted, checks: checksMode, view: 'scoreboard' });
 
   // Re-render every second for time-ago displays and alliance shift timing
   useEffect(() => {
@@ -656,6 +642,7 @@ export function ScoreboardPage() {
             onClick={toggleChecks}
           />
           <ControlChip icon="⇄" label="swap" onClick={toggleSwap} />
+          <ControlChip icon="🏆" label="leaderboard" onClick={() => switchScoreboardView('leaderboard')} />
           <ControlChip icon="🪶" label={LITE ? 'lite on' : 'lite'} active={LITE} onClick={toggleLite} />
           <ControlChip
             icon={muted ? '🔇' : '🔊'}
@@ -2111,41 +2098,6 @@ function FieldEStopBand() {
 }
 
 // ── Video Mode ────────────────────────────────────────────────────────
-
-/** Small labeled control button for the scoreboard's top-right corner. */
-function ControlChip({
-  icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Typography
-      onClick={onClick}
-      sx={{
-        cursor: 'pointer',
-        fontSize: '0.75rem',
-        lineHeight: 1,
-        px: 1,
-        py: 0.5,
-        borderRadius: 1,
-        border: `1px solid ${active ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.25)'}`,
-        color: active ? '#fff' : 'rgba(255,255,255,0.75)',
-        backgroundColor: active ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.4)',
-        whiteSpace: 'nowrap',
-        userSelect: 'none',
-        '&:hover': { backgroundColor: 'rgba(255,255,255,0.25)', color: '#fff' },
-      }}
-    >
-      {icon} {label}
-    </Typography>
-  );
-}
 
 /** Match timeline overlaid on the top edge of the video. Always mounted (so it
  *  can fade rather than reflow the layout when a match starts or ends) and it
