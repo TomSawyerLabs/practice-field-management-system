@@ -118,6 +118,7 @@ import {
   isRequestRecordingsInventory,
   redactSetupSettings,
   restoreSetupSecrets,
+  settingsPatchFromWire,
   isCaptureTimelapseFrame,
   isDeleteTimelapseRender,
   isTestTimelapseLights,
@@ -1697,7 +1698,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
             ws.send(JSON.stringify({ error: 'Admin authentication required to change setup settings' }));
           } else {
             // A masked secret coming back means "keep the stored one".
-            setup.configStore.updateSettings(restoreSetupSecrets(data.settings, setup.configStore.get().settings));
+            setup.configStore.updateSettings(
+              restoreSetupSecrets(settingsPatchFromWire(data.settings), setup.configStore.get().settings),
+            );
             // Settings change what the probe reports, so re-run immediately.
             void runAndBroadcastProbe();
           }

@@ -717,9 +717,18 @@ export function isSetupConfigState(msg: unknown): msg is SetupConfigState {
 }
 
 /** Persist one or more wizard settings. These override their env equivalents. */
+/** Settings to change. `null` clears a setting (back to its env/default):
+ *  JSON has no `undefined`, so a cleared field would otherwise never arrive. */
+export type SetupSettingsPatch = { [K in keyof SetupSettings]?: SetupSettings[K] | null };
+
 export interface UpdateSetupSettings {
   type: 'updateSetupSettings';
-  settings: Partial<SetupSettings>;
+  settings: SetupSettingsPatch;
+}
+
+/** A patch from the wire as the store takes it: `null` → `undefined` (clear). */
+export function settingsPatchFromWire(patch: SetupSettingsPatch): Partial<SetupSettings> {
+  return Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v === null ? undefined : v]));
 }
 
 /**
@@ -803,7 +812,7 @@ export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings 
     // Unknown key, or a value that fails its check — reject the whole message
     // rather than silently applying the parts that happen to be valid.
     if (!validate) return false;
-    if (value !== undefined && !validate(value)) return false;
+    if (value !== undefined && value !== null && !validate(value)) return false;
   }
 
   return true;

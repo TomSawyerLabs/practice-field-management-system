@@ -10,7 +10,7 @@
  * radio manager at an attacker — and has to stop accepting writes at all once
  * the field has been claimed with an admin passphrase.
  */
-import { isUpdateSetupSettings, isPrivateHostUrl } from '../src/types.js';
+import { isUpdateSetupSettings, isPrivateHostUrl, settingsPatchFromWire } from '../src/types.js';
 
 let failures = 0;
 function check(name: string, cond: boolean) {
@@ -58,6 +58,13 @@ check('refuses a wrong-typed known key', !update({ deploymentMode: 'kubernetes' 
 check('refuses a non-boolean confirmation', !update({ castVerified: 'yes' }));
 check('refuses an interface name with shell characters', !update({ vlanInterface: 'eno1; rm -rf /' }));
 check('accepts a normal interface name', update({ vlanInterface: 'eno1.100' }));
+check('accepts null, which clears a setting', update({ vlanInterface: null, radioUrl: null }));
+check(
+  'null arrives as a clear',
+  JSON.stringify(settingsPatchFromWire({ vlanInterface: null, radioUrl: 'http://10.0.100.2' })) ===
+    JSON.stringify({ radioUrl: 'http://10.0.100.2' }) &&
+    'vlanInterface' in settingsPatchFromWire({ vlanInterface: null }),
+);
 check('allows clearing a setting', update({ radioUrl: undefined }));
 
 // A partially-valid payload must be rejected outright, not half-applied.

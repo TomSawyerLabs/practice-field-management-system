@@ -2423,8 +2423,11 @@ export function sendRequestSetupProbe() {
   sendWhenOpen({ type: 'requestSetupProbe' });
 }
 
+/** `undefined` clears a setting; it goes over the wire as `null`, since
+ *  JSON would drop it. */
 export function sendUpdateSetupSettings(settings: Partial<SetupSettings>) {
-  sendWhenOpen({ type: 'updateSetupSettings', settings });
+  const patch = Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, v === undefined ? null : v]));
+  sendWhenOpen({ type: 'updateSetupSettings', settings: patch });
 }
 
 export function sendMarkSetupStep(step: SetupStepId, status: 'pending' | 'done' | 'skipped') {
