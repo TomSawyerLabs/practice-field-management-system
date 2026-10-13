@@ -118,6 +118,8 @@ hardware or a real deployment:
 
 `src/robotWifiScan.test.ts` › `the scanner > capitals-only difference is still tested automatically` failed once in a full `bun test` run (2026-10-13, 941 pass / 1 fail, while another thread's uncommitted work was in the tree) and passes on its own (`bun test src/robotWifiScan.test.ts`, 29/29). Looks timing-dependent under the full suite's load. Matters because a red full run hides real regressions.
 
+Also seen: `the scanner > a robot that goes quiet drops off the list` failed once in a full run (2026-10-13, 977 pass / 1 fail, with CPU-heavy binary builds running alongside); 29/29 three times on its own.
+
 ## The wizard's FMS address setting isn't applied
 
 `SetupSettings.fmsAddress` (`src/types.ts`) is only read by the setup probe
