@@ -65,6 +65,28 @@ system.
    showed whenever any challenge run existed in history — so once `556428c`
    got it to the TVs at all, the 2026-09-26/27 event's results sat on every
    idle TV.
+8. **A TV can be set to a dedicated leaderboard view** (2026-10-13, user:
+   "there should probably be a dedicated leaderboard view that a TV could be
+   set to"). It's a per-display _view_ of `/scores` (`?view=leaderboard`,
+   localStorage `scoreboard-view`), not a new route, because a Cast TV can
+   only ever load the URL registered for the Cast app — the sender can't
+   pass a URL, so per-TV settings travel as namespace messages →
+   localStorage → reload, exactly like swap/mute/checks. Switchable from the
+   🏆/📊 chips, carried when casting, and per receiver from Admin → Scoring →
+   Displays (`castReceiverView`). The view shows every table (top 10) plus a
+   live strip of the run on the field; it ignores decision 7's switch, since
+   choosing the view is the opt-in. Decision 7's switch stays for the
+   one-TV case.
+
+   Verified with headless Chromium against a fake localhost WebSocket
+   backend (no real pFMS — this PC reaches the field radio). Not verified on
+   a real Cast TV.
+
+   Committed as `353e9fa`, after waiting for a thread with hunks in the
+   same files to commit first (the pre-commit typecheck can't pass on a
+   mix of my staged files and its unstaged ones). Gotcha: staging partial
+   hunks with `git apply --cached --unidiff-zero` misplaced lines — build
+   the patch with normal context instead.
 
 ## Findings that constrain the design
 
@@ -237,6 +259,10 @@ the way `shiftState` is) so it can be unit-tested.
    but a dry run on the field before Saturday is the only way to know.
 3. Not built, and not asked for: a public shareable leaderboard link (the
    board is on `/match` and the TV only).
+4. The leaderboard ranks every challenge run in history, so the next speed
+   challenge day will mix in the 2026-09-26/27 results. Scope it to today
+   (or to an event the host starts)? Recommendation: today only, by local
+   date — no new state for staff to manage.
 
 ## Things not to do
 
