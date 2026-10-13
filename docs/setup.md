@@ -3,8 +3,8 @@
 ## Requirements
 
 Works with [`PRACTICE` or `OFFSEASON` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
-on the VH-113 AP (or VH-109). `PRACTICE` is recommended for simplicity and
-programmer connectivity.
+on the VH-113 AP (or VH-109). `PRACTICE` is recommended: `OFFSEASON`'s
+firewalls stop most teams from uploading code to their robots.
 
 Currently, only Linux is supported for network management due to
 dependencies on `iptables` and `iputils-arping`. The app must run with

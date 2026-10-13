@@ -1,6 +1,7 @@
 # Network Architecture
 
-The VH-113 field radio runs **`PRACTICE`** (or `OFFSEASON`) AP firmware.
+The VH-113 field radio runs **`PRACTICE`** (recommended) or `OFFSEASON` AP
+firmware.
 The AP handles DHCP on team VLANs directly; the pFMS host adds VLAN
 interfaces and MASQUERADE rules to route traffic between team subnets and
 the site network so laptops can reach robots and internet.

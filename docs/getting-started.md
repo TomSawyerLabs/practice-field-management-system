@@ -92,9 +92,11 @@ pFMS supports the **`PRACTICE`** (recommended) and **`OFFSEASON`**
 firmware images from
 [Vivid-Hosting's release page](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases).
 
-`PRACTICE` is simpler: the AP serves DHCP on team VLANs itself, and
-programmers can reach robots directly. With `OFFSEASON`, pFMS has to run
-`dnsmasq` per VLAN instead.
+Use `PRACTICE`. `OFFSEASON` works with pFMS, but its firewalls stop most
+teams from uploading code to their robots, which is too much friction for a
+practice field. On `PRACTICE` the AP serves DHCP on the team VLANs itself
+(pFMS routes around that with NAT); on `OFFSEASON`, pFMS runs `dnsmasq` per
+VLAN instead.
 
 - [ ] Flash the AP and confirm it answers at `http://10.0.100.2/status`.
 

@@ -4,7 +4,7 @@ A web interface for configuring practice field access points, running
 self-service matches, and enabling team laptop ↔ robot routing.
 
 pFMS drives a VH-113 (or VH-109) field AP running
-[`PRACTICE` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
+[`PRACTICE` (recommended) or `OFFSEASON` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
 (see [Field AP firmware limitations](#field-ap-firmware-limitations)),
 and provides:
 
@@ -59,9 +59,9 @@ and provides:
 pFMS works around several limits of the Vivid-Hosting field AP firmware.
 They're worth knowing before you set up a field:
 
-- **`PRACTICE` firmware is required.** The `OFFSEASON` image's firewalls
-  block too much of the traffic pFMS routes between team laptops and
-  robots.
+- **Use `PRACTICE` firmware.** pFMS supports `OFFSEASON` too, but its
+  firewalls stop most teams from uploading code to their robots — too
+  much friction for a practice field.
 - **`PRACTICE` serves DHCP on the team VLANs itself.** That's a cost, not
   a convenience: robots get addresses pFMS didn't hand out, so the host
   has to NAT (MASQUERADE plus per-DS DNAT) to route laptop ↔ robot traffic

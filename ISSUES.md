@@ -1,17 +1,5 @@
 # Known Issues & Technical Debt
 
-## Docs present OFFSEASON AP firmware as supported, for the wrong reason (README fixed)
-
-`docs/setup.md:5`, `docs/network.md:3,62` and
-`docs/getting-started.md:91-97` say pFMS works with `PRACTICE` **or**
-`OFFSEASON` firmware. `getting-started.md` says `PRACTICE` is recommended
-because the AP serves DHCP itself. Per the user (2026-10-12), `PRACTICE` is
-**required**: `OFFSEASON` has excessive firewalls. The AP's DHCP on
-`PRACTICE` is actually a cost that pFMS has to work around with reverse NAT.
-A new field following the docs could flash `OFFSEASON` and get stuck.
-Before changing the docs, decide whether the OFFSEASON code paths
-(per-VLAN dnsmasq, `docs/internals.md`) stay.
-
 ## Global hook redundancy in StationStatus
 
 `StationStatus` renders 6 times (once per station). Each instance subscribes to several global hooks (`useLastLinked`, `usePortBridgeState`, `useLatest`, `useMatchState`, `useNetworkStats`, `useSubnetScan`, `useMdnsActivity`, etc.). Any update to these global states causes all 6 instances to re-render and diff their entire subtree, even if only one station's data changed.
