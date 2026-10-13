@@ -67,15 +67,50 @@ index.ts orchestrates the services.
 
 ## Plan / steps
 
-1. Plan doc ← current
-2. Radio URL live (commit)
-3. Trunk interface live (commit), tests with a fake backend + dry-run boot
-4. Audit results (Explore agent) → per-step fixes, separate commits
-5. Remove the setup page's "restart pFMS after changing them" text and the
+1. Plan doc — done (`a3d7d8e`)
+2. **DRY_RUN changes nothing outside the machine** — done (`3b13074`) (first, before
+   any further local boots — see Findings)
+3. Radio URL live — done (`9c5a45b`)
+4. Trunk interface live ← next (commit), tests with a fake backend + dry-run boot
+   against a fake radio
+5. Audit results (Explore agent) → per-step fixes, separate commits
+6. Remove the setup page's "restart pFMS after changing them" text and the
    ISSUES.md "Restart after a startup-only setting" entry
-6. Docs (setup.md / getting-started.md) where they describe restarting
+7. Docs (setup.md / getting-started.md) where they describe restarting
 
 ## Findings / gotchas
+
+- **2026-10-12 incident: local DRY_RUN boots wiped the field radio.** This
+  dev PC reaches the real radio at `10.0.100.2`. DRY_RUN only swapped the
+  host network backend; RadioManager still POSTed, and its config-sync check
+  "repaired" the real radio to the dry run's empty config after ~15 s.
+  steamboat's journal: radio cleared 16:03:45 and 16:46:18 (my dry-run
+  boots), and overwritten 17:34:26 with the main checkout's stale
+  `active-config.json` SSIDs (1234, 972, 4159-Comp, 751, 840-Beta) by an
+  instance running from there (not one of mine). steamboat re-applied each
+  within ~34 s. User: never test on production hardware without explicit
+  consent; DRY_RUN should actually not change anything.
+- DRY_RUN write sites found (all unguarded before this work): radio
+  `/configuration` POST and `/scan/start`; robot-radio configure and
+  firmware upload (`robotTestMonitor`, despite its `dryRun` flag); DS UDP
+  control packets (`matchEngine.sendDSPacket`) and FMS TCP station
+  assignment (`fmsServer`); timelapse Home Assistant lights; Slack (posts,
+  deploy announcer); web push; `conntrack -D` and `ip route flush` in
+  index.ts; wpa_supplicant/wpa_cli on host Wi-Fi cards (robot Wi-Fi scan,
+  6 GHz watch, test joins); mDNS reflector sends. Already guarded: network
+  backend, dnsmasq, e-stop cuts, packet capture, subnet scanner.
+- Local fakes are exempt: writes to a loopback URL still go through in a
+  dry run, because `scripts/test-radio-reconcile.ts` runs with `DRY_RUN=1`
+  (to avoid the Linux network backend) against a fake radio on 127.0.0.1.
+- Staging two features that share files: `stage-hunks.py` (scratch, in
+  `%TEMP%\pfms-scratch`) selects hunks by regex; Python text-mode pipes on
+  Windows turn LF into CRLF, so send `git apply` bytes. Check the staged
+  tree builds alone with `git checkout-index -a --prefix=.staged-check/` +
+  `tsc -p .staged-check`.
+- DRY_RUN design: reads stay live (radio status, team checks, scans) so the
+  UI shows real data; every write is logged `[dry-run] Would …` and
+  skipped. Backstop: in a dry run, `fetch` refuses any non-GET/HEAD request
+  to a non-loopback host.
 
 - `checkRequiredTools()` exits the process when a tool is missing — fine at
   startup, wrong for a live switch; needs a non-exiting variant.
@@ -84,10 +119,11 @@ index.ts orchestrates the services.
 
 ## Progress log
 
-- [ ] Plan doc committed
-- [ ] Radio URL live
+- [x] Plan doc committed (`a3d7d8e`)
+- [x] DRY_RUN changes nothing outside the machine — `src/dryRun.ts`, guards at every write site, fetch backstop; regression test in `radioManager.test.ts` fails with dry run off (`3b13074`)
+- [x] Radio URL live (`9c5a45b`)
 - [ ] Trunk interface live
-- [ ] Wizard audit
+- [x] Wizard audit (`plans/setup-wizard-audit.md`)
 - [ ] Audit fixes
 - [ ] Restart text + ISSUES entry removed
 - [ ] Docs
@@ -98,6 +134,11 @@ index.ts orchestrates the services.
 
 ## Things not to do
 
+- **Never boot pFMS locally against the real radio.** Every local boot gets
+  `RADIO_URL` pointing at a fake radio on 127.0.0.1, and no test touches
+  real field hardware without the user's explicit consent (reads included).
+- Don't create extra branches/worktrees for this — work in this worktree
+  (user, 2026-10-12).
 - Don't touch the main checkout's uncommitted work.
 - Don't restart the process to apply a setting — that's what this removes.
 - Don't deploy or push.
