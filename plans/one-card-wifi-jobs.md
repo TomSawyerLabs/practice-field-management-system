@@ -66,7 +66,7 @@ join, longer scan cycle) was judged a non-issue.
 6. Docs (`docs/robot-tester.md`), checks, commit.
 7. Deploy is a separate step — ask first.
 
-Current step: done — committed `af79f1a`, deployed `c6dfb5e` to steamboat 2026-10-12 23:38.
+Current step: done — committed `af79f1a`, deployed `c6dfb5e`; both jobs on `wlx90de80351083` since 2026-10-13 11:09.
 
 ## Findings / gotchas
 
@@ -100,11 +100,16 @@ Current step: done — committed `af79f1a`, deployed `c6dfb5e` to steamboat 2026
 - [x] 5 admin page: job chips, band notes, robot problem alert, channel per robot heard
 - [x] 6 docs (`docs/robot-tester.md` "One card or two", `docs/configuration.md`), typecheck, tests — committed `af79f1a`
 - [x] 7 deployed `c6dfb5e` 2026-10-12 23:38: `wlp0s20f3` 38 channels (2.4: 13, 5: 25), `wlx90de80351083` 98 (2.4: 11, 5: 28, 6: 59), watch learned the field AP's addresses, no scan errors. Optional next: both jobs on `wlx90de80351083` (a setting change on steamboat — needs the user's OK)
+- [x] 8 both jobs on the MT7921AU (user's go-ahead 2026-10-13): steamboat
+      `setup-config.json` `robotWifiInterface` `wlp0s20f3` → `wlx90de80351083`
+      (backup `setup-config.json.bak-20261013-110844`), `./update.sh force` at
+      11:09 with the field idle. One pFMS wpa_supplicant on the card, 98
+      channels, the watch learned the field AP's addresses on the first
+      combined scan, no scan errors. The AC 9560 (`wlp0s20f3`) is free again.
 
 ## Open questions for the user
 
-1. Try both jobs on the MT7921AU (`wlx90de80351083`) to prove the one-card
-   path on real hardware? Optional; the two-card setup works as is.
+None.
 
 ## Things not to do
 
