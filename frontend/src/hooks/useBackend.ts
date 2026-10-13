@@ -128,6 +128,7 @@ import {
   QueueAdmin,
   isQueueState,
   isChallengeLeaderboardState,
+  type ChallengeLeaderboardOnTv,
   type ChallengeLeaderboardTables,
   isStationChecksState,
   TeamPrefsState,
@@ -434,7 +435,7 @@ let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
-let currentChallengeLeaderboard: ChallengeLeaderboardTables = {};
+let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
@@ -574,9 +575,9 @@ function handleQueueState(state: QueueState) {
   events.dispatchEvent(new CustomEvent('queueState', { detail: state }));
 }
 
-function handleChallengeLeaderboard(tables: ChallengeLeaderboardTables) {
-  currentChallengeLeaderboard = tables;
-  events.dispatchEvent(new CustomEvent('challengeLeaderboard', { detail: tables }));
+function handleChallengeLeaderboard(leaderboard: ChallengeLeaderboard) {
+  currentChallengeLeaderboard = leaderboard;
+  events.dispatchEvent(new CustomEvent('challengeLeaderboard', { detail: leaderboard }));
 }
 
 const currentTeamPrefs = new Map<number, TeamPrefsState>();
@@ -935,7 +936,7 @@ function receiveMessage(detail: Message) {
   }
 
   if (isChallengeLeaderboardState(detail)) {
-    handleChallengeLeaderboard(detail.tables);
+    handleChallengeLeaderboard({ tables: detail.tables, onTv: detail.onTv === true });
     return;
   }
 
@@ -1196,19 +1197,25 @@ export function useQueueState(): QueueState | null {
   return state;
 }
 
+export interface ChallengeLeaderboard {
+  tables: ChallengeLeaderboardTables;
+  /** Whether match control has put it on the scoreboard TVs. */
+  onTv: boolean;
+}
+
 /** The speed challenge leaderboard, computed by the server. Unlike
  *  `useMatchHistory`, this reaches the read-only /scores socket too. */
-export function useChallengeLeaderboard(): ChallengeLeaderboardTables {
-  const [tables, setTables] = useState<ChallengeLeaderboardTables>(currentChallengeLeaderboard);
+export function useChallengeLeaderboard(): ChallengeLeaderboard {
+  const [leaderboard, setLeaderboard] = useState<ChallengeLeaderboard>(currentChallengeLeaderboard);
 
   useEffect(() => {
-    setTables(currentChallengeLeaderboard);
-    const handler = (e: Event) => setTables((e as CustomEvent<ChallengeLeaderboardTables>).detail);
+    setLeaderboard(currentChallengeLeaderboard);
+    const handler = (e: Event) => setLeaderboard((e as CustomEvent<ChallengeLeaderboard>).detail);
     events.addEventListener('challengeLeaderboard', handler);
     return () => events.removeEventListener('challengeLeaderboard', handler);
   }, []);
 
-  return tables;
+  return leaderboard;
 }
 
 /** A team joins the fill line from its page. */
@@ -1911,6 +1918,11 @@ export function sendCastReceiverMute(receiverId: string, muted: boolean) {
 
 export function sendCastReceiverChecks(receiverId: string, checks: boolean) {
   ws?.send(JSON.stringify({ type: 'castReceiverChecks', receiverId, checks } satisfies CastReceiverChecks));
+}
+
+/** Show or hide the speed challenge leaderboard on the scoreboard TVs. */
+export function sendChallengeLeaderboardOnTv(show: boolean) {
+  ws?.send(JSON.stringify({ type: 'challengeLeaderboardOnTv', show } satisfies ChallengeLeaderboardOnTv));
 }
 
 /** Ask the server to play the "get ready" attention sound everywhere. */

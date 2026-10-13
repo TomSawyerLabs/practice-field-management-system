@@ -40,6 +40,7 @@ import {
   useMatchState,
   useMatchHistory,
   useChallengeLeaderboard,
+  sendChallengeLeaderboardOnTv,
   sendMatchCreate,
   sendMatchCancel,
   sendMatchAbortCountdown,
@@ -528,7 +529,26 @@ export function MatchControlPage() {
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
         )}
 
-        {showHistory && <ChallengeLeaderboard tables={leaderboard} />}
+        {showHistory && (
+          <ChallengeLeaderboard
+            tables={leaderboard.tables}
+            action={
+              <>
+                <FormControlLabel
+                  control={
+                    <Switch checked={leaderboard.onTv} onChange={e => sendChallengeLeaderboardOnTv(e.target.checked)} />
+                  }
+                  label="Show on the scoreboard TVs"
+                />
+                <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+                  {leaderboard.onTv
+                    ? 'The TVs show the top 5 between runs. Turn this off when the speed challenge is over — it also turns off by itself when pFMS restarts.'
+                    : 'For a speed challenge day: the TVs show the top 5 between runs.'}
+                </Typography>
+              </>
+            }
+          />
+        )}
         {showHistory && <MatchHistorySection matches={matchHistory.matches} />}
       </Container>
     </Box>

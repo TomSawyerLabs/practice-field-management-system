@@ -3974,11 +3974,27 @@ export type ChallengeLeaderboardTables = Partial<Record<ChallengeTiming, Challen
 export interface ChallengeLeaderboardState {
   type: 'challengeLeaderboard';
   tables: ChallengeLeaderboardTables;
+  /** Whether the scoreboard TVs show it between runs. Opt-in for the day of
+   *  a speed challenge: history keeps old events' runs, so without this the
+   *  TV would show a stale leaderboard on every ordinary practice day. */
+  onTv: boolean;
 }
 
 export function isChallengeLeaderboardState(msg: unknown): msg is ChallengeLeaderboardState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as ChallengeLeaderboardState).type === 'challengeLeaderboard';
+}
+
+/** Sent by match control to show or hide the leaderboard on the TVs. */
+export interface ChallengeLeaderboardOnTv {
+  type: 'challengeLeaderboardOnTv';
+  show: boolean;
+}
+
+export function isChallengeLeaderboardOnTv(msg: unknown): msg is ChallengeLeaderboardOnTv {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as ChallengeLeaderboardOnTv;
+  return m.type === 'challengeLeaderboardOnTv' && typeof m.show === 'boolean';
 }
 
 /** HTTP body for POST /api/match-review — a human reviewer's final score for one alliance. */

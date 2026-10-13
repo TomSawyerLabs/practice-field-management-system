@@ -593,9 +593,12 @@ One row per set of teams showing their best attempt, with the number of
 runs they've had. Window, stopwatch and relay runs are ranked in separate
 tables — they aren't comparable. Ties go to whoever got there first.
 
-It appears on `/match` while the field is idle, and takes over the bottom of
-the scoreboard between runs (top 5) so the TV is the leaderboard while the
-next team lines up.
+It appears on `/match` while the field is idle. Its **Show on the scoreboard
+TVs** switch puts it on the bottom of the scoreboard between runs (top 5), so
+the TV is the leaderboard while the next team lines up. The switch is off by
+default and turns itself off when pFMS restarts: history keeps every past
+event's runs, so a leaderboard that showed whenever one existed would sit on
+the TVs through ordinary practice days.
 
 ## Match History
 

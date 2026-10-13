@@ -25,8 +25,8 @@ and provides:
 - **Speed challenges and relay races** — non-match formats for field
   events: one robot (or two racing) enabled for a window you choose, laps
   and penalties tallied from a phone, or a relay where the FMS sends each
-  alliance's robots out one at a time; all ranked on a leaderboard that
-  takes over the TV between runs
+  alliance's robots out one at a time; all ranked on a leaderboard you can
+  put on the TV between runs
   ([details](docs/match-system.md#speed-challenge))
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review

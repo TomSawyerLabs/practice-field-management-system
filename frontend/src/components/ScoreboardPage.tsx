@@ -473,10 +473,11 @@ export function ScoreboardPage() {
     return getMatchSubPeriod(matchState.phase, displayRemaining, matchState.config.teleopDuration);
   }, [matchState, isMatchMode, displayRemaining]);
 
-  // The leaderboard takes the TV between runs — never while one is going,
-  // and only once a challenge has actually been run.
+  // On a speed challenge day, match control puts the leaderboard on the TV
+  // between runs — never while one is going, and only once a challenge has
+  // actually been run. Off otherwise: history keeps past events' runs.
   const betweenRuns = !matchState || matchState.phase === 'idle' || matchState.phase === 'created';
-  const showLeaderboard = !videoMode && betweenRuns && Object.keys(leaderboard).length > 0;
+  const showLeaderboard = leaderboard.onTv && !videoMode && betweenRuns && Object.keys(leaderboard.tables).length > 0;
 
   // Background — split when only one side is in a match
   const scoreboardBg = getScoreboardBg(matchState, leftInMatch, rightInMatch);
@@ -1108,7 +1109,7 @@ export function ScoreboardPage() {
               >
                 Speed Challenge Leaderboard
               </Box>
-              <ChallengeLeaderboard tables={leaderboard} compact limit={5} />
+              <ChallengeLeaderboard tables={leaderboard.tables} compact limit={5} />
             </Box>
           )}
 

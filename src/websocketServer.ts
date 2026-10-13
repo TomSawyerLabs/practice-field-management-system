@@ -51,6 +51,7 @@ import {
   isCastReceiverSwap,
   isCastReceiverMute,
   isCastReceiverChecks,
+  isChallengeLeaderboardOnTv,
   isPlayGetReady,
   isRadioConfigureRequest,
   isRemoveSavedTeam,
@@ -783,18 +784,27 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
    *  actually changes — most history edits (reviews, recordings) don't
    *  touch it. */
   let leaderboardJson = '';
+  /** Off until match control turns it on for a speed challenge day, and off
+   *  again after a restart — history keeps every past event's runs, so a
+   *  leaderboard left on would sit on the TVs through ordinary practice. */
+  let leaderboardOnTv = false;
   function leaderboardMessage(): ChallengeLeaderboardState {
-    return { type: 'challengeLeaderboard', tables: challengeLeaderboard(matchHistoryStore?.getState().matches ?? []) };
+    return {
+      type: 'challengeLeaderboard',
+      tables: challengeLeaderboard(matchHistoryStore?.getState().matches ?? []),
+      onTv: leaderboardOnTv,
+    };
+  }
+  function refreshLeaderboard() {
+    const msg = leaderboardMessage();
+    const json = JSON.stringify(msg);
+    if (json === leaderboardJson) return;
+    leaderboardJson = json;
+    broadcast(msg);
   }
   if (matchHistoryStore) {
     leaderboardJson = JSON.stringify(leaderboardMessage());
-    matchHistoryStore.addListener(() => {
-      const msg = leaderboardMessage();
-      const json = JSON.stringify(msg);
-      if (json === leaderboardJson) return;
-      leaderboardJson = json;
-      broadcast(msg);
-    });
+    matchHistoryStore.addListener(refreshLeaderboard);
   }
 
   // Broadcast usage tracking state changes to all clients
@@ -1418,6 +1428,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           }
         }
         broadcastReceiverList();
+      } else if (isChallengeLeaderboardOnTv(data)) {
+        leaderboardOnTv = data.show;
+        refreshLeaderboard();
       } else if (isCastReceiverChecks(data)) {
         // Find the target receiver and send it the setup-checks toggle
         for (const [rws, info] of castReceivers) {

@@ -15,6 +15,7 @@ import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Typography from '@mui/material/Typography';
+import type { ReactNode } from 'react';
 import { ChallengeLeaderboardTables, ChallengeTiming, isCountUpTiming } from '../../../src/types';
 import { CHALLENGE_COLOR } from '../utils/matchFormat';
 
@@ -30,11 +31,14 @@ export function ChallengeLeaderboard({
   tables: byTiming,
   compact,
   limit,
+  action,
 }: {
   tables: ChallengeLeaderboardTables;
   /** TV styling: bigger type, no card chrome. */
   compact?: boolean;
   limit?: number;
+  /** Under the title in card mode, e.g. the show-on-TVs switch. */
+  action?: ReactNode;
 }) {
   const tables = (['window', 'stopwatch', 'relay'] as ChallengeTiming[])
     .map(timing => ({ timing, rows: byTiming[timing] ?? [] }))
@@ -124,9 +128,10 @@ export function ChallengeLeaderboard({
   return (
     <Card sx={{ mb: 2, borderLeft: `6px solid ${CHALLENGE_COLOR}` }}>
       <CardContent>
-        <Typography variant="h6" sx={{ mb: 1.5 }}>
+        <Typography variant="h6" sx={{ mb: action ? 0.5 : 1.5 }}>
           Speed Challenge Leaderboard
         </Typography>
+        {action && <Box sx={{ mb: 2 }}>{action}</Box>}
         {body}
       </CardContent>
     </Card>
