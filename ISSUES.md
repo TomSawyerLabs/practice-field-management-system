@@ -137,3 +137,14 @@ listening later in startup. Polling `/health` until it answers before
 connecting works (that's what a standalone boot check did). Matters because the
 script is the end-to-end check for live trunk switching and currently can't
 report anything past its first line.
+
+## fmsServer tests can still land on a Windows-reserved port
+
+A full `bun test` on Windows (2026-10-13, 950 pass / 2 fail) failed both
+`disconnectTeam closes the sessions of one team only` hooks with
+`listen EACCES: permission denied 127.0.0.1:28100`. 28100 sits in a Hyper-V
+excluded range (`netsh interface ipv4 show excludedportrange protocol=tcp`
+listed 28020–28119). The file passes on its own (13/13, twice), so the
+"free port" picked by `freeTcpPort()` in `src/fmsServer.test.ts` was free
+when probed but refused when the server bound it. Matters because a red full
+run hides real regressions.
