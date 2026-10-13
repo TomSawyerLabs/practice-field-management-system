@@ -73,7 +73,8 @@ commit:
       fails on the old recorder, passes now)
 - [x] 10 Two-robot last-robot re-claim — `6fb8d54`
 - [x] Stale restart entry rewritten — `97b0191`
-- [ ] Not deployed (nobody asked; deploy is a separate decision)
+- [x] Firmware docs corrected — `5a13573`
+- [ ] Deploy — on hold at the user's request (2026-10-12)
 
 ## Findings / gotchas
 
@@ -93,12 +94,14 @@ commit:
 
 ## Open questions for the user
 
-1. OFFSEASON firmware: make the docs say PRACTICE is required? And do the
-   OFFSEASON code paths (per-VLAN dnsmasq, arping conflict check) stay?
-   Recommendation: fix the docs now; keep the code until nobody is known
-   to run OFFSEASON, then remove it in its own change.
-2. Setup page restart: does a graceful restart (KEEP_NETWORK) pick up a new
-   trunk interface? Needs a test on steamboat before a button goes there.
+1. ~~OFFSEASON docs~~ — answered 2026-10-12: both firmwares are supported;
+   PRACTICE is recommended because OFFSEASON's firewalls stop most teams
+   uploading code. Docs fixed in `5a13573`, code paths stay.
+2. Setup-page restart: the setup page says the trunk interface and radio URL
+   are read at startup, so "restart pFMS" (the service, not the computer)
+   after changing them. The ISSUES.md entry asks whether that page should
+   offer the restart, and whether the graceful restart applies a new trunk
+   interface. Waiting on the user: keep the entry, or drop it.
 
 ## Things not to do
 
