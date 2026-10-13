@@ -88,6 +88,16 @@ system.
    hunks with `git apply --cached --unidiff-zero` misplaced lines — build
    the patch with normal context instead.
 
+9. **Leaderboard scope is an option: Today (default) or All time**
+   (2026-10-13, user: "Make this an option. does it belong on the /match
+   page?" — yes, on the leaderboard card beside the TV switch). Server-held
+   like the TV switch, back to Today on restart, and it applies to every
+   leaderboard at once (match card, scoreboard, leaderboard TVs). Today =
+   since local midnight on the server's clock (`startOfDay`); a 60 s
+   `refreshLeaderboard` interval rolls it over at midnight. The match card
+   shows whenever history has any challenge run (`anyRuns`), so All time is
+   reachable on a day with nothing yet.
+
 ## Findings that constrain the design
 
 1. **pFMS only controls robots inside a match.** `sendDSPacket()` is called
@@ -259,10 +269,6 @@ the way `shiftState` is) so it can be unit-tested.
    but a dry run on the field before Saturday is the only way to know.
 3. Not built, and not asked for: a public shareable leaderboard link (the
    board is on `/match` and the TV only).
-4. The leaderboard ranks every challenge run in history, so the next speed
-   challenge day will mix in the 2026-09-26/27 results. Scope it to today
-   (or to an event the host starts)? Recommendation: today only, by local
-   date — no new state for staff to manage.
 
 ## Things not to do
 
