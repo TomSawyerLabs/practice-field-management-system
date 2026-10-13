@@ -1,0 +1,124 @@
+# Publishes the single-file pFMS binaries (scripts/build-binary.ts) as a
+# GitHub release on every push to master. Self-update (src/selfUpdate.ts)
+# installs the newest `build-*` release whose signed SHA256SUMS checks out.
+#
+# Release: build-<YYYYMMDD-HHMM>-<short commit>, assets pfms-linux-x64,
+# pfms-linux-arm64, SHA256SUMS and SHA256SUMS.sig (ed25519, secret
+# PFMS_RELEASE_SIGNING_KEY; public key in src/releaseKey.ts), plus a
+# build-provenance attestation. Only the newest 20 builds are kept.
+#
+# Careful: "[skip ci]" anywhere in the head commit message skips this too.
+name: release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# One release at a time, in push order; a queued run is replaced by a newer
+# push rather than publishing a build that's already stale.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+
+  build:
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      # Frontend, type check, and this host's mdns-socket addon.
+      - run: bun run build
+      # Compiles release/pfms-linux-<arch> and smoke-runs --version.
+      - run: bun scripts/build-binary.ts bun-linux-${{ matrix.arch }}
+      # Boots it from an empty directory (dry run, fake radio).
+      - run: bun scripts/test-binary.ts release/pfms-linux-${{ matrix.arch }} "$(git rev-parse --short HEAD)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pfms-linux-${{ matrix.arch }}
+          path: release/pfms-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums and signature
+        env:
+          PFMS_RELEASE_SIGNING_KEY: ${{ secrets.PFMS_RELEASE_SIGNING_KEY }}
+        run: |
+          cd dist
+          sha256sum pfms-linux-x64 pfms-linux-arm64 > SHA256SUMS
+          cat SHA256SUMS
+          bun ../scripts/sign-release.ts sign SHA256SUMS
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/pfms-linux-*'
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short=$(git rev-parse --short HEAD)
+          tag="build-$(git log -1 --format=%cd --date=format:%Y%m%d-%H%M)-$short"
+          previous_tag=$(gh release list --limit 100 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("build-"))] | sort_by(.createdAt) | last | .tagName // ""')
+          previous=""
+          if [ -n "$previous_tag" ]; then
+            previous=$(git rev-list -n 1 "$previous_tag" 2>/dev/null || true)
+          fi
+          bun scripts/release-notes.ts "$previous" "$(git rev-parse HEAD)" > notes.md
+          cat notes.md
+          gh release create "$tag" dist/pfms-linux-x64 dist/pfms-linux-arm64 dist/SHA256SUMS dist/SHA256SUMS.sig \
+            --target "$GITHUB_SHA" --title "pFMS $short" --notes-file notes.md --latest
+      - name: Keep the newest 20 builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("build-"))] | sort_by(.createdAt) | reverse | .[20:] | .[].tagName' |
+            while read -r tag; do
+              echo "Removing $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            done

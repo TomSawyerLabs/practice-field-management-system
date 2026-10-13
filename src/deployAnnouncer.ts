@@ -122,7 +122,7 @@ export function formatAnnouncement(commits: DeployCommit[], last: string, curren
 const FS = '\x1f';
 const RS = '\x1e';
 
-async function readCommits(last: string, current: string): Promise<DeployCommit[]> {
+export async function readCommits(last: string, current: string): Promise<DeployCommit[]> {
   const { stdout } = await execFile(
     'git',
     [
