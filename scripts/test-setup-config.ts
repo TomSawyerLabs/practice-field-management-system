@@ -83,6 +83,21 @@ resumed.markStep('radio', 'pending');
 check('re-opening a step reopens the wizard', resumed.nextStep() === 'radio');
 check('completion stamp is cleared', resumed.get().completedAt === undefined);
 
+// ── A step whose checks all pass is done without a click ────────────
+const auto = new SetupConfigStore(FILE + '.auto');
+auto.markStep('audio', 'skipped');
+const changed = auto.markPassingStepsDone([
+  { id: 'host', status: 'pass' },
+  { id: 'admin', status: 'fail' },
+  { id: 'interfaces', status: 'warn' },
+  { id: 'audio', status: 'pass' },
+]);
+check('a passing step is marked done', changed && auto.get().steps.host?.status === 'done');
+check('a failing or warning step is left alone', !auto.get().steps.admin && !auto.get().steps.interfaces);
+check('a skipped step stays skipped', auto.get().steps.audio?.status === 'skipped');
+check('nothing to do reports no change', !auto.markPassingStepsDone([{ id: 'host', status: 'pass' }]));
+clearSetupConfig(FILE + '.auto');
+
 // ── Clearing starts over ────────────────────────────────────────────
 check('clear removes the file', clearSetupConfig(FILE) === FILE);
 check('clear is idempotent', clearSetupConfig(FILE) === null);

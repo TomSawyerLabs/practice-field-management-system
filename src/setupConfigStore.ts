@@ -55,6 +55,26 @@ export class SetupConfigStore {
     return this.nextStep() === null;
   }
 
+  /**
+   * Mark every step whose checks all pass as done, unless it is already
+   * done or deliberately skipped. Steps that need a person to confirm
+   * something (heard the sound, saw the TV) only pass once confirmed, so
+   * nothing is waved through. Returns whether anything changed.
+   */
+  markPassingStepsDone(steps: { id: SetupStepId; status: string }[]): boolean {
+    let changed = false;
+    for (const step of steps) {
+      const progress = this.config.steps[step.id]?.status;
+      if (step.status !== 'pass' || progress === 'done' || progress === 'skipped') continue;
+      this.config.steps[step.id] = { status: 'done', at: Date.now() };
+      changed = true;
+    }
+    if (!changed) return false;
+    this.config.completedAt = this.isComplete() ? Date.now() : undefined;
+    this.persist();
+    return true;
+  }
+
   markStep(id: SetupStepId, status: SetupStepProgress['status']): SetupConfig {
     this.config.steps[id] = { status, at: Date.now() };
     // Re-opening any step re-opens the wizard as a whole.

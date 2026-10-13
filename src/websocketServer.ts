@@ -739,7 +739,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     if (!setup || setupProbeInFlight) return;
     setupProbeInFlight = true;
     try {
-      broadcast(await setup.runProbe());
+      const probe = await setup.runProbe();
+      broadcast(probe);
+      // A step that passes is done — the operator doesn't have to say so.
+      // (The store's own listener broadcasts the new progress.)
+      setup.configStore.markPassingStepsDone(probe.steps);
     } catch (err) {
       appWarn(`Setup probe failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
