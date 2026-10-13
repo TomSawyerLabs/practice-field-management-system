@@ -263,10 +263,15 @@ export class RobotTestMonitor {
     //   resolver — a robot radio's DNS must not affect name resolution for the
     //   rest of the host (we only need the IP to detect the team number)
     // --nohook hostname: never let a lease rename the host
+    // --ipv4only: only the IPv4 lease identifies the team (10.TE.AM.x), and
+    //   robot radios offer no DHCPv6 or router adverts — trying v6 only logged
+    //   "dhcp6_openudp: Address already in use" (systemd-networkd holds UDP 546
+    //   on the trunk's link-local address, which the test VLAN shares)
     const proc = spawn(
       'dhcpcd',
       [
         '--oneshot',
+        '--ipv4only',
         '--nobackground',
         '--waitip',
         '4',
