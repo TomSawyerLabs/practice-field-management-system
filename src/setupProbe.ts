@@ -324,8 +324,7 @@ async function probeRadio(radioUrl: string): Promise<SetupCheck[]> {
       fail(
         'reachable',
         'Radio',
-        `No answer from ${radioUrl} (${msg}). Field control has to be reachable before the radio can be configured.`,
-        `curl -v ${radioUrl}/status`,
+        `No answer from ${radioUrl} (${msg}). The radio is reached over field control, so check the Interfaces and Field control steps above first.`,
       ),
     ];
   }
@@ -482,7 +481,6 @@ async function probeScoreboard(
         'video',
         'Video stream (optional)',
         `${videoProxyTarget} did not answer (${err instanceof Error ? err.message : err}).`,
-        `curl -v ${videoProxyTarget}`,
       ),
     );
   }
