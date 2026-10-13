@@ -38,6 +38,13 @@ volunteering to sit in a scorekeeper's chair.
 
 pFMS is built for that:
 
+- **Bring your robot exactly as it's set up at home. Everything just works.**
+  No radio reprogramming and no kiosk. Type in the SSID and WPA key your robot
+  already uses (once; pFMS remembers it) and the field AP serves that network.
+  Laptops stay on the site's ordinary Wi-Fi, with internet, and everything
+  they do at home works unchanged: Driver Station by team number, code
+  deploys, `roboRIO-TEAM-FRC.local`, `limelight-*.local` and other mDNS
+  names, NetworkTables, dashboards, and device web pages.
 - **Free drive by default.** A team picks a station from its phone or laptop,
   the field AP is reconfigured for it, and its DS keeps its own
   Enable/Disable. The FMS only takes over a station when the team **joins a
@@ -49,9 +56,6 @@ pFMS is built for that:
 - **E-stop works outside matches too.** Robots in free drive can still be
   stopped from the field. E-stop doesn't rely on the DS: the host drops the
   control packets going to the robot.
-- **Laptops stay on your normal network.** The host routes between your site
-  Wi-Fi and the team VLANs, so a programmer can deploy code, reach the
-  Limelight, and still have internet.
 - **Multiple robots per team, all active at once.** Bring your comp bot and
   your practice bot and drive both together, each from its own laptop. Each
   laptop's DS link, routing, `.local` names (Limelights, roboRIO) and E-stop
@@ -61,8 +65,7 @@ pFMS is built for that:
 ### Hardware (deliberately boring)
 
 - A **Vivid-Hosting VH-113 or VH-109** field AP running the
-  [`PRACTICE` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases).
-  The `OFFSEASON` image firewalls off too much for what pFMS does
+  [`PRACTICE` (recommended) or `OFFSEASON` firmware](https://frc-radio.vivid-hosting.net/access-points/fms-ap-firmware-releases)
 - **Any 802.1Q-capable managed switch.** The Linux host does the routing, so
   you don't need a Cisco L3 switch
 - **A Linux box** with a NIC that can carry a VLAN trunk (NUC, small server, or
@@ -107,7 +110,8 @@ poke at it.
 - VH-113/VH-109 only. The six stations are fixed to VLANs 10–60 for now.
 - **The field AP firmware has limits of its own**, and pFMS works around
   them rather than hiding them:
-  - The `OFFSEASON` image firewalls off too much, so pFMS needs `PRACTICE`.
+  - pFMS supports both images, but `OFFSEASON`'s firewalls stop most teams
+    from uploading code, so we recommend `PRACTICE`.
   - `PRACTICE` runs its own DHCP on the team VLANs, so pFMS has to NAT
     laptop ↔ robot traffic. The DS ↔ roboRIO UDP ports are asymmetric, so
     that takes per-laptop DNAT on top of MASQUERADE.

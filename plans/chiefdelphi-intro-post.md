@@ -41,9 +41,9 @@ Nothing has been posted; posting is the user's call.
   pFMS does the routing on the Linux host, so any 802.1Q switch works.
 - **Radio confusion.** It's unclear whether to run PRACTICE or OFFSEASON AP
   firmware, the VH-109→VH-113 conversion is a puzzle, and Linksys/OpenMesh
-  support was dropped. pFMS needs PRACTICE: OFFSEASON's firewalls are too
-  restrictive. (PRACTICE's own DHCP is a cost, not the reason. pFMS has to
-  reverse-NAT around it.)
+  support was dropped. pFMS supports both and recommends PRACTICE, because
+  OFFSEASON's firewalls stop most teams uploading code. (PRACTICE's own DHCP
+  is a cost, not the reason. pFMS has to reverse-NAT around it.)
 - **Safety under FMS control.** Ryan_Blue points out that under full FMS
   control a DS can't be disabled locally, so "your software is solely
   responsible" (`/t/information-about-the-fms-protocol/470616`). pFMS only
@@ -61,12 +61,17 @@ Nothing has been posted; posting is the user's call.
 
 ## Decisions already made (don't re-ask)
 
-- **PRACTICE firmware is required, not just recommended** (user,
-  2026-10-12). OFFSEASON firmware has excessive firewalls. Don't say the
-  reason is that PRACTICE does DHCP: its DHCP is a headache that pFMS works
-  around with reverse NAT. The repo docs still say otherwise, which is
-  logged in `ISSUES.md`.
+- **Both AP firmwares are supported; PRACTICE is recommended** (user,
+  2026-10-12, correcting an earlier "required"). OFFSEASON's firewalls stop
+  most teams uploading code. Don't say the reason is that PRACTICE does
+  DHCP: its DHCP is a headache that pFMS works around with reverse NAT.
+  The repo docs were fixed in `5a13573`.
 - **Link every FMS the post names** (user, 2026-10-12).
+- **Lead with "bring your robot as it is at home, everything just works"**
+  (user, 2026-10-12): no radio reprogramming, the field serves the robot's
+  own SSID/key, and mDNS, deploys and the DS all work unchanged.
+- **Invite support for radios beyond the VH-109/VH-113** (user,
+  2026-10-12), given their firmware limits.
 
 ## Progress log
 
