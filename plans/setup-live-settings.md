@@ -11,15 +11,18 @@ audit every other wizard step for manual work.
 
 ## Environment / context
 
-- Worktree `C:\Users\camer\.t3\worktrees\practice-field-configurator\feature-setup-live-settings`,
-  branch `feature/setup-live-settings`, based on local `master` at `0abbba1`
-  (includes 14 unpushed commits from `plans/resolve-open-issues-2026-10.md`).
-- The main checkout has another thread's uncommitted work (cancel-match /
-  field E-Stop) in `src/index.ts`, `websocketServer.ts`, `types.ts`,
-  `matchEngine.ts` — that's why this work is in a worktree. Expect merge
-  conflicts with it in `src/index.ts`.
+- **Work happens in the main checkout on `master`**
+  (`C:\Users\camer\git\practice-field-configurator`), per the user
+  (2026-10-12: no separate branches). The first commits were made in a
+  worktree (`feature/setup-live-settings`) and fast-forwarded onto `master`;
+  that worktree is left over (remove with care: unlink bun's workspace link
+  first — see memory on junctions).
+- Shared working tree: stage only my hunks; the pre-commit hook typechecks a
+  mix of staged and worktree files, so commit split work with
+  `%TEMP%\pfms-scratch\commit-staged-only.sh` (backup, `checkout-index` the
+  listed files, set new files aside, commit, restore).
 - Both settings resolve via `setupConfigStore.resolveSetting()` (wizard
-  value wins over env) at `src/index.ts:159-160`, into module constants.
+  value wins over env); both are now read live.
 - Checks: `bun run typecheck`, `bun test` (~5.5 min, run in background),
   `DRY_RUN=1 bun src/index.ts` for a boot test (run from a temp cwd — it
   writes state files into the cwd).
@@ -122,15 +125,44 @@ index.ts orchestrates the services.
 - [x] Plan doc committed (`a3d7d8e`)
 - [x] DRY_RUN changes nothing outside the machine — `src/dryRun.ts`, guards at every write site, fetch backstop; regression test in `radioManager.test.ts` fails with dry run off (`3b13074`)
 - [x] Radio URL live (`9c5a45b`)
-- [ ] Trunk interface live
+- [x] Trunk interface live (`edc128c`): `src/trunkInterface.ts`, rebuild in
+      index.ts, waits for a match, retries every 30 s; wizard picker and
+      "field network running" check; `scripts/test-trunk-switch.ts`
+- [x] Missing tools no longer exit pFMS at startup (part of `edc128c`)
+- [x] Clearing a wizard setting actually clears it (`ddb7231`) — found on
+      the way: `undefined` was dropped by JSON
+- [x] FMS server test flake on Windows reserved ports (`6492a87`)
 - [x] Wizard audit (`plans/setup-wizard-audit.md`)
-- [ ] Audit fixes
-- [ ] Restart text + ISSUES entry removed
-- [ ] Docs
+- [x] Restart text + ISSUES entry removed, docs updated (`edc128c`)
+- [ ] Audit fixes beyond the two settings ← next; see Open questions
 
 ## Open questions for the user
 
-(none yet)
+Remaining "go do this" steps from `plans/setup-wizard-audit.md`, with my
+recommendation for each:
+
+1. **Missing tools** — an "Install" button in the Host step that runs
+   `apt-get install -y …` as root (pFMS already is), streaming the output.
+   Recommend yes; admin-only, refuses while apt is locked.
+2. **Admin passphrase in the wizard** — the wizard is open to anyone until
+   one is set. Recommend yes: an inline "set passphrase" field as the first
+   step.
+3. **Mark-done clicks** — auto-mark a step done when its checks all pass
+   (steps needing a human confirmation already only pass once confirmed).
+   Recommend yes.
+4. **Deployment** — write and enable the systemd unit from the wizard on a
+   systemd host (guard against a second instance). Recommend yes, but it's
+   the riskiest; would want your OK on the design first.
+5. **Scoreboard API key** — inline "create key" button instead of "go to
+   /admin". Recommend yes (small).
+6. **FMS_ENDPOINT** — env-only, and without it Driver Stations get no FMS.
+   Recommend making it a wizard setting (live start/stop of the FMS
+   server) — medium.
+7. **Sounds** — run the sound generator from the wizard when files are
+   missing. Recommend yes if bun is on the host; check first.
+8. Not automatable, keep as instructions: OS/root, switch native VLAN,
+   radio firmware flash, hearing the test sound, casting to a TV, Docker
+   restart policy, HTTPS/domain.
 
 ## Things not to do
 
