@@ -123,9 +123,12 @@ poke at it.
     with **every** robot's Wi-Fi down, even when only one team is joining
     or leaving. pFMS waits until no robot is enabled and no match is set
     up, but on a busy day you'll still notice it.
-  - The `OFFSEASON` image's firewalls stop most teams from uploading code,
-    so we recommend `PRACTICE`. pFMS does a fair amount of routing work to
-    make that image behave like an ordinary network.
+  - Neither firmware image is a clean fit. `OFFSEASON` is actually the
+    better match for pFMS: pFMS hands out the robots' addresses itself, so
+    routing is simple and does more. But its firewalls stop most teams from
+    uploading code, and that's the bigger problem. So we recommend
+    `PRACTICE`. Its own DHCP means pFMS has to NAT laptop ↔ robot traffic
+    to make it behave like an ordinary network.
 
   We'd be very happy to support other field APs (see below).
 
