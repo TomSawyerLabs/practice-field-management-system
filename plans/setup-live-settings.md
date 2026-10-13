@@ -134,14 +134,32 @@ index.ts orchestrates the services.
 - [x] FMS server test flake on Windows reserved ports (`6492a87`)
 - [x] Wizard audit (`plans/setup-wizard-audit.md`)
 - [x] Restart text + ISSUES entry removed, docs updated (`edc128c`)
-- [ ] Audit fixes beyond the two settings ← next; see Open questions
+- [x] Admin passphrase step, second in the wizard (`b679889`)
+- [x] Steps that pass mark themselves done (`a21fc4a`)
+- [x] Inline "Lock scoring with a key" (`42f299b`)
+- [x] Logged: several admin-page WebSocket actions have no admin check
+      (`fedb4f2`, ISSUES.md) — not fixed, needs a per-message decision
+- [ ] **Install missing tools** button (`src/hostTools.ts`) — coded,
+      unit-tested, typechecked alone; NOT committed ← blocked
+- [ ] **Install and enable the service** (`src/systemdService.ts`) — coded,
+      unit-tested; NOT committed ← blocked
+- [x] Browser check of the wizard against a fake pFMS (2026-10-13): admin
+      step sets the passphrase and stores the token, steps auto-mark done,
+      scoring key created and shown once, probe flips to Locked
+- Blocked on: the other thread's uncommitted scoreboard work shares
+  `types.ts`, `websocketServer.ts`, `useBackend.ts`; the pre-commit hook
+  typechecks my staged half without its unstaged half and fails on its
+  other files. Commit after it lands (my hunks are separate; stage with
+  `stage-hunks.py`, regexes `InstallHostTools|HostToolsInstallState|
+InstallSystemdService|SystemdServiceInstallResult|hostTools\.js|systemdService\.js`).
+  Docs for both are edited too (getting-started.md, deployment.md).
 
 ## Open questions for the user
 
 Remaining "go do this" steps from `plans/setup-wizard-audit.md`, with my
 recommendation for each:
 
-1. **Missing tools** — an "Install" button in the Host step that runs
+1. ✅ approved — **Missing tools** — an "Install" button in the Host step that runs
    `apt-get install -y …` as root (pFMS already is), streaming the output.
    Recommend yes; admin-only, refuses while apt is locked.
 2. **Admin passphrase in the wizard** — the wizard is open to anyone until
@@ -155,11 +173,14 @@ recommendation for each:
    the riskiest; would want your OK on the design first.
 5. **Scoreboard API key** — inline "create key" button instead of "go to
    /admin". Recommend yes (small).
-6. **FMS_ENDPOINT** — env-only, and without it Driver Stations get no FMS.
-   Recommend making it a wizard setting (live start/stop of the FMS
-   server) — medium.
-7. **Sounds** — run the sound generator from the wizard when files are
-   missing. Recommend yes if bun is on the host; check first.
+6. **FMS_ENDPOINT** — user asked whether it's the fixed IP DSes reach.
+   It's an on/off flag; the address is fixed (10.0.100.5). Proposed: run
+   the FMS server by default whenever the field network is up, keep
+   `FMS_ENDPOINT=false` as an off switch. Waiting on the user.
+7. **Sounds** — user suggested making it part of the "theme" setup. No
+   theme setup exists yet (Stage 2 of plans/multi-site-adoption.md).
+   Proposed: leave sounds out of this work, note custom sound sets there.
+   Waiting on the user.
 8. Not automatable, keep as instructions: OS/root, switch native VLAN,
    radio firmware flash, hearing the test sound, casting to a TV, Docker
    restart policy, HTTPS/domain.
