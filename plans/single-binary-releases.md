@@ -149,11 +149,16 @@ revert / error / not-a-service notices, policy editor. WS
 - [x] Second CI run (`38499189140`) green → `build-20261013-1904-7886b29`
       published as Latest; downloaded via `releases/latest/download/…`:
       `sha256sum -c` OK, signature OK, `gh attestation verify` OK
-- [ ] Real self-update between two CI builds on WSL
+- [x] Real self-update between CI builds on WSL (real GitHub feed and
+      release key, no overrides, systemd-like supervisor): `fb1ac02` →
+      `2cc3d57` installed from the admin WebSocket, restarted, kept
+      `pfms.prev`, confirmed after a minute. A first attempt found that an
+      Update pressed mid-check was refused — fixed in `2cc3d57` (checks are
+      shared; an install waits for one under way).
 - [x] Local private key deleted (2026-10-13) — releases are CI-only; the
       only copy is the GitHub secret. A new key would strand installed
       binaries.
-- [ ] Deploy `7886b29`+ to steamboat
+- [x] Steamboat on `2cc3d57` (checkout + update.sh; stays that way)
 
 ## Open questions for the user
 
