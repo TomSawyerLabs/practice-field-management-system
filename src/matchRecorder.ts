@@ -611,7 +611,9 @@ export class MatchRecorder {
       return 0;
     }
     let queued = 0;
-    for (const name of names) {
+    // In name order: readdir's order is the filesystem's (alphabetical on
+    // NTFS, hash order on ext4), and the warm-up should not depend on it.
+    for (const name of names.sort()) {
       if (name.startsWith('.') || name.startsWith('pending-')) continue;
       const dir = join(this.directory, name);
       if (this.session?.dir === dir) continue;

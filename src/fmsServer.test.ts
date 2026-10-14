@@ -148,7 +148,8 @@ describe('handshake reply follows the resolver', () => {
     expect((await replyTo(6036)).length).toBe(0);
   });
 
-  test("the resolver is told the DS's address", () => {
+  test("the resolver is told the DS's address", async () => {
+    await replyTo(254); // its own handshake: not relying on the tests above having run first
     expect(askedFrom.every(a => a === ADDRESS)).toBe(true);
     expect(askedFrom.length).toBeGreaterThan(0);
   });

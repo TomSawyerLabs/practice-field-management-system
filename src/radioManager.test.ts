@@ -1,19 +1,21 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { useNetworkBackend } from './networkManager.js';
+import { createDryRunBackend } from './node-ip/index.js';
 import type RadioManager from './radioManager.js';
 import type { RadioHoldReason } from './types.js';
 
-// The network manager reaches for Linux netlink the moment it loads. None of
-// this touches a NIC — these tests are about what a request does to the
-// active and held configs, and when — so stand in for it before importing.
+// None of this touches a NIC — these tests are about what a request does to
+// the active and held configs, and when — so the network manager runs on its
+// dry-run backend. Not a mock.module: bun's module mocks outlast the file
+// that makes them, and a stubbed networkManager broke every test file that
+// ran after this one and imported it (networkManager.test,
+// trunkInterface.test) — CI's file order put this one first.
 let RadioManagerClass: typeof RadioManager;
 beforeAll(async () => {
-  mock.module('./networkManager.js', () => ({
-    configureNetwork: async () => {},
-    setInternetAccess: async () => {},
-  }));
+  useNetworkBackend(createDryRunBackend());
   // Under the CommonJS tsconfig the dynamic import types as the namespace;
   // at runtime (ESM under Bun) `.default` is the class.
   RadioManagerClass = (await import('./radioManager.js')).default as unknown as typeof RadioManager;
