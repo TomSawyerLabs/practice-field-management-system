@@ -137,21 +137,40 @@ revert / error / not-a-service notices, policy editor. WS
 - [x] 4. Policy + scheduler
 - [x] 5. Admin Software tab (looked at in the browser against a local feed)
 - [x] 6. Docs: deployment.md single-binary + updating sections, README
-- [ ] Commit 3–6
-- [ ] Secret added → push → first CI release → check its assets, then a
-      real self-update from one CI build to the next on a throwaway Linux
-      box
+- [x] Commit 3–6 (`138bfa8`, `6e74515`, `c155ce0`, `4c9bae6`)
+- [x] Signing secret `PFMS_RELEASE_SIGNING_KEY` set on the repo
+      (2026-10-14 01:37 UTC; user: "you can make a signing key and put it
+      on github … releases only ever happen through github ci")
+- [x] Steamboat deployed to `4c9bae6` (checkout + update.sh, user's go
+      ahead) — clean start, tester dhcpcd `[ip4]` only
+- [x] First CI run failed in tests (order/filesystem dependencies the
+      Windows runs never hit); fixed in `7886b29`, verified on Linux bun
+      1.4.3 in four random file orders
+- [x] Second CI run (`38499189140`) green → `build-20261013-1904-7886b29`
+      published as Latest; downloaded via `releases/latest/download/…`:
+      `sha256sum -c` OK, signature OK, `gh attestation verify` OK
+- [ ] Real self-update between two CI builds on WSL
+- [x] Local private key deleted (2026-10-13) — releases are CI-only; the
+      only copy is the GitHub secret. A new key would strand installed
+      binaries.
+- [ ] Deploy `7886b29`+ to steamboat
 
 ## Open questions for the user
 
-1. **Add the signing secret.** Private key:
-   `C:\Users\camer\.pfms-release\pfms-release-signing-key.pem`. Either run
-   `gh secret set PFMS_RELEASE_SIGNING_KEY --repo TomSawyerLabs/practice-field-management-system < ~/.pfms-release/pfms-release-signing-key.pem`
-   yourself, or tell me to. Then back the key up (password manager) and
-   delete the file — **losing it strands every installed binary** (they
-   only trust this key).
-2. Steamboat stays on the checkout + `update.sh` (faster for dev and
-   upgrades, as you said) — recommendation: no change there.
+(none)
+
+## CI findings
+
+- First run (`38496783602`): `radioManager.test`'s `mock.module` of
+  networkManager leaked into later files (bun module mocks are
+  process-wide; CI's ext4 file order put it first) — "Export named
+  'restorePreviousStations' not found". Fix: no mock; the real module on
+  its dry-run backend via `useNetworkBackend`.
+- Same run: thumbnail warm-up used `readdirSync` order (hash order on
+  ext4). Fix: sort names.
+- `bun test --randomize --seed=N` reproduces order bugs locally; use it in
+  WSL against `git archive HEAD` with `bun install --ignore-scripts` (the
+  `prepare` lefthook script fails without `.git`).
 
 ## Things not to do
 
