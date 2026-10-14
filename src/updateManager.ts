@@ -66,6 +66,8 @@ export class UpdateManager {
   private lastError?: SelfUpdateStatus['lastError'];
   private timers: ReturnType<typeof setInterval>[] = [];
   private lastCheckStarted = 0;
+  /** The check under way, which callers share and an install waits for. */
+  private checking: Promise<void> | null = null;
 
   constructor(
     private readonly opts: {
@@ -161,39 +163,47 @@ export class UpdateManager {
     this.opts.broadcast(this.status());
   }
 
-  /** Look for a newer build. */
-  async check(): Promise<void> {
-    if (this.activity.stage !== 'idle') return;
+  /** Look for a newer build. A check already under way is joined. */
+  check(): Promise<void> {
+    if (this.checking) return this.checking;
+    if (this.activity.stage !== 'idle') return Promise.resolve();
     const build = buildInfo();
-    if (!build) return;
+    if (!build) return Promise.resolve();
     this.lastCheckStarted = Date.now();
     this.activity = { stage: 'checking' };
     this.publish();
-    try {
-      this.latest = await fetchUpdate({ version: build.version, builtAt: build.builtAt });
-      this.checkError = undefined;
-    } catch (err) {
-      this.checkError = err instanceof Error ? err.message : String(err);
-      throw err;
-    } finally {
-      this.checkedAt = new Date().toISOString();
-      this.activity = { stage: 'idle' };
-      this.publish();
-    }
+    this.checking = (async () => {
+      try {
+        this.latest = await fetchUpdate({ version: build.version, builtAt: build.builtAt });
+        this.checkError = undefined;
+      } catch (err) {
+        this.checkError = err instanceof Error ? err.message : String(err);
+        throw err;
+      } finally {
+        this.checking = null;
+        this.checkedAt = new Date().toISOString();
+        this.activity = { stage: 'idle' };
+        this.publish();
+      }
+    })();
+    return this.checking;
   }
 
   /** Why an install can't start now, or null. */
   refusal(): string | null {
     if (this.install === 'checkout') return 'This pFMS runs from a git checkout — update it with ./update.sh';
     if (this.install === 'unsupported') return `No pFMS builds are published for ${process.platform}-${process.arch}`;
-    if (this.activity.stage !== 'idle') return 'An update is already in progress';
-    if (!this.latest) return 'No newer build to install';
+    // A check under way is fine: the install waits for it (an hourly check
+    // can be running when an admin presses Update).
+    if (this.activity.stage !== 'idle' && this.activity.stage !== 'checking') return 'An update is already in progress';
+    if (!this.latest && !this.checking) return 'No newer build to install';
     if (this.opts.fieldIdleForMs() === null) return 'The field is in use — install once no match is set up or running';
     return null;
   }
 
   /** Install the newest build and restart into it. */
   async apply(who: string): Promise<void> {
+    if (this.checking) await this.checking.catch(() => {});
     const refused = this.refusal();
     if (refused) throw new Error(refused);
     const build = this.latest!;
