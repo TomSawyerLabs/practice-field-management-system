@@ -2,8 +2,9 @@
   "compilerOptions": {
     "target": "es2022",
     "module": "NodeNext",
-    // Bun runs src/ directly; tsc only type-checks.
-    "noEmit": true,
+    // Bun runs src/ directly; `bun run build` also compiles it to dist/ so
+    // the same checkout runs on Node (`node dist`).
+    "outDir": "dist",
     "rootDir": "src",
     "noImplicitAny": true,
     "strictNullChecks": true,

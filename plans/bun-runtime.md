@@ -27,12 +27,17 @@ anyone adopting pFMS.
 - No real field hardware during testing — fake `RADIO_URL`, `DRY_RUN=1`.
 - Steamboat deploy needs a separate explicit yes (step 4). Keep Node
   installed there as a rollback.
+- **Bun is preferred, not required.** Node stays a supported runtime
+  (`node dist`), not CI-tested. (User, 2026-10-13: "Node works fine … We
+  just prefer Bun"; "Supported, but not CI tested is fine".) Dropping the
+  `dist/` emit in step 1 had broken that — restored, and the docs that
+  said "Node can't run it" / "64-bit Linux only" corrected.
 
 ## Plan / steps
 
-1. **Code + scripts** — `start`/`dev`/`once` → bun; `build` keeps
-   `tsc --noEmit` as the type gate (deploy still stops on type errors) and
-   stops emitting `dist/`. CLI help, comments, `update.sh`'s `node -pe`.
+1. **Code + scripts** — `start`/`dev`/`once` → bun; `build` runs `tsc`
+   (type gate — deploy still stops on type errors — and the `dist/` Node
+   runs; briefly `--noEmit`, which broke Node, since restored). CLI help, comments, `update.sh`'s `node -pe`.
 2. **Production entry points** — unit files (repo copy, docs, wizard) run
    `bun --no-env-file src/index.ts`; Dockerfile runtime stage on
    `oven/bun:1-slim`. `--no-env-file` keeps today's behavior: production

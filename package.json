@@ -13,12 +13,13 @@
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p frontend",
     "test": "bun test",
-    "build": "bun scripts/check-bun-version.ts && bun run fetch-native && tsc --noEmit && cd frontend && bun run build",
+    "build": "bun scripts/check-bun-version.ts && bun run fetch-native && tsc && cd frontend && bun run build",
     "fetch-native": "bun scripts/fetch-mdns-socket.ts",
     "package": "bun run build && bun scripts/build-binary.ts",
     "dev": "bun --watch src/index.ts",
     "once": "bun src/index.ts",
-    "start": "bun src/index.ts"
+    "start": "bun src/index.ts",
+    "start:node": "node dist"
   },
   "keywords": [
     "FMS",

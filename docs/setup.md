@@ -54,9 +54,9 @@ For how to keep pFMS running across reboots — systemd or Docker — see
    - `dhcpcd5` — required by the [robot tester](robot-tester.md) to lease
      an address on `TEST_INTERFACE`.
 
-2. [bun](https://bun.sh) is the only runtime needed — it builds, runs the
-   dev servers, and runs the service (`bun src/index.ts`). Node isn't
-   supported — there's no compiled JavaScript for it to run.
+2. [bun](https://bun.sh) builds pFMS, runs the dev servers, and is the
+   default runtime for the service (`bun src/index.ts`). Node also runs
+   it, from the compiled `dist/` (`node dist`, or `bun run start:node`).
 
 3. JavaScript dependencies (the project uses [bun](https://bun.sh)):
 
@@ -66,10 +66,11 @@ For how to keep pFMS running across reboots — systemd or Docker — see
 
 ## Production Deployment
 
-1. `bun run build` — type-checks the backend and builds the frontend to
-   `frontend/dist/` (bun runs the backend's TypeScript directly; there is
-   no compiled backend)
-2. `bun run start` (or `bun src/index.ts`) — starts the backend
+1. `bun run build` — type-checks and compiles the backend to `dist/` (for
+   Node; bun runs the TypeScript directly) and builds the frontend to
+   `frontend/dist/`
+2. `bun run start` (or `bun src/index.ts`) — starts the backend on bun;
+   `bun run start:node` (or `node dist`) on Node
 3. Configure a web server to serve the static frontend and proxy `/ws` and
    `/api/*` to the backend (examples below)
 

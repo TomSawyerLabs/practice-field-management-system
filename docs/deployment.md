@@ -162,6 +162,10 @@ otherwise whatever `command -v bun` prints (e.g. `/home/you/.bun/bin/bun`).
 Use the same bun `update.sh` builds with — the build refuses a bun older
 than `engines.bun` in `package.json`.
 
+To run it on Node instead, use `ExecStart=/usr/bin/node dist` — the build
+compiles the backend to `dist/` for exactly this. Node doesn't read `.env`,
+so no flag is needed.
+
 `systemctl reload` preserves iptables rules, route tables, and routing
 preferences, so robots stay connected through an update.
 `systemctl restart` does a full cleanup. See

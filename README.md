@@ -107,7 +107,7 @@ On a Linux host (network management needs Linux and root):
 ```bash
 sudo apt install iptables iputils-arping fping dnsmasq-base conntrack tcpdump
 sudo apt install alsa-utils dhcpcd5   # match audio + robot tester
-curl -fsSL https://bun.sh/install | sudo BUN_INSTALL=/usr/local bash   # bun, the only runtime
+curl -fsSL https://bun.sh/install | sudo BUN_INSTALL=/usr/local bash   # bun builds and runs it (Node can run dist/ too)
 
 bun install
 bun run build
@@ -215,7 +215,7 @@ in-flight task notes live in [`plans/`](plans/).
 
 ## Project Structure
 
-- `src/` — backend (TypeScript, run directly by bun)
+- `src/` — backend (TypeScript; bun runs it directly, `bun run build` compiles it to `dist/` for Node)
 - `frontend/` — React frontend (Vite multi-page app)
 - `docs/` — documentation
 - `sounds/` — match audio WAV files (charge horn, buzzers, countdowns)
