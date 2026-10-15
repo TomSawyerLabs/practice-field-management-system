@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { countDsJoysticks, RobotLinkTimer } from './robotPacketCapture.js';
+import type { LinkHop } from './robotLinkWatch.js';
+import { countDsJoysticks, RobotLinkTimer, RobotPacketCapture } from './robotPacketCapture.js';
 
 /** DS→robot header: sequence, comm version, control, request, station. */
 const HEADER = [0x12, 0x34, 0x01, 0x04, 0x00, 0x00];
@@ -93,5 +94,45 @@ describe('RobotLinkTimer', () => {
     const stats = timer.stats(end + 1_500)!;
     expect(stats.lossPct).toBe(100);
     expect(stats.rttMs).toBeUndefined();
+  });
+});
+
+describe('RobotPacketCapture hops', () => {
+  /** An Ethernet frame (802.1Q-tagged when `vlan` is given) carrying IPv4 UDP. */
+  function frame(src: string, dst: string, dstPort: number, payload: number[], vlan?: number): Buffer {
+    const ip = (a: string) => a.split('.').map(Number);
+    const eth = [...Array(12).fill(0), ...(vlan === undefined ? [] : [0x81, 0x00, 0, vlan]), 0x08, 0x00];
+    const ipHeader = [0x45, 0, 0, 0, 0, 0, 0, 0, 64, 17, 0, 0, ...ip(src), ...ip(dst)];
+    const udp = [0x04, 0x00, dstPort >> 8, dstPort & 0xff, 0, 0, 0, 0];
+    return Buffer.from([...eth, ...ipHeader, ...udp, ...payload]);
+  }
+  const ROBOT_STATUS = [0x12, 0x34, 0x01, 0x00, 0x20, 12, 128, 0];
+
+  test('reports each control and reply packet with its captured addresses', () => {
+    const hops: LinkHop[] = [];
+    const capture = new RobotPacketCapture(
+      'eno1',
+      () => ({ 840: 'slot2' }),
+      () => {},
+      true,
+      vlan => (vlan === 20 ? 'slot2' : undefined),
+      undefined,
+      undefined,
+      hop => hops.push(hop),
+    );
+    const parse = (data: Buffer, at: number) =>
+      (capture as unknown as { parsePacket(d: Buffer, at: number): void }).parsePacket(data, at);
+
+    parse(frame('10.55.132.86', '10.8.40.2', 1110, HEADER), 1);
+    parse(frame('10.8.40.254', '10.8.40.2', 1110, HEADER, 20), 2);
+    parse(frame('10.8.40.2', '10.8.40.254', 1150, ROBOT_STATUS, 20), 3);
+    parse(frame('10.8.40.2', '10.55.132.86', 1150, ROBOT_STATUS), 4);
+
+    expect(hops).toEqual([
+      { station: 'slot2', kind: 'control', src: '10.55.132.86', dst: '10.8.40.2', at: 1 },
+      { station: 'slot2', kind: 'control', src: '10.8.40.254', dst: '10.8.40.2', at: 2 },
+      { station: 'slot2', kind: 'reply', src: '10.8.40.2', dst: '10.8.40.254', at: 3 },
+      { station: 'slot2', kind: 'reply', src: '10.8.40.2', dst: '10.55.132.86', at: 4 },
+    ]);
   });
 });

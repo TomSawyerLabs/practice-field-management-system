@@ -22,7 +22,28 @@ we can. Reported by the user 2026-10-14.
   gateway (`src/index.ts`, `addDnat`), so robot replies that arrived before the
   rule don't stay pinned to local delivery.
 
+## Decisions already made (don't re-ask)
+
+- Build the per-session robot-link logging first, then fix from evidence
+  (user, 2026-10-14).
+
 ## Findings / gotchas
+
+- **Symptom (user, 2026-10-14):** all DS lights red, "No Robot
+  Communication", so Enable is unavailable. Seen only on the NI 26.x DS so
+  far. Restarting the DS alone fixes it (no Wi-Fi reconnect needed). The red
+  FMS light is expected out of a match: a DS not in a match gets no reply.
+- **Leading hypothesis (untested): the DS's cached roboRIO address.** In the
+  pits the laptop on the robot's own Wi-Fi resolves `roboRIO-TEAM-FRC.local`
+  to whatever the robot radio's DHCP gave the roboRIO. On the field the
+  roboRIO may get a different address from the field AP; a DS that keeps the
+  old resolution sends to an address nobody answers from until restarted.
+  Team 840 today was healthy and at the standard `.2`. The new logging tells
+  this apart ("the DS sends to X, but no robot answers").
+- **The capture on the trunk (`eno1`) sees every leg:** the laptop's own
+  1110 packets arrive untagged from `10.55.x`, the masqueraded copy goes out
+  tagged (vlan 20 for slot2) from `.254`, and robot 1150 replies are seen both
+  to `.254` and, after DNAT, to the laptop (checked live 2026-10-14 18:04).
 
 - **The conntrack race is already handled** (flush on `addDnat`). Not the
   cause unless the flush fails; no `conntrack flush failed` lines since
@@ -43,11 +64,14 @@ we can. Reported by the user 2026-10-14.
 
 ## Plan / steps
 
-1. **[current]** Pin down the symptom with the user (questions below).
-2. Make the next occurrence leave evidence: log per drive session when
+1. ~~Pin down the symptom with the user.~~ Done (see findings).
+2. **[current]** Make the next occurrence leave evidence: log per drive session when
    DS→robot control (1110) first appears and when robot replies (1150) first
    flow, and warn when one direction is missing for N seconds after the
    session starts. Then a stuck DS shows which side is stuck.
+   Built: `src/robotLinkWatch.ts`, fed by `RobotPacketCapture`'s new
+   `onHop`; lines `Robot link up/down/back …` (documented in
+   `docs/network.md`). Needs deploying, then a stuck DS on the field.
 3. Depending on 1–2: a pFMS fix (if robot replies don't reach the laptop) or
    team-facing guidance (if the DS never sends, i.e. it's the DS's own
    network/mDNS state after the adapter changed).
@@ -57,17 +81,17 @@ we can. Reported by the user 2026-10-14.
 - [x] Checked the conntrack flush path: in place.
 - [x] Checked journal since 2026-10-01 for laptops on team subnets: one.
 - [x] Checked "no activity" session endings: real silence.
-- [ ] Symptom details from the user.
-- [ ] Diagnostics for the next occurrence.
+- [x] Symptom details from the user.
+- [x] Diagnostics for the next occurrence: built and tested.
+- [ ] Deploy the diagnostics.
+- [ ] Next stuck DS: read its `Robot link down` line, fix accordingly.
 
 ## Open questions for the user
 
-1. What does the DS show while stuck: Communications light red (no robot),
-   FMS light red, Robot Code red, or Enable missing?
-2. Which Driver Station: NI 26.x, the 2027 FIRST DS, or both?
-3. Where does "connected to the robot's Wi-Fi directly" happen: pits before
-   the robot is on a station, or on the field?
-4. Is a restart of the DS alone enough, or do they also reconnect Wi-Fi?
+1. ~~What the stuck DS shows~~: all red, no robot comms.
+2. ~~Which DS~~: NI 26.x only so far.
+3. ~~Restart alone enough?~~ Yes.
+4. Go ahead and deploy the diagnostics? (Recommended: yes; logging only.)
 
 ## Things not to do
 

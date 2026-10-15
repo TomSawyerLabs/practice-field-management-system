@@ -41,6 +41,7 @@ import { SubnetScanner } from './subnetScanner.js';
 import { MdnsReflector } from './mdnsReflector.js';
 import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
+import { RobotLinkWatch } from './robotLinkWatch.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
 import { handleFirmwareRequest } from './firmwareApi.js';
@@ -1215,6 +1216,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // joysticks, battery, Ready), fed by the packet capture, DS status and radio
   // status below.
   let robotPacketCapture: RobotPacketCapture | undefined;
+  // Which leg of each drive session's robot link is broken, if any. Created
+  // with the drive sessions below; the capture feeds it.
+  let robotLinkWatch: RobotLinkWatch | undefined;
   const stationChecks = new StationChecksTracker({
     getMatchState: () => matchEngine.getState(),
     captureActive: () => robotPacketCapture?.isRunning() ?? false,
@@ -1245,6 +1249,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       },
       (station, count) => stationChecks.noteJoysticks(station, count),
       (station, enabled) => matchEngine.noteDsControl(station, enabled),
+      hop => robotLinkWatch?.hop(hop),
     );
     robotPacketCapture.start();
   };
@@ -1849,9 +1854,19 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // End sessions whose laptop went quiet (DS_STALE_TIMEOUT_MS), re-sync the
       // kernel rules, and keep the UI's timeout countdown fresh. A laptop swap
       // needs no button: close the old DS, and the new one takes over ~20 s later.
+      robotLinkWatch = new RobotLinkWatch({
+        laptopOn: station => driveSessions.laptopOn(station),
+        isLegacyDs: dsIp => matchEngine.dsProtocolOf(dsIp) === 'legacy',
+        capturing: () => robotPacketCapture?.isRunning() ?? false,
+        info: appInfo,
+        warn: appWarn,
+        now: () => Date.now(),
+      });
+
       setInterval(() => {
         driveSessions.sweep();
         broadcastDriveSessionState();
+        robotLinkWatch?.check();
       }, 5_000);
 
       // Track which stations have already had checks triggered this session,

@@ -262,6 +262,25 @@ only when a rule is built on that slot's bridge.
   there (rules for robots that left, duplicate copies, leftover blocks) is
   removed.
 
+**Is the laptop's DS reaching its robot?** The packet capture sees every leg
+of a legacy NI DS's link (the laptop's control packets as they arrive, the
+robot's replies to the gateway, and those replies forwarded to the laptop),
+and pFMS logs one line per drive session saying which:
+`Robot link up for <ip> on <slot> after Ns: DS → <robot ip>` when it works.
+When it doesn't, after a 10 s grace, it logs
+`Robot link down for <ip> on <slot>: …`, ending in one of:
+
+- _the DS sends the robot nothing_: the DS on the laptop is stuck, not the
+  field;
+- _the DS sends to X, but no robot answers_: the DS is aiming at an address
+  the robot isn't on;
+- _the robot answers from X, but its replies aren't reaching the laptop_: the
+  drive session's DNAT isn't working, so pFMS is at fault.
+
+A later `Robot link back … after Ns` shows when it recovered (a DS restart,
+say). The 2027 DS isn't judged: its robot answers on the DS's own port, which
+the capture doesn't watch.
+
 The match engine still records a Driver Station per station; the drive
 sessions keep it in step, so a station shows the laptop of the robot on it
 now.

@@ -385,6 +385,11 @@ export class MatchEngine {
     }
   }
 
+  /** Which Driver Station generation is at this address, if it has said. */
+  dsProtocolOf(ip: string): DsProtocol | undefined {
+    return this.dsEndpoints.get(ip)?.protocol;
+  }
+
   /** UDP destination + protocol for control packets to a DS address. */
   private endpointFor(ip: string): { protocol: DsProtocol; udpPort: number } {
     return this.dsEndpoints.get(ip) ?? { protocol: 'legacy', udpPort: UdpSendPort };

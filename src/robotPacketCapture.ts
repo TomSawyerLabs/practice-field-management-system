@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import type { LinkHop } from './robotLinkWatch.js';
 import type { StationName, TelemetryUpdate } from './types.js';
 
 /**
@@ -35,6 +36,9 @@ export class RobotPacketCapture {
      *  not. Captured at ingress, so it is seen even while the field's stop
      *  cut drops the packet before it reaches the robot. */
     private readonly onDsControl?: (station: StationName, enabled: boolean) => void,
+    /** Every control and reply packet with its addresses, for telling which
+     *  leg of a DS's robot link is broken (src/robotLinkWatch.ts). */
+    private readonly onHop?: (hop: LinkHop) => void,
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -147,14 +151,14 @@ export class RobotPacketCapture {
 
     // Extract source IP (bytes 12-15 of IP header)
     const srcIp = `${data[ipOffset + 12]}.${data[ipOffset + 13]}.${data[ipOffset + 14]}.${data[ipOffset + 15]}`;
+    const dstIp = `${data[ipOffset + 16]}.${data[ipOffset + 17]}.${data[ipOffset + 18]}.${data[ipOffset + 19]}`;
 
     // UDP payload starts after IP header + 8 bytes UDP header
     const payloadOffset = ipOffset + ipHeaderLen + 8;
     const dstPort = data.readUInt16BE(ipOffset + ipHeaderLen + 2);
 
     if (dstPort === DS_TO_ROBOT_PORT) {
-      const dstIp = `${data[ipOffset + 16]}.${data[ipOffset + 17]}.${data[ipOffset + 18]}.${data[ipOffset + 19]}`;
-      this.parseDsToRobot(data.subarray(payloadOffset), dstIp, vlanId, capturedAt);
+      this.parseDsToRobot(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt);
       return;
     }
     if (data.length < payloadOffset + 6) return; // Need at least 6 bytes of robot payload
@@ -201,6 +205,8 @@ export class RobotPacketCapture {
     // Trace byte: bit5=robotCode, bit4=isRoboRIO
     const hasRobotCode = Boolean(traceByte & 0x20);
 
+    this.onHop?.({ station, kind: 'reply', src: srcIp, dst: dstIp, at: capturedAt });
+
     const timer = this.linkTimer(station);
     timer.reply(data.readUInt16BE(payloadOffset), capturedAt);
     const link = timer.stats(capturedAt);
@@ -236,9 +242,17 @@ export class RobotPacketCapture {
 
   /** DS→robot control packet: time it for the link round trip, and report
    *  how many joysticks it carries. */
-  private parseDsToRobot(payload: Buffer, dstIp: string, vlanId: number | undefined, capturedAt: number): void {
+  private parseDsToRobot(
+    payload: Buffer,
+    srcIp: string,
+    dstIp: string,
+    vlanId: number | undefined,
+    capturedAt: number,
+  ): void {
     const team = teamFromIp(dstIp);
     if (!team) return;
+    const hopStation = this.resolveStation(team, vlanId);
+    if (hopStation) this.onHop?.({ station: hopStation, kind: 'control', src: srcIp, dst: dstIp, at: capturedAt });
     // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
     if (payload.length >= 4 && payload[2] === 0x01) {
       const station = this.resolveStation(team, vlanId);
