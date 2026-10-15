@@ -65,14 +65,14 @@ we can. Reported by the user 2026-10-14.
 ## Plan / steps
 
 1. ~~Pin down the symptom with the user.~~ Done (see findings).
-2. **[current]** Make the next occurrence leave evidence: log per drive session when
+2. Make the next occurrence leave evidence: log per drive session when
    DS→robot control (1110) first appears and when robot replies (1150) first
    flow, and warn when one direction is missing for N seconds after the
    session starts. Then a stuck DS shows which side is stuck.
    Built: `src/robotLinkWatch.ts`, fed by `RobotPacketCapture`'s new
    `onHop`; lines `Robot link up/down/back …` (documented in
-   `docs/network.md`). Needs deploying, then a stuck DS on the field.
-3. Depending on 1–2: a pFMS fix (if robot replies don't reach the laptop) or
+   `docs/network.md`). Deployed; waiting for a stuck DS on the field.
+3. **[current]** Depending on 1–2: a pFMS fix (if robot replies don't reach the laptop) or
    team-facing guidance (if the DS never sends, i.e. it's the DS's own
    network/mDNS state after the adapter changed).
 
@@ -83,7 +83,8 @@ we can. Reported by the user 2026-10-14.
 - [x] Checked "no activity" session endings: real silence.
 - [x] Symptom details from the user.
 - [x] Diagnostics for the next occurrence: built and tested.
-- [ ] Deploy the diagnostics.
+- [x] Deploy the diagnostics: `73ed821` live on steamboat 2026-10-14 23:52
+      (no drive sessions at the time, so no `Robot link` line seen yet).
 - [ ] Next stuck DS: read its `Robot link down` line, fix accordingly.
 
 ## Open questions for the user
@@ -91,7 +92,7 @@ we can. Reported by the user 2026-10-14.
 1. ~~What the stuck DS shows~~: all red, no robot comms.
 2. ~~Which DS~~: NI 26.x only so far.
 3. ~~Restart alone enough?~~ Yes.
-4. Go ahead and deploy the diagnostics? (Recommended: yes; logging only.)
+4. ~~Deploy the diagnostics?~~ Yes, deployed.
 
 ## Things not to do
 
