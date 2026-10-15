@@ -919,7 +919,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       return;
     }
 
-    const socketRemoteAddress = (ws as any)._socket?.remoteAddress;
+    // The upgrade request's socket, not ws's private `_socket`: Bun's built-in
+    // `ws` has no `_socket`, so every client would read as 'unknown'.
+    const socketRemoteAddress = req.socket.remoteAddress;
     const rawIp = getRealClientIp(socketRemoteAddress, req.headers, trustedProxyMatcher);
     // `let`: a client seen over IPv6 switches to its IPv4 address below.
     let clientIp = normalizeIp(rawIp);
