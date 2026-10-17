@@ -61,6 +61,15 @@ we can. Reported by the user 2026-10-14.
   is no per-session "DS→robot 1110 seen" / "robot→DS 1150 delivered" line, so
   past incidents can't be reconstructed from the journal. The passive capture
   (`src/robotPacketCapture.ts`) already sees both directions per station.
+- **Coverage gap found 2026-10-16:** the first version only watched laptops
+  that already had a drive session, so a DS stuck _before_ reaching pFMS as
+  its FMS (no TCP 1750 handshake, no session, no DNAT) logged nothing even
+  though the capture saw its 1110 packets. Now reported as "� but it has no
+  drive session". Still invisible: a DS that neither reaches pFMS nor sends
+  robot packets through it (its packets never cross `eno1`).
+- **journald is not dropping lines any more:** no `Suppressed` notices since
+  2026-09-15, and the journal goes back to 2026-03 (4 GB), so `Robot link`
+  lines will survive for later reading.
 
 ## Plan / steps
 
@@ -85,6 +94,9 @@ we can. Reported by the user 2026-10-14.
 - [x] Diagnostics for the next occurrence: built and tested.
 - [x] Deploy the diagnostics: `73ed821` live on steamboat 2026-10-14 23:52
       (no drive sessions at the time, so no `Robot link` line seen yet).
+- [x] 2026-10-16: still no drive sessions since the deploy, so no lines yet.
+- [x] Cover laptops sending to their robot with no drive session (gap above).
+- [ ] Deploy that addition.
 - [ ] Next stuck DS: read its `Robot link down` line, fix accordingly.
 
 ## Open questions for the user
