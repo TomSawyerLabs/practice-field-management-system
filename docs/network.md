@@ -275,7 +275,11 @@ When it doesn't, after a 10 s grace, it logs
 - _the DS sends to X, but no robot answers_: the DS is aiming at an address
   the robot isn't on;
 - _the robot answers from X, but its replies aren't reaching the laptop_: the
-  drive session's DNAT isn't working, so pFMS is at fault.
+  drive session's DNAT isn't working, so pFMS is at fault;
+- _the DS sends to X, but it has no drive session_: the laptop is aiming at
+  its robot but never reached pFMS as its FMS, so nothing forwards the
+  robot's replies to it. `… started its drive session after Ns` follows if
+  it gets there.
 
 A later `Robot link back … after Ns` shows when it recovered (a DS restart,
 say). The 2027 DS isn't judged: its robot answers on the DS's own port, which

@@ -121,4 +121,35 @@ describe('RobotLinkWatch', () => {
     f.watch.check();
     expect(f.log).toEqual([]);
   });
+
+  test('a laptop sending without a drive session is reported, and its session start noted', () => {
+    const f = field();
+    f.laptops.delete('slot2');
+    f.watch.check();
+    f.traffic({ answer: false });
+    f.watch.check();
+    expect(f.log).toEqual([]); // still in its grace period
+    for (let i = 0; i < 10; i++) f.traffic({ answer: false });
+    f.watch.check();
+    f.traffic({ answer: false });
+    f.watch.check(); // reported once
+    expect(f.log).toEqual([
+      `warn: Robot link down for ${DS} on slot2: the DS sends to ${RIO}, but it has no drive session (it never reached pFMS as its FMS), so the robot's replies can't reach it`,
+    ]);
+    f.laptops.set('slot2', DS); // e.g. after a DS restart
+    f.watch.check();
+    expect(f.log.at(-1)).toBe(`info: Robot link: ${DS} on slot2 started its drive session after 12s`);
+  });
+
+  test('a second laptop on a station that already has a session is left to drive sessions', () => {
+    const f = field();
+    f.watch.check();
+    const other = '10.55.65.16';
+    for (let i = 0; i < 12; i++) {
+      f.traffic();
+      f.watch.hop({ station: 'slot2', kind: 'control', src: other, dst: RIO, at: 0 });
+    }
+    f.watch.check();
+    expect(f.log.every(l => !l.includes(other))).toBe(true);
+  });
 });

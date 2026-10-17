@@ -15,6 +15,10 @@ import { StationNameList, type StationName } from './types.js';
  * - the DS sending to an address no robot answers from,
  * - the robot answering, but its replies not being forwarded to the laptop.
  *
+ * A laptop sending its robot control packets without ever having started a
+ * drive session (it never reached pFMS as its FMS) is reported too: with no
+ * session there is no DNAT, so the robot's replies can't reach it.
+ *
  * Only transitions are logged, so a healthy field logs one line per session.
  */
 
@@ -67,15 +71,23 @@ type Watched = {
   downAt: number | null;
 };
 
+/** A laptop sending control packets with no drive session. */
+type Orphan = { station: StationName; robot: string; first: number; last: number; logged: boolean };
+
 export class RobotLinkWatch {
   private watched = new Map<StationName, Watched>();
+  /** By laptop address. */
+  private orphans = new Map<string, Orphan>();
 
   constructor(private readonly fx: RobotLinkWatchEffects) {}
 
   /** Every captured control or reply packet. */
   hop(h: LinkHop): void {
     const w = this.current(h.station);
-    if (!w) return;
+    if (!w) {
+      if (h.kind === 'control' && !sameSubnet(h.src, h.dst)) this.orphan(h);
+      return;
+    }
     if (h.kind === 'control') {
       // Only the laptop's own copy: the forwarded copy is from the gateway.
       if (h.src === w.dsIp) w.targets.set(h.dst, h.at);
@@ -92,6 +104,7 @@ export class RobotLinkWatch {
     // the case most worth reporting.
     for (const station of StationNameList) this.current(station);
     if (!this.fx.capturing()) return;
+    this.checkOrphans(now);
     for (const [station, w] of this.watched) {
       if (!this.fx.isLegacyDs(w.dsIp)) continue;
       const state = this.stateOf(w, now);
@@ -112,6 +125,44 @@ export class RobotLinkWatch {
       w.downAt ??= now;
       w.logged = key;
       this.fx.warn(`Robot link down for ${w.dsIp} on ${station}: ${describe(state)}`);
+    }
+  }
+
+  private orphan(h: LinkHop): void {
+    const o = this.orphans.get(h.src);
+    if (o && o.station === h.station) {
+      o.last = h.at;
+      o.robot = h.dst;
+    } else {
+      this.orphans.set(h.src, { station: h.station, robot: h.dst, first: h.at, last: h.at, logged: false });
+    }
+  }
+
+  /** Report laptops that keep sending without a session, and say when one
+   *  gets its session. A laptop the station's session belongs to someone
+   *  else's is a second DS, which drive sessions already report. */
+  private checkOrphans(now: number): void {
+    for (const [dsIp, o] of this.orphans) {
+      const holder = this.fx.laptopOn(o.station);
+      if (holder !== undefined) {
+        if (holder === dsIp && o.logged)
+          this.fx.info(
+            `Robot link: ${dsIp} on ${o.station} started its drive session after ${Math.round((now - o.first) / 1000)}s`,
+          );
+        this.orphans.delete(dsIp);
+        continue;
+      }
+      if (now - o.last > LINK_RECENT_MS) {
+        if (o.logged)
+          this.fx.info(`Robot link: ${dsIp} on ${o.station} stopped sending, still without a drive session`);
+        this.orphans.delete(dsIp);
+        continue;
+      }
+      if (o.logged || now - o.first < LINK_GRACE_MS) continue;
+      o.logged = true;
+      this.fx.warn(
+        `Robot link down for ${dsIp} on ${o.station}: the DS sends to ${o.robot}, but it has no drive session (it never reached pFMS as its FMS), so the robot's replies can't reach it`,
+      );
     }
   }
 
@@ -154,6 +205,11 @@ export class RobotLinkWatch {
     this.watched.set(station, fresh);
     return fresh;
   }
+}
+
+/** Same /24: the gateway's forwarded copy of a control packet, not a laptop. */
+function sameSubnet(a: string, b: string): boolean {
+  return a.slice(0, a.lastIndexOf('.')) === b.slice(0, b.lastIndexOf('.'));
 }
 
 function describe(state: LinkState): string {
