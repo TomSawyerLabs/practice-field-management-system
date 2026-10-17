@@ -96,7 +96,8 @@ we can. Reported by the user 2026-10-14.
       (no drive sessions at the time, so no `Robot link` line seen yet).
 - [x] 2026-10-16: still no drive sessions since the deploy, so no lines yet.
 - [x] Cover laptops sending to their robot with no drive session (gap above).
-- [ ] Deploy that addition.
+- [x] Deploy that addition: `3ef6456` live on steamboat 2026-10-16 19:28
+      (capture listening, frontend bundle matches).
 - [ ] Next stuck DS: read its `Robot link down` line, fix accordingly.
 
 ## Open questions for the user
