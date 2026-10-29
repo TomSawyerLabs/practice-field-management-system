@@ -113,6 +113,21 @@ hardware or a real deployment:
   `br-slot1` (35 on slot2, 19, 18, 12, 10 on the rest) on 2026-10-12. A
   handful is expected, so memberships are probably leaking (team-check mDNS
   sockets, or reflector re-joins). Check with `cat /proc/net/igmp` over time.
+- The robot-link log puts a duplicated team's second laptop on the wrong
+  slot. 2026-10-28 5:15 PM PDT, 114 on slot1 and 114-TestBird on slot2:
+  `Robot link down for 10.55.231.82 on slot1: ... it has no drive session`.
+  10.55.231.82 was the slot2 (TestBird) laptop. The message probably looks
+  the slot up by team number, which is wrong when one team has two robots.
+
+## Per-laptop `ip rule` entries pile up on steamboat
+
+`ip rule list` on steamboat had 487 entries on 2026-10-28. Most are stale
+`from <laptop> to 10.TE.AM.0/24 lookup <slot table>` rules for teams that
+left days ago, with the same laptop/subnet pair repeated many times
+(e.g. 10.55.65.16 → 10.59.40.0/24 about 30 times). Priorities count down from
+32765 and had reached 31924. They survive restarts because `KEEP_NETWORK=true`
+restores rules from the kernel. Stale rules can send a returning laptop to
+the wrong slot's table, and priorities will eventually run out.
 
 ## Flaky under load: robotWifiScan "capitals-only difference is still tested automatically"
 
