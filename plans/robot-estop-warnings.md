@@ -114,6 +114,24 @@ in that file. Left out on purpose:
 The first launch of nine threads used the tomsawyerlabs.com project ID. Those
 threads changed nothing, and their worktrees and branches were removed.
 
+## After the 3:33 PM PDT deploy (2026-10-30)
+
+`0586d9a` went live while Release was red on `src/wsAccess.test.ts`. The test
+helper returned on socket open, so on Linux the opening burst landed among a
+test's replies. CI's log shows the guard refusing correctly. Fixed in `fc15475`.
+Not run on Linux: WSL can't reach GitHub for `syslog-server`, so only the next
+push proves it.
+
+User corrections after reading the changelog:
+
+- A team may clear an e-stop from its DS: `3c4d62d` reverted in `d7761ad`.
+- The second-laptop block had no port, so it dropped all that laptop's traffic
+  to the robot. It must hold off only the DS: UDP 1110 in `d2be772`.
+
+Before deploying `d2be772`, check `iptables -S FORWARD` for `block-dup-ds`. A
+restart that keeps the network adopts a live rule, and the port-limited delete
+wouldn't match an old rule with no port.
+
 ## Things not to do
 
 - Don't launch T3 threads on a remembered project ID: read the project first,
