@@ -1,17 +1,5 @@
 # Known Issues & Technical Debt
 
-## Per-station firmware/radio configure progress not surfaced in UI
-
-_in progress — issues/station-progress-ui_
-
-When a firmware update or radio reconfiguration runs through station test port mode, the `StationTestManager` receives per-station progress callbacks from the `RobotTestMonitor`. These are currently no-ops — the inline test port mode UI only shows settling banners (derived from `StationTestState.testState.reconfiguredAt`), not step-by-step progress (e.g., "Uploading firmware... 30%").
-
-To add detailed progress UI to the inline view, we'd need:
-
-1. A per-station progress message type (e.g., `StationFirmwareUpdateProgress`) or embed progress in `StationTestState`
-2. Corresponding frontend hooks and UI components
-3. Care to avoid conflating with the global test monitor's progress handlers
-
 ## Operator pages have no login of their own
 
 `/match`, `/staff`, `/csa`, `/test` and `/overview` need no credential, so the
@@ -182,3 +170,26 @@ distro would get no tester lease and a flood of log lines.
 Seen 2026-10-30 at 320px wide: the status bar's Get Help, Scoreboard and GitHub
 icons are 14×14 px and 4 px apart, on every page. Get Help is the one a team
 needs when something is wrong.
+
+## No button starts a firmware update from station test port mode
+
+`stationFirmwareUpdateRequest` is handled on the backend and
+`sendStationFirmwareUpdateRequest` exists in `frontend/src/hooks/useBackend.ts`,
+but nothing calls it. The inline panel on a station card shows firmware progress
+now, yet the only way to start an update there is a hand-sent WebSocket message;
+users have to go to `/test`, which only drives the dedicated test interface.
+
+## /test progress bars keep animating after the operation ends
+
+In `frontend/src/components/TestPage.tsx`, `RadioConfigureSection` and
+`FirmwareUpdateSection` pass `variant={configuring ? 'determinate' : undefined}`
+to `LinearProgress`. `undefined` means indeterminate, so a finished or failed
+operation shows a looping green or red bar under its result.
+
+## Robot checks keep running during a radio configure or firmware update
+
+Seen with a fake radio on a station test port (2026-10-30): pressing Fix while a
+check was in flight left the phase on "Running checks...", and partway through
+the reboot wait it dropped to "Detecting robot..." with the team number gone,
+before the configure had finished. `docs/robot-tester.md` says both operations
+stop the periodic checks. The operation itself still completed.

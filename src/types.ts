@@ -3861,6 +3861,10 @@ export interface StationTestState {
   portName: string;
   /** Per-band WPA key check results — populated once radio checks complete. */
   wpaKeyChecks?: WpaKeyCheckResult[];
+  /** Latest step of this session's radio configure or firmware update. Kept
+   *  here, not sent as its own message, so it never reaches the /test page's
+   *  global progress handlers and a client connecting mid-update still gets it. */
+  progress?: FirmwareUpdateProgress | RadioConfigureProgress;
   /** Seconds remaining before test mode auto-exits due to inactivity. */
   timeoutRemaining: number;
   /** Epoch ms when test mode was started. */

@@ -1,11 +1,4 @@
-import type {
-  StationName,
-  StationTestState,
-  RobotTestState,
-  FirmwareUpdateProgress,
-  RadioConfigureProgress,
-  WpaKeyCheckResult,
-} from './types.js';
+import type { StationName, StationTestState, RobotTestState, WpaKeyCheckResult } from './types.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import type { PortBridgeManager } from './portBridgeManager.js';
 import type { NetworkBackend } from './node-ip/index.js';
@@ -20,6 +13,8 @@ const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 /** How often to check for timed-out sessions. */
 const TIMEOUT_CHECK_INTERVAL_MS = 30_000;
 
+type StationProgress = NonNullable<StationTestState['progress']>;
+
 interface ActiveSession {
   monitor: RobotTestMonitor;
   portVlanId: number;
@@ -28,6 +23,8 @@ interface ActiveSession {
   lastActivity: number;
   /** Latest WPA key check results (updated after each check cycle). */
   wpaKeyChecks?: WpaKeyCheckResult[];
+  /** Latest step of a radio configure or firmware update. */
+  progress?: StationProgress;
 }
 
 /**
@@ -52,8 +49,6 @@ export class StationTestManager {
     private readonly firmwareStore: FirmwareStore | undefined,
     private readonly radioManager: RadioManager,
     private readonly onStateChange: (state: StationTestState) => void,
-    private readonly onFirmwareProgress: (station: StationName, progress: FirmwareUpdateProgress) => void,
-    private readonly onRadioConfigureProgress: (station: StationName, progress: RadioConfigureProgress) => void,
     private readonly dryRun: boolean,
     private readonly hasClients?: () => boolean,
   ) {
@@ -80,17 +75,18 @@ export class StationTestManager {
     this.testModePorts.add(portVlanId);
 
     const now = Date.now();
+    const monitor = new RobotTestMonitor(
+      portIface,
+      this.net,
+      state => this.handleStateChange(station, state),
+      progress => this.handleProgress(station, monitor, progress),
+      this.firmwareStore,
+      this.dryRun,
+      this.hasClients,
+      progress => this.handleProgress(station, monitor, progress),
+    );
     const session: ActiveSession = {
-      monitor: new RobotTestMonitor(
-        portIface,
-        this.net,
-        state => this.handleStateChange(station, state),
-        progress => this.onFirmwareProgress(station, progress),
-        this.firmwareStore,
-        this.dryRun,
-        this.hasClients,
-        progress => this.onRadioConfigureProgress(station, progress),
-      ),
+      monitor,
       portVlanId,
       portName: portConfig.name,
       startedAt: now,
@@ -151,12 +147,17 @@ export class StationTestManager {
     if (!session) throw new Error(`Test port mode is not active for ${station}`);
     session.lastActivity = Date.now();
 
-    // Auto-resolve WPA key from station config if not provided
-    const config = this.radioManager.getStationConfig(station);
-    const resolvedKey6 = wpaKey6 || config?.wpaKey;
-    if (!resolvedKey6) throw new Error('No WPA key provided and none configured for this station');
+    try {
+      // Auto-resolve WPA key from station config if not provided
+      const config = this.radioManager.getStationConfig(station);
+      const resolvedKey6 = wpaKey6 || config?.wpaKey;
+      if (!resolvedKey6) throw new Error('No WPA key provided and none configured for this station');
 
-    await session.monitor.configureTeamRadio(teamNumber, resolvedKey6, wpaKey24 || resolvedKey6, ssidSuffix);
+      await session.monitor.configureTeamRadio(teamNumber, resolvedKey6, wpaKey24 || resolvedKey6, ssidSuffix);
+    } catch (err) {
+      this.reportRefused(station, session, 'radioConfigureProgress', err);
+      throw err;
+    }
   }
 
   /** Start a firmware update through a station's test port mode session. */
@@ -173,7 +174,12 @@ export class StationTestManager {
     // Auto-detect WPA key from station config if not provided
     const config = this.radioManager.getStationConfig(station);
     const resolvedKey = wpaKey || config?.wpaKey;
-    await session.monitor.startFirmwareUpdate(resolvedKey, wpaKey24, skipReconfigure);
+    try {
+      await session.monitor.startFirmwareUpdate(resolvedKey, wpaKey24, skipReconfigure);
+    } catch (err) {
+      this.reportRefused(station, session, 'firmwareUpdateProgress', err);
+      throw err;
+    }
   }
 
   /** Check WPA keys for a station's test session against the expected station config. */
@@ -248,6 +254,8 @@ export class StationTestManager {
     const session = this.sessions.get(station);
     if (!session) return;
     session.lastActivity = Date.now();
+    // A finished step stays up until the settling it started is over
+    if (session.progress?.step === 'complete' && !state.reconfiguredAt) session.progress = undefined;
     this.broadcastState(station);
 
     // When checks complete, run WPA key verification automatically
@@ -256,6 +264,36 @@ export class StationTestManager {
         appWarn(`StationTestManager: WPA key check failed for ${station}: ${(err as Error).message}`);
       });
     }
+  }
+
+  private handleProgress(station: StationName, monitor: RobotTestMonitor, progress: StationProgress): void {
+    const session = this.sessions.get(station);
+    // stop() doesn't abort an operation, so a stopped monitor can still report
+    if (session?.monitor !== monitor) return;
+    session.lastActivity = Date.now();
+    session.progress = progress;
+    // Those results describe the radio as it was before this change
+    if (progress.step === 'complete') session.wpaKeyChecks = undefined;
+    this.broadcastState(station);
+  }
+
+  /** The monitor only reports failures once an operation is under way. Show
+   *  the requests it refused outright too. */
+  private reportRefused(
+    station: StationName,
+    session: ActiveSession,
+    type: StationProgress['type'],
+    err: unknown,
+  ): void {
+    if (this.sessions.get(station) !== session) return;
+    const { progress } = session;
+    // A second request bounced off an operation that is still running
+    if (progress && progress.step !== 'complete' && progress.step !== 'error') return;
+    const message = (err as Error).message;
+    // The monitor already reported this one
+    if (progress?.error === message) return;
+    session.progress = { type, step: 'error', message, progress: 0, elapsedMs: 0, error: message };
+    this.broadcastState(station);
   }
 
   private broadcastState(station: StationName): void {
@@ -293,6 +331,7 @@ export class StationTestManager {
       portVlanId: session.portVlanId,
       portName: session.portName,
       wpaKeyChecks: session.wpaKeyChecks,
+      progress: session.progress,
       timeoutRemaining: remaining,
       startedAt: session.startedAt,
     };

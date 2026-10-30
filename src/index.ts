@@ -1199,11 +1199,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       firmwareStore,
       radioManager,
       state => broadcast(state),
-      // Per-station firmware/radio progress is not broadcast as top-level messages
-      // to avoid conflating with the global test monitor's progress handlers.
-      // The inline UI derives progress from StationTestState (settling banners, etc.).
-      () => {},
-      () => {},
       !!process.env.DRY_RUN,
       () => wss.clients.size > 0,
     );

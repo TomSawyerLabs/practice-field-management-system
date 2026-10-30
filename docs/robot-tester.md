@@ -384,6 +384,18 @@ When the radio firmware check fails, the tester can update firmware in-place.
 5. **Reconfigure** — Re-apply team configuration (unless "skip reconfigure" was checked)
 6. **Verify** — Confirm radio comes back with correct firmware and config
 
+## Test Port Mode On A Station
+
+A station's test port mode runs the same tester on one of the field ports and
+shows it inline on the station card. A radio configure or firmware update
+started there shows each step in that panel. The step travels inside the
+`stationTestState` message (`progress`), so a browser that opens mid-update
+sees it, and it does not appear on `/test`, whose bars follow only the
+dedicated test interface. A finished step stays up until the network has
+settled; an error stays until the next attempt or until test port mode exits.
+Each step counts as activity, so the 5-minute auto-exit can't end a session
+during an update.
+
 ## WebSocket Messages
 
 ### Server → Client

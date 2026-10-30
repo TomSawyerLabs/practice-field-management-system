@@ -28,10 +28,11 @@ const phaseLabels: Record<string, string> = {
 };
 
 export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: InlineTestPortModeProps) {
-  const { testState: inner, portName, wpaKeyChecks, timeoutRemaining } = testState;
+  const { testState: inner, portName, wpaKeyChecks, progress, timeoutRemaining } = testState;
   const { phase, teamNumber, checks, reconfiguredAt, reconfigureTimeoutMs, reconfigureType } = inner;
 
   const hasMismatch = wpaKeyChecks?.some(c => c.status === 'mismatch');
+  const operationRunning = !!progress && progress.step !== 'complete' && progress.step !== 'error';
 
   return (
     <Box sx={{ px: 1, py: 1 }}>
@@ -62,8 +63,13 @@ export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: Inli
           </Typography>
           {teamNumber && <Chip label={`Team ${teamNumber}`} size="small" color="info" variant="outlined" />}
         </Box>
-        {(phase === 'dhcp_requesting' || phase === 'checking') && <LinearProgress sx={{ borderRadius: 1 }} />}
+        {(phase === 'dhcp_requesting' || phase === 'checking') && !operationRunning && (
+          <LinearProgress sx={{ borderRadius: 1 }} />
+        )}
       </Box>
+
+      {/* Radio configure / firmware update progress */}
+      {progress && <OperationProgress progress={progress} running={operationRunning} />}
 
       {/* Settling banner */}
       {reconfiguredAt && reconfigureTimeoutMs && (
@@ -77,7 +83,12 @@ export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: Inli
 
       {/* WPA key mismatch alert + fix button */}
       {hasMismatch && (
-        <WpaKeyMismatchAlert wpaKeyChecks={wpaKeyChecks!} teamNumber={teamNumber} onFix={onConfigureRadio} />
+        <WpaKeyMismatchAlert
+          wpaKeyChecks={wpaKeyChecks!}
+          teamNumber={teamNumber}
+          fixDisabled={operationRunning}
+          onFix={onConfigureRadio}
+        />
       )}
 
       {/* Check results */}
@@ -110,13 +121,53 @@ export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: Inli
   );
 }
 
+function OperationProgress({
+  progress,
+  running,
+}: {
+  progress: NonNullable<StationTestState['progress']>;
+  running: boolean;
+}) {
+  const label = progress.type === 'firmwareUpdateProgress' ? 'Firmware update' : 'Radio configuration';
+
+  if (!running) {
+    const failed = progress.step === 'error';
+    return (
+      <Alert severity={failed ? 'error' : 'success'} sx={{ mb: 1, py: 0 }}>
+        <Typography variant="caption">
+          {failed ? `${label} failed: ${progress.error ?? progress.message}` : progress.message}
+        </Typography>
+      </Alert>
+    );
+  }
+
+  return (
+    <Box sx={{ mb: 1 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+        <Typography variant="caption">{progress.message}</Typography>
+        <Typography variant="caption" color="text.secondary">
+          {progress.progress}%
+        </Typography>
+      </Box>
+      <LinearProgress
+        variant="determinate"
+        value={progress.progress}
+        aria-label={label}
+        sx={{ height: 6, borderRadius: 3 }}
+      />
+    </Box>
+  );
+}
+
 function WpaKeyMismatchAlert({
   wpaKeyChecks,
   teamNumber,
+  fixDisabled,
   onFix,
 }: {
   wpaKeyChecks: NonNullable<StationTestState['wpaKeyChecks']>;
   teamNumber?: number;
+  fixDisabled: boolean;
   onFix: (teamNumber: number, wpaKey6: string, wpaKey24?: string, ssidSuffix?: string) => void;
 }) {
   const mismatched = wpaKeyChecks.filter(c => c.status === 'mismatch');
@@ -132,6 +183,7 @@ function WpaKeyMismatchAlert({
             variant="contained"
             color="warning"
             startIcon={<BuildIcon />}
+            disabled={fixDisabled}
             onClick={() => {
               // The fix is initiated by the backend using the station's known config.
               // We send the request with the station's team number — the backend
