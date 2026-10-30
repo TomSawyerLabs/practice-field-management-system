@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -59,6 +59,10 @@ function fakeExchange(url: string, method = 'GET'): { req: IncomingMessage; res:
   return { req, res: new FakeResponse() };
 }
 
+/** Limit for anything running a real ffmpeg, which takes as long as the machine
+ *  lets it: the same 60 s production gives a frame, not Bun's default 5 s. */
+const FFMPEG_LIMIT_MS = 60_000;
+
 describe('recordings API', () => {
   if (!ffmpegAvailable()) {
     test.skip('needs ffmpeg on PATH', () => {});
@@ -73,29 +77,29 @@ describe('recordings API', () => {
   beforeAll(() => {
     mkdirSync(matchDir, { recursive: true });
     mkdirSync(orphanDir, { recursive: true });
-    for (const out of [join(matchDir, 'all-field.mp4'), join(orphanDir, 'all-field.part0.mp4')]) {
-      execFileSync(
-        ffmpeg,
-        // Ten seconds, so the thumbnail's seek lands well inside the file.
-        [
-          '-v',
-          'error',
-          '-y',
-          '-f',
-          'lavfi',
-          '-i',
-          'testsrc=size=320x240:rate=30',
-          '-t',
-          '10',
-          '-c:v',
-          'libx264',
-          '-preset',
-          'ultrafast',
-          out,
-        ],
-        { stdio: 'inherit' },
-      );
-    }
+    const video = join(matchDir, 'all-field.mp4');
+    execFileSync(
+      ffmpeg,
+      // Ten seconds, so the thumbnail's seek lands well inside the file.
+      [
+        '-v',
+        'error',
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=30',
+        '-t',
+        '10',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        video,
+      ],
+      { stdio: 'inherit' },
+    );
+    copyFileSync(video, join(orphanDir, 'all-field.part0.mp4'));
     const manifest: RecordingManifest = {
       matchId: 'match-7',
       matchNumber: 7,
@@ -115,7 +119,7 @@ describe('recordings API', () => {
       getStreams: () => [],
       getRetentionDays: () => 30,
     });
-  });
+  }, FFMPEG_LIMIT_MS);
 
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -136,48 +140,60 @@ describe('recordings API', () => {
     expect(orphan.sidecars).toEqual([]);
   });
 
-  test('a thumbnail is generated once and cached beside the video', async () => {
-    const path = await recorder.thumbnail('match-7', 'all-field.mp4');
-    expect(path).toBe(join(matchDir, 'all-field.thumb.jpg'));
-    expect(existsSync(path!)).toBe(true);
-    // Asked again, the cached file comes back without another ffmpeg run.
-    expect(await recorder.thumbnail('match-7', 'all-field.mp4')).toBe(path!);
-    // A stream that captured nothing has no frame to give.
-    expect(await recorder.thumbnail('match-7', 'side.mp4')).toBeUndefined();
-    // Nor does anything outside the directory.
-    expect(await recorder.thumbnail('match-7', '../secret.mp4')).toBeUndefined();
-  });
+  test(
+    'a thumbnail is generated once and cached beside the video',
+    async () => {
+      const path = await recorder.thumbnail('match-7', 'all-field.mp4');
+      expect(path).toBe(join(matchDir, 'all-field.thumb.jpg'));
+      expect(existsSync(path!)).toBe(true);
+      // Asked again, the cached file comes back without another ffmpeg run.
+      expect(await recorder.thumbnail('match-7', 'all-field.mp4')).toBe(path!);
+      // A stream that captured nothing has no frame to give.
+      expect(await recorder.thumbnail('match-7', 'side.mp4')).toBeUndefined();
+      // Nor does anything outside the directory.
+      expect(await recorder.thumbnail('match-7', '../secret.mp4')).toBeUndefined();
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('making a thumbnail does not make the directory look newer', async () => {
-    // The retention sweep ages a directory with no manifest by its mtime, so
-    // an admin looking at an orphan must not reset its clock.
-    const before = statSync(orphanDir).mtimeMs;
-    expect(await recorder.thumbnail('pending-123', 'all-field.part0.mp4')).toBeDefined();
-    // Restored, not merely close: the slack is for the millisecond lost
-    // putting the timestamp back through utimes, not for the ffmpeg run.
-    expect(Math.abs(statSync(orphanDir).mtimeMs - before)).toBeLessThan(10);
-  });
+  test(
+    'making a thumbnail does not make the directory look newer',
+    async () => {
+      // The retention sweep ages a directory with no manifest by its mtime, so
+      // an admin looking at an orphan must not reset its clock.
+      const before = statSync(orphanDir).mtimeMs;
+      expect(await recorder.thumbnail('pending-123', 'all-field.part0.mp4')).toBeDefined();
+      // Restored, not merely close: the slack is for the millisecond lost
+      // putting the timestamp back through utimes, not for the ffmpeg run.
+      expect(Math.abs(statSync(orphanDir).mtimeMs - before)).toBeLessThan(10);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('?thumb=1 serves the JPEG, and a sidecar comes back as itself', async () => {
-    const thumb = fakeExchange('/api/recordings/match-7/all-field.mp4?thumb=1');
-    expect(handleRecordingsRequest(thumb.req, thumb.res as unknown as ServerResponse, recorder)).toBe(true);
-    await thumb.res.done;
-    expect(thumb.res.status).toBe(200);
-    expect(thumb.res.headers['content-type']).toBe('image/jpeg');
-    expect(thumb.res.body.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8])); // JPEG SOI
+  test(
+    '?thumb=1 serves the JPEG, and a sidecar comes back as itself',
+    async () => {
+      const thumb = fakeExchange('/api/recordings/match-7/all-field.mp4?thumb=1');
+      expect(handleRecordingsRequest(thumb.req, thumb.res as unknown as ServerResponse, recorder)).toBe(true);
+      await thumb.res.done;
+      expect(thumb.res.status).toBe(200);
+      expect(thumb.res.headers['content-type']).toBe('image/jpeg');
+      expect(thumb.res.body.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8])); // JPEG SOI
 
-    const csv = fakeExchange('/api/recordings/match-7/scores.csv');
-    expect(handleRecordingsRequest(csv.req, csv.res as unknown as ServerResponse, recorder)).toBe(true);
-    await csv.res.done;
-    expect(csv.res.status).toBe(200);
-    expect(csv.res.headers['content-type']).toBe('text/csv; charset=utf-8');
-    expect(csv.res.body.toString()).toContain('alliance');
+      const csv = fakeExchange('/api/recordings/match-7/scores.csv');
+      expect(handleRecordingsRequest(csv.req, csv.res as unknown as ServerResponse, recorder)).toBe(true);
+      await csv.res.done;
+      expect(csv.res.status).toBe(200);
+      expect(csv.res.headers['content-type']).toBe('text/csv; charset=utf-8');
+      expect(csv.res.body.toString()).toContain('alliance');
 
-    const missing = fakeExchange('/api/recordings/match-7/telemetry.csv');
-    expect(handleRecordingsRequest(missing.req, missing.res as unknown as ServerResponse, recorder)).toBe(true);
-    await missing.res.done;
-    expect(missing.res.status).toBe(404);
-  });
+      const missing = fakeExchange('/api/recordings/match-7/telemetry.csv');
+      expect(handleRecordingsRequest(missing.req, missing.res as unknown as ServerResponse, recorder)).toBe(true);
+      await missing.res.done;
+      expect(missing.res.status).toBe(404);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('a failed capture has no thumbnail to serve', async () => {
     const x = fakeExchange('/api/recordings/match-7/side.mp4?thumb=1');

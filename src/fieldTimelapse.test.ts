@@ -19,6 +19,7 @@ import {
   type TimelapseAction,
   type TimelapseConfig,
   type TimelapseLights,
+  type TimelapseState,
 } from './types.js';
 
 const ffmpeg = process.env.FFMPEG_PATH ?? 'ffmpeg';
@@ -33,7 +34,23 @@ function ffmpegAvailable(): boolean {
   }
 }
 
+/** Limit for anything running a real ffmpeg, which takes as long as the machine
+ *  lets it: the same 60 s production gives a frame, not Bun's default 5 s. */
+const FFMPEG_LIMIT_MS = 60_000;
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+/** Resolves on the first state, current or broadcast, that `ok` accepts. */
+function until(timelapse: FieldTimelapse, ok: (state: TimelapseState) => boolean): Promise<void> {
+  return new Promise(resolve => {
+    if (ok(timelapse.getState())) return resolve();
+    const off = timelapse.addListener(state => {
+      if (!ok(state)) return;
+      off();
+      resolve();
+    });
+  });
+}
 
 describe('timelapse time helpers', () => {
   test('slotTime lands on the local wall clock of the given day', () => {
@@ -273,7 +290,7 @@ describe('FieldTimelapse light handshake over webhooks', () => {
       ],
       { stdio: 'inherit' },
     );
-  });
+  }, FFMPEG_LIMIT_MS);
 
   afterAll(() => {
     try {
@@ -283,8 +300,10 @@ describe('FieldTimelapse light handshake over webhooks', () => {
     }
   });
 
-  /** `onStart` lets a test decide how Home Assistant behaves. */
-  function instance(onStart: (nonce: string, tl: FieldTimelapse) => void, readyTimeoutSeconds = 2) {
+  /** `onStart` lets a test decide how Home Assistant behaves. The default
+   *  timeout is one a callback that arrives can't lose to, however busy the
+   *  machine, and an ignored one still fails inside the test's own limit. */
+  function instance(onStart: (nonce: string, tl: FieldTimelapse) => void, readyTimeoutSeconds = 20) {
     const posted: { url: string; nonce: string }[] = [];
     const timelapse: FieldTimelapse = new FieldTimelapse({
       directory: dir,
@@ -321,15 +340,13 @@ describe('FieldTimelapse light handshake over webhooks', () => {
     const { timelapse, posted } = instance((nonce, tl) => {
       setTimeout(() => tl.notifyLightsReady(nonce), 150);
     });
-    const started = Date.now();
     const entry = await timelapse.captureFrame('manual', true);
     await timelapse.stop();
 
+    // Shot on the callback: a timeout would say 'failed'.
     expect(entry.lights).toBe('ran');
     expect(entry.lightsError).toBeUndefined();
     expect(entry.files).toHaveLength(1);
-    // Shot on the callback, not on a timeout.
-    expect(Date.now() - started).toBeLessThan(2000);
     expect(posted.map(p => p.url.split('/').pop())).toEqual([
       'pfms_lights_start_abcdefgh',
       'pfms_lights_done_abcdefgh',
@@ -532,6 +549,8 @@ describe('FieldTimelapse', () => {
   let busy = false;
   const calls: { url: string; method: string; body?: string }[] = [];
   let timelapse: FieldTimelapse;
+  /** Shared so a later test asks about the same recording, however long ago. */
+  let match1StartedAt = 0;
 
   beforeAll(() => {
     // 20 s of test pattern with a 2 s GOP, so keyframe-only sampling yields
@@ -565,7 +584,7 @@ describe('FieldTimelapse', () => {
       },
     });
     timelapse.start();
-  });
+  }, FFMPEG_LIMIT_MS);
 
   afterAll(async () => {
     await timelapse.stop();
@@ -576,44 +595,52 @@ describe('FieldTimelapse', () => {
     }
   });
 
-  test('an archival frame is a full-resolution JPEG per stream, with the light actions around it', async () => {
-    // The custom-calls mode: two before the shutter, one after.
-    config.lights = {
-      mode: 'http',
-      preActions: [
-        { method: 'POST', url: 'http://lights.invalid/snapshot', body: '{"scene_id":"pfms_restore"}' },
-        { method: 'POST', url: 'http://lights.invalid/on', body: '{"entity_id":"light.all_lights"}' },
-      ],
-      postActions: [{ method: 'POST', url: 'http://lights.invalid/restore' }],
-    };
-    calls.length = 0;
+  test(
+    'an archival frame is a full-resolution JPEG per stream, with the light actions around it',
+    async () => {
+      // The custom-calls mode: two before the shutter, one after.
+      config.lights = {
+        mode: 'http',
+        preActions: [
+          { method: 'POST', url: 'http://lights.invalid/snapshot', body: '{"scene_id":"pfms_restore"}' },
+          { method: 'POST', url: 'http://lights.invalid/on', body: '{"entity_id":"light.all_lights"}' },
+        ],
+        postActions: [{ method: 'POST', url: 'http://lights.invalid/restore' }],
+      };
+      calls.length = 0;
 
-    const entry = await timelapse.captureFrame('manual', true);
+      const entry = await timelapse.captureFrame('manual', true);
 
-    expect(entry.error).toBeUndefined();
-    expect(entry.lights).toBe('ran');
-    expect(entry.files).toHaveLength(1);
-    expect(entry.files[0].bytes).toBeGreaterThan(1000);
-    expect(timelapse.filePath('frame', entry.files[0].file)).toBeTruthy();
-    // Both pre calls in order, then the post one — bodies passed through.
-    expect(calls.map(c => c.url)).toEqual([
-      'http://lights.invalid/snapshot',
-      'http://lights.invalid/on',
-      'http://lights.invalid/restore',
-    ]);
-    expect(calls[0].body).toBe('{"scene_id":"pfms_restore"}');
-  });
+      expect(entry.error).toBeUndefined();
+      expect(entry.lights).toBe('ran');
+      expect(entry.files).toHaveLength(1);
+      expect(entry.files[0].bytes).toBeGreaterThan(1000);
+      expect(timelapse.filePath('frame', entry.files[0].file)).toBeTruthy();
+      // Both pre calls in order, then the post one — bodies passed through.
+      expect(calls.map(c => c.url)).toEqual([
+        'http://lights.invalid/snapshot',
+        'http://lights.invalid/on',
+        'http://lights.invalid/restore',
+      ]);
+      expect(calls[0].body).toBe('{"scene_id":"pfms_restore"}');
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('a busy field still gets its frame, but the lights are left alone', async () => {
-    busy = true;
-    calls.length = 0;
-    const entry = await timelapse.captureFrame('manual', true);
-    busy = false;
+  test(
+    'a busy field still gets its frame, but the lights are left alone',
+    async () => {
+      busy = true;
+      calls.length = 0;
+      const entry = await timelapse.captureFrame('manual', true);
+      busy = false;
 
-    expect(entry.lights).toBe('skipped-field-in-use');
-    expect(entry.files).toHaveLength(1);
-    expect(calls).toHaveLength(0);
-  });
+      expect(entry.lights).toBe('skipped-field-in-use');
+      expect(entry.files).toHaveLength(1);
+      expect(calls).toHaveLength(0);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('robots on the field leave the lights alone too — they are already on', async () => {
     // Its own instance: telemetry here would otherwise start the fast
@@ -667,40 +694,44 @@ describe('FieldTimelapse', () => {
     expect(calls.map(c => c.url)).toContain('http://lights.invalid/restore');
   }, 20_000);
 
-  test('a failing light action does not cost the frame', async () => {
-    const failing = new FieldTimelapse({
-      directory: dir,
-      ffmpegPath: ffmpeg,
-      getStreams: () => [{ name: 'All field', url: source, enabled: true }],
-      getConfig: () => config,
-      isAvailable: () => true,
-      isFieldBusy: () => false,
-      inputPrefixArgs: ['-re', '-stream_loop', '-1'],
-      tickMs: 60_000,
-      fetchImpl: async () => ({ ok: false, status: 503, text: async () => '' }),
-    });
-    const entry = await failing.captureFrame('manual', true);
-    await failing.stop();
+  test(
+    'a failing light action does not cost the frame',
+    async () => {
+      const failing = new FieldTimelapse({
+        directory: dir,
+        ffmpegPath: ffmpeg,
+        getStreams: () => [{ name: 'All field', url: source, enabled: true }],
+        getConfig: () => config,
+        isAvailable: () => true,
+        isFieldBusy: () => false,
+        inputPrefixArgs: ['-re', '-stream_loop', '-1'],
+        tickMs: 60_000,
+        fetchImpl: async () => ({ ok: false, status: 503, text: async () => '' }),
+      });
+      const entry = await failing.captureFrame('manual', true);
+      await failing.stop();
 
-    expect(entry.lights).toBe('failed');
-    expect(entry.lightsError).toContain('503');
-    expect(entry.files).toHaveLength(1);
-  });
+      expect(entry.lights).toBe('failed');
+      expect(entry.lightsError).toContain('503');
+      expect(entry.files).toHaveLength(1);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('robots showing up start a timelapse that plays back at 30 fps', async () => {
     config.lights = { mode: 'none' };
     expect(timelapse.getState().capturing).toBe(false);
 
     timelapse.onTelemetry();
-    await sleep(600);
-    expect(timelapse.getState().capturing).toBe(true);
+    await until(timelapse, state => state.capturing);
     expect(timelapse.getState().robotsPresent).toBe(true);
 
     // Let the encoder see several seconds of source, then close it out the way
     // a match start would.
     await sleep(6000);
+    const closed = until(timelapse, state => !state.capturing && state.recentSessions.length > 0);
     timelapse.onMatchState({ phase: 'countdown' } as MatchState);
-    await sleep(1500);
+    await closed;
 
     const state = timelapse.getState();
     expect(state.capturing).toBe(false);
@@ -775,7 +806,7 @@ describe('FieldTimelapse', () => {
     mkdirSync(matchDir);
     const recording = join(matchDir, 'all-field.mp4');
     execFileSync(ffmpeg, ['-v', 'error', '-y', '-i', source, '-c', 'copy', '-movflags', '+faststart', recording]);
-    const startedAt = Date.now() - 60 * 60_000;
+    const startedAt = (match1StartedAt = Date.now() - 60 * 60_000);
     timelapse.onMatchRecorded({
       matchId: 'match-1',
       recordings: [{ name: 'All field', path: recording, startedAt, durationSeconds: 20 }],
@@ -816,7 +847,7 @@ describe('FieldTimelapse', () => {
     const twoHoursAgo = Date.now() - 2 * 60 * 60_000;
     const queued = timelapse.fillInPastMatches([
       // Filled in by the test above.
-      { matchId: 'match-1', recordings: rec(Date.now() - 60 * 60_000) },
+      { matchId: 'match-1', recordings: rec(match1StartedAt) },
       // Recorded before filling in existed.
       { matchId: 'match-2', recordings: rec(twoHoursAgo) },
       // The live capture was running through most of it.
