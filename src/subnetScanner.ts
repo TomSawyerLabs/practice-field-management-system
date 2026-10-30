@@ -40,6 +40,8 @@ export class SubnetScanner {
     private readonly onScanComplete?: (results: SubnetScanResults) => void,
     /** A station's bridge interface, when pFMS runs the station networks. */
     private readonly bridgeOf?: (station: StationName) => string | undefined,
+    /** The station a guest host chose (its route preference), if any. */
+    private readonly chosenStationOf?: (ip: string) => StationName | null,
     /** From DRY_RUN by default, so no caller can forget it: a dry run on the
      *  field network must not sweep real team subnets. */
     private readonly dryRun = isDryRun(),
@@ -207,18 +209,22 @@ export class SubnetScanner {
    * Scan the kernel conntrack table for flows involving configured team subnets.
    * Any non-team IP (guest network) seen communicating with a team subnet is
    * added to that station's host map as a conntrack-sourced host.
+   *
+   * Conntrack can't say which bridge a flow used, so for a team on two stations
+   * a guest host belongs to the station it chose, and to neither until it does.
    */
   private async scanConntrack(): Promise<void> {
     if (this.dryRun) return;
 
-    // Build reverse lookup: subnet prefix → station
-    const subnetToStation = new Map<string, StationName>();
+    // Build reverse lookup: subnet prefix → its stations
+    const subnetToStations = new Map<string, StationName[]>();
     for (const station of StationNameList) {
       const team = this.getTeamForStation(station);
       if (team === null) continue;
-      subnetToStation.set(teamSubnet(team), station);
+      const subnet = teamSubnet(team);
+      subnetToStations.set(subnet, [...(subnetToStations.get(subnet) ?? []), station]);
     }
-    if (subnetToStation.size === 0) return;
+    if (subnetToStations.size === 0) return;
 
     let stdout: string;
     try {
@@ -235,6 +241,14 @@ export class SubnetScanner {
 
     // Track which conntrack-sourced hosts are still active this scan
     const activeGuests = new Map<StationName, Set<string>>();
+    const addGuest = (guest: string, stations: StationName[]) => {
+      if (guest === FIELD_CONTROL_ADDRESS) return; // our own IP
+      const chosen = this.chosenStationOf?.(guest);
+      const station = stations.length === 1 ? stations[0] : stations.find(s => s === chosen);
+      if (!station) return;
+      if (!activeGuests.has(station)) activeGuests.set(station, new Set());
+      activeGuests.get(station)!.add(guest);
+    };
 
     for (const line of stdout.split('\n')) {
       // Extract src and dst from the FIRST tuple only (before [UNREPLIED]/[ASSURED] or second src=)
@@ -251,22 +265,16 @@ export class SubnetScanner {
       // Check if src or dst falls in a team subnet
       const srcPrefix = src.split('.').slice(0, 3).join('.');
       const dstPrefix = dst.split('.').slice(0, 3).join('.');
-      const srcStation = subnetToStation.get(srcPrefix);
-      const dstStation = subnetToStation.get(dstPrefix);
+      const srcStations = subnetToStations.get(srcPrefix);
+      const dstStations = subnetToStations.get(dstPrefix);
 
       // We want exactly one side in a team subnet, the other a private (guest) IP.
       // Filter out internet IPs — robots can make outbound connections that show up
       // in conntrack, but we only care about local guest network hosts.
-      if (srcStation && !dstStation && SubnetScanner.isPrivateIp(dst)) {
-        // src is in team subnet → dst is the guest (skip our own IPs)
-        if (dst === FIELD_CONTROL_ADDRESS) continue;
-        if (!activeGuests.has(srcStation)) activeGuests.set(srcStation, new Set());
-        activeGuests.get(srcStation)!.add(dst);
-      } else if (dstStation && !srcStation && SubnetScanner.isPrivateIp(src)) {
-        // dst is in team subnet → src is the guest (skip our own IPs)
-        if (src === FIELD_CONTROL_ADDRESS) continue;
-        if (!activeGuests.has(dstStation)) activeGuests.set(dstStation, new Set());
-        activeGuests.get(dstStation)!.add(src);
+      if (srcStations && !dstStations && SubnetScanner.isPrivateIp(dst)) {
+        addGuest(dst, srcStations); // src is in team subnet → dst is the guest
+      } else if (dstStations && !srcStations && SubnetScanner.isPrivateIp(src)) {
+        addGuest(src, dstStations); // dst is in team subnet → src is the guest
       }
     }
 

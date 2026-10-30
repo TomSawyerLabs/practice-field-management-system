@@ -395,6 +395,12 @@ robot. The unicast mDNS query that identifies a SystemCore is pinned too (by
 the `mdns-socket` addon), so one team can run a roboRIO and a SystemCore side
 by side.
 
+Guest laptops are found from conntrack, which can't say which bridge a flow
+used. For a team on one station, a laptop talking to its subnet is listed there
+and auto-connected. For a team on two stations, a laptop is listed only on the
+robot it chose (team page or `/route`) and is never auto-connected: until it
+chooses, it stays on whichever route the kernel picks.
+
 ### Guest Host Names
 
 Guest-network hosts (DS laptops, phones) are shown by device name wherever

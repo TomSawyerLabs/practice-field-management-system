@@ -87,8 +87,10 @@ capture attribution in `6e290fb`.
   reached the test port's. Writes (configure, firmware) follow the same route.
   Logged in ISSUES.md; not fixed here.
 - **Laptop routing (read from the code, 2026-10-30):** each laptop can choose,
-  from the team page's Connect (route preference) or `/route` and Drive. The gap
-  is the default: see the ISSUES.md entry on guest laptops.
+  from the team page's Connect (route preference) or `/route` and Drive.
+  Auto-connect used to place a laptop that hadn't chosen on the team's last
+  station, moving it off the robot it was reaching. Conntrack has no interface,
+  so that was always a guess.
 
 ## Release order for addon 0.2.0
 
@@ -111,7 +113,10 @@ Pushing master first fails safely ("nothing deployed"), but the release run fail
 - [x] Pinned SystemCore probe: `sendTo` in the addon, version 0.2.0, proven in
       the lab with all four controller pairings. The local tag exists; the
       release needs the push above.
-- [x] Robot tester checked: wrong robot confirmed, logged.
+- [x] Robot tester checked: wrong robot confirmed, logged, and handed to
+      `issues/station-test-port` (user, 2026-10-30).
+- [x] Guest laptops of a duplicated team: listed only on the robot they chose,
+      and never auto-connected (user approved, 2026-10-30).
 - [ ] Not yet seen live: two robots of one team both on. Check the Network page
       for both stations next time. The pinned path runs for every team from the
       next deploy, so ordinary team checks exercise it straight away.

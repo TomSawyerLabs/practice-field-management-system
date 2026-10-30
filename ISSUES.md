@@ -120,7 +120,7 @@ Each needs a field visit. What to try and what each result means is in
 
 ## Robot tester can reach the wrong robot when its team is also on a station
 
-_in progress — issues/two-robot-own-traffic_
+_in progress — issues/station-test-port_
 
 The tester reaches the radio with plain `fetch` to `10.TE.AM.1`
 (`src/firmwareUpdater.ts`, `src/stationTestManager.ts`, `configureRadio` in
@@ -132,18 +132,6 @@ So with a team's robot on a station and another of its robots on the tester, the
 checks describe the wrong robot, and a configure or firmware update goes to the
 radio on the field. Matters because that write hits a robot the team may be
 driving. Details in `plans/two-robot-own-traffic.md`.
-
-## Guest laptops of a team on two stations land on the last station
-
-_in progress — issues/two-robot-own-traffic_
-
-`SubnetScanner.scanConntrack` maps a subnet to one station, so every guest host of
-a duplicated team is listed on the last of its stations. For a laptop that hasn't
-picked a robot, `index.ts` then auto-connects its route preference there, about
-10 s after its first traffic, moving it from the robot the main table was sending
-it to. An explicit choice on the team page or `/route` is respected, because
-auto-connect skips a laptop with a preference; after Disconnect, its next traffic
-gets auto-connected again. Conntrack has no interface to go by.
 
 ## RawPacketLog daily-cap test fails often, even alone
 
