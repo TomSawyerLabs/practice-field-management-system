@@ -71,9 +71,10 @@ Read from steamboat on 2026-10-30: 485 rules, down to priority 31927.
 - [x] Parse the prefix length; `priority` on add and remove
 - [x] Startup sync, one-at-a-time changes, no-op for an unchanged route
 - [x] Tests, docs, ISSUES.md
-- [ ] Next deploy: check `ip rule list` on steamboat drops to about one rule per
+- [x] Next deploy: check `ip rule list` on steamboat drops to about one rule per
       laptop on the field. The user does the deploy.
-- [ ] Same check, taken over from the robot-tester dhcpcd thread: confirm the
+      Seen 2026-10-30 3:34 PM PDT (22:34Z), `0586d9a`, no laptops on: 3 rules.
+- [x] Same check, taken over from the robot-tester dhcpcd thread: confirm the
       `[manager]` dhcpcd process is gone and `dhcpcd: eno1.99 [ip4]` comes and goes
       (`plans/robot-tester-dhcpcd.md`).
 

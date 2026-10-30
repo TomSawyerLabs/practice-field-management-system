@@ -104,7 +104,7 @@ we can. Reported by the user 2026-10-14.
   from, and its session waited for the Drive button (reworded).
 - **Side finding, not this task:** 5:05:44 to 5:09:07 PM, a second 114 laptop
   was blocked and unblocked with every ~6 s TCP flap, so the block has gaps.
-  See ISSUES.md.
+  Fixed by `4cf44ab`.
 
 ## Plan / steps
 
@@ -135,8 +135,9 @@ we can. Reported by the user 2026-10-14.
       (capture listening, frontend bundle matches).
 - [x] Read team 114's 2026-10-28 occurrence from the logs (findings above).
 - [x] Split "no robot answers" from "pFMS isn't forwarding", fix the
-      no-session wording. Not deployed yet.
-- [ ] Deploy that.
+      no-session wording.
+- [x] Deployed: `0586d9a` live on steamboat 2026-10-30 3:33 PM PDT (22:33Z),
+      with the rest of that day's work in one push (`579d716` included).
 - [ ] Next occurrence: confirm with the split line, and with what the team did.
 
 ## Open questions for the user

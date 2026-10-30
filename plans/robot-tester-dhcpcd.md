@@ -62,5 +62,6 @@ the tester as stuck as before.
 - [x] Update `docs/robot-tester.md`
 - [x] Log the separate `--reboot 0` problem on dhcpcd 10.0.x in `ISSUES.md`, since fixed
       with `--reboot 2` (`plans/station-test-port-fixes.md`)
-- [ ] Confirm on steamboat after the next deploy: `ps` shows `dhcpcd: eno1.99 [ip4]`
-      coming and going, not `[manager]` staying up
+- [x] Confirmed on steamboat after the `0586d9a` deploy, 2026-10-30 3:34 PM PDT
+      (22:34Z): `ps` shows `dhcpcd: eno1.99 [ip4]`, and the journal shows it
+      started and stopped by turns, with no `[manager]`
