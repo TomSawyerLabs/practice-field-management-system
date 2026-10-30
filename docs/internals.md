@@ -206,8 +206,9 @@ Wi-Fi leg, not the laptop's, and works out of a match.
 ## Usage Tracking
 
 `src/usageTracker.ts` records per-station link sessions (team, first
-seen, last seen, end; a session ends after 2 hours without link).
-Persisted to `usage-data.json` and surfaced on the `/usage` page.
+seen, last seen, end; a session ends after 2 hours without link). A host
+team's robot with no Driver Station counts as having no link, except during
+a scrimmage. Persisted to `usage-data.json` and surfaced on the `/usage` page.
 
 ## Saved Teams
 

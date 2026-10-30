@@ -734,7 +734,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Initialize field usage tracker (tracks robot connection hours per team)
   const usageTracker = new UsageTracker();
-  usageTracker.attach(radioManager);
+  // A host robot with no Driver Station is parked, not practicing.
+  let laptopDriving = (_station: StationName): string | undefined => undefined;
+  usageTracker.attach(
+    radioManager,
+    (team, station) =>
+      hostTeamsInEffect(setupConfigStore.get().settings, matchQueue.getState()).includes(team) &&
+      !laptopDriving(station) &&
+      !matchEngine.getState().connectedStations[station],
+  );
 
   // Initialize support system
   const supportStore = new SupportStore();
@@ -1616,6 +1624,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       driveSessions.restore(dnat, blocks);
       console.log(`Restored ${dnat.length} DNAT rule(s) and ${blocks.length} duplicate-DS block(s) from the kernel`);
     }
+
+    laptopDriving = station => driveSessions.laptopOn(station);
 
     /** Build and broadcast drive session state to all clients. Keyed by
      *  station on the wire, computed fresh from where each robot is now. */

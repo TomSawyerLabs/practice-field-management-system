@@ -40,7 +40,9 @@ export class UsageTracker {
     }, PERSIST_INTERVAL_MS);
   }
 
-  attach(radioManager: RadioManager): void {
+  /** `isParked` names a linked robot nobody is using. It counts as off the
+   *  field, so one left powered on overnight doesn't run up hours. */
+  attach(radioManager: RadioManager, isParked: (team: number, station: StationName) => boolean = () => false): void {
     // Initialize prev team state
     for (const station of StationNameList) {
       this.prevTeam.set(station as StationName, radioManager.getTeamForStation(station as StationName));
@@ -57,7 +59,7 @@ export class UsageTracker {
         if (!detail) continue;
 
         const team = radioManager.getTeamForStation(sn);
-        const linked = detail.isLinked;
+        const linked = detail.isLinked && !(team && isParked(team, sn));
         const wasLinked = this.wasLinked.get(sn) ?? false;
         this.wasLinked.set(sn, linked);
 
