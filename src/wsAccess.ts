@@ -48,14 +48,17 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   stationSelfAStop: 'anyone',
   stationClearAStop: 'anyone',
 
-  // ── Stops: never refused, a false Driver Station match must not get in
-  //    the way of one. ───────────────────────────────────────────────────
+  // ── Stops, and clearing them: never refused. A false Driver Station match
+  //    must not get in the way of one, and a team may clear its own e-stop
+  //    from its Driver Station. ──────────────────────────────────────────
   adminStopMatch: 'anyone',
   matchAbortCountdown: 'anyone',
   stationPauseMatch: 'anyone',
   adminStationDisable: 'anyone',
   adminGlobalEStop: 'anyone',
   adminStationEStop: 'anyone',
+  adminClearFieldEStop: 'anyone',
+  adminClearEStop: 'anyone',
 
   // ── Every page ──────────────────────────────────────────────────────
   subscribe: 'anyone',
@@ -91,11 +94,6 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   stationResumeMatch: 'staff',
   updateMatchConfig: 'staff',
   adminStationEnable: 'staff',
-  // Letting a stopped robot go is an operator's call, even for a team's own
-  // e-stop. `staff` and not `admin`: /match has no login, and its Clear
-  // buttons are the ones used most.
-  adminClearFieldEStop: 'staff',
-  adminClearEStop: 'staff',
   staffReady: 'staff',
   staffHeartbeat: 'staff',
   playGetReady: 'staff',

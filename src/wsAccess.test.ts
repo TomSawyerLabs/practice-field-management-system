@@ -132,7 +132,6 @@ describe('pages with no login', () => {
     'updateMatchConfig', // MatchTimeline's editor: these pages pass `progress` or `readOnly`
     'applyConfig', // PendingRadioChangesPanel: these pages use only that file's text helpers
     'cancelPendingChange', // the same panel
-    'adminClearFieldEStop', // FieldEStopControl: these pages use only that file's TeamEStopBanner
   ]);
   const gated = (root: string) => [
     ...new Set(sends(root).filter(t => accessOf(t) !== 'anyone' && !importedNotRendered.has(t))),
@@ -302,26 +301,6 @@ describe('the WebSocket gate', () => {
       'stationEStop',
       'stationDisable',
     ]);
-  });
-
-  test('a Driver Station cannot clear an e-stop, even its own', async () => {
-    const ds = await client(DS_IP);
-    for (const msg of [
-      { type: 'adminClearEStop', station: 'slot2' },
-      { type: 'adminClearEStop' },
-      { type: 'adminClearFieldEStop' },
-    ]) {
-      expect((await ds.send(msg))[0]?.error).toContain('Driver Station');
-    }
-    expect(engineCalls).toEqual([]);
-  });
-
-  test('any other device can clear an e-stop, with no login', async () => {
-    claimField();
-    const staff = await client(STAFF_IP);
-    expect(await staff.send({ type: 'adminClearEStop', station: 'slot2' })).toEqual([]);
-    expect(await staff.send({ type: 'adminClearFieldEStop' })).toEqual([]);
-    expect(engineCalls).toEqual(['clearEStop', 'clearFieldEStop']);
   });
 
   test('any other device can run the match', async () => {

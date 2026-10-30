@@ -314,7 +314,7 @@ missing from the table is refused, so a new one has to be classified.
 | Tier        | Who                                                                                       | Examples                                                              |
 | ----------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `anyone`    | Team pages, and anything that stops robots                                                | Join, ready, `station`, `portBridge`, E-Stop, Stop match              |
-| `staff`     | Any device that isn't a Driver Station. There is no staff login. An admin login overrides | Create and start a match, kick, clear an e-stop, radio programming    |
+| `staff`     | Any device that isn't a Driver Station. There is no staff login. An admin login overrides | Create and start a match, kick, force ready, radio programming        |
 | `admin`     | An admin login, or anyone until the field has a passphrase, so first-time setup can run   | API keys, score reset, setup settings, restart, cast display controls |
 | `adminOnly` | An admin login, always                                                                    | Slack config, audio device, clearing history, deleting recordings     |
 

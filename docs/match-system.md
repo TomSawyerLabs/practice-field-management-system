@@ -217,10 +217,7 @@ only after someone presses **Enable**. Nothing brings it back by itself:
   (its Driver Station, the team's page, or field staff) and what to do, so
   the team can tell their own stop from the field's.
 - Requires a human to clear (per robot on `/match`, or on `/admin`);
-  clearing the match clears it too. A team can't clear it from its Driver
-  Station, even when the team pressed E-Stop itself: clearing is refused on a
-  DS laptop, and a team's page has no Clear. Any other device can open
-  `/match`.
+  clearing the match clears it too.
 - After staff clear it, the team (or staff) can re-enable the robot
   mid-match.
 
