@@ -23,8 +23,17 @@ access check so external login works, and `src/websocketServer.ts` has no addres
 or `Origin` check. So a visitor with no cookie should be able to send every
 `anyone` and `staff` message, such as `matchCreate`, `station` or
 `adminGlobalEStop`. Matters because `docs/support.md` says pFMS assumes everyone
-who can reach it is trusted. An address-based fix also needs
-`plans/caddy-xff-perimeter-spoof.md` in the ops repo.
+who can reach it is trusted. An address-based fix can now rely on Caddy's client
+address: the forged `X-Forwarded-For` fix is live (ops `01d9534`, 1:48 PM PDT
+(20:48Z) on 2026-10-30, `plans/caddy-xff-perimeter-spoof.md` there).
+
+## NAT rules remain after a station is cleared
+
+On steamboat at 4:46 PM PDT (23:46Z) on 2026-10-30, with `active-config.json`
+empty since the 6:00 AM PDT clear and all six bridges down, `iptables -t nat -S`
+still had `pfms-nat-slot1` for `10.1.0.0/24` and `pfms-nat-slot3` and
+`pfms-nat-slot4` for `10.17.0.0/24`. Matters because the field's rules should
+describe the teams on it, and stale ones confuse anyone reading them mid-incident.
 
 ## Admin login has no rate limit
 
