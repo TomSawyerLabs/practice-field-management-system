@@ -26,6 +26,8 @@ we can. Reported by the user 2026-10-14.
 
 - Build the per-session robot-link logging first, then fix from evidence
   (user, 2026-10-14).
+- No team-page message about the wait after a robot is added: DS restarts are
+  relatively fast, so a team that restarts loses little (user, 2026-10-30).
 
 ## Findings / gotchas
 
@@ -136,8 +138,6 @@ we can. Reported by the user 2026-10-14.
       no-session wording. Not deployed yet.
 - [ ] Deploy that.
 - [ ] Next occurrence: confirm with the split line, and with what the team did.
-- [ ] Decide whether the team page should say comms take about a minute after
-      a robot is added.
 
 ## Open questions for the user
 
