@@ -109,15 +109,6 @@ a default route makes it start. Matters because the systemd unit only orders on
 `network.target`, which doesn't promise a route: a host booting before its network
 is ready could crash-loop, and one optional feature shouldn't take the field down.
 
-## `bun test` also runs the compiled tests after a build
-
-`bun run build` runs `tsc`, which writes `dist/*.test.js`, and a later `bun test`
-picks those up alongside `src/`. Seen 2026-10-30: 109 test files instead of 60, and
-two `RawPacketLog` failures that exist only in `dist
-awPacketLog.test.js`; deleting
-`dist/` clears them. Matters because a build before a test run gives double counts
-and false failures.
-
 ## Robot tester can't complete a lease on dhcpcd 10.0.x
 
 `dhcpcdArgs()` in `src/robotTestMonitor.ts` passes `--reboot 0`. dhcpcd 10.0.6
@@ -159,3 +150,11 @@ check was in flight left the phase on "Running checks...", and partway through
 the reboot wait it dropped to "Detecting robot..." with the team number gone,
 before the configure had finished. `docs/robot-tester.md` says both operations
 stop the periodic checks. The operation itself still completed.
+
+## RawPacketLog daily-cap test fails often, even alone
+
+`src/rawPacketLog.test.ts` › `stops at the daily cap, and starts again the next day` failed 2 of 3 runs of that file alone on an idle-ish Windows machine (2026-10-30), and once in a full `bun test` (746 pass / 1 fail): `Expected: 176, Received: 24` at line 59. The test's `flush()` calls `log.close()` and then waits a fixed 50 ms. Matters because it turns a full run red on its own.
+
+## Three more tests time out when the full suite runs under heavy load
+
+A full `bun test` in the main checkout on a busy machine (2026-10-30, 1320 pass / 10 fail, 507 s) also failed `FieldTimelapse light handshake over webhooks > the callback releases the shutter, and both webhooks are called` (3.2 s), `a challenge run end to end > finishing a stopwatch run stops the robot and ends the run` (5.1 s) and two unnamed `recordings API` tests (5.5 s). Each passed in less loaded runs. The other 6 failures were the robotWifiScan flake, since fixed. Matters because a red full run hides real regressions.
