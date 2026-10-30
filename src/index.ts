@@ -27,7 +27,7 @@ import {
 import {
   onConfigChange as onRouteConfigChange,
   cleanupAllPreferences,
-  restorePreferencesFromKernel,
+  syncPreferencesWithKernel,
   setRoutePreference,
   clearRoutePreference,
   getPreference,
@@ -255,6 +255,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const radioManager = new RadioManager(radioUrl(), vlanInterface);
   // The wizard's radio URL takes effect the moment it's saved.
   setupConfigStore.addListener(() => radioManager.setApiBaseUrl(radioUrl()));
+
+  // Before anything can ask for a route. A graceful restart keeps the rules of
+  // the teams still on the field; after a full one, none of them should be
+  // here, and any that are were left by a crash.
+  if (startupTrunk) {
+    await syncPreferencesWithKernel(KeepNetwork ? s => radioManager.getTeamForStation(s) : () => null).catch(err =>
+      appWarn(`Could not read the per-laptop ip rules: ${(err as Error).message}`),
+    );
+  }
 
   // Connect to the radio in the background — don't block startup.
   // After a full restart (iptables were flushed), re-apply the restored activeConfig
@@ -2210,11 +2219,5 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     restorePreviousStations(s => radioManager.getTeamForStation(s));
     // Rules written by an older pFMS: bring the bridges' NAT up to date.
     void migrateAllBridgeNat(s => radioManager.getTeamForStation(s));
-
-    const restored = await restorePreferencesFromKernel();
-    if (restored > 0) {
-      console.log(`Restored ${restored} route preference(s) from kernel`);
-      broadcastRouteState();
-    }
   }
 })();

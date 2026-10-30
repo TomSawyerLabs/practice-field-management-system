@@ -66,12 +66,15 @@ export interface IpRuleOptions {
   from: string;
   to?: string;
   table: number;
+  /** Without one, the kernel numbers a new rule below the lowest in use and
+   *  won't notice a duplicate, and a removal takes the first rule that fits. */
+  priority?: number;
 }
 
 /** A parsed entry from `ip rule list` */
 export interface IpRuleInfo {
   priority: number;
-  /** Source address or "all" */
+  /** Source address, CIDR for a range, or "all" */
   src?: string;
   /** Destination CIDR or "all" */
   dst?: string;

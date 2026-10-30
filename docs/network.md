@@ -352,10 +352,12 @@ team 1234):
   overhead.
 - **Route page** (`/route`) lets laptops choose which station's robot they
   connect to. Selecting a station adds an
-  `ip rule from <laptop-ip> lookup <vlan-table>` kernel rule directing
-  that laptop's traffic through the chosen station's VLAN. Preferences are
+  `ip rule from <laptop-ip> to 10.TE.AM.0/24 lookup <vlan-table>` kernel rule
+  directing that laptop's traffic through the chosen station's VLAN. Each
+  laptop has one rule, numbered downward from priority 32765. Preferences are
   cleared when station configs change, to prevent stale rules pointing at
-  removed routing tables.
+  removed routing tables, and startup removes any rule left over from before
+  (see [Graceful Reload](internals.md#graceful-reload)).
 
 ## Device Discovery
 

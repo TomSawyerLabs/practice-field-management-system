@@ -260,14 +260,17 @@ now most get 6–8 kB, a team's Video tab ~19 kB, `/match` ~48 kB, `/usage`
    - **Previous station config** — initialized from the radio manager so
      future team changes properly tear down old routes/rules
    - **Route preferences** — rebuilt from `ip rule list` so laptop routing
-     choices persist
+     choices persist. A laptop keeps its first rule in priority order whose
+     station still has that rule's team; every other per-laptop rule is stale
+     and removed, duplicates included
 
 This means robots stay connected and laptops keep their routing
 preferences during service updates.
 
 Hard shutdown (`SIGTERM`/`SIGINT`) performs full cleanup: stops DHCP,
 flushes all iptables rules, per-station route tables, and ip rule
-preferences.
+preferences. A start without the flag file removes any per-laptop ip rules a
+crash left behind.
 
 ## Clearing All Configurations
 

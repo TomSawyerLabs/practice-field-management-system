@@ -102,13 +102,15 @@ export function createDryRunBackend(inner?: NetworkBackend): NetworkBackend {
 
     async addIpRule(opts: IpRuleOptions) {
       console.log(
-        `[dry-run] Would add ip rule: from ${opts.from}${opts.to ? ` to ${opts.to}` : ''} table ${opts.table}`,
+        `[dry-run] Would add ip rule: from ${opts.from}${opts.to ? ` to ${opts.to}` : ''}` +
+          `${opts.priority !== undefined ? ` priority ${opts.priority}` : ''} table ${opts.table}`,
       );
     },
 
     async removeIpRule(opts: IpRuleOptions) {
       console.log(
-        `[dry-run] Would remove ip rule: from ${opts.from}${opts.to ? ` to ${opts.to}` : ''} table ${opts.table}`,
+        `[dry-run] Would remove ip rule: from ${opts.from}${opts.to ? ` to ${opts.to}` : ''}` +
+          `${opts.priority !== undefined ? ` priority ${opts.priority}` : ''} table ${opts.table}`,
       );
     },
 

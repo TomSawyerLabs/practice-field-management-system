@@ -129,18 +129,6 @@ Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
 `[dry-run] Would fping` branch is dead and a DRY_RUN instance sweeps real team
 subnets. Matters because this PC reaches the real field network.
 
-## Per-laptop `ip rule` entries pile up on steamboat
-
-_in progress — issues/ip-rule-cleanup_
-
-`ip rule list` on steamboat had 487 entries on 2026-10-28. Most are stale
-`from <laptop> to 10.TE.AM.0/24 lookup <slot table>` rules for teams that
-left days ago, with the same laptop/subnet pair repeated many times
-(e.g. 10.55.65.16 → 10.59.40.0/24 about 30 times). Priorities count down from
-32765 and had reached 31924. They survive restarts because `KEEP_NETWORK=true`
-restores rules from the kernel. Stale rules can send a returning laptop to
-the wrong slot's table, and priorities will eventually run out.
-
 ## Flaky under load: robotWifiScan "capitals-only difference is still tested automatically"
 
 _in progress — issues/test-reliability_

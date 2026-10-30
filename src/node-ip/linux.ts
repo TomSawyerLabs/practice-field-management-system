@@ -50,6 +50,35 @@ interface IpAddrEntry {
   }>;
 }
 
+interface IpRuleEntry {
+  priority: number;
+  src?: string;
+  srclen?: number;
+  dst?: string;
+  dstlen?: number;
+  table?: string;
+}
+
+/** `ip -j rule list` keeps a selector's prefix length in a field of its own:
+ *  {"dst":"10.1.14.0","dstlen":24}, and no length at all for a single host. */
+export function parseIpRule(entry: IpRuleEntry): IpRuleInfo {
+  const cidr = (address?: string, length?: number) => (length === undefined ? address : `${address}/${length}`);
+  return {
+    priority: entry.priority,
+    src: cidr(entry.src, entry.srclen),
+    dst: cidr(entry.dst, entry.dstlen),
+    table: entry.table,
+  };
+}
+
+function ipRuleArgs(opts: IpRuleOptions): string[] {
+  const args = ['from', opts.from];
+  if (opts.to) args.push('to', opts.to);
+  if (opts.priority !== undefined) args.push('priority', String(opts.priority));
+  args.push('table', String(opts.table));
+  return args;
+}
+
 function parseInterfaceInfo(entry: IpAddrEntry): InterfaceInfo {
   return {
     name: entry.ifname,
@@ -258,27 +287,13 @@ export function createLinuxBackend(): NetworkBackend {
     },
 
     async listIpRules(): Promise<IpRuleInfo[]> {
-      interface RawRule {
-        priority: number;
-        src?: string;
-        dst?: string;
-        table?: string;
-      }
-      const entries = await ipJson<RawRule[]>('rule', 'list');
-      return entries.map(e => ({
-        priority: e.priority,
-        src: e.src,
-        dst: e.dst,
-        table: e.table,
-      }));
+      const entries = await ipJson<IpRuleEntry[]>('rule', 'list');
+      return entries.map(parseIpRule);
     },
 
     async addIpRule(opts: IpRuleOptions): Promise<void> {
-      const args = ['from', opts.from];
-      if (opts.to) args.push('to', opts.to);
-      args.push('table', String(opts.table));
       try {
-        await ip('rule', 'add', ...args);
+        await ip('rule', 'add', ...ipRuleArgs(opts));
       } catch (err) {
         if (isExecError(err) && err.stderr.includes('File exists')) return;
         throw err;
@@ -286,11 +301,8 @@ export function createLinuxBackend(): NetworkBackend {
     },
 
     async removeIpRule(opts: IpRuleOptions): Promise<void> {
-      const args = ['from', opts.from];
-      if (opts.to) args.push('to', opts.to);
-      args.push('table', String(opts.table));
       try {
-        await ip('rule', 'del', ...args);
+        await ip('rule', 'del', ...ipRuleArgs(opts));
       } catch (err) {
         if (isExecError(err) && (err.stderr.includes('No such') || err.stderr.includes('No rule'))) return;
         throw err;
