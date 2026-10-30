@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test, type Mock } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import type { NetworkBackend } from './node-ip/index.js';
@@ -10,11 +10,14 @@ import {
   RobotTestMonitor,
   type DhcpHost,
 } from './robotTestMonitor.js';
-import type { RobotTestState } from './types.js';
+import * as firmwareUpdater from './firmwareUpdater.js';
+import type { FirmwareStore } from './firmwareStore.js';
+import * as teamChecker from './teamChecker.js';
+import type { CheckResult, RobotTestState } from './types.js';
 
 // Everything the tester does to the host goes through fakes here: dhcpcd, the
 // network backend and fetch (the factory-radio probe). Nothing touches a NIC or
-// a radio. The lease is on a non-team address so no team checks run either.
+// a radio. The DHCP tests lease a non-team address so no team checks run.
 const IFACE = 'test0.99';
 
 /** A dhcpcd that does what the test says. SIGTERM exits 0, as the real one does. */
@@ -92,13 +95,13 @@ describe('RobotTestMonitor DHCP', () => {
   const spawnCount = () => calls.filter(c => c === 'spawn').length;
 
   /** Start the tester on a VLAN, which goes straight to its first dhcpcd. */
-  async function startMonitor(): Promise<void> {
+  async function startMonitor(firmwareStore?: FirmwareStore): Promise<void> {
     monitor = new RobotTestMonitor(
       IFACE,
       net,
       state => states.push(state),
       undefined,
-      undefined,
+      firmwareStore,
       false,
       undefined,
       undefined,
@@ -311,5 +314,210 @@ describe('RobotTestMonitor DHCP', () => {
     jest.advanceTimersByTime(DHCP_RETRY_MS - 2_000);
     await settle();
     expect(spawnCount()).toBe(2);
+  });
+
+  describe('during a radio configure or firmware update', () => {
+    const CHECK_INTERVAL_MS = 1_500;
+    const radioDown: CheckResult[] = [{ name: 'Radio', status: 'error', message: 'Unreachable' }];
+    const radioUp: CheckResult[] = [{ name: 'Radio Team', status: 'pass', message: 'OK' }];
+    const firmwareStore = {} as FirmwareStore;
+
+    /** Holds checkRadio open until called, when a test sets it. */
+    let finishCheck: ((results: CheckResult[]) => void) | undefined;
+    let holdCheck: boolean;
+    let checkRadio: Mock<typeof teamChecker.checkRadio>;
+    let finishFirmware: (err?: Error) => void;
+
+    const team = () => states.at(-1)?.teamNumber;
+    const checkCount = () => checkRadio.mock.calls.length;
+    const fetchSpy = () =>
+      globalThis.fetch as unknown as Mock<(...args: Parameters<typeof fetch>) => Promise<Response>>;
+    const statusProbes = () => fetchSpy().mock.calls.filter(([url]) => String(url).endsWith('/status')).length;
+
+    /** Run time forward in small steps, so awaits between timers get to go. */
+    async function runFor(ms: number): Promise<void> {
+      for (let elapsed = 0; elapsed < ms; elapsed += 500) {
+        jest.advanceTimersByTime(500);
+        await settle();
+      }
+    }
+
+    /** A robot on a team address, with its first round of checks finished. */
+    async function startWithRobot(): Promise<void> {
+      await startMonitor(firmwareStore);
+      address = { ip: '10.12.34.100', prefixLength: 24 };
+      procs[0].exit(0);
+      await settle();
+      expect(phase()).toBe('complete');
+      expect(team()).toBe(1234);
+    }
+
+    /** A configure stopped at its reboot wait, which polls until the team number shows. */
+    async function startConfigure(): Promise<void> {
+      radioResponds = true;
+      monitor.configureTeamRadio(5678, 'passphrase').catch(() => {});
+      await settle();
+    }
+
+    beforeEach(() => {
+      finishCheck = undefined;
+      holdCheck = false;
+      spyOn(teamChecker, 'checkFactoryDefault').mockImplementation(() => Promise.resolve([]));
+      spyOn(teamChecker, 'checkRobotController').mockImplementation(() =>
+        Promise.resolve({ checks: radioDown, controller: null } as never),
+      );
+      checkRadio = spyOn(teamChecker, 'checkRadio').mockImplementation(() =>
+        holdCheck
+          ? new Promise(resolve => {
+              finishCheck = resolve;
+            })
+          : Promise.resolve(radioUp),
+      );
+      spyOn(firmwareUpdater, 'updateRadioFirmware').mockImplementation(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finishFirmware = err => (err ? reject(err) : resolve());
+          }),
+      );
+    });
+
+    test('a check in flight when a configure starts is dropped, so the reboot looks like nothing', async () => {
+      await startWithRobot();
+      holdCheck = true;
+      await runFor(CHECK_INTERVAL_MS);
+      expect(phase()).toBe('checking');
+
+      await startConfigure();
+      expect(phase()).toBe('ready');
+
+      // The radio went down for the reboot. On a VLAN that used to read as the robot leaving.
+      finishCheck?.(radioDown);
+      await settle();
+
+      expect(phase()).toBe('ready');
+      expect(team()).toBe(1234);
+      expect(spawnCount()).toBe(1);
+    });
+
+    test('no check starts during a configure', async () => {
+      await startWithRobot();
+      await startConfigure();
+      const checks = checkCount();
+
+      await runFor(30_000);
+
+      expect(checkCount()).toBe(checks);
+      expect(team()).toBe(1234);
+    });
+
+    test('a configure that fails restarts the checks and the factory probe', async () => {
+      await startWithRobot();
+      fetchSpy().mockImplementation(() => Promise.resolve(new Response('nope', { status: 400 })));
+      const configure = monitor.configureTeamRadio(5678, 'passphrase');
+      await expect(configure).rejects.toThrow('Radio rejected configuration');
+      const checks = checkCount();
+      expect(checks).toBeGreaterThan(1);
+
+      const probes = statusProbes();
+      await runFor(10_000);
+
+      expect(checkCount()).toBeGreaterThan(checks);
+      expect(statusProbes()).toBeGreaterThan(probes);
+    });
+
+    test('a configure that finishes looks for the new lease, with the checks still off until then', async () => {
+      await startWithRobot();
+      const checks = checkCount();
+      fetchSpy().mockImplementation(() => Promise.resolve(Response.json({ teamNumber: 5678, version: '2.0' })));
+      const configure = monitor.configureTeamRadio(5678, 'passphrase');
+      await runFor(6_000);
+      await configure;
+      await settle();
+
+      expect(team()).toBeUndefined();
+      expect(phase()).toBe('dhcp_requesting');
+      expect(spawnCount()).toBe(2);
+      expect(checkCount()).toBe(checks);
+    });
+
+    test('a firmware update stops the checks and the factory probe, then restarts both when it fails', async () => {
+      await startWithRobot();
+      const update = monitor.startFirmwareUpdate('passphrase', undefined);
+      update.catch(() => {});
+      await settle();
+      expect(phase()).toBe('ready');
+
+      const checks = checkCount();
+      const probes = statusProbes();
+      await runFor(10_000);
+      expect(checkCount()).toBe(checks);
+      expect(statusProbes()).toBe(probes);
+
+      finishFirmware(new Error('Upload failed'));
+      await expect(update).rejects.toThrow('Upload failed');
+      await settle();
+      expect(checkCount()).toBe(checks + 1);
+
+      await runFor(CHECK_INTERVAL_MS + 500);
+      expect(checkCount()).toBeGreaterThan(checks + 1);
+      expect(statusProbes()).toBeGreaterThan(probes);
+    });
+
+    test('a firmware update that finishes starts the settling window and checks again', async () => {
+      await startWithRobot();
+      const update = monitor.startFirmwareUpdate('passphrase', undefined);
+      await settle();
+      const checks = checkCount();
+
+      finishFirmware();
+      await update;
+      await settle();
+
+      expect(checkCount()).toBe(checks + 1);
+    });
+
+    test('a configure refuses a firmware update', async () => {
+      await startWithRobot();
+      await startConfigure();
+      await expect(monitor.startFirmwareUpdate('passphrase', undefined)).rejects.toThrow('Radio configuration');
+    });
+
+    test('a firmware update refuses a configure', async () => {
+      await startWithRobot();
+      monitor.startFirmwareUpdate('passphrase', undefined).catch(() => {});
+      await settle();
+      await expect(monitor.configureTeamRadio(5678, 'passphrase')).rejects.toThrow('Firmware update in progress');
+    });
+
+    test('an operation that ends after stop() restarts nothing', async () => {
+      await startWithRobot();
+      const update = monitor.startFirmwareUpdate('passphrase', undefined);
+      await settle();
+      monitor.stop();
+      const checks = checkCount();
+      const probes = statusProbes();
+
+      finishFirmware();
+      await update;
+      await runFor(10_000);
+
+      expect(checkCount()).toBe(checks);
+      expect(statusProbes()).toBe(probes);
+      expect(spawnCount()).toBe(1);
+    });
+
+    test('a check in flight at stop() can not schedule another', async () => {
+      await startWithRobot();
+      holdCheck = true;
+      await runFor(CHECK_INTERVAL_MS);
+      const checks = checkCount();
+
+      monitor.stop();
+      holdCheck = false;
+      finishCheck?.(radioUp);
+      await runFor(10_000);
+
+      expect(checkCount()).toBe(checks);
+    });
   });
 });

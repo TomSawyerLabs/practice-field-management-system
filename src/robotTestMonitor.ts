@@ -163,8 +163,12 @@ export class RobotTestMonitor {
   /** Bumped by killDhcp, so a startDhcp still waiting on cleanup knows it was superseded. */
   private dhcpGeneration = 0;
   private checking = false;
+  /** Bumped by stopChecking, so a check still in flight knows to drop its results. */
+  private checkRun = 0;
   private firmwareUpdating = false;
   private radioConfiguring = false;
+  /** stop() doesn't abort an operation, which mustn't restart anything when it ends. */
+  private stopped = false;
   private factoryProbeTimer: NodeJS.Timeout | null = null;
   /** True if the interface is a VLAN sub-interface (link state mirrors parent, not meaningful). */
   private skipLinkDetection = false;
@@ -216,6 +220,7 @@ export class RobotTestMonitor {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.linkPollTimer) {
       clearInterval(this.linkPollTimer);
       this.linkPollTimer = null;
@@ -314,6 +319,8 @@ export class RobotTestMonitor {
 
   private startFactoryProbe(): void {
     this.stopFactoryProbe();
+    // A radio rebooting can drop the link, and the operation restarts this itself
+    if (this.operationRunning) return;
     // Probe immediately, then every 2 seconds
     this.probeFactoryDefault();
     this.factoryProbeTimer = setInterval(() => this.probeFactoryDefault(), 2000);
@@ -485,6 +492,7 @@ export class RobotTestMonitor {
       if (res.ok) {
         this.factoryRadioIp = '192.168.69.1';
         const data = (await res.json()) as { teamNumber?: number; version?: string };
+        if (this.operationRunning) return;
         if (!this.teamNumber) {
           // No DHCP yet — radio is there but we can't reach it via team IP
           factoryCheck = {
@@ -507,6 +515,7 @@ export class RobotTestMonitor {
       // Not reachable — no factory-IP radio
       this.factoryRadioIp = null;
     }
+    if (this.operationRunning) return; // Started while this probe was in flight
 
     // Merge: remove old factory check, add new one if present
     const filtered = this.checks.filter(c => c.name !== 'Radio Detected' && c.name !== 'Radio Not Configured');
@@ -520,8 +529,9 @@ export class RobotTestMonitor {
   // ── Robot checks ──────────────────────────────────────────────────
 
   private async runChecks(): Promise<void> {
-    if (!this.teamNumber || this.checking) return;
+    if (!this.teamNumber || this.checking || this.operationRunning) return;
 
+    const run = ++this.checkRun;
     this.checking = true;
     this.phase = 'checking';
     this.broadcast();
@@ -535,6 +545,8 @@ export class RobotTestMonitor {
         checkRobotController(this.teamNumber, [], mdns),
       ]);
       const radioResults = await checkRadio(this.teamNumber, mdns, controllerResult.controller);
+      // Abandoned while in flight: these describe a robot that may be mid-reboot
+      if (run !== this.checkRun) return;
       const rioResults = controllerResult.checks;
       this.checks = [...factoryResult, ...radioResults, ...rioResults];
 
@@ -590,21 +602,48 @@ export class RobotTestMonitor {
     } catch (err) {
       console.error('RobotTestMonitor: check error:', err);
     } finally {
-      this.checking = false;
-      this.broadcast();
+      if (run === this.checkRun) {
+        this.checking = false;
+        this.broadcast();
 
-      // Schedule re-check (only if someone is watching)
-      this.stopChecking();
-      this.checkTimer = setTimeout(() => {
-        if (this.linkUp && this.teamNumber && (!this.hasClients || this.hasClients())) this.runChecks();
-      }, CHECK_INTERVAL_MS);
+        // Schedule re-check (only if someone is watching)
+        this.cancelCheckTimer();
+        this.checkTimer = setTimeout(() => {
+          if (this.linkUp && this.teamNumber && (!this.hasClients || this.hasClients())) this.runChecks();
+        }, CHECK_INTERVAL_MS);
+      }
     }
   }
 
+  /** Cancel the next check, and abandon any check in flight. */
   private stopChecking(): void {
+    this.checkRun++;
+    this.checking = false;
+    this.cancelCheckTimer();
+  }
+
+  private cancelCheckTimer(): void {
     if (this.checkTimer) {
       clearTimeout(this.checkTimer);
       this.checkTimer = null;
+    }
+  }
+
+  // ── Radio operations ─────────────────────────────────────────────
+
+  /** A radio configure or firmware update owns the radio until it finishes. */
+  private get operationRunning(): boolean {
+    return this.firmwareUpdating || this.radioConfiguring;
+  }
+
+  /** Stop everything that talks to the radio, for the start of an operation. */
+  private pauseForOperation(): void {
+    this.stopChecking();
+    this.stopFactoryProbe();
+    // Nothing is being checked now, and "complete" would claim the old results are current
+    if (this.phase === 'checking' || this.phase === 'complete') {
+      this.phase = 'ready';
+      this.broadcast();
     }
   }
 
@@ -626,6 +665,7 @@ export class RobotTestMonitor {
       throw new Error('Dry run: the robot radio was not updated');
     }
     if (this.firmwareUpdating) throw new Error('Firmware update already in progress');
+    if (this.radioConfiguring) throw new Error('Radio configuration in progress — wait for it to finish');
     if (!this.teamNumber) throw new Error('No team number detected — plug in a robot first');
     if (!this.linkUp) throw new Error('Link is down — plug in a cable first');
     if (!skipReconfigure && !wpaKey)
@@ -633,7 +673,7 @@ export class RobotTestMonitor {
     if (!this.firmwareStore) throw new Error('Firmware store not configured');
 
     this.firmwareUpdating = true;
-    this.stopChecking();
+    this.pauseForOperation();
 
     const startTime = Date.now();
     const sendProgress = (p: Omit<FirmwareUpdateProgress, 'type' | 'elapsedMs'>) => {
@@ -646,8 +686,6 @@ export class RobotTestMonitor {
       this.reconfiguredAt = Date.now();
       this.reconfigureTimeoutMs = 180_000;
       this.reconfigureType = 'firmware';
-      // Re-run checks after successful update
-      this.runChecks();
     } catch (err) {
       sendProgress({
         step: 'error',
@@ -658,6 +696,10 @@ export class RobotTestMonitor {
       throw err;
     } finally {
       this.firmwareUpdating = false;
+      if (!this.stopped) {
+        this.startFactoryProbe();
+        this.runChecks();
+      }
     }
   }
 
@@ -677,10 +719,10 @@ export class RobotTestMonitor {
     if (wpaKey24 && wpaKey24.length < 8) throw new Error('2.4 GHz WPA passphrase must be at least 8 characters');
 
     this.radioConfiguring = true;
-    this.stopChecking();
-    this.stopFactoryProbe();
+    this.pauseForOperation();
 
     const startTime = Date.now();
+    let needsNewLease = false;
     const sendProgress = (p: Omit<RadioConfigureProgress, 'type' | 'elapsedMs'>) => {
       this.onRadioConfigureProgress?.({ type: 'radioConfigureProgress', elapsedMs: Date.now() - startTime, ...p });
     };
@@ -774,10 +816,7 @@ export class RobotTestMonitor {
       this.factoryRadioIp = null;
       this.phase = this.skipLinkDetection ? 'link_up' : this.linkUp ? 'link_up' : 'link_down';
       this.broadcast();
-      this.startFactoryProbe();
-      if (this.linkUp || this.skipLinkDetection) {
-        this.startDhcp();
-      }
+      needsNewLease = this.linkUp || this.skipLinkDetection;
     } catch (err) {
       sendProgress({
         step: 'error',
@@ -785,12 +824,15 @@ export class RobotTestMonitor {
         progress: 0,
         error: err instanceof Error ? err.message : String(err),
       });
-      // Restart probes and checks so the tester recovers
-      this.startFactoryProbe();
-      if (this.teamNumber) this.runChecks();
       throw err;
     } finally {
       this.radioConfiguring = false;
+      // Restart probes and checks so the tester recovers
+      if (!this.stopped) {
+        this.startFactoryProbe();
+        if (needsNewLease) this.startDhcp();
+        else this.runChecks();
+      }
     }
   }
 

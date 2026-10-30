@@ -360,16 +360,16 @@ The test page can program a radio in `TEAM_ROBOT_RADIO` mode without being on th
 
 ### Mutual Exclusion
 
-Radio configuration is mutually exclusive with firmware updates — only one can run at a time. Both stop the periodic health checks and factory probe during their operation and restart them afterward.
+Radio configuration is mutually exclusive with firmware updates — only one can run at a time. Both stop the periodic health checks and factory probe during their operation and restart them afterward, whether it worked or not. A check already running when the operation starts is abandoned, because its results would describe a radio on its way into a reboot. The phase shows `ready` until checks resume, with the team number kept. An operation still running when the tester stops carries on, but restarts nothing when it ends.
 
 ### Error Recovery
 
-If configuration fails at any point, the tester:
+If a configuration or firmware update fails at any point, the tester:
 
 - Sends an error progress message to the frontend
+- Clears the `radioConfiguring` or `firmwareUpdating` flag
 - Restarts the factory probe
-- Restarts health checks (if a team number was detected before the configure attempt)
-- Clears the `radioConfiguring` flag
+- Restarts health checks (if a team number is known)
 
 ## Firmware Updates
 
