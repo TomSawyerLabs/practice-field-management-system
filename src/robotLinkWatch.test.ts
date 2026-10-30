@@ -22,12 +22,12 @@ function field() {
   });
   /** One second of traffic: what the laptop sends, and whether the robot
    *  answers and its answers reach the laptop. */
-  const traffic = (opts: { to?: string; answer?: boolean; deliver?: boolean } = {}) => {
-    const { to = RIO, answer = true, deliver = true } = opts;
+  const traffic = (opts: { to?: string; answer?: boolean; deliver?: boolean; forward?: boolean } = {}) => {
+    const { to = RIO, answer = true, deliver = true, forward = true } = opts;
     for (let i = 0; i < 50; i++) {
       clock += 20;
       watch.hop({ station: 'slot2', kind: 'control', src: DS, dst: to, at: clock });
-      watch.hop({ station: 'slot2', kind: 'control', src: GW, dst: to, at: clock });
+      if (forward) watch.hop({ station: 'slot2', kind: 'control', src: GW, dst: to, at: clock });
       if (!answer) continue;
       watch.hop({ station: 'slot2', kind: 'reply', src: to, dst: GW, at: clock });
       if (deliver) watch.hop({ station: 'slot2', kind: 'reply', src: to, dst: DS, at: clock });
@@ -68,7 +68,18 @@ describe('RobotLinkWatch', () => {
     f.traffic({ to: '10.8.40.200', answer: false });
     f.watch.check();
     expect(f.log).toEqual([
-      `warn: Robot link down for ${DS} on slot2: the DS sends to 10.8.40.200, but no robot answers`,
+      `warn: Robot link down for ${DS} on slot2: the DS sends to 10.8.40.200 and pFMS forwards it, but no robot answers`,
+    ]);
+  });
+
+  test('control packets that never leave for the robot point at forwarding', () => {
+    const f = field();
+    f.watch.check();
+    f.wait(LINK_GRACE_MS);
+    f.traffic({ answer: false, forward: false });
+    f.watch.check();
+    expect(f.log).toEqual([
+      `warn: Robot link down for ${DS} on slot2: the DS sends to ${RIO}, but pFMS isn't forwarding that to the robot's network`,
     ]);
   });
 
@@ -134,7 +145,7 @@ describe('RobotLinkWatch', () => {
     f.traffic({ answer: false });
     f.watch.check(); // reported once
     expect(f.log).toEqual([
-      `warn: Robot link down for ${DS} on slot2: the DS sends to ${RIO}, but it has no drive session (it never reached pFMS as its FMS), so the robot's replies can't reach it`,
+      `warn: Robot link down for ${DS} on slot2: the DS sends to ${RIO}, but it has no drive session, so the robot's replies can't reach it`,
     ]);
     f.laptops.set('slot2', DS); // e.g. after a DS restart
     f.watch.check();

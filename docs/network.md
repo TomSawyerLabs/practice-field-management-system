@@ -276,14 +276,17 @@ When it doesn't, after a 10 s grace, it logs
 
 - _the DS sends the robot nothing_: the DS on the laptop is stuck, not the
   field;
-- _the DS sends to X, but no robot answers_: the DS is aiming at an address
-  the robot isn't on;
+- _the DS sends to X, but pFMS isn't forwarding that to the robot's network_:
+  pFMS is at fault;
+- _the DS sends to X and pFMS forwards it, but no robot answers_: the robot is
+  off, still coming up, or not at X. This is normal for up to about a minute
+  after a robot is added: the DS needs no restart;
 - _the robot answers from X, but its replies aren't reaching the laptop_: the
   drive session's DNAT isn't working, so pFMS is at fault;
-- _the DS sends to X, but it has no drive session_: the laptop is aiming at
-  its robot but never reached pFMS as its FMS, so nothing forwards the
-  robot's replies to it. `… started its drive session after Ns` follows if
-  it gets there.
+- _the DS sends to X, but it has no drive session_: nothing forwards the
+  robot's replies to the laptop. The DS may not have reached pFMS, or the
+  team has two robots and nobody pressed Drive. `… started its drive session
+after Ns` follows if it gets one.
 
 A later `Robot link back … after Ns` shows when it recovered (a DS restart,
 say). The 2027 DS isn't judged: its robot answers on the DS's own port, which

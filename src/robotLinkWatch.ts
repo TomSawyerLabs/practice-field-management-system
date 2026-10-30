@@ -13,11 +13,12 @@ import { StationNameList, type StationName } from './types.js';
  *
  * - the DS sending nothing at all,
  * - the DS sending to an address no robot answers from,
+ * - pFMS not forwarding the DS's packets onto the robot's network,
  * - the robot answering, but its replies not being forwarded to the laptop.
  *
- * A laptop sending its robot control packets without ever having started a
- * drive session (it never reached pFMS as its FMS) is reported too: with no
- * session there is no DNAT, so the robot's replies can't reach it.
+ * A laptop sending its robot control packets with no drive session is
+ * reported too: without a session there is no DNAT, so the robot's replies
+ * can't reach it.
  *
  * Only transitions are logged, so a healthy field logs one line per session.
  */
@@ -35,6 +36,7 @@ export type LinkHop = {
 export type LinkState =
   | { ok: true }
   | { ok: false; problem: 'ds-silent' }
+  | { ok: false; problem: 'not-forwarded'; targets: string[] }
   | { ok: false; problem: 'robot-silent'; targets: string[] }
   | { ok: false; problem: 'not-delivered'; robot: string };
 
@@ -61,6 +63,8 @@ type Watched = {
   since: number;
   /** Robot addresses the laptop's control packets go to → last seen. */
   targets: Map<string, number>;
+  /** Last control packet seen leaving for the robot's VLAN. */
+  forwarded: number;
   /** Addresses the robot answered from → last seen. */
   robots: Map<string, number>;
   /** Last reply forwarded to the laptop. */
@@ -89,8 +93,8 @@ export class RobotLinkWatch {
       return;
     }
     if (h.kind === 'control') {
-      // Only the laptop's own copy: the forwarded copy is from the gateway.
       if (h.src === w.dsIp) w.targets.set(h.dst, h.at);
+      else if (sameSubnet(h.src, h.dst)) w.forwarded = h.at;
     } else {
       w.robots.set(h.src, h.at);
       if (h.dst === w.dsIp) w.delivered = h.at;
@@ -161,7 +165,7 @@ export class RobotLinkWatch {
       if (o.logged || now - o.first < LINK_GRACE_MS) continue;
       o.logged = true;
       this.fx.warn(
-        `Robot link down for ${dsIp} on ${o.station}: the DS sends to ${o.robot}, but it has no drive session (it never reached pFMS as its FMS), so the robot's replies can't reach it`,
+        `Robot link down for ${dsIp} on ${o.station}: the DS sends to ${o.robot}, but it has no drive session, so the robot's replies can't reach it`,
       );
     }
   }
@@ -172,7 +176,10 @@ export class RobotLinkWatch {
     const targets = this.recent(w.targets, now);
     if (targets.length === 0) return { ok: false, problem: 'ds-silent' };
     const robots = this.recent(w.robots, now);
-    if (robots.length === 0) return { ok: false, problem: 'robot-silent', targets };
+    if (robots.length === 0) {
+      const forwarded = now - w.forwarded <= LINK_RECENT_MS;
+      return { ok: false, problem: forwarded ? 'robot-silent' : 'not-forwarded', targets };
+    }
     return { ok: false, problem: 'not-delivered', robot: robots[0] };
   }
 
@@ -197,6 +204,7 @@ export class RobotLinkWatch {
       dsIp,
       since: this.fx.now(),
       targets: new Map(),
+      forwarded: -Infinity,
       robots: new Map(),
       delivered: -Infinity,
       logged: null,
@@ -217,8 +225,10 @@ function describe(state: LinkState): string {
   switch (state.problem) {
     case 'ds-silent':
       return 'the DS sends the robot nothing (no control packets from the laptop)';
+    case 'not-forwarded':
+      return `the DS sends to ${state.targets.join(', ')}, but pFMS isn't forwarding that to the robot's network`;
     case 'robot-silent':
-      return `the DS sends to ${state.targets.join(', ')}, but no robot answers`;
+      return `the DS sends to ${state.targets.join(', ')} and pFMS forwards it, but no robot answers`;
     case 'not-delivered':
       return `the robot answers from ${state.robot}, but its replies aren't reaching the laptop`;
   }
