@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { configureNetwork, restorePreviousStations, useNetworkBackend } from './networkManager.js';
+import { configureNetwork, duplicateDsBlock, restorePreviousStations, useNetworkBackend } from './networkManager.js';
 import { createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import type { StationName } from './types.js';
 
@@ -85,4 +85,9 @@ describe('a station that fails to set up', () => {
     await configureNetwork({ ...none, slot1: 254, slot2: 1678 }, 'eth0', true);
     expect(fake.added).toEqual(['br-slot2 10.16.78.254', 'br-slot1 10.2.54.254']);
   });
+});
+
+test("a second laptop loses only its Driver Station's control packets to the robot", () => {
+  const rule = duplicateDsBlock('slot2', '10.55.231.82', 'pfms-block-dup-ds-slot2');
+  expect(rule).toMatchObject({ source: '10.55.231.82', jump: 'DROP', protocol: 'udp', destinationPort: 1110 });
 });

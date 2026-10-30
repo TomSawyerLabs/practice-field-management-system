@@ -121,7 +121,7 @@ connection again and logs it, every 15 s until the stream stops. That doesn't
 always work: some DSes have kept streaming through this for over 40 minutes.
 
 A second laptop for a robot another laptop is driving gets no reply either:
-it is held off the robot's network anyway, and an assignment would lock it.
+its control packets are dropped anyway, and an assignment would lock it.
 
 When staff set "Freeplay outside matches" to **Held**, an unjoined DS is
 instead assigned a slot (FMS-controlled) and held with a stream of disabled
@@ -259,10 +259,11 @@ only when a rule is built on that slot's bridge.
   refused as a "duplicate DS", and joining a match handed control to the old
   laptop (2026-09-27, slots 1 and 4).
 - **A robot moving slots keeps its laptop**, and its rules follow it.
-- **"Multiple DSes"** means a second laptop for the same robot. It is held
-  off the robot's VLAN with a FORWARD drop and told so in its game data. A
-  TCP flap doesn't lift this, or the second laptop would reach the robot in
-  every gap. It ends when the first laptop goes quiet or stops driving, the
+- **"Multiple DSes"** means a second laptop for the same robot. A FORWARD drop
+  on UDP 1110 stops its Driver Station's control packets, and its game data
+  says so. Everything else that laptop does on the robot's network, such as
+  deploying code, cameras and NetworkTables, keeps working. A TCP flap doesn't
+  lift this, or the second DS would reach the robot in every gap. It ends when the first laptop goes quiet or stops driving, the
   robot leaves the field, or the second laptop goes quiet for 20 s, stops
   from the Drive button, drives another robot, or is switched to another
   team.

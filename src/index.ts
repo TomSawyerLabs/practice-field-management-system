@@ -20,6 +20,7 @@ import {
   bridgeName,
   restorePreviousStations,
   setTeamStopCut,
+  duplicateDsBlock,
   migrateAllBridgeNat,
   networkBackend,
   flushManagedNetworkState,
@@ -1514,13 +1515,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       toDestination: rule.dsIp,
       comment: dnatComment(rule.station),
     });
-    const blockOptions = (rule: BlockRule) => ({
-      chain: 'FORWARD',
-      source: rule.dsIp,
-      outInterface: bridgeName(rule.station),
-      jump: 'DROP',
-      comment: blockComment(rule.station),
-    });
+    const blockOptions = (rule: BlockRule) => duplicateDsBlock(rule.station, rule.dsIp, blockComment(rule.station));
 
     const driveSessions = new DriveSessions({
       robotOn: station => radioManager.getStationConfig(station)?.ssid || null,

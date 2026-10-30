@@ -530,6 +530,23 @@ export async function dropHairpinForwarding(physicalInterface: string): Promise<
 const DS_TO_ROBOT_CONTROL_PORT = 1110;
 
 /**
+ * Holds a second laptop's Driver Station off a robot another laptop is driving.
+ * Only its control packets are dropped: code deploys, cameras, NetworkTables
+ * and anything else that laptop does on the robot's network keep working.
+ */
+export function duplicateDsBlock(station: StationName, dsIp: string, comment: string) {
+  return {
+    chain: 'FORWARD',
+    source: dsIp,
+    outInterface: bridgeName(station),
+    protocol: 'udp' as const,
+    destinationPort: DS_TO_ROBOT_CONTROL_PORT,
+    jump: 'DROP',
+    comment,
+  };
+}
+
+/**
  * A team Stop, network layer: drop every Driver Station → robot control packet
  * going into a station's bridge. A robot disables its outputs about 100 ms
  * after its control packets stop, whatever its Driver Station thinks — so this
