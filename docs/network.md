@@ -252,8 +252,12 @@ only when a rule is built on that slot's bridge.
   laptop (2026-09-27, slots 1 and 4).
 - **A robot moving slots keeps its laptop**, and its rules follow it.
 - **"Multiple DSes"** means a second laptop for the same robot. It is held
-  off the robot's VLAN with a FORWARD drop and told so in its game data,
-  until the first laptop goes quiet or the second disconnects.
+  off the robot's VLAN with a FORWARD drop and told so in its game data. A
+  TCP flap doesn't lift this, or the second laptop would reach the robot in
+  every gap. It ends when the first laptop goes quiet or stops driving, the
+  robot leaves the field, or the second laptop goes quiet for 20 s, stops
+  from the Drive button, drives another robot, or is switched to another
+  team.
 - **Persistent** across DS TCP reconnects (the DS flaps every ~6 s when no
   match is running). A session ends when its laptop has said nothing for
   20 s, when its robot leaves the field, or when the laptop's DS is switched

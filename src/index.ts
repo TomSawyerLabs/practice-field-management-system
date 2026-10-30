@@ -1913,8 +1913,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       });
 
       fms.on('dsConnected', ({ address }) => driveSessions.heard(address));
-      // Sessions survive a TCP drop (the DS flaps every ~6 s out of a match);
-      // a blocked laptop that disconnects is unblocked.
+      // Sessions and duplicate blocks survive a TCP drop (the DS flaps every
+      // ~6 s out of a match); both end when the laptop goes quiet.
       fms.on('dsDisconnected', ({ address }) => driveSessions.disconnected(address));
 
       // End sessions whose laptop went quiet (DS_STALE_TIMEOUT_MS), re-sync the

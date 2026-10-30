@@ -120,6 +120,8 @@ export class DriveSessions {
     } else {
       this.laptops.set(dsIp, { team: team ?? null, lastActivity: now });
     }
+    // Switched to another team, it is no longer a duplicate on the old robot.
+    if (team !== undefined) this.liftBlocks(dsIp, robot => teamOfSsid(robot) !== team);
 
     const driving = this.robotDrivenBy(dsIp);
     if (driving !== undefined) {
@@ -162,6 +164,7 @@ export class DriveSessions {
       if (driving !== undefined) this.endSession(driving, 'stopped from the Drive button');
       // Stopped on purpose: don't take it back on the next handshake.
       this.laptops.get(dsIp)!.lastRobot = undefined;
+      this.liftBlocks(dsIp);
       return;
     }
     const robot = this.fx.robotOn(station);
@@ -193,12 +196,13 @@ export class DriveSessions {
   }
 
   /** A laptop's TCP connection closed. Sessions survive it (the DS flaps
-   *  every ~6 s out of a match); a block on it is lifted. */
+   *  every ~6 s out of a match), and so does a block while another laptop is
+   *  actively driving the robot: a duplicate DS flaps too, and lifting its
+   *  block on every close let it through to the robot in each gap (114's
+   *  second laptop, 2026-10-28). A laptop that really left goes quiet and
+   *  sweep() lifts the block. */
   disconnected(dsIp: string): void {
-    let changed = false;
-    for (const ips of this.blocked.values()) changed = ips.delete(dsIp) || changed;
-    this.pruneEmptyBlocks();
-    if (changed) this.touch();
+    this.liftBlocks(dsIp, robot => this.isFree(robot));
   }
 
   /** Every few seconds: end sessions whose laptop went quiet, lift blocks on
@@ -438,6 +442,13 @@ export class DriveSessions {
     const holder = this.sessions.get(robot);
     if (holder === dsIp) return true;
     if (holder !== undefined && !this.isStale(holder)) {
+      // It stays on the robot it drives. A block here would send it the
+      // duplicate warning's disabled packets for as long as it drives.
+      const driving = this.robotDrivenBy(dsIp);
+      if (driving !== undefined) {
+        this.fx.warn(`Drive refused: ${dsIp} stays on ${driving}, ${robot} is driven by ${holder}`);
+        return false;
+      }
       const ips = this.blocked.get(robot) ?? new Set<string>();
       if (!ips.has(dsIp)) {
         ips.add(dsIp);
@@ -456,7 +467,7 @@ export class DriveSessions {
     this.sessions.set(robot, dsIp);
     const laptop = this.laptops.get(dsIp);
     if (laptop) laptop.lastRobot = robot;
-    this.blocked.get(robot)?.delete(dsIp);
+    for (const ips of this.blocked.values()) ips.delete(dsIp);
     this.pruneEmptyBlocks();
     this.fx.info(`Drive started: ${dsIp} → ${robot} on ${this.stationOf(robot) ?? '?'}`);
     this.touch();
@@ -514,6 +525,14 @@ export class DriveSessions {
   private isStale(dsIp: string): boolean {
     const laptop = this.laptops.get(dsIp);
     return !laptop || this.fx.now() - laptop.lastActivity > DS_STALE_TIMEOUT_MS;
+  }
+
+  /** `dsIp` is no longer a duplicate on the robots `which` picks. */
+  private liftBlocks(dsIp: string, which: (robot: RobotId) => boolean = () => true): void {
+    let changed = false;
+    for (const [robot, ips] of this.blocked) if (which(robot)) changed = ips.delete(dsIp) || changed;
+    this.pruneEmptyBlocks();
+    if (changed) this.touch();
   }
 
   private pruneEmptyBlocks(): void {

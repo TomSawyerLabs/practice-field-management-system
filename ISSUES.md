@@ -1,16 +1,5 @@
 # Known Issues & Technical Debt
 
-## A second laptop on a robot gets through in gaps
-
-_in progress — issues/second-laptop-gaps_
-
-On 2026-10-28, 5:05:44 to 5:09:07 PM PDT (00:05-00:09Z), team 114's second
-laptop `10.55.231.82` logged `Blocked duplicate DS` and `Unblocked duplicate DS`
-every ~6 s, in step with its TCP flap, while `10.55.150.65` was driving the
-robot. `driveSessions.disconnected()` lifts the block when the TCP connection
-closes. Matters because the block exists to keep a second DS off a robot, and it
-opens each time that DS flaps.
-
 ## Operator pages have no login of their own
 
 _in progress — issues/operator-login_

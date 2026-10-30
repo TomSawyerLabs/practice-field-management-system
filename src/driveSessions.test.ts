@@ -206,16 +206,148 @@ describe('two laptops for one robot', () => {
     expect(f.blocks.size).toBe(0);
     expect([...f.dnat.keys()]).toEqual([`slot4|840|10.55.1.1`]);
   });
+});
 
-  test('a blocked laptop that disconnects is unblocked', async () => {
-    const f = field({ slot4: '840-FuriousG' });
-    f.ds.heard(LAPTOP_840, 840);
-    f.ds.heard('10.55.1.1', 840);
+describe('a second laptop whose TCP connection flaps (114, 2026-10-28)', () => {
+  const DRIVER = '10.55.150.65';
+  const SECOND = '10.55.231.82';
+  const FLAP_MS = 6_000;
+
+  /** Both laptops on the robot, the second one blocked. */
+  async function blockedSecond(radio: Partial<Record<StationName, string>> = { slot3: '114-Eaglestrike' }) {
+    const f = field(radio);
+    f.ds.heard(DRIVER, 114);
+    f.ds.heard(SECOND, 114);
     await f.settle();
-    f.ds.disconnected('10.55.1.1');
+    expect(f.blocks.has(`slot3|${SECOND}`)).toBe(true);
+    return f;
+  }
+
+  /** One flap of the second laptop: its connection closes, and it handshakes
+   *  again ~6 s later. The driver keeps talking unless told it went quiet. */
+  async function flap(f: Awaited<ReturnType<typeof blockedSecond>>, { driverQuiet = false } = {}) {
+    f.ds.disconnected(SECOND);
+    await f.settle();
+    if (!driverQuiet) expect(f.blocks.has(`slot3|${SECOND}`)).toBe(true);
+    f.advance(FLAP_MS);
+    if (!driverQuiet) f.ds.heard(DRIVER, 114);
+    f.ds.sweep();
+    await f.settle();
+    if (!driverQuiet) expect(f.blocks.has(`slot3|${SECOND}`)).toBe(true);
+    f.ds.heard(SECOND, 114);
+    await f.settle();
+  }
+
+  test('stays off the robot through every gap, for the whole 3 minutes', async () => {
+    const f = await blockedSecond();
+    for (let i = 0; i < 34; i++) await flap(f);
+    expect(f.ds.blockedByStation()).toEqual({ slot3: [SECOND] });
+    expect(f.ds.laptopOn('slot3')).toBe(DRIVER);
+    expect(f.log.filter(l => l.startsWith('Blocked duplicate DS'))).toHaveLength(1);
+    expect(f.log.filter(l => l.startsWith('Unblocked duplicate DS'))).toHaveLength(0);
+  });
+
+  test('takes the robot once the driver goes quiet', async () => {
+    const f = await blockedSecond();
+    await flap(f);
+    for (let t = 0; t <= DS_STALE_TIMEOUT_MS + FLAP_MS; t += FLAP_MS) await flap(f, { driverQuiet: true });
+    expect(f.ds.laptopOn('slot3')).toBe(SECOND);
+    expect(f.blocks.size).toBe(0);
+    expect([...f.dnat.keys()]).toEqual([`slot3|114|${SECOND}`]);
+  });
+
+  test('is freed when the driver stops driving', async () => {
+    const f = await blockedSecond();
+    f.ds.drive(DRIVER, null);
     await f.settle();
     expect(f.blocks.size).toBe(0);
-    expect(f.ds.laptopOn('slot4')).toBe(LAPTOP_840);
+  });
+
+  test('is freed when the robot leaves the field', async () => {
+    const f = await blockedSecond();
+    f.apply({ slot3: null });
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+    expect(f.ds.blockedByStation()).toEqual({});
+  });
+
+  test('a close after the driver went stale frees it before the next sweep', async () => {
+    const f = await blockedSecond();
+    f.advance(DS_STALE_TIMEOUT_MS / 2);
+    f.ds.heard(SECOND, 114);
+    f.advance(DS_STALE_TIMEOUT_MS / 2 + 1);
+    f.ds.disconnected(SECOND);
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+  });
+
+  test('a laptop that really left is unblocked once it has been quiet long enough', async () => {
+    const f = await blockedSecond();
+    f.ds.disconnected(SECOND);
+    f.advance(DS_STALE_TIMEOUT_MS / 2);
+    f.ds.heard(DRIVER, 114);
+    f.advance(DS_STALE_TIMEOUT_MS / 2 + 1);
+    f.ds.heard(DRIVER, 114);
+    f.ds.sweep();
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+    expect(f.ds.laptopOn('slot3')).toBe(DRIVER);
+  });
+
+  test('switched to another team, it drives that team’s robot and leaves the old one', async () => {
+    const f = await blockedSecond({ slot3: '114-Eaglestrike', slot5: '840-FuriousG' });
+    f.ds.heard(SECOND, 840);
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+    expect(f.ds.laptopOn('slot5')).toBe(SECOND);
+  });
+
+  test('switched to a team with no robot here, it is released too', async () => {
+    const f = await blockedSecond();
+    f.ds.heard(SECOND, 751);
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+  });
+});
+
+describe('a blocked laptop of a team with two robots', () => {
+  const DRIVER = '10.55.3.3';
+  const SECOND = '10.55.4.4';
+
+  async function blockedOnComp() {
+    const f = field({ slot2: '1234-Comp', slot5: '1234-Practice' });
+    f.ds.drive(DRIVER, 'slot2');
+    f.ds.heard(SECOND, 1234);
+    f.ds.drive(SECOND, 'slot2');
+    await f.settle();
+    expect(f.blocks.has(`slot2|${SECOND}`)).toBe(true);
+    return f;
+  }
+
+  test('driving the other robot lifts the block', async () => {
+    const f = await blockedOnComp();
+    f.ds.drive(SECOND, 'slot5');
+    await f.settle();
+    expect(f.ds.laptopOn('slot5')).toBe(SECOND);
+    expect(f.blocks.size).toBe(0);
+    expect(f.ds.blockedByStation()).toEqual({});
+  });
+
+  test('the stop button lifts the block', async () => {
+    const f = await blockedOnComp();
+    f.ds.drive(SECOND, null);
+    await f.settle();
+    expect(f.blocks.size).toBe(0);
+  });
+
+  test('a laptop already driving is refused the other robot, not blocked', async () => {
+    const f = await blockedOnComp();
+    f.ds.drive(SECOND, 'slot5');
+    f.ds.drive(SECOND, 'slot2');
+    await f.settle();
+    expect(f.ds.laptopOn('slot5')).toBe(SECOND);
+    expect(f.ds.laptopOn('slot2')).toBe(DRIVER);
+    expect(f.blocks.size).toBe(0);
   });
 });
 
