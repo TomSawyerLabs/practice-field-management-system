@@ -53,7 +53,7 @@ missing and can install them with apt.
 
 Notes:
 
-- **It's large** (~90 MB) — that's the embedded JavaScript runtime.
+- **It's large** (~115 MB) — mostly the embedded JavaScript runtime.
 - It ignores a `.env` or `bunfig.toml` in its working directory; settings
   come from the environment and the setup wizard, as in production.
 - The git-checkout install below stays the faster path for development
@@ -85,8 +85,9 @@ running or just over.
 | Install whenever idle         | Installs as soon as the field has been idle long enough, any time of day                                       |
 
 **If a new build doesn't come up,** pFMS goes back by itself: a build that
-stops four times while starting (systemd restarting it each time), or
-isn't answering `/health` two minutes after starting, is swapped back out
+reaches a fourth start because it keeps stopping while starting (systemd
+restarting it each time), or isn't answering `/health` two minutes after
+starting, is swapped back out
 for `pfms.prev` (kept as `pfms.failed` for a look), and automatic updates
 skip it from then on. The Software tab says what happened. The state is in
 `self-update.json` in the working directory.

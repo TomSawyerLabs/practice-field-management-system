@@ -160,6 +160,45 @@ revert / error / not-a-service notices, policy editor. WS
       binaries.
 - [x] Steamboat on `2cc3d57` (checkout + update.sh; stays that way)
 
+## Verification, 2026-10-30
+
+The ISSUES.md entry "Linux targets never run, no self-update path" was out of
+date: it predated all of the above. Rechecked rather than assumed, on x64 in
+WSL (Ubuntu, real systemd as PID 1). No field hardware was involved.
+
+- CI build `6e290fb` (real release): `sha256sum -c` OK, `--version` OK,
+  `scripts/test-binary.ts` 9/9.
+- Real update under real systemd with the wizard's unit: `9947417` to `6e290fb`
+  over the admin WebSocket, the real signed `SHA256SUMS` checked against the
+  compiled-in key, kept `pfms.prev`, confirmed after a minute. `systemctl
+reload` replaced the process and came back. WSL has no outbound internet here
+  (DNS only), so the release was downloaded on Windows and mirrored on loopback
+  through `PFMS_UPDATE_FEED`; the HTTPS fetch from GitHub itself was last proven
+  by the 2026-10-13 run above.
+- `scripts/test-self-update.ts` on four builds with the FMS address change: all pass, including
+  bad signature, rollback and auto-update.
+- Crash-looping build under real systemd with `RestartSec=2` (the suite only has
+  a fake supervisor): back on the previous build in 16 s, `pfms.failed` kept,
+  service stayed active, never reached the start limit.
+- First non-dry-run of a packaged binary, in an empty network namespace (no route
+  to anything): added `10.0.100.5/24` to the NIC itself, bound TCP 1750 and UDP
+  1160, accepted a TCP connection on 1750. `iptables`, `arping`, `fping`,
+  `dnsmasq`, `conntrack` and `tcpdump` were stand-in scripts (WSL can't apt
+  without internet), so none of those were exercised.
+- mdns addon: loaded through the binary's own runtime (`BUN_BE_BUN=1`), opened a
+  socket pinned to the NIC and sent multicast. Reflector started. Not exercised:
+  the app opening a socket on a real station bridge.
+
+Not verified: arm64 outside CI's boot test (never on a Pi); real team VLANs,
+bridges, iptables or dnsmasq from the binary; a real radio, robot or DS; speaker
+audio (`aplay`); a real field host; Docker, whose caveat in deployment.md stands.
+
+Found on the way, logged in ISSUES.md: pFMS crashes if the mDNS reflector can't
+join multicast (no default route).
+
+CI's binary is about 117 MB and a local build with bun 1.4.2 about 89 MB. CI uses
+`bun-version: latest`. Cause not looked into.
+
 ## Open questions for the user
 
 (none)

@@ -87,13 +87,6 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## Setup and packaging
-
-_in progress — issues/setup-and-packaging_
-
-- The Linux standalone-binary targets compile but have never been run, and
-  the binary has no self-update path (`update.sh` doesn't apply to it).
-
 ## A team on two stations: what still isn't per-robot
 
 Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
@@ -125,6 +118,25 @@ _in progress — issues/test-reliability_
 `src/robotWifiScan.test.ts` › `the scanner > capitals-only difference is still tested automatically` failed once in a full `bun test` run (2026-10-13, 941 pass / 1 fail, while another thread's uncommitted work was in the tree) and passes on its own (`bun test src/robotWifiScan.test.ts`, 29/29). Looks timing-dependent under the full suite's load. Matters because a red full run hides real regressions.
 
 Also seen: `the scanner > a robot that goes quiet drops off the list` failed once in a full run (2026-10-13, 977 pass / 1 fail, with CPU-heavy binary builds running alongside); 29/29 three times on its own.
+
+## pFMS crashes at startup if the mDNS reflector can't join multicast
+
+With `MDNS_REFLECTOR=true` and no default route, `socket.addMembership(MDNS_ADDR)`
+in `src/mdnsReflector.ts` throws `ENODEV: no such device, setsockopt` inside the
+`bind` callback. Nothing catches it, so the whole process dies. Reproduced
+2026-10-30 in an empty network namespace holding only `lo` and a dummy NIC; adding
+a default route makes it start. Matters because the systemd unit only orders on
+`network.target`, which doesn't promise a route: a host booting before its network
+is ready could crash-loop, and one optional feature shouldn't take the field down.
+
+## `bun test` also runs the compiled tests after a build
+
+`bun run build` runs `tsc`, which writes `dist/*.test.js`, and a later `bun test`
+picks those up alongside `src/`. Seen 2026-10-30: 109 test files instead of 60, and
+two `RawPacketLog` failures that exist only in `dist
+awPacketLog.test.js`; deleting
+`dist/` clears them. Matters because a build before a test run gives double counts
+and false failures.
 
 ## scripts/test-trunk-switch.ts connects its WebSocket before pFMS is listening
 
