@@ -134,6 +134,7 @@ Reviewed values override the live sensor counts in match history, and the
 
 The ball counter (balls-counter) depends on the read-only broadcast: it keeps
 `/ws/scores` open and starts and stops its per-match recording from
-`MatchState` (`phase`, `matchId`, `subPeriod`, `inactiveGoalAlliance`, pause
-spans), joining on `matchId`, and its tally mirrors the 3 s in-flight grace.
-Don't drop or rename those fields.
+`MatchState` (`phase`, `matchId`, `subPeriod`, `inactiveGoalAlliance`; it
+builds its pause spans from `phase`), joining on `matchId`, and its tally
+mirrors the 3 s in-flight grace. Don't drop or rename those fields:
+`src/matchEngine.test.ts` fails if one goes missing.

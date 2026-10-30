@@ -1201,3 +1201,14 @@ describe('coming out of an e-stop starts disabled', () => {
     engine.stopMatch();
   });
 });
+
+describe('the ball counter contract', () => {
+  // balls-counter (src/ball_counter/match.py) reads these from /ws/scores to
+  // start and stop its recordings. docs/scoring.md.
+  test('the match state keeps the fields it reads', () => {
+    const state = created().getState();
+    for (const field of ['phase', 'matchId', 'subPeriod', 'inactiveGoalAlliance']) {
+      expect(field in state).toBe(true);
+    }
+  });
+});
