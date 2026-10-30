@@ -68,12 +68,33 @@ continues` lines, and 706 of the 765 e-stop rows above were TestBird's, filed
 - [x] Detector, attribution, two-robot fix, who-pressed logging
 - [x] Team banner, every robot of the team; `/csa` critical issue
 - [x] Tests and docs
-- [ ] Merged to local master
-- [ ] Deployed with the other threads' work (user's big push)
+- [x] Merged to local master
+- [x] Deployed on its own: `6e290fb`, 2026-10-30 9:53 AM PDT (16:53Z)
 - [ ] Seen on a real e-stop
+
+## Stop cut and follow-up threads (2026-10-30)
+
+The user doesn't want to cut comms, saying it shouldn't ever be needed. Agreed
+change, in `issues/stop-cut`: remove the `pfms-estop-*` cut from the field and
+station e-stops, keep it for the team page's Stop until a replacement exists,
+and drop the wait that keeps it on after a clear until the DS shows Disabled.
+
+Remaining `ISSUES.md` entries went to eight threads, each claimed by branch name
+in that file. Left out on purpose:
+
+- The Blue Alliance reporting and the Space → A-Stop mapping: the user said not
+  yet.
+- The field checks and balls-counter: they need a field visit or another repo.
+- The SystemCore parser: 5940 comes back mid next week, around 2026-11-04.
+- 114's Driver Station logs: not expected, so stop waiting on them.
+
+The first launch of nine threads used the tomsawyerlabs.com project ID. Those
+threads changed nothing, and their worktrees and branches were removed.
 
 ## Things not to do
 
+- Don't launch T3 threads on a remembered project ID: read the project first,
+  and check each new thread's worktree path after launching.
 - Don't treat a pFMS "cleared" e-stop as the robot being clear.
 - Don't trust historical two-robot telemetry station by station; use the voltage
   to tell the robots apart.

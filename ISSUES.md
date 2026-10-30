@@ -2,6 +2,8 @@
 
 ## A second laptop on a robot gets through in gaps
 
+_in progress — issues/second-laptop-gaps_
+
 On 2026-10-28, 5:05:44 to 5:09:07 PM PDT (00:05-00:09Z), team 114's second
 laptop `10.55.231.82` logged `Blocked duplicate DS` and `Unblocked duplicate DS`
 every ~6 s, in step with its TCP flap, while `10.55.150.65` was driving the
@@ -11,6 +13,8 @@ opens each time that DS flaps.
 
 ## Operator pages have no login of their own
 
+_in progress — issues/operator-login_
+
 `/match`, `/staff`, `/csa`, `/test` and `/overview` need no credential, so the
 server can only refuse them to Driver Stations (`staff` tier in
 `src/wsAccess.ts`, seen 2026-10-30). A team's phone on guest Wi-Fi can open
@@ -18,6 +22,8 @@ server can only refuse them to Driver Stations (`staff` tier in
 someone who means it.
 
 ## A Driver Station can still clear an e-stop over the WebSocket
+
+_in progress — issues/stop-cut_
 
 `adminClearEStop` and `adminClearFieldEStop` stay `anyone` in `src/wsAccess.ts`
 (2026-10-30), left alone while e-stop behaviour is being reconsidered. Clearing
@@ -27,6 +33,8 @@ themselves (`adminStopMatch`, `matchAbortCountdown`, `stationPauseMatch`,
 not block one.
 
 ## Timing-sensitive tests in a full run
+
+_in progress — issues/test-timing_
 
 `src/matchEngine.test.ts` › `a challenge run end to end > finishing a stopwatch
 run stops the robot and ends the run` and `src/fieldTimelapse.test.ts` ›
@@ -86,6 +94,8 @@ Each needs a field visit. What to try and what each result means is in
 
 ## A team on two stations: what still isn't per-robot
 
+_in progress — issues/two-station-remaining_
+
 Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
 `plans/two-robot-own-traffic.md`. These still aren't:
 
@@ -104,11 +114,15 @@ Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
 
 ## Subnet scanner ignores DRY_RUN
 
+_in progress — issues/host-robustness_
+
 `src/index.ts` never passes `dryRun` to `SubnetScanner`, so the
 `[dry-run] Would fping` branch is dead and a DRY_RUN instance sweeps real team
 subnets. Matters because this PC reaches the real field network.
 
 ## pFMS crashes at startup if the mDNS reflector can't join multicast
+
+_in progress — issues/host-robustness_
 
 With `MDNS_REFLECTOR=true` and no default route, `socket.addMembership(MDNS_ADDR)`
 in `src/mdnsReflector.ts` throws `ENODEV: no such device, setsockopt` inside the
@@ -120,6 +134,8 @@ is ready could crash-loop, and one optional feature shouldn't take the field dow
 
 ## Robot tester can't complete a lease on dhcpcd 10.0.x
 
+_in progress — issues/station-test-port_
+
 `dhcpcdArgs()` in `src/robotTestMonitor.ts` passes `--reboot 0`. dhcpcd 10.0.6
 (Ubuntu 24.04, seen in WSL) arms its REQUEST timeout from the `reboot` value, so
 every offer fails on the spot and it spins on `offered` / `failed to request the
@@ -129,15 +145,21 @@ distro would get no tester lease and a flood of log lines.
 
 ## StationStatus `full` mode looks unreachable
 
+_in progress — issues/ui-cleanup_
+
 `StationStatus` takes a `full` prop that switches on `FreeplayControl`, `MatchPanel`, `StationNetworkCard`, the mDNS table and the full chart set, but its only callers (`SlotGroup` and the deprecated `AllianceStatus` in `frontend/src/components/AllianceStatus.tsx`) never pass it. Worth deciding whether that code is dead and removable.
 
 ## Page header icons are too small to tap on a phone
+
+_in progress — issues/ui-cleanup_
 
 Seen 2026-10-30 at 320px wide: the status bar's Get Help, Scoreboard and GitHub
 icons are 14×14 px and 4 px apart, on every page. Get Help is the one a team
 needs when something is wrong.
 
 ## No button starts a firmware update from station test port mode
+
+_in progress — issues/station-test-port_
 
 `stationFirmwareUpdateRequest` is handled on the backend and
 `sendStationFirmwareUpdateRequest` exists in `frontend/src/hooks/useBackend.ts`,
@@ -147,12 +169,16 @@ users have to go to `/test`, which only drives the dedicated test interface.
 
 ## /test progress bars keep animating after the operation ends
 
+_in progress — issues/station-test-port_
+
 In `frontend/src/components/TestPage.tsx`, `RadioConfigureSection` and
 `FirmwareUpdateSection` pass `variant={configuring ? 'determinate' : undefined}`
 to `LinearProgress`. `undefined` means indeterminate, so a finished or failed
 operation shows a looping green or red bar under its result.
 
 ## Robot checks keep running during a radio configure or firmware update
+
+_in progress — issues/station-test-port_
 
 Seen with a fake radio on a station test port (2026-10-30): pressing Fix while a
 check was in flight left the phase on "Running checks...", and partway through
@@ -162,8 +188,12 @@ stop the periodic checks. The operation itself still completed.
 
 ## RawPacketLog daily-cap test fails often, even alone
 
+_in progress — issues/test-timing_
+
 `src/rawPacketLog.test.ts` › `stops at the daily cap, and starts again the next day` failed 2 of 3 runs of that file alone on an idle-ish Windows machine (2026-10-30), and once in a full `bun test` (746 pass / 1 fail): `Expected: 176, Received: 24` at line 59. The test's `flush()` calls `log.close()` and then waits a fixed 50 ms. Matters because it turns a full run red on its own.
 
 ## Three more tests time out when the full suite runs under heavy load
+
+_in progress — issues/test-timing_
 
 A full `bun test` in the main checkout on a busy machine (2026-10-30, 1320 pass / 10 fail, 507 s) also failed `FieldTimelapse light handshake over webhooks > the callback releases the shutter, and both webhooks are called` (3.2 s), `a challenge run end to end > finishing a stopwatch run stops the robot and ends the run` (5.1 s) and two unnamed `recordings API` tests (5.5 s). Each passed in less loaded runs. The other 6 failures were the robotWifiScan flake, since fixed. Matters because a red full run hides real regressions.
