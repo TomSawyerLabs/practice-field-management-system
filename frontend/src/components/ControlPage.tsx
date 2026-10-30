@@ -16,6 +16,8 @@ import { alpha } from '@mui/material/styles';
 import { TeamAvatar } from './TeamAvatar';
 import {
   useLatest,
+  useQueueState,
+  useSetupConfig,
   useMatchState,
   useDriveSessionState,
   useSavedTeams,
@@ -88,7 +90,8 @@ import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import TableHead from '@mui/material/TableHead';
 import Alert from '@mui/material/Alert';
-import { formatBytes, describeIp, formatAge } from '../../../src/utils';
+import { formatBytes, describeIp, formatAge, hostTeamsInEffect } from '../../../src/utils';
+import { parkedHostStations } from '../utils/fieldIssues';
 
 // Helper function to format numbers with thin space as thousands separator
 function formatNumberWithThinSpace(num: number | undefined): string {
@@ -186,12 +189,18 @@ function useFindAvailableStation(): StationName | null {
 
 /** What a team sees when the field is full. Making room is field staff's
  *  call (Release on the admin page), never another team's — teams are not
- *  asked to pick whose robot to bump. */
+ *  asked to pick whose robot to bump. Parked host robots are named, since a
+ *  full field otherwise looks like that many teams practicing. */
 function FieldFullAlert() {
+  const latest = useLatest();
+  const setupConfig = useSetupConfig();
+  const queue = useQueueState();
+  const parked = parkedHostStations(latest, hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue)).length;
   return (
     <Alert severity="warning" sx={{ mb: 2 }}>
-      The field is full ({StationNameList.length} robots). Ask field staff to make room for your robot, or wait for a
-      team to leave.
+      The field is full ({StationNameList.length} robots
+      {parked > 0 && `, ${parked} of them the host team's, parked and not running`}). Ask field staff to make room for
+      your robot, or wait for a team to leave.
     </Alert>
   );
 }

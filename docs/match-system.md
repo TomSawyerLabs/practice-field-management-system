@@ -390,6 +390,12 @@ The admin page's **Host team** card names the teams that host the field
 - **sits last** on the lists staff read to choose who to release: Teams &
   Controls on the admin page, and the robots on the CSA page. Both label it
   as the host.
+- **counts as parked while it's off the Wi-Fi.** The CSA page shows a note
+  instead of a problem, since a host robot being off is normal. When the field
+  is full, the CSA and admin pages call it out as the slot to release, and the
+  team page's "field is full" message says how many of the robots are parked.
+- **only adds to [field usage](internals.md#usage-tracking) with a Driver
+  Station connected**, so one left powered on overnight doesn't run up hours.
 
 This only changes what pFMS proposes. Staff and the team can still release a
 host robot, and **Clear all robots from the radio** still takes everything
