@@ -1,4 +1,4 @@
-import type { Alliance, DiscoveredHost, StationName } from './types.js';
+import type { Alliance, DiscoveredHost, SetupSettings, StationName } from './types.js';
 import CIDRMatcher from 'cidr-matcher';
 
 /** `10.TE.AM` for a team — the first three octets every robot-side address
@@ -83,6 +83,17 @@ export function teamOfSsid(ssid: string | null | undefined): number | null {
   if (!ssid) return null;
   const num = parseInt(ssid.split('-', 2)[0], 10);
   return Number.isNaN(num) ? null : num;
+}
+
+/** The teams getting the host's treatment right now: none in a scrimmage. */
+export function hostTeamsInEffect(settings: Pick<SetupSettings, 'hostTeams' | 'scrimmageMode'>): number[] {
+  return settings.scrimmageMode ? [] : (settings.hostTeams ?? []);
+}
+
+/** Whether a robot gets the host's treatment right now. */
+export function isHostRobot(ssid: string, settings: Pick<SetupSettings, 'hostTeams' | 'scrimmageMode'>): boolean {
+  const team = teamOfSsid(ssid);
+  return team !== null && hostTeamsInEffect(settings).includes(team);
 }
 
 /**

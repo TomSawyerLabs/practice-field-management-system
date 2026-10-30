@@ -4,6 +4,7 @@ import {
   detectFieldIssues,
   fieldControlOf,
   groupIssues,
+  releaseOrder,
   stationLabel,
   stationOrder,
   worstSeverity,
@@ -617,6 +618,18 @@ describe('order by time on the field', () => {
     });
     expect(stationOrder(ms)).toEqual(['slot3', 'slot4', 'slot6', 'slot2', 'slot5', 'slot1']);
     expect(stationOrder(null)).toEqual(['slot1', 'slot2', 'slot3', 'slot4', 'slot5', 'slot6']);
+  });
+
+  test('releaseOrder keeps that order but moves the host team last', () => {
+    const ms = match({
+      stationStates: {
+        slot1: control({ teamNumber: 111, connectedAt: NOW - 90_000 }),
+        slot2: control({ teamNumber: 222, connectedAt: NOW - 60_000 }),
+        slot3: control({ teamNumber: 333, connectedAt: NOW - 1000 }),
+      },
+    });
+    expect(releaseOrder(ms, [111])).toEqual(['slot4', 'slot5', 'slot6', 'slot2', 'slot3', 'slot1']);
+    expect(releaseOrder(ms, [])).toEqual(stationOrder(ms));
   });
 
   test('issues of equal severity follow that order, and never name a slot', () => {

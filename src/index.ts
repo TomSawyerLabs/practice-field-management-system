@@ -11,7 +11,7 @@ import dgram from 'node:dgram';
 import { startConfigurationScheduler } from './scheduler.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
-import { teamOfSsid, teamSubnet, toCidr } from './utils.js';
+import { isHostRobot, teamOfSsid, teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine } from './matchEngine.js';
 import {
@@ -436,14 +436,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // When a match ends, every robot on the field is queued to leave unless it
   // plays on: joining the next match, or pressing Keep / Enable Wi-Fi,
-  // withdraws its release. Nothing leaves until staff apply.
+  // withdraws its release. Nothing leaves until staff apply. The host team's
+  // robots aren't queued, outside a scrimmage.
   let phaseBeforeRelease = matchEngine.getState().phase;
   matchEngine.addStateListener(state => {
     const previous = phaseBeforeRelease;
     phaseBeforeRelease = state.phase;
     if (state.phase !== 'postMatch' || previous === 'postMatch') return;
     if (setupConfigStore.get().settings.releaseAfterMatch === false) return;
-    radioManager.stageReleaseAll('postMatch');
+    radioManager.stageReleaseAll('postMatch', ssid => isHostRobot(ssid, setupConfigStore.get().settings));
   });
   matchEngine.setStationJoinHook(station => {
     const ssid = radioManager.getStationConfig(station)?.ssid;
@@ -1416,7 +1417,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Initialize scheduled configuration clearing
   if (RadioClearSchedule) {
-    startConfigurationScheduler(radioManager, RadioClearSchedule, RadioClearTimezone, matchEngine);
+    startConfigurationScheduler(radioManager, RadioClearSchedule, RadioClearTimezone, matchEngine, ssid =>
+      isHostRobot(ssid, setupConfigStore.get().settings),
+    );
   } else {
     console.log('RADIO_CLEAR_SCHEDULE environment variable is not set. Skipping scheduled configuration clearing.');
   }

@@ -279,6 +279,13 @@ export interface SetupSettings {
    *  plays on (joins the next match, or its team presses Keep). Nothing
    *  leaves until staff apply. Absent / true = on. */
   releaseAfterMatch?: boolean;
+  /** Teams hosting the field. Their robots stay configured through the daily
+   *  reset, aren't queued to leave when a match ends, and sit last on staff's
+   *  lists of who to release. See `scrimmageMode`. */
+  hostTeams?: number[];
+  /** A scrimmage is on: the host team gets no special treatment, and its
+   *  robots come and go like everyone else's. Absent / false = no scrimmage. */
+  scrimmageMode?: boolean;
   /** Field policy on robot control systems. 'none' (default) says nothing to
    *  teams; 'preferSystemCore' warns roboRIO teams; the block modes fail the
    *  robot check for the disallowed control system. */
@@ -891,6 +898,9 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   sixGhzWatchInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
   wifiCountry: v => typeof v === 'string' && /^[A-Z]{2}$/.test(v),
   releaseAfterMatch: v => typeof v === 'boolean',
+  hostTeams: v =>
+    Array.isArray(v) && v.length <= 16 && v.every(t => typeof t === 'number' && Number.isInteger(t) && t > 0),
+  scrimmageMode: v => typeof v === 'boolean',
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
   timelapse: isTimelapseConfig,

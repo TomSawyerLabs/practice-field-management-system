@@ -244,6 +244,14 @@ export function stationOrder(matchState: MatchState | null): StationName[] {
   return [...StationNameList].sort((a, b) => at(a) - at(b) || StationNameList.indexOf(a) - StationNameList.indexOf(b));
 }
 
+/** stationOrder for choosing who to release: the host team's robots last, as
+ *  the last to give up a slot. */
+export function releaseOrder(matchState: MatchState | null, hostTeams: number[]): StationName[] {
+  const isHost = (s: StationName) => hostTeams.includes(matchState?.stationStates[s]?.teamNumber ?? 0);
+  // Array.sort is stable, so each group keeps stationOrder's order.
+  return stationOrder(matchState).sort((a, b) => Number(isHost(a)) - Number(isHost(b)));
+}
+
 /** How a station is named to staff: its robot's SSID, else "team N", else
  *  "this robot". The same words the issues use. */
 export function stationLabel(input: Pick<FieldIssueInputs, 'latest' | 'matchState'>, station: StationName): string {

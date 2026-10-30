@@ -8,6 +8,9 @@ import type { MatchEngine } from './matchEngine.js';
  * Environment Variables (read in index.ts):
  * - RADIO_CLEAR_SCHEDULE: Cron expression for when to clear configurations (e.g., "0 6 * * *" for daily at 6am)
  * - RADIO_CLEAR_TIMEZONE: Timezone for the cron schedule (optional, defaults to system TZ)
+ *
+ * `keep` names the robots that stay configured (the host team's), asked
+ * afresh each time so a settings change needs no restart.
  */
 
 export function startConfigurationScheduler(
@@ -15,6 +18,7 @@ export function startConfigurationScheduler(
   schedule: string,
   timezone: string | undefined,
   matchEngine: MatchEngine,
+  keep: (ssid: string) => boolean,
 ): void {
   try {
     const cronJob = new CronJob(
@@ -26,7 +30,7 @@ export function startConfigurationScheduler(
         }
         console.log(`Scheduled task triggered: Clearing all radio configurations`);
         try {
-          await radioManager.clearAllConfigurations();
+          await radioManager.clearAllConfigurations(false, keep);
         } catch (error) {
           console.error(`Error in scheduled configuration clear:`, error);
         }

@@ -728,12 +728,12 @@ class RadioManager {
 
   /** The match is over: every robot on the field is queued to leave unless
    *  it asks to stay before staff apply. A robot with a change already
-   *  waiting is left to that change. */
-  stageReleaseAll(reason: PendingReleaseReason): number {
+   *  waiting is left to that change, and one that `stays` isn't queued. */
+  stageReleaseAll(reason: PendingReleaseReason, stays: (ssid: string) => boolean = () => false): number {
     let added = 0;
     for (const station of StationNameList) {
       const ssid = this.activeConfig[station]?.ssid;
-      if (!ssid || this.changes.some(c => c.ssid === ssid)) continue;
+      if (!ssid || stays(ssid) || this.changes.some(c => c.ssid === ssid)) continue;
       this.changes.push({ id: newChangeId(), kind: 'release', ssid, reason });
       added++;
     }
@@ -1213,19 +1213,30 @@ class RadioManager {
     return mappings;
   }
 
-  async clearAllConfigurations(stage = false): Promise<void> {
+  /** Empty the field. A robot `keep` names stays, with anything waiting for
+   *  it; if that leaves nothing to clear, the radio is left alone, so a robot
+   *  that is staying doesn't lose its Wi-Fi to a push that changes nothing. */
+  async clearAllConfigurations(stage = false, keep: (ssid: string) => boolean = () => false): Promise<void> {
     console.log(`Starting to clear all active radio configurations${stage ? ' (staged)' : ''}`);
 
     // No guard for a reconfigure in progress: the commit below queues
     // behind it (enqueueRadioPush).
     try {
       // Waiting changes go too: a clear is a reset, not a step in a batch.
-      if (this.changes.length > 0) {
-        console.log(`Dropping ${this.changes.length} pending Wi-Fi change(s) with the clear`);
-        this.changes = [];
+      const kept = this.changes.filter(c => keep(c.ssid));
+      if (kept.length < this.changes.length) {
+        console.log(`Dropping ${this.changes.length - kept.length} pending Wi-Fi change(s) with the clear`);
+        this.changes = kept;
         this.saveStagedConfig();
       }
-      for (const stationId in this.activeConfig) delete this.activeConfig[stationId as StationName];
+      const stations = Object.keys(this.activeConfig) as StationName[];
+      const leaving = stations.filter(s => !keep(this.activeConfig[s].ssid));
+      if (leaving.length === 0 && stations.length > 0) {
+        console.log(`Nothing to clear: ${stations.length} robot(s) stay on the field`);
+        this.afterListChange();
+        return;
+      }
+      for (const station of leaving) delete this.activeConfig[station];
       this.saveActiveConfig();
       this.notifyConfigChange();
 

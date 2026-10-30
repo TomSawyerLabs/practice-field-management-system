@@ -373,6 +373,29 @@ Teams are never shown slot numbers — a robot is named by its SSID, and
 pointer to ask field staff to make room. Teams cannot bump another team's
 robot themselves; that is a Release on the admin page.
 
+### Host team
+
+The admin page's **Host team** card names the teams that host the field
+(setting `hostTeams`). Every robot of a host team:
+
+- **stays configured through the daily reset** (`RADIO_CLEAR_SCHEDULE`), and
+  anything waiting for it stays on the pending list. A reset with nothing
+  else to clear does not touch the radio.
+- **isn't queued to leave** when a match ends.
+- **sits last** on the lists staff read to choose who to release: Teams &
+  Controls on the admin page, and the robots on the CSA page. Both label it
+  as the host.
+
+This only changes what pFMS proposes. Staff and the team can still release a
+host robot, and **Clear all robots from the radio** still takes everything
+off: it is for a stuck field.
+
+Ticking **Scrimmage** on that card (setting `scrimmageMode`) suspends all of
+this, so the host team's robots come and go like everyone else's. It stays
+on until an admin unticks it; pFMS has no way to tell a scrimmage is over.
+
+Both settings are admin-only, like every other setup setting.
+
 ## Match queue
 
 `/queue` (admin-gated) keeps one ordered list of upcoming matches so the

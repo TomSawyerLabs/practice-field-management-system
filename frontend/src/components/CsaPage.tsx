@@ -29,7 +29,7 @@ import {
   type TeamCheckResults,
   type TelemetryUpdate,
 } from '../../../src/types';
-import { teamOfSsid } from '../../../src/utils';
+import { hostTeamsInEffect, teamOfSsid } from '../../../src/utils';
 import {
   getServerTime,
   sendAdminStationEnable,
@@ -47,6 +47,7 @@ import {
   useLastLinked,
   useLatest,
   useMatchState,
+  useSetupConfig,
   useNetworkStats,
   usePendingCommitState,
   useRoutePreferenceState,
@@ -62,7 +63,7 @@ import {
   isMatchRunning,
   shortAge,
   stationLabel,
-  stationOrder,
+  releaseOrder,
   worstSeverity,
   type FieldControl,
   type FieldControlKind,
@@ -395,10 +396,16 @@ interface StationFacts {
   control: FieldControl;
   /** Epoch ms this team took the station; undefined = unknown (old config). */
   connectedAt?: number;
+  isHost: boolean;
   worst?: IssueSeverity;
 }
 
-function stationFacts(input: FieldIssueInputs, issues: FieldIssue[], station: StationName): StationFacts {
+function stationFacts(
+  input: FieldIssueInputs,
+  issues: FieldIssue[],
+  station: StationName,
+  hostTeams: number[],
+): StationFacts {
   const radio = input.latest?.radioUpdate?.stationStatuses[station] ?? null;
   const ssid = radio?.ssid || undefined;
   const control = input.matchState?.stationStates[station];
@@ -429,6 +436,7 @@ function stationFacts(input: FieldIssueInputs, issues: FieldIssue[], station: St
     matchSlot: control?.matchSlot ?? null,
     control: fieldControlOf(input, station),
     connectedAt: control?.connectedAt,
+    isHost: hostTeams.includes(team ?? 0),
     worst: worstSeverity(issues.filter(i => i.station === station)),
   };
 }
@@ -504,6 +512,7 @@ function StationTile({ facts, now, onClick }: { facts: StationFacts; now: number
           <Tooltip title="Time since this robot's Wi-Fi was put on the field" arrow enterTouchDelay={0}>
             <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.65rem', whiteSpace: 'nowrap' }}>
               {facts.connectedAt !== undefined ? `on field ${shortAge(now - facts.connectedAt)}` : 'on field'}
+              {facts.isHost ? ' · host' : ''}
             </Typography>
           </Tooltip>
           {facts.matchSlot && (
@@ -970,6 +979,7 @@ export function CsaPage() {
   const sixGhzWatch = useSixGhzWatch();
   const robotDropouts = useRobotDropouts();
   const robotEStops = useRobotEStops();
+  const setupConfig = useSetupConfig();
   const [selected, setSelected] = useState<StationName | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -1020,10 +1030,12 @@ export function CsaPage() {
   const radioStatus = latest?.radioUpdate?.status;
   const radioBusy = radioStatus === 'CONFIGURING' || radioStatus === 'BOOTING';
 
-  // Robots on the field, longest there first. Empty slots are not shown at
-  // all: staff think in robots, and slot numbers mean nothing to a CSA.
-  const facts = stationOrder(matchState)
-    .map(s => stationFacts(input, issues, s))
+  // Robots on the field, longest there first, the host team's last. Empty
+  // slots are not shown at all: staff think in robots, and slot numbers mean
+  // nothing to a CSA.
+  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {});
+  const facts = releaseOrder(matchState, hostTeams)
+    .map(s => stationFacts(input, issues, s, hostTeams))
     .filter(f => f.ssid);
   const names = Object.fromEntries(StationNameList.map(s => [s, stationLabel(input, s)])) as Names;
   const robotsLinked = facts.filter(f => f.linked).length;
@@ -1149,7 +1161,8 @@ export function CsaPage() {
       )}
       {facts.length > 0 && (
         <Typography variant="caption" sx={{ color: 'text.disabled', textAlign: 'center' }}>
-          Longest on the field first. Tap a robot for its raw radio, Driver Station, telemetry and scan data.
+          Longest on the field first, host team last. Tap a robot for its raw radio, Driver Station, telemetry and scan
+          data.
         </Typography>
       )}
 

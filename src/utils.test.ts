@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { robotNameOf, teamLabelAmong, teamOfSsid, teamSubnet } from './utils.js';
+import { isUpdateSetupSettings } from './types.js';
+import { hostTeamsInEffect, isHostRobot, robotNameOf, teamLabelAmong, teamOfSsid, teamSubnet } from './utils.js';
+import { accessOf } from './wsAccess.js';
 
 describe('teamOfSsid', () => {
   test('reads the number before the first hyphen', () => {
@@ -10,6 +12,34 @@ describe('teamOfSsid', () => {
     expect(teamOfSsid('')).toBeNull();
     expect(teamOfSsid(undefined)).toBeNull();
     expect(teamOfSsid('robot-1234')).toBeNull();
+  });
+});
+
+describe('host teams', () => {
+  const settings = { hostTeams: [1967, 5940] };
+
+  test('every robot of a host team counts, and no other', () => {
+    expect(isHostRobot('1967-Elsa', settings)).toBe(true);
+    expect(isHostRobot('5940', settings)).toBe(true);
+    expect(isHostRobot('254', settings)).toBe(false);
+    expect(isHostRobot('robot-1967', settings)).toBe(false);
+  });
+
+  test('nobody is the host in a scrimmage, or with none set', () => {
+    expect(hostTeamsInEffect({ ...settings, scrimmageMode: true })).toEqual([]);
+    expect(isHostRobot('1967', { ...settings, scrimmageMode: true })).toBe(false);
+    expect(isHostRobot('1967', {})).toBe(false);
+  });
+
+  test('only an admin can change them, and only to real team numbers', () => {
+    expect(accessOf('updateSetupSettings')).toBe('admin');
+    const update = (settings: unknown) => isUpdateSetupSettings({ type: 'updateSetupSettings', settings });
+    expect(update({ hostTeams: [1967, 5940], scrimmageMode: true })).toBe(true);
+    expect(update({ hostTeams: [] })).toBe(true);
+    expect(update({ hostTeams: [1967.5] })).toBe(false);
+    expect(update({ hostTeams: [0] })).toBe(false);
+    expect(update({ hostTeams: '1967' })).toBe(false);
+    expect(update({ scrimmageMode: 'yes' })).toBe(false);
   });
 });
 

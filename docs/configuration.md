@@ -61,6 +61,10 @@ service restart — no `systemctl daemon-reload` needed.
 | `RADIO_CLEAR_SCHEDULE` | _(none)_ | Cron expression for scheduled configuration clearing (e.g., `0 6 * * *`) |
 | `RADIO_CLEAR_TIMEZONE` | _(none)_ | Timezone for scheduled clearing (e.g., `America/Los_Angeles`)            |
 
+The host team's robots stay configured through a scheduled clear, unless the
+admin page's Scrimmage box is ticked. See
+[Host team](match-system.md#host-team).
+
 ## Scoring & Scoreboard
 
 | Variable                         | Default                             | Description                                                                                                                                                                                                                                                                                                                                                                                          |

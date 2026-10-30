@@ -24,7 +24,7 @@ import TableSortLabel from '@mui/material/TableSortLabel';
 
 import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
-import { prettyStationName, teamLabelAmong } from '../../../src/utils';
+import { hostTeamsInEffect, prettyStationName, teamLabelAmong } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -235,7 +235,10 @@ function useConnectedTeamRows(): TeamRow[] {
   });
 }
 
-function sortTeamRows(rows: TeamRow[], key: TeamSortKey, direction: 'asc' | 'desc'): TeamRow[] {
+function sortTeamRows(rows: TeamRow[], key: TeamSortKey, direction: 'asc' | 'desc', hostTeams: number[]): TeamRow[] {
+  // By time on the field this is the order to release robots in, so the host
+  // team's stay last whichever way it runs.
+  const hostRank = (row: TeamRow) => (key === 'connected' && hostTeams.includes(row.teamNumber) ? 1 : 0);
   const value = (row: TeamRow): number => {
     switch (key) {
       case 'team':
@@ -254,7 +257,10 @@ function sortTeamRows(rows: TeamRow[], key: TeamSortKey, direction: 'asc' | 'des
   // Slot order is the tiebreak, so equal values (a whole field enabled in the
   // same instant) stay put instead of jittering between renders.
   return [...rows].sort(
-    (a, b) => sign * (value(a) - value(b)) || StationNameList.indexOf(a.station) - StationNameList.indexOf(b.station),
+    (a, b) =>
+      hostRank(a) - hostRank(b) ||
+      sign * (value(a) - value(b)) ||
+      StationNameList.indexOf(a.station) - StationNameList.indexOf(b.station),
   );
 }
 
@@ -329,7 +335,7 @@ function TeamControlButtons({ row }: { row: TeamRow }) {
   );
 }
 
-function ConnectedTeamRow({ row }: { row: TeamRow }) {
+function ConnectedTeamRow({ row, isHost }: { row: TeamRow; isHost: boolean }) {
   const { station, teamNumber, label, state, isRobotLinked } = row;
   const now = Date.now();
 
@@ -341,6 +347,7 @@ function ConnectedTeamRow({ row }: { row: TeamRow }) {
           <Typography variant="subtitle1" fontWeight="bold" sx={{ whiteSpace: 'nowrap' }}>
             {label}
           </Typography>
+          {isHost && <Chip label="Host" size="small" color="info" variant="outlined" />}
         </Box>
       </TableCell>
       <TableCell sx={{ whiteSpace: 'nowrap', color: 'text.secondary' }}>{prettyStationName(station)}</TableCell>
@@ -378,6 +385,8 @@ function ConnectedTeamRow({ row }: { row: TeamRow }) {
 
 function StationControlSection() {
   const rows = useConnectedTeamRows();
+  const setupConfig = useSetupConfig();
+  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {});
   const [sortKey, setSortKey] = useState<TeamSortKey>('connected');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(teamSortDefaultDirection.connected);
   const [, setTick] = useState(0);
@@ -396,7 +405,7 @@ function StationControlSection() {
     }
   };
 
-  const sorted = sortTeamRows(rows, sortKey, sortDirection);
+  const sorted = sortTeamRows(rows, sortKey, sortDirection, hostTeams);
 
   const sortableHeader = (key: TeamSortKey) => (
     <TableCell sortDirection={sortKey === key ? sortDirection : false} sx={{ whiteSpace: 'nowrap' }}>
@@ -415,8 +424,9 @@ function StationControlSection() {
       <CardContent>
         <Typography variant="h5">Teams &amp; Controls</Typography>
         <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
-          Every team on the field, longest-connected first. Tap a column heading to reorder. Slots with no team are not
-          listed. Release takes a robot off the field; Forget also deletes its saved passphrase.
+          Every team on the field, longest-connected first, with the host team last. Tap a column heading to reorder.
+          Slots with no team are not listed. Release takes a robot off the field; Forget also deletes its saved
+          passphrase.
         </Typography>
 
         {sorted.length === 0 ? (
@@ -438,7 +448,7 @@ function StationControlSection() {
               </TableHead>
               <TableBody>
                 {sorted.map(row => (
-                  <ConnectedTeamRow key={row.station} row={row} />
+                  <ConnectedTeamRow key={row.station} row={row} isHost={hostTeams.includes(row.teamNumber)} />
                 ))}
               </TableBody>
             </Table>
@@ -1046,6 +1056,57 @@ function SixGhzWatchSection() {
   );
 }
 
+/** Who hosts the field: their robots keep their slots through the daily reset
+ *  and after matches, and are the last staff are pointed at to release. The
+ *  scrimmage switch suspends all of that without losing the list. */
+function HostTeamSection() {
+  const setupConfig = useSetupConfig();
+  const hostTeams = setupConfig?.config.settings.hostTeams ?? [];
+  const scrimmage = setupConfig?.config.settings.scrimmageMode === true;
+  return (
+    <Card sx={{ mb: 2 }}>
+      <CardContent>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+          <Typography variant="h6">Host team</Typography>
+          {scrimmage && <Chip size="small" color="warning" label="Scrimmage" />}
+        </Box>
+        <Autocomplete
+          multiple
+          freeSolo
+          options={[]}
+          value={hostTeams.map(String)}
+          onChange={(_, values) => {
+            const teams = values.map(v => parseInt(v, 10)).filter(t => Number.isInteger(t) && t > 0);
+            sendUpdateSetupSettings({ hostTeams: [...new Set(teams)] });
+          }}
+          renderInput={params => (
+            <TextField {...params} size="small" label="Host team numbers" helperText="Press Enter after each team." />
+          )}
+          sx={{ mb: 1 }}
+        />
+        <Typography variant="body2" sx={{ color: 'text.secondary', mb: 1.5 }}>
+          The host team&rsquo;s robots stay on the field through the daily reset and when a match ends, and are listed
+          last when choosing who to release. Staff and the team can still release them.
+        </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={scrimmage}
+              onChange={e => sendUpdateSetupSettings({ scrimmageMode: e.target.checked })}
+            />
+          }
+          label="Scrimmage: treat the host team like everyone else"
+        />
+        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+          {scrimmage
+            ? 'The host team’s robots are cleared by the daily reset and queued to leave after a match, like every other robot. Untick this when the scrimmage is over.'
+            : 'Tick this for a scrimmage. It stays on, across days, until you untick it.'}
+        </Typography>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Holds on Wi-Fi changes: teams' requests are parked instead of applied
  *  until staff apply them — always, or only around a match. The
  *  pending panel underneath is the same one the match page shows. */
@@ -1277,6 +1338,7 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
     case 'wifi':
       return (
         <>
+          <HostTeamSection />
           <WifiChangesSection />
           <WifiCardsSection />
           <RobotWifiScanSection />

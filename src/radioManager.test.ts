@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterEach, beforeAll, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -450,6 +450,64 @@ describe('after a match', () => {
     await rm.clearAllConfigurations();
     expect(rm.getStationConfig('slot1')).toBeNull();
     expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+});
+
+describe('robots that stay', () => {
+  const isHost = (ssid: string) => ssid.startsWith('1234');
+
+  test('are not queued to leave when a match ends', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+
+    expect(rm.stageReleaseAll('postMatch', isHost)).toBe(1);
+    expect(rm.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '5678', station: 'slot2', reason: 'postMatch' },
+    ]);
+  });
+
+  test('stay through a reset, and everything else goes', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+
+    await rm.clearAllConfigurations(false, isHost);
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')).toBeNull();
+  });
+
+  test('keep their waiting changes through a reset, and only those', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', other);
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', { ssid: '', wpaKey: '' });
+    await rm.configure('slot2', { ssid: '', wpaKey: '' });
+
+    await rm.clearAllConfigurations(false, isHost);
+    expect(rm.getPendingState().changes).toEqual([
+      { id: expect.any(String), kind: 'release', ssid: '1234-Comp', station: 'slot1', reason: 'team' },
+    ]);
+  });
+
+  test('a reset with only them on the field leaves the radio alone', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    const commit = spyOn(rm, 'commitConfiguration');
+
+    await rm.clearAllConfigurations(false, isHost);
+    expect(commit).not.toHaveBeenCalled();
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+
+  test('a reset naming nobody still empties the field', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+
+    await rm.clearAllConfigurations();
+    expect(rm.getStationConfig('slot1')).toBeNull();
   });
 });
 
