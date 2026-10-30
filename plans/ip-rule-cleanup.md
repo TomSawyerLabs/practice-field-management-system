@@ -77,12 +77,17 @@ Read from steamboat on 2026-10-30: 485 rules, down to priority 31927.
 - [x] Same check, taken over from the robot-tester dhcpcd thread: confirm the
       `[manager]` dhcpcd process is gone and `dhcpcd: eno1.99 [ip4]` comes and goes
       (`plans/robot-tester-dhcpcd.md`).
+- [ ] Still unseen on real hardware, because no team was on the field: a rule added
+      with an explicit priority (expect 32765 first), and a graceful reload that
+      keeps a live rule. On a day with teams, `ip rule list` should show numbers
+      from 32765 down with no duplicates, and a reload should log
+      `Restored route preference`.
 
-The deploy is not imminent. As of 2026-10-30 `origin/master` is still `6e290fb`:
-local master is held for one big push, after the remaining Issues threads and
-after tag `mdns-socket-v0.2.0` goes out. A message will arrive after the push, so
-do both checks then. The watcher started 2:37 PM PDT (21:37Z) stops about 4:37 PM
-PDT (23:37Z); that timing out is expected, not a failure, and it is not re-armed.
+The deploy was a graceful reload at 3:33 PM PDT (22:33Z). The journal says
+`Removed 482 stale per-laptop ip rule(s)`, taking 485 rules to the 3 system ones,
+still 3 at 3:38 PM PDT (22:38Z). Nothing was restored, correctly:
+`active-config.json` had been empty since the 6:00 AM PDT daily clear, so no slot
+had a team.
 
 ## Things not to do
 
