@@ -15,12 +15,20 @@ import type { StationName, TelemetryUpdate } from './types.js';
  * The DS's control packets to the robot (dst port 1110) carry its joysticks.
  * They cross pFMS only when the DS routes through it (drive sessions), so the
  * joystick report is best-effort: no packets means "can't tell".
+ *
+ * A SystemCore robot driven by the 2027 FIRST Driver Station answers from UDP
+ * 1110 to the DS's own port instead, in a layout that isn't published. Those
+ * robots are recognized by that, and their traffic both ways goes to
+ * `rawLog` undecoded, rather than being misread as the NI layout
+ * (plans/systemcore-robot-capture.md).
  */
 export class RobotPacketCapture {
   private proc: ChildProcess | null = null;
   private buf = Buffer.alloc(0);
   private headerParsed = false;
   private debuggedTeams = new Set<number>();
+  /** SystemCore robots seen answering from UDP 1110, by address. */
+  private systemCoreRobots = new Set<string>();
   /** Per station: pairs the DS's control packets with the robot's replies. */
   private linkTimers = new Map<StationName, RobotLinkTimer>();
 
@@ -43,6 +51,8 @@ export class RobotPacketCapture {
     /** Every control and reply packet with its sequence number, for spotting
      *  sub-second dropouts and brownouts (src/robotDropouts.ts). */
     private readonly dropouts?: Pick<RobotDropoutTracker, 'control' | 'reply'>,
+    /** Where SystemCore robots' traffic is kept raw until it can be decoded. */
+    private readonly rawLog?: { write(record: Buffer): void },
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -56,7 +66,17 @@ export class RobotPacketCapture {
     // Capture on all VLAN sub-interfaces by listening on the parent
     const proc = spawn(
       'tcpdump',
-      ['-i', this.interfaceName, '-U', '-w', '-', '--immediate-mode', '-p', 'udp and (dst port 1150 or dst port 1110)'],
+      [
+        '-i',
+        this.interfaceName,
+        '-U',
+        '-w',
+        '-',
+        '--immediate-mode',
+        '-p',
+        // src port 1110: a SystemCore robot's replies to the 2027 DS.
+        'udp and (dst port 1150 or dst port 1110 or src port 1110)',
+      ],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
 
@@ -125,15 +145,16 @@ export class RobotPacketCapture {
 
       // Capture time (ms, µs resolution) — what the link round trip is timed by.
       const capturedAt = this.buf.readUInt32LE(0) * 1000 + this.buf.readUInt32LE(4) / 1000;
-      const packetData = this.buf.subarray(16, totalLen);
+      const record = this.buf.subarray(0, totalLen);
+      const packetData = record.subarray(16);
       this.buf = this.buf.subarray(totalLen);
 
-      this.parsePacket(packetData, capturedAt);
+      this.parsePacket(packetData, capturedAt, record);
     }
   }
 
   /** Parse a single captured packet (Ethernet + [VLAN] + IP + UDP + payload). */
-  private parsePacket(data: Buffer, capturedAt: number): void {
+  private parsePacket(data: Buffer, capturedAt: number, record: Buffer): void {
     // Ethernet header: 14 bytes (dst[6] + src[6] + etherType[2])
     if (data.length < 14) return;
     let etherType = data.readUInt16BE(12);
@@ -159,9 +180,21 @@ export class RobotPacketCapture {
 
     // UDP payload starts after IP header + 8 bytes UDP header
     const payloadOffset = ipOffset + ipHeaderLen + 8;
+    const srcPort = data.readUInt16BE(ipOffset + ipHeaderLen);
     const dstPort = data.readUInt16BE(ipOffset + ipHeaderLen + 2);
 
+    if (srcPort === DS_TO_ROBOT_PORT && dstPort !== ROBOT_TO_DS_PORT) {
+      if (!this.systemCoreRobots.has(srcIp)) {
+        this.systemCoreRobots.add(srcIp);
+        console.log(
+          `RobotPacketCapture: ${srcIp} answers its Driver Station from UDP 1110 (SystemCore, 2027 DS) — keeping its packets raw for decoding`,
+        );
+      }
+      this.rawLog?.write(record);
+      return;
+    }
     if (dstPort === DS_TO_ROBOT_PORT) {
+      if (this.systemCoreRobots.has(dstIp)) this.rawLog?.write(record);
       this.parseDsToRobot(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt);
       return;
     }
@@ -359,6 +392,7 @@ export class RobotLinkTimer {
 }
 
 const DS_TO_ROBOT_PORT = 1110;
+const ROBOT_TO_DS_PORT = 1150;
 const JOYSTICK_TAG = 0x0c;
 
 /**

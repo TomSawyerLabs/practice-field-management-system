@@ -305,6 +305,13 @@ shows a warning with the last 15 minutes' dropouts, what they mean and what
 to try, plus a brownout count for the visit. `/csa` lists the robot too.
 Like the link checks, this needs a legacy DS routed through pFMS.
 
+A SystemCore robot (2027 DS) answers from UDP 1110 to the DS's own port, in
+an unpublished layout. The capture recognizes it by that and keeps its
+traffic raw in `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a
+day, 300 MB total) until it can be decoded, instead of misreading it as NI
+packets (`plans/systemcore-robot-capture.md`). Until then, dropouts, link
+checks and battery readings cover NI robots only.
+
 The match engine still records a Driver Station per station; the drive
 sessions keep it in step, so a station shows the laptop of the robot on it
 now.

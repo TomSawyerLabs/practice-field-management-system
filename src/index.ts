@@ -43,6 +43,7 @@ import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from 
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotLinkWatch } from './robotLinkWatch.js';
 import { describeDropout, RobotDropoutTracker } from './robotDropouts.js';
+import { RawPacketLog } from './rawPacketLog.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
 import { handleFirmwareRequest } from './firmwareApi.js';
@@ -1256,6 +1257,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (station, enabled) => matchEngine.noteDsControl(station, enabled),
       hop => robotLinkWatch?.hop(hop),
       robotDropouts,
+      // SystemCore robots' packets, kept until their layout can be decoded
+      // (plans/systemcore-robot-capture.md).
+      new RawPacketLog({ directory: 'systemcore-captures', prefix: 'systemcore' }),
     );
     robotPacketCapture.start();
   };

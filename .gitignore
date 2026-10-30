@@ -34,3 +34,6 @@ push-keys.json
 
 # Wi-Fi reports uploaded by Driver Station laptops (src/diagReportApi.ts).
 /diag-reports/
+
+# SystemCore robots' raw packets, kept for decoding (src/rawPacketLog.ts).
+/systemcore-captures/

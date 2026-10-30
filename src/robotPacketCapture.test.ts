@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkHop } from './robotLinkWatch.js';
+import type { TelemetryUpdate } from './types.js';
 import { countDsJoysticks, RobotLinkTimer, RobotPacketCapture } from './robotPacketCapture.js';
 
 /** DS→robot header: sequence, comm version, control, request, station. */
@@ -97,17 +98,17 @@ describe('RobotLinkTimer', () => {
   });
 });
 
-describe('RobotPacketCapture hops', () => {
-  /** An Ethernet frame (802.1Q-tagged when `vlan` is given) carrying IPv4 UDP. */
-  function frame(src: string, dst: string, dstPort: number, payload: number[], vlan?: number): Buffer {
-    const ip = (a: string) => a.split('.').map(Number);
-    const eth = [...Array(12).fill(0), ...(vlan === undefined ? [] : [0x81, 0x00, 0, vlan]), 0x08, 0x00];
-    const ipHeader = [0x45, 0, 0, 0, 0, 0, 0, 0, 64, 17, 0, 0, ...ip(src), ...ip(dst)];
-    const udp = [0x04, 0x00, dstPort >> 8, dstPort & 0xff, 0, 0, 0, 0];
-    return Buffer.from([...eth, ...ipHeader, ...udp, ...payload]);
-  }
-  const ROBOT_STATUS = [0x12, 0x34, 0x01, 0x00, 0x20, 12, 128, 0];
+/** An Ethernet frame (802.1Q-tagged when `vlan` is given) carrying IPv4 UDP. */
+function frame(src: string, dst: string, dstPort: number, payload: number[], vlan?: number, srcPort = 1024): Buffer {
+  const ip = (a: string) => a.split('.').map(Number);
+  const eth = [...Array(12).fill(0), ...(vlan === undefined ? [] : [0x81, 0x00, 0, vlan]), 0x08, 0x00];
+  const ipHeader = [0x45, 0, 0, 0, 0, 0, 0, 0, 64, 17, 0, 0, ...ip(src), ...ip(dst)];
+  const udp = [srcPort >> 8, srcPort & 0xff, dstPort >> 8, dstPort & 0xff, 0, 0, 0, 0];
+  return Buffer.from([...eth, ...ipHeader, ...udp, ...payload]);
+}
+const ROBOT_STATUS = [0x12, 0x34, 0x01, 0x00, 0x20, 12, 128, 0];
 
+describe('RobotPacketCapture hops', () => {
   test('reports each control and reply packet with its captured addresses', () => {
     const hops: LinkHop[] = [];
     const capture = new RobotPacketCapture(
@@ -134,5 +135,60 @@ describe('RobotPacketCapture hops', () => {
       { station: 'slot2', kind: 'reply', src: '10.8.40.2', dst: '10.8.40.254', at: 3 },
       { station: 'slot2', kind: 'reply', src: '10.8.40.2', dst: '10.55.132.86', at: 4 },
     ]);
+  });
+});
+
+describe('RobotPacketCapture SystemCore robots', () => {
+  /** A capture over one station whose telemetry, hops and raw records the
+   *  test can see. Records are tagged by their packet's first byte. */
+  function capture() {
+    const telemetry: TelemetryUpdate[] = [];
+    const hops: LinkHop[] = [];
+    const raw: Buffer[] = [];
+    const c = new RobotPacketCapture(
+      'eno1',
+      () => ({ 5940: 'slot3' }),
+      u => telemetry.push(u),
+      true,
+      undefined,
+      undefined,
+      undefined,
+      hop => hops.push(hop),
+      undefined,
+      { write: r => raw.push(r) },
+    );
+    const parse = (data: Buffer, at: number) => {
+      const record = Buffer.concat([Buffer.alloc(16), data]);
+      (c as unknown as { parsePacket(d: Buffer, at: number, r: Buffer): void }).parsePacket(data, at, record);
+    };
+    return { parse, telemetry, hops, raw };
+  }
+  const DS = '10.55.65.16';
+  const RIO = '10.59.40.2';
+
+  test('replies from UDP 1110 are kept raw, not read as NI status', () => {
+    const f = capture();
+    f.parse(frame(RIO, '10.59.40.254', 54797, ROBOT_STATUS, undefined, 1110), 1);
+    expect(f.raw).toHaveLength(1);
+    expect(f.telemetry).toEqual([]);
+    expect(f.hops).toEqual([]);
+  });
+
+  test('once its robot is known, the DS’s control packets are kept too, and still reported', () => {
+    const f = capture();
+    f.parse(frame(DS, RIO, 1110, HEADER, undefined, 54797), 1);
+    expect(f.raw).toHaveLength(0);
+    f.parse(frame(RIO, DS, 54797, ROBOT_STATUS, undefined, 1110), 2);
+    f.parse(frame(DS, RIO, 1110, HEADER, undefined, 54797), 3);
+    expect(f.raw).toHaveLength(2);
+    expect(f.hops.map(h => h.kind)).toEqual(['control', 'control']);
+  });
+
+  test('an NI robot is never recorded', () => {
+    const f = capture();
+    f.parse(frame(DS, RIO, 1110, HEADER), 1);
+    f.parse(frame(RIO, '10.59.40.254', 1150, ROBOT_STATUS), 2);
+    expect(f.raw).toEqual([]);
+    expect(f.telemetry).toHaveLength(1);
   });
 });
