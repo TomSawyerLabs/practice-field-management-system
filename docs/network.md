@@ -449,6 +449,12 @@ It is a per-laptop bridge, not a flood:
   and conntrack then dropped a pinned socket's query (EPERM) when the same
   flow had already gone out the other bridge of a two-robot team.
 
+The reflector is optional, so it never takes pFMS down with it. A port it
+can't bind or a multicast group it can't join (a host with no default route
+yet, an interface whose address isn't up) is logged once and retried every
+few seconds, so `.local` names start working once the network is up, with
+no restart. A bad `MDNS_EXCLUDE_REQUESTERS` entry is logged and skipped.
+
 ## Physical Field Ports
 
 With `FIELD_PORTS` configured (e.g. `201:Port A,202:Port B`), teams can

@@ -32,6 +32,11 @@
  * The laptop side is one ordinary socket on :5353. It ignores anything from
  * a team subnet on the field (the station sockets have it), and never
  * receives its own packets (multicast loopback off).
+ *
+ * This is an optional feature on a process that runs the field, and nothing
+ * above it catches an exception, so nothing here may throw. A socket that
+ * can't open or join yet (a host booting before its network is ready: no
+ * default route means ENODEV, 2026-10-30) is logged and retried until it can.
  */
 import dgram from 'node:dgram';
 import { mdnsSocketUnavailable, openInterfaceSocket, type InterfaceSocket } from './mdnsSocket.js';
@@ -177,7 +182,8 @@ function parseExcludeList(raw: string): IpMatcher[] {
     if (cidrMatch) {
       const prefix = parseInt(cidrMatch[2], 10);
       if (prefix < 0 || prefix > 32) {
-        throw new Error(`mDNS: invalid CIDR prefix in "${entry}"`);
+        console.error(`mDNS: ignoring invalid CIDR prefix in "${entry}"`);
+        continue;
       }
       const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
       const network = (ipToNumber(cidrMatch[1]) & mask) >>> 0;
@@ -192,7 +198,8 @@ function parseExcludeList(raw: string): IpMatcher[] {
       const lo = parseInt(rangeMatch[2], 10);
       const hi = parseInt(rangeMatch[3], 10);
       if (lo > hi || lo > 255 || hi > 255) {
-        throw new Error(`mDNS: invalid range in "${entry}"`);
+        console.error(`mDNS: ignoring invalid range in "${entry}"`);
+        continue;
       }
       const start = (base | lo) >>> 0;
       const end = (base | hi) >>> 0;
@@ -207,7 +214,7 @@ function parseExcludeList(raw: string): IpMatcher[] {
       continue;
     }
 
-    throw new Error(`mDNS: unrecognized exclude entry "${entry}"`);
+    console.error(`mDNS: ignoring unrecognized exclude entry "${entry}"`);
   }
   return matchers;
 }
@@ -374,6 +381,9 @@ const REOPEN_AFTER_MS = 30_000;
 
 export class MdnsReflector {
   private socket: dgram.Socket | null = null;
+  /** Multicast joins still to make on the shared socket, by interface IP;
+   *  undefined is the default interface. Retried with the timer. */
+  private unjoined = new Set<string | undefined>();
   /** Teams with a station on the field (rebuilt in refreshMemberships). A
    *  packet from one of their subnets on the shared socket is the robot
    *  side: its station's socket handles it. */
@@ -419,45 +429,12 @@ export class MdnsReflector {
   }
 
   start(): void {
-    if (this.socket) return;
+    if (this.pruneTimer) return;
 
-    // The laptop side: queries from team laptops arrive here, and answers go
-    // back to them from here (unicast, from :5353 on their own subnet).
-    const socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-
-    socket.on('error', err => {
-      console.error('mDNS reflector error:', err);
-    });
-
-    socket.on('message', (msg, rinfo) => {
-      this.handleLaptopPacket(msg, rinfo);
-    });
-
-    socket.bind(MDNS_PORT, () => {
-      // Join mDNS multicast on the default interface (main network).
-      socket.addMembership(MDNS_ADDR);
-      socket.setMulticastLoopback(false);
-      socket.setMulticastTTL(255); // mDNS spec requires TTL=255
-      socket.setTTL(255); // same for the unicast answers we hand back to laptops
-
-      // Join multicast on additional interfaces (e.g. guest WiFi VLAN)
-      // so we can receive mDNS queries from laptops on those networks.
-      for (const ip of this.listenInterfaces) {
-        try {
-          socket.addMembership(MDNS_ADDR, ip);
-          console.log(`mDNS: listening on ${ip}`);
-        } catch (err) {
-          console.error(`mDNS: failed to join multicast on ${ip}:`, err);
-        }
-      }
-
-      console.log('mDNS reflector started on port', MDNS_PORT);
-      this.refreshMemberships();
-    });
-
-    this.socket = socket;
+    this.openLaptopSocket();
     this.pruneTimer = setInterval(() => {
       this.pending.prune();
+      this.retryLaptopSocket();
       this.reopenFailedSockets();
     }, PENDING_QUERY_TTL_MS);
     this.pruneTimer.unref();
@@ -465,13 +442,14 @@ export class MdnsReflector {
 
   stop(): void {
     if (this.socket) {
-      this.socket.close();
+      this.closeLaptopSocket(this.socket);
       this.socket = null;
     }
     if (this.pruneTimer) {
       clearInterval(this.pruneTimer);
       this.pruneTimer = null;
     }
+    this.unjoined.clear();
     for (const station of [...this.stationSockets.keys()]) this.closeStationSocket(station);
     this.activeTeams.clear();
     this.sendQueue.length = 0;
@@ -504,12 +482,106 @@ export class MdnsReflector {
     }
   }
 
+  // ── The laptop side: opening the shared socket ─────────────────────
+
+  /** The laptop side: queries from team laptops arrive here, and answers go
+   *  back to them from here (unicast, from :5353 on their own subnet). */
+  private openLaptopSocket({ quiet = false } = {}): void {
+    let socket: dgram.Socket | undefined;
+    let bound = false;
+    const failed = (err: unknown) => {
+      if (socket && this.socket !== socket) return; // stopped meanwhile
+      if (socket) this.closeLaptopSocket(socket);
+      this.socket = null;
+      this.unjoined.clear();
+      if (!quiet) console.warn(`mDNS: can't open port ${MDNS_PORT} (${(err as Error).message}) — retrying`);
+    };
+
+    try {
+      const opened = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      socket = opened;
+
+      opened.on('error', err => {
+        // Before the bind completes this is the bind failing: nothing else
+        // would ever bring the socket back.
+        if (bound) console.error('mDNS reflector error:', err);
+        else failed(err);
+      });
+
+      opened.on('message', (msg, rinfo) => {
+        this.guarded('a laptop packet', () => this.handleLaptopPacket(msg, rinfo));
+      });
+
+      this.socket = opened;
+      opened.bind(MDNS_PORT, () => {
+        bound = true;
+        if (this.socket !== opened) return; // stopped while binding
+        try {
+          opened.setMulticastLoopback(false);
+          opened.setMulticastTTL(255); // mDNS spec requires TTL=255
+          opened.setTTL(255); // same for the unicast answers we hand back to laptops
+        } catch (err) {
+          failed(err);
+          return;
+        }
+
+        // The default interface (main network), and any others (e.g. guest
+        // WiFi VLAN) so we receive mDNS queries from laptops on those networks.
+        this.unjoined = new Set([undefined, ...this.listenInterfaces]);
+        this.joinMulticast(opened);
+
+        console.log('mDNS reflector started on port', MDNS_PORT);
+        this.refreshMemberships();
+      });
+    } catch (err) {
+      failed(err);
+    }
+  }
+
+  /** Make the joins still outstanding. A join that fails doesn't hold up the
+   *  others, or the robot side. */
+  private joinMulticast(socket: dgram.Socket, { quiet = false } = {}): void {
+    for (const ip of [...this.unjoined]) {
+      const where = ip ?? 'the default interface';
+      try {
+        socket.addMembership(MDNS_ADDR, ip);
+        this.unjoined.delete(ip);
+        if (ip || quiet) console.log(`mDNS: listening on ${where}`);
+      } catch (err) {
+        // EADDRINUSE: already joined there, as when a listed address is the
+        // default interface's own.
+        if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') this.unjoined.delete(ip);
+        else if (!quiet) console.warn(`mDNS: can't join multicast on ${where} (${(err as Error).message}) — retrying`);
+      }
+    }
+  }
+
+  /** Whatever didn't work at startup may work now the network has come up. */
+  private retryLaptopSocket(): void {
+    if (this.socket) this.joinMulticast(this.socket, { quiet: true });
+    else this.openLaptopSocket({ quiet: true });
+  }
+
+  private closeLaptopSocket(socket: dgram.Socket): void {
+    this.guarded('closing the socket', () => socket.close());
+  }
+
+  /** Socket callbacks have nothing above them: anything thrown in one would
+   *  end the process. */
+  private guarded(what: string, handle: () => void): void {
+    try {
+      handle();
+    } catch (err) {
+      console.error(`mDNS: failed at ${what}:`, err);
+    }
+  }
+
   // ── The robot side: one pinned socket per station ──────────────────
 
   private openStationSocket(station: StationName, ifname: string, { quiet = false } = {}): void {
     try {
       const socket = this.openSocket(ifname, MDNS_PORT, (data, address) =>
-        this.handleRobotPacket(station, data, address),
+        this.guarded(`a packet from ${station}`, () => this.handleRobotPacket(station, data, address)),
       );
       this.stationSockets.set(station, { kind: 'open', ifname, socket });
       console.log(`mDNS: ${station} uses its own socket on ${ifname} (ifindex ${socket.ifindex})`);
@@ -530,7 +602,7 @@ export class MdnsReflector {
   private closeStationSocket(station: StationName): void {
     const entry = this.stationSockets.get(station);
     this.stationSockets.delete(station);
-    if (entry?.kind === 'open') entry.socket.close();
+    if (entry?.kind === 'open') this.guarded(`closing ${station}'s socket`, () => entry.socket.close());
   }
 
   private reopenFailedSockets(now = Date.now()): void {
@@ -618,11 +690,17 @@ export class MdnsReflector {
     if (this.sendInFlight || this.sendQueue.length === 0 || !this.socket) return;
     this.sendInFlight = true;
     const entry = this.sendQueue.shift()!;
-    this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, err => {
-      if (err) console.error(`mDNS: failed to send (${entry.label}):`, err);
+    try {
+      this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, err => {
+        if (err) console.error(`mDNS: failed to send (${entry.label}):`, err);
+        this.sendInFlight = false;
+        this.flushSendQueue();
+      });
+    } catch (err) {
+      console.error(`mDNS: failed to send (${entry.label}):`, err);
       this.sendInFlight = false;
       this.flushSendQueue();
-    });
+    }
   }
 
   private static readonly MAX_RECENT_NAMES = 10;

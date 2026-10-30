@@ -145,18 +145,6 @@ it to. An explicit choice on the team page or `/route` is respected, because
 auto-connect skips a laptop with a preference; after Disconnect, its next traffic
 gets auto-connected again. Conntrack has no interface to go by.
 
-## pFMS crashes at startup if the mDNS reflector can't join multicast
-
-_in progress — issues/host-robustness_
-
-With `MDNS_REFLECTOR=true` and no default route, `socket.addMembership(MDNS_ADDR)`
-in `src/mdnsReflector.ts` throws `ENODEV: no such device, setsockopt` inside the
-`bind` callback. Nothing catches it, so the whole process dies. Reproduced
-2026-10-30 in an empty network namespace holding only `lo` and a dummy NIC; adding
-a default route makes it start. Matters because the systemd unit only orders on
-`network.target`, which doesn't promise a route: a host booting before its network
-is ready could crash-loop, and one optional feature shouldn't take the field down.
-
 ## Robot tester can't complete a lease on dhcpcd 10.0.x
 
 _in progress — issues/station-test-port_

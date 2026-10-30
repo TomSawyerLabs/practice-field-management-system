@@ -1,5 +1,16 @@
-import { describe, expect, test } from 'bun:test';
-import { answerFor, PendingQueries, stationScope, withDnsId, withoutUnicastResponse } from './mdnsReflector.js';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import dgram from 'node:dgram';
+import { EventEmitter } from 'node:events';
+import {
+  answerFor,
+  MdnsReflector,
+  PendingQueries,
+  stationScope,
+  withDnsId,
+  withoutUnicastResponse,
+} from './mdnsReflector.js';
+import type { InterfaceSocket } from './mdnsSocket.js';
+import type { StationName } from './types.js';
 
 /**
  * The reflector's answer routing: a question forwarded to a VLAN is remembered
@@ -117,5 +128,257 @@ describe('forwarded queries', () => {
     response.writeUInt16BE(0x1234, 0);
     expect(answerFor(response, { address: '10.55.0.20', port: 5353, id: 0x1234 }).readUInt16BE(0)).toBe(0);
     expect(answerFor(response, { address: '10.55.0.21', port: 50123, id: 0x1234 })).toBe(response);
+  });
+});
+
+describe('an optional feature must not take the field down', () => {
+  /** Stands in for dgram's socket, failing the way Bun's does in a network
+   *  namespace with no default route (seen 2026-10-30). */
+  class FakeSocket extends EventEmitter {
+    joined: (string | undefined)[] = [];
+    /** Interfaces with no network yet; undefined is the default one. */
+    noNetwork = new Set<string | undefined>();
+    alreadyJoined = new Set<string | undefined>();
+    bindError: Error | null = null;
+    bindCallback: (() => void) | null = null;
+    deferBind = false;
+    throwOnSend: Error | null = null;
+    sends: { port: number; address: string }[] = [];
+    closed = 0;
+
+    bind(_port: number, callback: () => void) {
+      if (this.bindError) this.emit('error', this.bindError);
+      else if (this.deferBind) this.bindCallback = callback;
+      else callback();
+    }
+    addMembership(_group: string, ip?: string) {
+      if (this.noNetwork.has(ip)) {
+        throw Object.assign(new Error('ENODEV: no such device, setsockopt'), { code: 'ENODEV' });
+      }
+      if (this.alreadyJoined.has(ip)) {
+        throw Object.assign(new Error('EADDRINUSE: address already in use, setsockopt'), { code: 'EADDRINUSE' });
+      }
+      this.joined.push(ip);
+    }
+    setMulticastLoopback() {}
+    setMulticastTTL() {}
+    setTTL() {}
+    send(_packet: Buffer, _o: number, _l: number, port: number, address: string, callback: (e: Error | null) => void) {
+      if (this.throwOnSend) throw this.throwOnSend;
+      this.sends.push({ port, address });
+      callback(null);
+    }
+    close() {
+      if (++this.closed > 1) throw new Error('Not running');
+    }
+  }
+
+  const spies: { mockRestore(): void }[] = [];
+  let reflector: MdnsReflector | undefined;
+
+  afterEach(() => {
+    reflector?.stop();
+    reflector = undefined;
+    for (const spy of spies.splice(0)) spy.mockRestore();
+  });
+
+  /** A reflector on fake sockets, with slot1 occupied. `sockets` are handed
+   *  out in turn. `tick` is one pass of its timer, and `robotPacket` arrives
+   *  on the station socket it opened. */
+  function setup({
+    sockets = [new FakeSocket()],
+    listen = [],
+    excludes,
+    teamForStation = (station: StationName) => (station === 'slot1' ? 1234 : null),
+    stationForRequester = () => 'slot1',
+  }: {
+    sockets?: FakeSocket[];
+    listen?: string[];
+    excludes?: string;
+    teamForStation?: (station: StationName) => number | null;
+    stationForRequester?: (ip: string) => StationName | null;
+  } = {}) {
+    const unused = [...sockets];
+    spies.push(
+      spyOn(dgram, 'createSocket').mockImplementation((() => unused.shift()) as unknown as typeof dgram.createSocket),
+    );
+    let tick = () => {};
+    spies.push(
+      spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void) => {
+        tick = fn;
+        return { unref() {} };
+      }) as unknown as typeof setInterval),
+    );
+    for (const method of ['log', 'warn', 'error'] as const) {
+      spies.push(spyOn(console, method).mockImplementation(() => {}));
+    }
+
+    const opened: string[] = [];
+    let onPacket: (data: Buffer, address: string, port: number) => void = () => {};
+    const openSocket = (ifname: string, _port: number, handler: typeof onPacket): InterfaceSocket => {
+      opened.push(ifname);
+      onPacket = handler;
+      return { ifname, ifindex: 7, send() {}, sendTo() {}, close() {} };
+    };
+    reflector = new MdnsReflector(
+      teamForStation,
+      stationForRequester,
+      station => station,
+      excludes,
+      listen,
+      openSocket,
+    );
+    return {
+      reflector,
+      opened,
+      tick: () => tick(),
+      robotPacket: (data: Buffer) => onPacket(data, '10.12.34.1', 5353),
+    };
+  }
+
+  const name = Buffer.from([5, ...Buffer.from('radio'), 5, ...Buffer.from('local'), 0]);
+  /** A laptop asking for radio.local. */
+  const query = Buffer.concat([Buffer.from([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]), name, Buffer.from([0, 1, 0, 1])]);
+  const laptop = { address: '10.55.0.20', port: 5353, family: 'IPv4', size: query.length };
+  /** The radio's answer. */
+  const answer = Buffer.concat([
+    Buffer.from([0, 0, 0x84, 0, 0, 0, 0, 1, 0, 0, 0, 0]),
+    name,
+    Buffer.from([0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 10, 12, 34, 1]),
+  ]);
+
+  test('no default route at startup: logged, not thrown, and joined once the network is up', () => {
+    const socket = new FakeSocket();
+    socket.noNetwork.add(undefined);
+    const { reflector, tick } = setup({ sockets: [socket] });
+
+    expect(() => reflector.start()).not.toThrow();
+    tick();
+    expect(socket.joined).toEqual([]);
+
+    socket.noNetwork.clear();
+    tick();
+    expect(socket.joined).toEqual([undefined]);
+
+    tick();
+    expect(socket.joined).toEqual([undefined]);
+  });
+
+  test('robots and other interfaces carry on while the default interface has no network', () => {
+    const socket = new FakeSocket();
+    socket.noNetwork.add(undefined);
+    const { reflector, opened } = setup({ sockets: [socket], listen: ['10.55.0.1'] });
+
+    reflector.start();
+    expect(socket.joined).toEqual(['10.55.0.1']);
+    expect(opened).toEqual(['slot1']);
+  });
+
+  test('a listen interface whose address is not up yet is joined when it is', () => {
+    const socket = new FakeSocket();
+    socket.noNetwork.add('10.55.0.1');
+    const { reflector, tick } = setup({ sockets: [socket], listen: ['10.55.0.1'] });
+
+    reflector.start();
+    expect(socket.joined).toEqual([undefined]);
+
+    socket.noNetwork.clear();
+    tick();
+    expect(socket.joined).toEqual([undefined, '10.55.0.1']);
+  });
+
+  test('an interface already joined counts as joined, not as one to keep retrying', () => {
+    const socket = new FakeSocket();
+    socket.alreadyJoined.add('10.55.0.1');
+    const addMembership = spyOn(socket, 'addMembership');
+    const { reflector, tick } = setup({ sockets: [socket], listen: ['10.55.0.1'] });
+
+    reflector.start();
+    const attempts = addMembership.mock.calls.length;
+    tick();
+    expect(addMembership.mock.calls.length).toBe(attempts);
+  });
+
+  test('port 5353 taken: starts on a fresh socket once it is free', () => {
+    const taken = new FakeSocket();
+    taken.bindError = Object.assign(new Error('bind EADDRINUSE 0.0.0.0'), { code: 'EADDRINUSE' });
+    const free = new FakeSocket();
+    const { reflector, tick, opened } = setup({ sockets: [taken, free] });
+
+    expect(() => reflector.start()).not.toThrow();
+    expect(taken.closed).toBe(1);
+    expect(opened).toEqual([]);
+
+    tick();
+    expect(free.joined).toEqual([undefined]);
+    expect(opened).toEqual(['slot1']);
+  });
+
+  test('stopped while still binding: the late bind does nothing', () => {
+    const socket = new FakeSocket();
+    socket.deferBind = true;
+    socket.noNetwork.add(undefined);
+    const { reflector } = setup({ sockets: [socket] });
+
+    reflector.start();
+    reflector.stop();
+    expect(() => socket.bindCallback?.()).not.toThrow();
+    expect(socket.closed).toBe(1);
+  });
+
+  test('closing a socket that already died is not fatal', () => {
+    const socket = new FakeSocket();
+    socket.closed = 1;
+    const { reflector } = setup({ sockets: [socket] });
+
+    reflector.start();
+    expect(() => reflector.stop()).not.toThrow();
+  });
+
+  test('a send that throws loses that answer, not the process or the answers after it', () => {
+    const socket = new FakeSocket();
+    const { reflector, robotPacket } = setup({ sockets: [socket] });
+    reflector.start();
+
+    socket.emit('message', query, laptop);
+    socket.throwOnSend = Object.assign(new Error('EADDRNOTAVAIL'), { code: 'EADDRNOTAVAIL' });
+    expect(() => robotPacket(answer)).not.toThrow();
+
+    socket.throwOnSend = null;
+    robotPacket(answer);
+    expect(socket.sends).toEqual([{ port: 5353, address: laptop.address }]);
+  });
+
+  test('a throw while handling a laptop packet stays in the reflector', () => {
+    const socket = new FakeSocket();
+    const { reflector } = setup({
+      sockets: [socket],
+      stationForRequester: () => {
+        throw new Error('lookup failed');
+      },
+    });
+    reflector.start();
+
+    expect(() => socket.emit('message', query, laptop)).not.toThrow();
+  });
+
+  test('a throw while handling a robot packet stays in the reflector', () => {
+    let broken = false;
+    const { reflector, robotPacket } = setup({
+      teamForStation: station => {
+        if (broken) throw new Error('lookup failed');
+        return station === 'slot1' ? 1234 : null;
+      },
+    });
+    reflector.start();
+
+    broken = true;
+    expect(() => robotPacket(answer)).not.toThrow();
+    broken = false;
+  });
+
+  test('a bad MDNS_EXCLUDE_REQUESTERS entry is skipped, not fatal', () => {
+    expect(() => setup({ excludes: '10.55.0.20, not-an-ip, 10.0.0.0/99, 10.0.0.9-1' })).not.toThrow();
+    expect(console.error).toHaveBeenCalledTimes(3);
   });
 });
