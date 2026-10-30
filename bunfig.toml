@@ -1,0 +1,4 @@
+[test]
+# `bun run build` compiles the tests into dist/ along with everything else,
+# so without this a built checkout runs each of them twice.
+pathIgnorePatterns = ["dist/**"]
