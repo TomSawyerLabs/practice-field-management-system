@@ -75,9 +75,21 @@ async function until(text: string, ms = 8000): Promise<boolean> {
   for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) if (seen(text)) return true;
   return false;
 }
+/** Whether pFMS answers on its HTTP port. The radio connects earlier in
+ *  startup than that port opens, so a log line can't stand in for this. */
+async function listening(ms = 30_000): Promise<boolean> {
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) {
+    const res = await fetch(`http://127.0.0.1:${port}/health`).catch(() => null);
+    if (res?.ok) return true;
+  }
+  return false;
+}
 
 try {
-  check('pFMS came up', await until(`Radio connected at ${radioUrl}`, 30_000), log.slice(-5).join(' | '));
+  check('pFMS finds the fake radio', await until(`Radio connected at ${radioUrl}`, 30_000), log.slice(-5).join(' | '));
+  const up = await listening();
+  check('pFMS came up', up, log.slice(-5).join(' | '));
+  if (!up) throw new Error('pFMS never answered /health');
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   await new Promise((r, j) => (ws.once('open', r), ws.once('error', j)));
   const save = (settings: Record<string, unknown>) =>

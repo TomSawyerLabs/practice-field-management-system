@@ -118,19 +118,6 @@ awPacketLog.test.js`; deleting
 `dist/` clears them. Matters because a build before a test run gives double counts
 and false failures.
 
-## scripts/test-trunk-switch.ts connects its WebSocket before pFMS is listening
-
-_in progress — issues/test-reliability_
-
-`bun scripts/test-trunk-switch.ts` prints `PASS: pFMS came up`, then dies with
-`WebSocket connection to 'ws://127.0.0.1:<port>/ws' failed: Failed to connect`
-(Windows and Linux, 2026-10-13). It treats the `Radio connected at …` log line
-as "up" and connects straight away, but the HTTP/WebSocket server starts
-listening later in startup. Polling `/health` until it answers before
-connecting works (that's what a standalone boot check did). Matters because the
-script is the end-to-end check for live trunk switching and currently can't
-report anything past its first line.
-
 ## Robot tester can't complete a lease on dhcpcd 10.0.x
 
 `dhcpcdArgs()` in `src/robotTestMonitor.ts` passes `--reboot 0`. dhcpcd 10.0.6
