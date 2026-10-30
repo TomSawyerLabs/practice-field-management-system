@@ -85,7 +85,7 @@ capture attribution in `6e290fb`.
   is 1000+ifindex (`man dhcpcd`) and the bridge's connected route is 0. Lab: three
   plain requests answered from the station's robot; only `--interface testport`
   reached the test port's. Writes (configure, firmware) follow the same route.
-  Logged in ISSUES.md; not fixed here.
+  Fixed in `plans/tester-interface-pinning.md`.
 - **Laptop routing (read from the code, 2026-10-30):** each laptop can choose,
   from the team page's Connect (route preference) or `/route` and Drive.
   Auto-connect used to place a laptop that hadn't chosen on the team's last

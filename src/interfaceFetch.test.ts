@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { curlArgs, fetchOnInterface } from './interfaceFetch.js';
 import * as interfaceFetch from './interfaceFetch.js';
-import { checkRadio, checkRoboRIO } from './teamChecker.js';
+import { checkFactoryDefault, checkRadio, checkRoboRIO } from './teamChecker.js';
 
 const reply = (stdout: string) => async () => ({ stdout });
 
@@ -62,14 +62,55 @@ describe('fetchOnInterface', () => {
 
   test('other failures say what curl said', async () => {
     await expect(
-      fetchOnInterface('br-nope', 'http://x/', {}, 1000, failing({ code: 45, stderr: "curl: (45) Couldn't bind\n" })),
-    ).rejects.toThrow("curl: (45) Couldn't bind");
+      fetchOnInterface(
+        'br-slot1',
+        'http://x/',
+        {},
+        1000,
+        failing({ code: 7, stderr: 'curl: (7) Failed to connect\n' }),
+      ),
+    ).rejects.toThrow('curl: (7) Failed to connect');
+  });
+
+  test('a port that has gone says which', async () => {
+    const stderr = "curl: (45) Couldn't bind to 'eno1.p101'\n";
+    await expect(fetchOnInterface('eno1.p101', 'http://x/', {}, 1000, failing({ code: 45, stderr }))).rejects.toThrow(
+      "Network interface eno1.p101 is not available (curl: (45) Couldn't bind to 'eno1.p101')",
+    );
   });
 
   test('says so when curl is missing', async () => {
     await expect(fetchOnInterface('br-slot1', 'http://x/', {}, 1000, failing({ code: 'ENOENT' }))).rejects.toThrow(
       'curl is not installed',
     );
+  });
+});
+
+describe('curlArgs for a multipart form', () => {
+  const file = { path: '/var/lib/pfms/fw;v2 "new".img', filename: 'firmware.img.enc' };
+
+  test('sends the file by path, with curl left to read it', () => {
+    const args = curlArgs('testport', 'http://x/firmware', { method: 'POST', form: { file, checksum: 'abc' } }, 60_000);
+    expect(args[args.indexOf('--form') + 1]).toBe(
+      'file=@"/var/lib/pfms/fw;v2 \\"new\\".img";filename="firmware.img.enc";type=application/octet-stream',
+    );
+    expect(args.slice(args.indexOf('--max-time'), args.indexOf('--max-time') + 2)).toEqual(['--max-time', '60']);
+  });
+
+  test("a string field is literal, so a value starting with @ can't name a file", () => {
+    const args = curlArgs('testport', 'http://x/', { form: { checksum: '@/etc/passwd' } }, 1000);
+    expect(args[args.indexOf('--form-string') + 1]).toBe('checksum=@/etc/passwd');
+    expect(args).not.toContain('--form');
+  });
+
+  test('keeps the fields in order, and turns off the wait for 100 Continue', () => {
+    const args = curlArgs('testport', 'http://x/', { form: { file, checksum: 'abc' } }, 1000);
+    expect(args.indexOf('--form')).toBeLessThan(args.indexOf('--form-string'));
+    expect(args).toContain('Expect:');
+  });
+
+  test('a body-only request leaves Expect alone', () => {
+    expect(curlArgs('testport', 'http://x/', { body: 'a' }, 1000)).not.toContain('Expect:');
   });
 });
 
@@ -97,9 +138,10 @@ describe('fetchOnInterface in a dry run', () => {
     expect(ran).not.toHaveBeenCalled();
   });
 
-  test('a body with no method counts as a write', async () => {
-    const write = fetchOnInterface('br-slot1', 'http://10.12.34.1/x', { body: 'a=1' }, 1000, ran);
-    await expect(write).rejects.toThrow('dry run');
+  test('a body or form with no method counts as a write', async () => {
+    for (const init of [{ body: 'a=1' }, { form: { checksum: 'abc' } }]) {
+      await expect(fetchOnInterface('br-slot1', 'http://10.12.34.1/x', init, 1000, ran)).rejects.toThrow('dry run');
+    }
     expect(ran).not.toHaveBeenCalled();
   });
 
@@ -147,10 +189,10 @@ describe('team checks reach the robot on their own station', () => {
     expect(direct).not.toHaveBeenCalled();
   });
 
-  test('the robot tester, on its own interface, is not pinned', async () => {
+  test("the factory check stays on the tester's interface, for both addresses", async () => {
     const { seen, direct } = stubBridges();
-    await checkRadio(9999, { ip: '10.99.99.100' });
-    expect(seen).toEqual([]);
-    expect(direct).toHaveBeenCalledTimes(1);
+    await checkFactoryDefault(9999, { ifname: 'testport' });
+    expect(seen.sort()).toEqual(['testport http://10.99.99.1/status', 'testport http://192.168.69.1/status']);
+    expect(direct).not.toHaveBeenCalled();
   });
 });

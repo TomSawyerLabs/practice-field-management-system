@@ -11,6 +11,7 @@ import type {
 import { teamSubnet } from './utils.js';
 import { checkRadio, checkRobotController, checkFactoryDefault } from './teamChecker.js';
 import { updateRadioFirmware } from './firmwareUpdater.js';
+import { fetchOnInterface, type HttpReply } from './interfaceFetch.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import type { NetworkBackend } from './node-ip/index.js';
 
@@ -490,9 +491,7 @@ export class RobotTestMonitor {
   private async probeFactoryDefault(): Promise<void> {
     let factoryCheck: CheckResult | null = null;
     try {
-      const res = await fetch(`http://192.168.69.1/status`, {
-        signal: AbortSignal.timeout(500),
-      });
+      const res = await fetchOnInterface(this.interfaceName, 'http://192.168.69.1/status', {}, 500);
       if (res.ok) {
         this.factoryRadioIp = '192.168.69.1';
         const data = (await res.json()) as { teamNumber?: number; version?: string };
@@ -543,12 +542,12 @@ export class RobotTestMonitor {
     try {
       // The controller (roboRIO or SystemCore) is identified first so the
       // radio's SystemCore mode can be judged against what is actually there.
-      const mdns = this.leasedIp ? { ip: this.leasedIp } : undefined;
+      const source = { ifname: this.interfaceName };
       const [factoryResult, controllerResult] = await Promise.all([
-        checkFactoryDefault(this.teamNumber),
-        checkRobotController(this.teamNumber, [], mdns),
+        checkFactoryDefault(this.teamNumber, source),
+        checkRobotController(this.teamNumber, [], source),
       ]);
-      const radioResults = await checkRadio(this.teamNumber, mdns, controllerResult.controller);
+      const radioResults = await checkRadio(this.teamNumber, source, controllerResult.controller);
       // Abandoned while in flight: these describe a robot that may be mid-reboot
       if (run !== this.checkRun) return;
       const rioResults = controllerResult.checks;
@@ -685,7 +684,15 @@ export class RobotTestMonitor {
     };
 
     try {
-      await updateRadioFirmware(this.teamNumber, wpaKey, wpaKey24, skipReconfigure, this.firmwareStore, sendProgress);
+      await updateRadioFirmware(
+        this.teamNumber,
+        this.interfaceName,
+        wpaKey,
+        wpaKey24,
+        skipReconfigure,
+        this.firmwareStore,
+        sendProgress,
+      );
       // Mark the settling period — firmware updates take longer to stabilize
       this.reconfiguredAt = Date.now();
       this.reconfigureTimeoutMs = 180_000;
@@ -749,14 +756,18 @@ export class RobotTestMonitor {
         channel: 0,
       };
 
-      let configRes: Response;
+      let configRes: HttpReply;
       try {
-        configRes = await fetch(`http://${radioIp}/configuration`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(configBody),
-          signal: AbortSignal.timeout(15_000),
-        });
+        configRes = await fetchOnInterface(
+          this.interfaceName,
+          `http://${radioIp}/configuration`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(configBody),
+          },
+          15_000,
+        );
       } catch (err) {
         throw new Error(`Failed to reach radio at ${radioIp}: ${err instanceof Error ? err.message : err}`);
       }
@@ -779,7 +790,7 @@ export class RobotTestMonitor {
       let rebooted = false;
       while (Date.now() < deadline) {
         try {
-          const res = await fetch('http://192.168.69.1/status', { signal: AbortSignal.timeout(2000) });
+          const res = await fetchOnInterface(this.interfaceName, 'http://192.168.69.1/status', {}, 2000);
           if (res.ok) {
             const data = (await res.json()) as { teamNumber?: number; version?: string };
             // Wait until the radio reports the new team number (not just that it's back up)

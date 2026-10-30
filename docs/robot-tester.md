@@ -25,6 +25,14 @@ The interface should **not** be managed by NetworkManager or have any existing I
 
   Then set `TEST_INTERFACE=eno1.10`.
 
+### Traffic stays on the tester's interface
+
+Everything the tester sends is pinned to its interface: the checks, the factory probe, radio configuration, firmware updates and the passphrase check. The HTTP goes through `curl --interface`, and the mDNS and SystemCore queries through the `mdns-socket` addon. Plain requests would follow the routing table instead, and `dhcpcd` installs its route at metric 1000 plus the interface index, which loses to a station bridge's metric 0. So with a team on a station and on the tester, an unpinned request reaches the robot on the field, and a configure or firmware update would write to a radio the team may be driving. Pinning also lets two test sessions run at once, each reaching its own radio at `192.168.69.1`.
+
+`curl` is therefore needed for the tester, and without it every check fails. A port that disappears mid-operation gives "Network interface … is not available" rather than reaching anything else.
+
+The replies have to get through too, so the interface can't use strict reverse-path filtering (`rp_filter=1`), which drops a reply whose source the routing table would send elsewhere. A pinned request then times out; it doesn't reach the wrong robot. Loose (`2`), the usual default, is fine.
+
 ## State Machine
 
 The tester progresses through these phases:
@@ -381,7 +389,7 @@ When the radio firmware check fails, the tester can update firmware in-place.
 
 1. **Verify** — Confirm radio is reachable, verify WPA key matches current config (SHA-256 hash comparison)
 2. **Get firmware** — Retrieve binary from the firmware store (auto-downloads in background when outdated firmware is first detected)
-3. **Upload** — POST firmware binary to `http://10.TE.AM.1/api/upgrade`
+3. **Upload** — POST firmware binary to `http://10.TE.AM.1/firmware`, as a multipart form, with 60 seconds to finish
 4. **Wait** — Poll for radio to reboot and come back online
 5. **Reconfigure** — Re-apply team configuration (unless "skip reconfigure" was checked)
 6. **Verify** — Confirm radio comes back with correct firmware and config
@@ -433,7 +441,7 @@ websocketServer.ts ──► robotTestMonitor.ts (state machine)
                            │     └─ checkMdns()         → raw mDNS multicast query
                            │
                            ├─► firmwareUpdater.ts (firmware update flow)
-                           │     └─ POST 10.TE.AM.1/api/upgrade
+                           │     └─ POST 10.TE.AM.1/firmware
                            │
                            └─► configureTeamRadio() (radio programming)
                                  └─ POST <radioIp>/configuration
@@ -447,6 +455,7 @@ websocketServer.ts ──► robotTestMonitor.ts (state machine)
 | `src/teamChecker.ts`                   | Standalone check functions: radio status, roboRIO NI SysAPI, factory default detection, mDNS resolution     |
 | `src/firmwareUpdater.ts`               | Firmware update flow: verify, upload, reboot wait, reconfigure                                              |
 | `src/firmwareStore.ts`                 | Firmware binary storage and background download                                                             |
+| `src/interfaceFetch.ts`                | HTTP pinned to one interface, with `curl --interface`                                                       |
 | `src/types.ts`                         | Type definitions: `RobotTestState`, `CheckResult`, `FirmwareUpdateProgress`, `RadioConfigureProgress`       |
 | `frontend/src/components/TestPage.tsx` | React UI: stepper, check results, firmware update dialog, radio configure dialog                            |
 | `frontend/src/hooks/useBackend.ts`     | WebSocket hooks: `useRobotTestState()`, `useFirmwareUpdateProgress()`, `useRadioConfigureProgress()`        |

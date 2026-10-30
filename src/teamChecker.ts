@@ -68,14 +68,14 @@ async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = FET
   }
 }
 
-/** HTTP for a robot check, out of the source's bridge when it has one. */
+/** HTTP for a robot check, out of the source's interface when it has one. */
 function fetchFrom(
   source: CheckSource | undefined,
   url: string,
   init?: HttpRequest,
   timeoutMs = FETCH_TIMEOUT,
 ): Promise<HttpReply> {
-  if (source && 'ifname' in source) return fetchOnInterface(source.ifname, url, init, timeoutMs);
+  if (source) return fetchOnInterface(source.ifname, url, init, timeoutMs);
   return fetchWithTimeout(url, init, timeoutMs);
 }
 
@@ -111,25 +111,18 @@ function parseNISysAPIResponse(xml: string): NISysAPIBag[] {
 const FACTORY_DEFAULT_IP = '192.168.69.1';
 
 /**
- * Where a check's traffic goes out. `ifname`: a station's bridge, pinned to it
- * (two stations of one team share an address and a subnet, so neither the
- * address nor the routing table can pick the bridge). `ip`: an interface
- * address, for the robot tester's own interface, which needs no pinning for
- * HTTP.
+ * The interface a check's traffic is pinned to: a station's bridge, or the
+ * robot tester's own port. Two stations of one team share an address and a
+ * subnet, and so do a station and a test port (dhcpcd's route loses to the
+ * bridge's on metric), so neither the address nor the routing table can pick
+ * the robot.
  */
-export type CheckSource = { ifname: string } | { ip: string };
+export type CheckSource = { ifname: string };
 
-/** Send an mDNS query and wait for the A record. Null on timeout. */
-function mdnsQuery(hostname: string, source: CheckSource, timeoutMs: number): Promise<string | null> {
-  return 'ifname' in source
-    ? pinnedMdnsQuery(hostname, source.ifname, timeoutMs)
-    : multicastMdnsQuery(hostname, source.ip, timeoutMs);
-}
-
-/** A query out of one bridge on a pinned socket (src/mdnsSocket.ts), which
- *  hears only that bridge's answers. Asks for a multicast answer: a unicast
- *  one would go to the gateway address, which the drive session's DNAT
- *  hands to the DS laptop. */
+/** An mDNS query on a socket pinned to one interface (src/mdnsSocket.ts), which
+ *  hears only that interface's answers. Null on timeout. Asks for a multicast
+ *  answer: a unicast one would go to the gateway address, which the drive
+ *  session's DNAT hands to the DS laptop. */
 function pinnedMdnsQuery(hostname: string, ifname: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -153,73 +146,6 @@ function pinnedMdnsQuery(hostname: string, ifname: string, timeoutMs: number): P
     } catch (err) {
       settle({ error: err as Error });
     }
-  });
-}
-
-/**
- * Send a raw mDNS multicast query on a specific interface and wait for a response.
- * Returns the first A record IP, or null on timeout.
- *
- * This is a standalone diagnostic socket, separate from the mDNS reflector
- * (mdnsReflector.ts). Both coexist on port 5353 via SO_REUSEADDR:
- *
- *   - The reflector bridges queries between the main/guest networks and team
- *     VLANs. It will also see responses to our queries and forward them to
- *     laptop-facing interfaces — that's harmless extra traffic.
- *
- *   - This socket binds to 0.0.0.0:5353 so it receives multicast responses
- *     from ALL VLANs, not just the target. That means concurrent checks for
- *     different stations, laptop mDNS queries from the guest WiFi, and the
- *     reflector's forwarded packets all arrive here. parseARecord() filters
- *     by hostname to ensure we only accept the specific A record we asked for.
- *
- *   - Binding to mdnsSource:5353 instead of 0.0.0.0 would seem cleaner but
- *     breaks multicast delivery on Linux: the kernel filters by destination
- *     IP, and mDNS responses are addressed to 224.0.0.251, not our unicast IP.
- */
-function multicastMdnsQuery(hostname: string, mdnsSource: string, timeoutMs: number): Promise<string | null> {
-  return new Promise(resolve => {
-    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    const timer = setTimeout(() => {
-      sock.close();
-      resolve(null);
-    }, timeoutMs);
-
-    sock.on('error', () => {
-      clearTimeout(timer);
-      sock.close();
-      resolve(null);
-    });
-
-    sock.on('message', msg => {
-      // Only accept A records whose name matches our query. This is critical
-      // because we're on 0.0.0.0:5353 and receive mDNS traffic from all VLANs,
-      // including: concurrent diagnostic checks for other stations, the mDNS
-      // reflector's forwarded responses, and unsolicited announcements.
-      const ip = parseARecord(msg, hostname);
-      if (ip) {
-        clearTimeout(timer);
-        sock.close();
-        resolve(ip);
-      }
-    });
-
-    // Bind to 0.0.0.0:5353 — see function doc for why not mdnsSource.
-    // SO_REUSEADDR (set in createSocket) allows coexistence with the mDNS reflector.
-    sock.bind(MDNS_PORT, '0.0.0.0', () => {
-      try {
-        sock.addMembership('224.0.0.251', mdnsSource);
-      } catch {
-        // May fail if already a member (e.g. reflector already joined this interface)
-      }
-      // Set the outgoing multicast interface explicitly — otherwise the OS sends
-      // on the default-route interface (main network) and the query never reaches
-      // the team VLAN where the robot lives.
-      sock.setMulticastInterface(mdnsSource);
-      sock.setMulticastTTL(255); // mDNS spec requires TTL=255
-      const query = buildMdnsQuery(hostname);
-      sock.send(query, 0, query.length, 5353, '224.0.0.251');
-    });
   });
 }
 
@@ -315,7 +241,7 @@ function parseARecord(msg: Buffer, expectedName?: string): string | null {
   return null;
 }
 
-/** Check mDNS resolution for a hostname via multicast on a specific interface. */
+/** Check mDNS resolution for a hostname via multicast on the source's interface. */
 export async function checkMdns(
   name: string,
   hostname: string,
@@ -324,7 +250,7 @@ export async function checkMdns(
 ): Promise<CheckResult[]> {
   if (!source) return [];
   try {
-    const resolved = await mdnsQuery(hostname, source, FETCH_TIMEOUT);
+    const resolved = await pinnedMdnsQuery(hostname, source.ifname, FETCH_TIMEOUT);
     if (!resolved) {
       return [{ name, status: 'error', message: `${hostname} — no response` }];
     }
@@ -351,12 +277,12 @@ export async function checkMdns(
  * Only warn if the radio responds at the factory IP but NOT at the team IP,
  * which means the radio hasn't been configured with a team number yet.
  */
-export async function checkFactoryDefault(team: number): Promise<CheckResult[]> {
+export async function checkFactoryDefault(team: number, source: CheckSource): Promise<CheckResult[]> {
   const teamIp = `${teamSubnet(team)}.1`;
 
   const [factoryResult, teamResult] = await Promise.all([
-    fetchWithTimeout(`http://${FACTORY_DEFAULT_IP}/status`).catch(() => null),
-    fetchWithTimeout(`http://${teamIp}/status`).catch(() => null),
+    fetchFrom(source, `http://${FACTORY_DEFAULT_IP}/status`).catch(() => null),
+    fetchFrom(source, `http://${teamIp}/status`).catch(() => null),
   ]);
 
   if (!factoryResult?.ok) return []; // Factory IP not reachable — no radio connected
@@ -638,9 +564,7 @@ interface SystemCoreInfo {
  * (verified with 5940's SystemCore on 2026-09-13).
  */
 function probeSystemCore(ip: string, source?: CheckSource, timeoutMs = FETCH_TIMEOUT): Promise<SystemCoreInfo | null> {
-  return source && 'ifname' in source
-    ? pinnedSystemCoreProbe(ip, source.ifname, timeoutMs)
-    : routedSystemCoreProbe(ip, timeoutMs);
+  return source ? pinnedSystemCoreProbe(ip, source.ifname, timeoutMs) : routedSystemCoreProbe(ip, timeoutMs);
 }
 
 /** The SystemCore's answer to our query, or null if this packet isn't one. */
@@ -652,7 +576,7 @@ function systemCoreFromReply(msg: Buffer, ip: string): SystemCoreInfo | null {
   return { ip: a?.type === 'A' ? a.address : ip, hostname: srv.target, port: srv.port };
 }
 
-/** The probe out of one bridge. A free port, not 5353: the answer comes back
+/** The probe out of one interface. A free port, not 5353: the answer comes back
  *  on this flow, so the drive session's DNAT leaves it alone. */
 function pinnedSystemCoreProbe(ip: string, ifname: string, timeoutMs: number): Promise<SystemCoreInfo | null> {
   return new Promise(resolve => {
@@ -680,7 +604,7 @@ function pinnedSystemCoreProbe(ip: string, ifname: string, timeoutMs: number): P
   });
 }
 
-/** The probe by the routing table, for the robot tester's own interface. */
+/** The probe by the routing table, for a station with no bridge of pFMS's to pin to. */
 function routedSystemCoreProbe(ip: string, timeoutMs: number): Promise<SystemCoreInfo | null> {
   return new Promise(resolve => {
     const sock = dgram.createSocket('udp4');

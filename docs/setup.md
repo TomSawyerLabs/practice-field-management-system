@@ -49,7 +49,8 @@ For how to keep pFMS running across reboots — systemd or Docker — see
    ```
 
    `curl` carries the radio and roboRIO checks out of each station's
-   bridge; most hosts already have it.
+   bridge, and everything the robot tester sends out of its port; most
+   hosts already have it.
    - `alsa-utils` — provides `aplay` for field match audio. Without an
      audio player (`aplay`, `paplay`, `ffplay`, `mpv`, `play`), the field
      speaker stays silent. You also need a real sound device.

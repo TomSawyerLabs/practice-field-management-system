@@ -11,13 +11,14 @@ import {
   type DhcpHost,
 } from './robotTestMonitor.js';
 import * as firmwareUpdater from './firmwareUpdater.js';
+import * as interfaceFetch from './interfaceFetch.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import * as teamChecker from './teamChecker.js';
 import type { CheckResult, RobotTestState } from './types.js';
 
 // Everything the tester does to the host goes through fakes here: dhcpcd, the
-// network backend and fetch (the factory-radio probe). Nothing touches a NIC or
-// a radio. The DHCP tests lease a non-team address so no team checks run.
+// network backend and fetchOnInterface (the factory-radio probe). Nothing touches
+// a NIC or a radio. The DHCP tests lease a non-team address so no team checks run.
 const IFACE = 'test0.99';
 
 /** A dhcpcd that does what the test says. SIGTERM exits 0, as the real one does. */
@@ -123,10 +124,13 @@ describe('RobotTestMonitor DHCP', () => {
     states = [];
     spyOn(console, 'log').mockImplementation(() => {});
     spyOn(console, 'error').mockImplementation(() => {});
-    spyOn(globalThis, 'fetch').mockImplementation((() =>
+    spyOn(interfaceFetch, 'fetchOnInterface').mockImplementation(() =>
       radioResponds
         ? Promise.resolve(Response.json({ teamNumber: 1234, version: '2.0' }))
-        : Promise.reject(new Error('no radio'))) as unknown as typeof fetch);
+        : Promise.reject(new Error('no radio')),
+    );
+    // A request by the routing table could reach the team's robot on a station
+    spyOn(globalThis, 'fetch').mockRejectedValue(new Error('left by the routing table'));
   });
 
   afterEach(() => {
@@ -335,9 +339,8 @@ describe('RobotTestMonitor DHCP', () => {
 
     const team = () => states.at(-1)?.teamNumber;
     const checkCount = () => checkRadio.mock.calls.length;
-    const fetchSpy = () =>
-      globalThis.fetch as unknown as Mock<(...args: Parameters<typeof fetch>) => Promise<Response>>;
-    const statusProbes = () => fetchSpy().mock.calls.filter(([url]) => String(url).endsWith('/status')).length;
+    const fetchSpy = () => interfaceFetch.fetchOnInterface as Mock<typeof interfaceFetch.fetchOnInterface>;
+    const statusProbes = () => fetchSpy().mock.calls.filter(([, url]) => url.endsWith('/status')).length;
 
     /** Run time forward in small steps, so awaits between timers get to go. */
     async function runFor(ms: number): Promise<void> {
@@ -479,6 +482,35 @@ describe('RobotTestMonitor DHCP', () => {
       await settle();
 
       expect(checkCount()).toBe(checks + 1);
+    });
+
+    test("a configure and its reboot wait stay on the tester's interface", async () => {
+      await startWithRobot();
+      fetchSpy().mockImplementation(() => Promise.resolve(Response.json({ teamNumber: 5678, version: '2.0' })));
+      fetchSpy().mockClear();
+      const configure = monitor.configureTeamRadio(5678, 'passphrase');
+      await runFor(6_000);
+      await configure;
+
+      const urls = fetchSpy().mock.calls.map(([ifname, url]) => `${ifname} ${url}`);
+      expect(urls).toContain(`${IFACE} http://10.12.34.1/configuration`);
+      expect(urls).toContain(`${IFACE} http://192.168.69.1/status`);
+      expect(urls.every(url => url.startsWith(`${IFACE} `))).toBe(true);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    test("the checks and the firmware update are given the tester's interface", async () => {
+      await startWithRobot();
+      const source = { ifname: IFACE };
+      expect(teamChecker.checkFactoryDefault).toHaveBeenCalledWith(1234, source);
+      expect(teamChecker.checkRobotController).toHaveBeenCalledWith(1234, [], source);
+      expect(checkRadio).toHaveBeenCalledWith(1234, source, null);
+
+      monitor.startFirmwareUpdate('passphrase', undefined).catch(() => {});
+      await settle();
+      expect(
+        (firmwareUpdater.updateRadioFirmware as Mock<typeof firmwareUpdater.updateRadioFirmware>).mock.calls[0][1],
+      ).toBe(IFACE);
     });
 
     test('a configure refuses a firmware update', async () => {

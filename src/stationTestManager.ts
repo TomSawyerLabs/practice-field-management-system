@@ -4,6 +4,7 @@ import type { PortBridgeManager } from './portBridgeManager.js';
 import type { NetworkBackend } from './node-ip/index.js';
 import type { FirmwareStore } from './firmwareStore.js';
 import type RadioManager from './radioManager.js';
+import { fetchOnInterface } from './interfaceFetch.js';
 import { hashWpaKey } from './wpaKeyUtils.js';
 import { teamSubnet } from './utils.js';
 import { appInfo, appWarn } from './appLogger.js';
@@ -198,7 +199,7 @@ export class StationTestManager {
     const radioIp = `${teamSubnet(team)}.1`;
 
     try {
-      const res = await fetch(`http://${radioIp}/status`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetchOnInterface(testState.interfaceName, `http://${radioIp}/status`, {}, 3000);
       if (!res.ok) return [];
 
       const status = (await res.json()) as {

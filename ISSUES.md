@@ -108,21 +108,6 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## Robot tester can reach the wrong robot when its team is also on a station
-
-_in progress — issues/station-test-port_
-
-The tester reaches the radio with plain `fetch` to `10.TE.AM.1`
-(`src/firmwareUpdater.ts`, `src/stationTestManager.ts`, `configureRadio` in
-`src/robotTestMonitor.ts`, plus the tester's own checks). dhcpcd installs the test
-port's route at metric 1000+ifindex and a station bridge's route is metric 0, so
-the bridge wins. Lab, 2026-10-30: three plain requests answered from the station's
-robot, and the test port's robot was reached only with `--interface testport`.
-So with a team's robot on a station and another of its robots on the tester, the
-checks describe the wrong robot, and a configure or firmware update goes to the
-radio on the field. Matters because that write hits a robot the team may be
-driving. Details in `plans/two-robot-own-traffic.md`.
-
 ## RawPacketLog daily-cap test fails often, even alone
 
 _in progress — issues/test-timing_

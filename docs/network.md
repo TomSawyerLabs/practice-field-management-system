@@ -393,7 +393,8 @@ stations has the same subnet on two bridges, and the routing table would send
 everything to one robot, so pinning is what lets each station report its own
 robot. The unicast mDNS query that identifies a SystemCore is pinned too (by
 the `mdns-socket` addon), so one team can run a roboRIO and a SystemCore side
-by side.
+by side. The [robot tester](robot-tester.md) pins all its traffic to its own
+port the same way, since its route loses to a station bridge for the same team.
 
 Guest laptops are found from conntrack, which can't say which bridge a flow
 used. For a team on one station, a laptop talking to its subnet is listed there

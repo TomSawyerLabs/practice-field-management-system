@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs';
 import type { FirmwareUpdateProgress } from './types.js';
 import { teamSubnet } from './utils.js';
 import type { FirmwareStore } from './firmwareStore.js';
+import { fetchOnInterface, type HttpReply } from './interfaceFetch.js';
 import { hashWpaKey } from './wpaKeyUtils.js';
 
 // ── Radio status type ───────────────────────────────────────────────
@@ -15,25 +15,17 @@ interface RadioStatus {
   networkStatus24?: { hashedWpaKey?: string; wpaKeySalt?: string };
 }
 
+/** How long a request to the radio gets, unless it says otherwise. */
+const REQUEST_TIMEOUT_MS = 5_000;
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
-async function fetchWithTimeout(url: string, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
-  const { timeout = 5000, ...fetchOptions } = options;
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  try {
-    return await fetch(url, { ...fetchOptions, signal: controller.signal });
-  } finally {
-    clearTimeout(id);
-  }
-}
-
 /** Wait for a URL to become reachable, polling every `intervalMs`. */
-async function waitForHost(url: string, timeoutMs: number, intervalMs = 2000): Promise<boolean> {
+async function waitForHost(ifname: string, url: string, timeoutMs: number, intervalMs = 2000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const res = await fetchWithTimeout(url, { timeout: 2000 });
+      const res = await fetchOnInterface(ifname, url, {}, 2000);
       if (res.ok) return true;
     } catch {
       // Not ready yet
@@ -55,9 +47,13 @@ export type ProgressCallback = (progress: Omit<FirmwareUpdateProgress, 'type' | 
  * 4. Wait for radio to reboot
  * 5. Re-apply configuration (teamNumber, ssidSuffix, WPA keys)
  * 6. Verify radio comes back with correct config
+ *
+ * Every request stays on `ifname`, the tester's port. By the routing table, one
+ * could write to this team's robot on a station instead.
  */
 export async function updateRadioFirmware(
   team: number,
+  ifname: string,
   wpaKey: string | undefined,
   wpaKey24: string | undefined,
   skipReconfigure: boolean,
@@ -72,7 +68,7 @@ export async function updateRadioFirmware(
 
   let status: RadioStatus;
   try {
-    const res = await fetchWithTimeout(`${radioUrl}/status`);
+    const res = await fetchOnInterface(ifname, `${radioUrl}/status`, {}, REQUEST_TIMEOUT_MS);
     if (!res.ok) throw new Error(`Radio returned HTTP ${res.status}`);
     status = (await res.json()) as RadioStatus;
   } catch (err) {
@@ -129,18 +125,17 @@ export async function updateRadioFirmware(
   // Step 3: Upload firmware to radio
   onProgress({ step: 'uploading', message: 'Uploading firmware to radio...', progress: 30 });
 
-  const firmwareData = readFileSync(firmware.filePath);
-  const formData = new FormData();
-  formData.append('file', new Blob([firmwareData]), 'firmware.img.enc');
-  formData.append('checksum', firmware.checksum);
-
-  let uploadRes: Response;
+  let uploadRes: HttpReply;
   try {
-    uploadRes = await fetchWithTimeout(`${radioUrl}/firmware`, {
-      method: 'POST',
-      body: formData,
-      timeout: 60_000,
-    });
+    uploadRes = await fetchOnInterface(
+      ifname,
+      `${radioUrl}/firmware`,
+      {
+        method: 'POST',
+        form: { file: { path: firmware.filePath, filename: 'firmware.img.enc' }, checksum: firmware.checksum },
+      },
+      60_000,
+    );
   } catch (err) {
     throw new Error(`Firmware upload failed: ${err instanceof Error ? err.message : err}`);
   }
@@ -165,7 +160,7 @@ export async function updateRadioFirmware(
 
   while (Date.now() < rebootDeadline) {
     try {
-      const res = await fetchWithTimeout(teamUrl, { timeout: 2000 });
+      const res = await fetchOnInterface(ifname, teamUrl, {}, 2000);
       if (res.ok) {
         rebootedToFactory = false;
         break;
@@ -174,7 +169,7 @@ export async function updateRadioFirmware(
       // Not ready
     }
     try {
-      const res = await fetchWithTimeout(factoryUrl, { timeout: 2000 });
+      const res = await fetchOnInterface(ifname, factoryUrl, {}, 2000);
       if (res.ok) {
         rebootedToFactory = true;
         break;
@@ -199,7 +194,7 @@ export async function updateRadioFirmware(
     const verifyUrl = rebootedToFactory ? factoryUrl : teamUrl;
     let message = 'Firmware flashed. Radio may need manual configuration.';
     try {
-      const res = await fetchWithTimeout(verifyUrl);
+      const res = await fetchOnInterface(ifname, verifyUrl, {}, REQUEST_TIMEOUT_MS);
       if (res.ok) {
         const newStatus = (await res.json()) as RadioStatus;
         const newVersion = newStatus.version ?? 'unknown';
@@ -230,12 +225,16 @@ export async function updateRadioFirmware(
   };
 
   try {
-    const res = await fetchWithTimeout(configUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(configBody),
-      timeout: 15_000,
-    });
+    const res = await fetchOnInterface(
+      ifname,
+      configUrl,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configBody),
+      },
+      15_000,
+    );
     if (res.status !== 202) {
       const body = await res.text();
       throw new Error(`Configuration rejected (HTTP ${res.status}): ${body}`);
@@ -248,13 +247,13 @@ export async function updateRadioFirmware(
   // Step 6: Wait for radio to come back at team IP with new firmware
   onProgress({ step: 'verifying_config', message: 'Waiting for radio to apply configuration...', progress: 80 });
 
-  const configReady = await waitForHost(teamUrl, 120_000, 3000);
+  const configReady = await waitForHost(ifname, teamUrl, 120_000, 3000);
   if (!configReady) {
     throw new Error('Radio did not come back at team IP after reconfiguration (2 minute timeout)');
   }
 
   try {
-    const res = await fetchWithTimeout(teamUrl);
+    const res = await fetchOnInterface(ifname, teamUrl, {}, REQUEST_TIMEOUT_MS);
     if (!res.ok) throw new Error(`radio returned HTTP ${res.status}`);
     const newStatus = (await res.json()) as RadioStatus;
     const newVersion = newStatus.version ?? 'unknown';

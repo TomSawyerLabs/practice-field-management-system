@@ -19,7 +19,7 @@ export const REQUIRED_TOOLS = ['iptables', 'arping', 'fping', 'dnsmasq', 'conntr
 export const OPTIONAL_TOOLS: [tool: string, why: string][] = [
   ['aplay', 'field match audio'],
   ['dhcpcd', 'the robot tester'],
-  ['curl', 'radio and roboRIO checks on station networks'],
+  ['curl', 'radio and roboRIO checks on station networks, and everything the robot tester sends'],
 ];
 
 /** apt package names differ from binary names for a few of these. */

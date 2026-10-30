@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import * as interfaceFetch from './interfaceFetch.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { StationTestManager } from './stationTestManager.js';
 import type { PortBridgeManager } from './portBridgeManager.js';
@@ -182,6 +183,21 @@ describe('StationTestManager progress', () => {
     sendRadioStep(stale, { step: 'error', message: 'Too late', progress: 0, error: 'Too late' });
 
     expect(manager.getState('slot1')?.progress).toBeUndefined();
+  });
+
+  test("the passphrase check reads the radio on this session's port", async () => {
+    const monitor = (manager as unknown as { sessions: Map<StationName, { monitor: RobotTestMonitor }> }).sessions.get(
+      'slot2',
+    )!.monitor;
+    (monitor as unknown as { teamNumber: number }).teamNumber = 1234;
+    const read = spyOn(interfaceFetch, 'fetchOnInterface').mockResolvedValue(Response.json({}));
+    const direct = spyOn(globalThis, 'fetch').mockRejectedValue(new Error('left by the routing table'));
+    spies.push(read, direct);
+
+    await manager.checkWpaKeys('slot2');
+
+    expect(read.mock.calls[0].slice(0, 2)).toEqual(['test0.p102', 'http://10.12.34.1/status']);
+    expect(direct).not.toHaveBeenCalled();
   });
 
   test('a new operation replaces the last result', () => {
