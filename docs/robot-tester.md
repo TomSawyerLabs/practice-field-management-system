@@ -40,15 +40,17 @@ disabled ─► link_down ─► link_up ─► dhcp_requesting ─► ready ─
                                                      to dhcp_requesting)
 ```
 
-| Phase             | Description                                                                                        |
-| ----------------- | -------------------------------------------------------------------------------------------------- |
-| `disabled`        | `TEST_INTERFACE` not set                                                                           |
-| `link_down`       | Polling carrier state at 5 Hz, waiting for a cable                                                 |
-| `link_up`         | Cable detected. Adds `192.168.69.8/24` secondary IP for factory radio detection, starts DHCP       |
-| `dhcp_requesting` | Running `dhcpcd --oneshot` to obtain a lease. Retries on failure. Rejects link-local (169.254.x.x) |
-| `ready`           | DHCP lease obtained. Team number derived from IP (`10.TE.AM.x` → team TE×100+AM)                   |
-| `checking`        | Running diagnostic checks against the radio and roboRIO                                            |
-| `complete`        | Checks finished. Re-checks every 1.5 seconds while clients are connected                           |
+| Phase             | Description                                                                                               |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| `disabled`        | `TEST_INTERFACE` not set                                                                                  |
+| `link_down`       | Polling carrier state at 5 Hz, waiting for a cable                                                        |
+| `link_up`         | Cable detected. Adds `192.168.69.8/24` secondary IP for factory radio detection, starts DHCP              |
+| `dhcp_requesting` | Running `dhcpcd --oneshot` to obtain a lease. Retries until it gets one. Rejects link-local (169.254.x.x) |
+| `ready`           | DHCP lease obtained. Team number derived from IP (`10.TE.AM.x` → team TE×100+AM)                          |
+| `checking`        | Running diagnostic checks against the radio and roboRIO                                                   |
+| `complete`        | Checks finished. Re-checks every 1.5 seconds while clients are connected                                  |
+
+Each `dhcpcd` attempt gets 15 seconds, enough for a fresh lease (about 7 seconds, most of it probing that the address is free). If nothing answers, the tester stops that `dhcpcd` and starts another 5 seconds later, so with no robot plugged in `dhcpcd` comes and goes rather than staying up, and a newly connected robot is found within about 25 seconds. A factory-default radio appearing at 192.168.69.1 skips the wait between attempts. `dhcpcd`'s own `--timeout` is not used, because it does nothing under `--nobackground`.
 
 `dhcpcd` runs with the `resolv.conf` and `hostname` hooks disabled: the tester only needs the leased IP (to derive the team number), so DNS servers and hostnames offered by the lease are never applied to the host. Whenever the tester releases the lease it also runs `resolvectl revert` on the interface, clearing any per-link DNS state left behind by leases acquired before this isolation existed.
 

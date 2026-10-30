@@ -21,6 +21,16 @@ const CHECK_INTERVAL_MS = 1_500;
 /** Default secondary IP added to the test interface so we can reach factory-default radios at 192.168.69.1. */
 const DEFAULT_FACTORY_PROBE_IP = '192.168.69.8';
 const FACTORY_PROBE_PREFIX = 24;
+/**
+ * How long one dhcpcd attempt may run. A fresh lease takes about 7 s (up to 1 s
+ * before the first DISCOVER, then ARP probing the offer), so this has to leave
+ * room for that and for one retransmitted DISCOVER, 4 s after the first.
+ */
+export const DHCP_ATTEMPT_MS = 15_000;
+export const DHCP_RETRY_MS = 5_000;
+/** How long a dhcpcd gets to exit after SIGTERM before it's sent SIGKILL. */
+export const DHCP_STOP_GRACE_MS = 3_000;
+const DHCP_COMMAND_TIMEOUT_MS = 5_000;
 
 /** Parse a team number from an IP in the 10.TE.AM.x range. */
 function teamFromIp(ip: string): number | null {
@@ -63,6 +73,80 @@ async function getInterfaceGateway(iface: string): Promise<string | undefined> {
   }
 }
 
+/**
+ * dhcpcd's arguments for one attempt.
+ *
+ * --oneshot: obtain a lease and exit
+ * --nobackground: stay in foreground (we manage the process). This also turns
+ *   off dhcpcd's own --timeout, so the attempt is timed by DHCP_ATTEMPT_MS
+ * --waitip=4: wait until an IPv4 address is assigned. The = is required: the
+ *   option's argument is optional, so `--waitip 4` makes "4" a second interface
+ *   name, which puts dhcpcd in manager mode
+ * --noipv4ll: don't fall back to link-local (169.254.x.x) if no DHCP server responds
+ * --reboot 0: skip rebinding the last lease, always do a fresh discover
+ * --nohook resolv.conf: never register the lease's DNS servers with the host
+ *   resolver — a robot radio's DNS must not affect name resolution for the
+ *   rest of the host (we only need the IP to detect the team number)
+ * --nohook hostname: never let a lease rename the host
+ * --ipv4only: only the IPv4 lease identifies the team (10.TE.AM.x), and
+ *   robot radios offer no DHCPv6 or router adverts — trying v6 only logged
+ *   "dhcp6_openudp: Address already in use" (systemd-networkd holds UDP 546
+ *   on the trunk's link-local address, which the test VLAN shares)
+ */
+export function dhcpcdArgs(iface: string): string[] {
+  return [
+    '--oneshot',
+    '--ipv4only',
+    '--nobackground',
+    '--waitip=4',
+    '--noipv4ll',
+    '--reboot',
+    '0',
+    '--nohook',
+    'resolv.conf',
+    '--nohook',
+    'hostname',
+    iface,
+  ];
+}
+
+/** SIGTERM a dhcpcd and wait for it to go, escalating so a wedged one can't stall the tester. */
+function stopDhcpcd(proc: ChildProcess): Promise<void> {
+  return new Promise(resolve => {
+    if (proc.exitCode !== null || proc.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const force = setTimeout(() => {
+      proc.kill('SIGKILL');
+      resolve();
+    }, DHCP_STOP_GRACE_MS);
+    const stopped = () => {
+      clearTimeout(force);
+      resolve();
+    };
+    proc.once('exit', stopped);
+    proc.once('error', stopped);
+    proc.kill();
+  });
+}
+
+/** The host commands the tester's DHCP client runs. Tests substitute these. */
+export interface DhcpHost {
+  spawnDhcpcd(args: string[]): ChildProcess;
+  /** Run a short-lived command. Rejects if it fails. */
+  run(command: string, args: string[]): Promise<unknown>;
+  readInterfaceIp(iface: string, excludeIps: string[]): Promise<{ ip: string; prefixLength: number } | null>;
+  readInterfaceGateway(iface: string): Promise<string | undefined>;
+}
+
+const realDhcpHost: DhcpHost = {
+  spawnDhcpcd: args => spawn('dhcpcd', args, { stdio: ['ignore', 'pipe', 'pipe'] }),
+  run: (command, args) => execFile(command, args, { timeout: DHCP_COMMAND_TIMEOUT_MS }),
+  readInterfaceIp: getInterfaceIp,
+  readInterfaceGateway: getInterfaceGateway,
+};
+
 export class RobotTestMonitor {
   private phase: RobotTestPhase = 'link_down';
   private linkUp = false;
@@ -75,6 +159,9 @@ export class RobotTestMonitor {
   private linkPollTimer: NodeJS.Timeout | null = null;
   private checkTimer: NodeJS.Timeout | null = null;
   private dhcpProc: ChildProcess | null = null;
+  private dhcpRetryTimer: NodeJS.Timeout | null = null;
+  /** Bumped by killDhcp, so a startDhcp still waiting on cleanup knows it was superseded. */
+  private dhcpGeneration = 0;
   private checking = false;
   private firmwareUpdating = false;
   private radioConfiguring = false;
@@ -100,6 +187,7 @@ export class RobotTestMonitor {
     private readonly hasClients?: () => boolean,
     private readonly onRadioConfigureProgress?: (progress: RadioConfigureProgress) => void,
     private readonly factoryProbeIp: string = DEFAULT_FACTORY_PROBE_IP,
+    private readonly dhcpHost: DhcpHost = realDhcpHost,
   ) {}
 
   async start(): Promise<void> {
@@ -240,7 +328,7 @@ export class RobotTestMonitor {
 
   // ── DHCP ──────────────────────────────────────────────────────────
 
-  private startDhcp(): void {
+  private async startDhcp(): Promise<void> {
     if (this.dryRun) {
       console.log(`[dry-run] Would run dhcpcd on ${this.interfaceName}`);
       this.phase = 'dhcp_requesting';
@@ -251,56 +339,32 @@ export class RobotTestMonitor {
     this.phase = 'dhcp_requesting';
     this.broadcast();
 
-    // Kill any stale dhcpcd for this interface
-    this.killDhcp();
+    // Kill any stale dhcpcd for this interface. Waits, because a dhcpcd started
+    // alongside --release could be the instance the release stops, and one
+    // started while the old one is still up only passes it these arguments and
+    // exits 0 with no lease.
+    const cleared = this.killDhcp();
+    const generation = this.dhcpGeneration;
+    await cleared;
+    if (generation === this.dhcpGeneration) this.spawnDhcp();
+  }
 
-    // dhcpcd --oneshot: obtain a lease and exit
-    // --nobackground: stay in foreground (we manage the process)
-    // --waitip 4: wait until an IPv4 address is assigned
-    // --noipv4ll: don't fall back to link-local (169.254.x.x) if no DHCP server responds
-    // --reboot 0: skip rebinding the last lease, always do a fresh discover
-    // --nohook resolv.conf: never register the lease's DNS servers with the host
-    //   resolver — a robot radio's DNS must not affect name resolution for the
-    //   rest of the host (we only need the IP to detect the team number)
-    // --nohook hostname: never let a lease rename the host
-    // --ipv4only: only the IPv4 lease identifies the team (10.TE.AM.x), and
-    //   robot radios offer no DHCPv6 or router adverts — trying v6 only logged
-    //   "dhcp6_openudp: Address already in use" (systemd-networkd holds UDP 546
-    //   on the trunk's link-local address, which the test VLAN shares)
-    const proc = spawn(
-      'dhcpcd',
-      [
-        '--oneshot',
-        '--ipv4only',
-        '--nobackground',
-        '--waitip',
-        '4',
-        '--timeout',
-        '1',
-        '--noipv4ll',
-        '--reboot',
-        '0',
-        '--nohook',
-        'resolv.conf',
-        '--nohook',
-        'hostname',
-        this.interfaceName,
-      ],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+  private spawnDhcp(): void {
+    const proc = this.dhcpHost.spawnDhcpcd(dhcpcdArgs(this.interfaceName));
     this.dhcpProc = proc;
 
+    let timedOut = false;
+    const watchdog = setTimeout(() => {
+      timedOut = true;
+      stopDhcpcd(proc);
+    }, DHCP_ATTEMPT_MS);
+
     proc.on('error', err => {
+      clearTimeout(watchdog);
+      if (this.dhcpProc !== proc) return;
       this.dhcpProc = null;
       console.error(`RobotTestMonitor: failed to start dhcpcd: ${err.message}`);
-      // Retry after a delay if link is still up
-      if (this.linkUp) {
-        setTimeout(() => {
-          if (this.linkUp && this.phase === 'dhcp_requesting') this.startDhcp();
-        }, 5000);
-      }
+      this.scheduleDhcpRetry();
     });
 
     let output = '';
@@ -312,32 +376,50 @@ export class RobotTestMonitor {
     });
 
     proc.on('exit', async code => {
+      clearTimeout(watchdog);
+      if (this.dhcpProc !== proc) return; // Stopped by killDhcp
       this.dhcpProc = null;
       if (!this.linkUp) return; // Link dropped during DHCP
 
-      if (code === 0) {
+      if (timedOut) {
+        // Nothing answered, the normal state with no robot plugged in. dhcpcd
+        // exits 0 on SIGTERM, so this has to come before trusting the code.
+        this.scheduleDhcpRetry();
+      } else if (code === 0) {
         await this.handleDhcpSuccess();
       } else {
         console.log(`RobotTestMonitor: dhcpcd exited with code ${code}`);
         for (const line of output.trim().split('\n')) {
           console.log(`  dhcpcd: ${line}`);
         }
-        // Retry after a delay if link is still up
-        if (this.linkUp) {
-          setTimeout(() => {
-            if (this.linkUp && this.phase === 'dhcp_requesting') this.startDhcp();
-          }, 5000);
-        }
+        this.scheduleDhcpRetry();
       }
     });
+  }
+
+  /** Try dhcpcd again after a delay, if we're still waiting for a lease by then. */
+  private scheduleDhcpRetry(delayMs = DHCP_RETRY_MS): void {
+    this.cancelDhcpRetry();
+    this.dhcpRetryTimer = setTimeout(() => {
+      this.dhcpRetryTimer = null;
+      if (this.linkUp && this.phase === 'dhcp_requesting') this.spawnDhcp();
+    }, delayMs);
+  }
+
+  private cancelDhcpRetry(): void {
+    if (this.dhcpRetryTimer) {
+      clearTimeout(this.dhcpRetryTimer);
+      this.dhcpRetryTimer = null;
+    }
   }
 
   private async handleDhcpSuccess(): Promise<void> {
     try {
       // Read the assigned IP directly from the interface
-      const addr = await getInterfaceIp(this.interfaceName, [this.factoryProbeIp]);
+      const addr = await this.dhcpHost.readInterfaceIp(this.interfaceName, [this.factoryProbeIp]);
       if (!addr) {
         console.log('RobotTestMonitor: dhcpcd succeeded but no IP on interface');
+        this.scheduleDhcpRetry();
         return;
       }
 
@@ -350,17 +432,13 @@ export class RobotTestMonitor {
             .catch(() => {});
         }
         // Retry DHCP after a short delay
-        if (this.linkUp) {
-          setTimeout(() => {
-            if (this.linkUp && this.phase === 'dhcp_requesting') this.startDhcp();
-          }, 500);
-        }
+        this.scheduleDhcpRetry(500);
         return;
       }
 
       this.leasedIp = addr.ip;
       this.leasedPrefix = addr.prefixLength;
-      this.routerIp = await getInterfaceGateway(this.interfaceName);
+      this.routerIp = await this.dhcpHost.readInterfaceGateway(this.interfaceName);
       this.teamNumber = teamFromIp(addr.ip) ?? undefined;
 
       if (this.teamNumber) {
@@ -378,18 +456,23 @@ export class RobotTestMonitor {
     }
   }
 
-  private killDhcp(): void {
-    if (this.dhcpProc) {
-      this.dhcpProc.kill();
-      this.dhcpProc = null;
-    }
-    // Also release the lease and kill any orphaned dhcpcd for this interface
-    execFile('dhcpcd', ['--release', this.interfaceName]).catch(() => {});
+  private async killDhcp(): Promise<void> {
+    this.dhcpGeneration++;
+    this.cancelDhcpRetry();
     // Drop any per-link DNS state a lease may have registered with
     // systemd-resolved. Leases acquired before the --nohook resolv.conf flag
     // was added persist across restarts and degrade host-wide name resolution
     // (a dead robot-radio DNS server stalls every lookup on the host).
-    execFile('resolvectl', ['revert', this.interfaceName]).catch(() => {});
+    this.dhcpHost.run('resolvectl', ['revert', this.interfaceName]).catch(() => {});
+
+    const proc = this.dhcpProc;
+    this.dhcpProc = null;
+    if (proc) await stopDhcpcd(proc);
+
+    // Also release the lease and kill any orphaned dhcpcd for this interface.
+    // --ipv4only because that's part of the instance's name: without it,
+    // --release looks for a dual-stack dhcpcd and reports "dhcpcd is not running".
+    await this.dhcpHost.run('dhcpcd', ['--ipv4only', '--release', this.interfaceName]).catch(() => {});
   }
 
   /** Continuously probe the factory default IP. Updates only the factory-related check result. */
@@ -413,8 +496,9 @@ export class RobotTestMonitor {
               : 'Radio has no team number — needs to be configured',
           };
           // Radio detected — trigger an immediate DHCP attempt if we're waiting
-          if (this.phase === 'dhcp_requesting' && !this.dhcpProc) {
-            this.startDhcp();
+          if (this.phase === 'dhcp_requesting' && this.dhcpRetryTimer) {
+            this.cancelDhcpRetry();
+            this.spawnDhcp();
           }
         }
         // When we DO have a team number, the full checkFactoryDefault() in runChecks handles it
@@ -482,7 +566,6 @@ export class RobotTestMonitor {
         this.leasedPrefix = 24;
         this.routerIp = undefined;
         this.checks = [];
-        this.killDhcp();
         if (!this.dryRun && oldIp) {
           // Remove only the DHCP address, keep the factory probe IP
           this.net
@@ -683,7 +766,6 @@ export class RobotTestMonitor {
       this.reconfigureType = 'radio';
 
       // Reset DHCP state so we pick up the newly configured radio
-      this.killDhcp();
       this.teamNumber = undefined;
       this.leasedIp = undefined;
       this.leasedPrefix = 24;
