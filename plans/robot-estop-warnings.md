@@ -79,7 +79,7 @@ change, in `issues/stop-cut`: remove the `pfms-estop-*` cut from the field and
 station e-stops, keep it for the team page's Stop until a replacement exists,
 and drop the wait that keeps it on after a clear until the DS shows Disabled.
 
-Remaining `ISSUES.md` entries went to eight threads, each claimed by branch name
+Remaining `ISSUES.md` entries went to seven threads, each claimed by branch name
 in that file. Left out on purpose:
 
 - The Blue Alliance reporting and the Space → A-Stop mapping: the user said not

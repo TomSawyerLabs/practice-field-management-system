@@ -94,7 +94,7 @@ Each needs a field visit. What to try and what each result means is in
 
 ## A team on two stations: what still isn't per-robot
 
-_in progress — issues/two-station-remaining_
+_in progress — issues/two-robot-own-traffic_
 
 Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
 `plans/two-robot-own-traffic.md`. These still aren't:
