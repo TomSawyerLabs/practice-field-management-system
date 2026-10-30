@@ -38,6 +38,7 @@ import {
   useStationTestState,
   sendStationTestModeRequest,
   sendStationTestModeStop,
+  sendStationFirmwareUpdateRequest,
   sendStationRadioConfigureRequest,
 } from '../hooks/useBackend';
 import { useSavedWiFiSettings } from '../hooks/useSavedWiFiSettings';
@@ -456,6 +457,9 @@ export function StationStatus({ station }: { station: StationName }) {
                   onStop={() => sendStationTestModeStop(station)}
                   onConfigureRadio={(teamNumber, wpaKey6, wpaKey24, ssidSuffix) =>
                     sendStationRadioConfigureRequest(station, teamNumber, wpaKey6, wpaKey24, ssidSuffix)
+                  }
+                  onUpdateFirmware={(wpaKey, wpaKey24, skipReconfigure) =>
+                    sendStationFirmwareUpdateRequest(station, wpaKey, wpaKey24, skipReconfigure)
                   }
                 />
               ) : stationSsid && !isLinked ? (

@@ -2,13 +2,11 @@ import { useState, useEffect, useRef } from 'react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Checkbox from '@mui/material/Checkbox';
 import Container from '@mui/material/Container';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import GlobalStyles from '@mui/material/GlobalStyles';
 import LinearProgress from '@mui/material/LinearProgress';
 import Link from '@mui/material/Link';
@@ -29,6 +27,7 @@ import {
   sendRadioConfigureRequest,
 } from '../hooks/useBackend';
 import { DsClientNotice } from './DsClientGuard';
+import { FirmwareUpdateDialog } from './FirmwareUpdateDialog';
 import { StatusIcon } from './TeamChecksPanel';
 import {
   CheckResultRow,
@@ -573,16 +572,8 @@ function RadioConfigureSection({ teamNumber }: { teamNumber?: number }) {
 
 function FirmwareUpdateSection() {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [wpaKey, setWpaKey] = useState('');
-  const [wpaKey24, setWpaKey24] = useState('');
-  const [skipReconfigure, setSkipReconfigure] = useState(false);
   const progress = useFirmwareUpdateProgress();
   const updating = progress && progress.step !== 'complete' && progress.step !== 'error';
-
-  const handleSubmit = () => {
-    sendFirmwareUpdateRequest(wpaKey || undefined, wpaKey24 || undefined, skipReconfigure);
-    setDialogOpen(false);
-  };
 
   return (
     <Box sx={{ mt: 1 }}>
@@ -625,64 +616,11 @@ function FirmwareUpdateSection() {
         Update Firmware
       </Button>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth>
-        <form
-          onSubmit={e => {
-            e.preventDefault();
-            handleSubmit();
-          }}
-        >
-          <DialogTitle>Update Radio Firmware</DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" sx={{ mb: 2 }}>
-              This will flash the latest firmware to the robot radio. The radio will reboot during the process (2-3
-              minutes).
-            </Typography>
-            {!skipReconfigure && (
-              <>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  The current configuration (team number, SSID suffix) will be re-applied after the update. Enter the
-                  WPA passphrase below, or leave blank to auto-detect from the station config.
-                </Typography>
-                <TextField
-                  label="6 GHz WPA Passphrase (optional)"
-                  value={wpaKey}
-                  onChange={e => setWpaKey(e.target.value)}
-                  fullWidth
-                  autoFocus
-                  helperText="Leave blank to auto-detect from station config"
-                  margin="dense"
-                />
-                <TextField
-                  label="2.4 GHz WPA Passphrase (optional)"
-                  value={wpaKey24}
-                  onChange={e => setWpaKey24(e.target.value)}
-                  fullWidth
-                  helperText="Leave blank to use the same key as 6 GHz"
-                  margin="dense"
-                />
-              </>
-            )}
-            <FormControlLabel
-              control={
-                <Checkbox checked={skipReconfigure} onChange={e => setSkipReconfigure(e.target.checked)} size="small" />
-              }
-              label={
-                <Typography variant="body2" color="text.secondary">
-                  Flash firmware only — skip reconfiguration
-                </Typography>
-              }
-              sx={{ mt: 1 }}
-            />
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button type="submit" variant="contained" color="warning">
-              {skipReconfigure ? 'Flash Firmware' : 'Update & Reconfigure'}
-            </Button>
-          </DialogActions>
-        </form>
-      </Dialog>
+      <FirmwareUpdateDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onSubmit={sendFirmwareUpdateRequest}
+      />
     </Box>
   );
 }

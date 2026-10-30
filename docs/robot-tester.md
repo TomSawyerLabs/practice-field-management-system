@@ -389,8 +389,10 @@ When the radio firmware check fails, the tester can update firmware in-place.
 ## Test Port Mode On A Station
 
 A station's test port mode runs the same tester on one of the field ports and
-shows it inline on the station card. A radio configure or firmware update
-started there shows each step in that panel. The step travels inside the
+shows it inline on the station card. When the **Radio Firmware** check fails,
+the panel offers **Update Firmware**, with the same dialog as `/test`; a
+passphrase left blank comes from the station's config. A radio configure or
+firmware update started there shows each step in that panel. The step travels inside the
 `stationTestState` message (`progress`), so a browser that opens mid-update
 sees it, and it does not appear on `/test`, whose bars follow only the
 dedicated test interface. A finished step stays up until the network has

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -7,7 +8,9 @@ import LinearProgress from '@mui/material/LinearProgress';
 import CableIcon from '@mui/icons-material/Cable';
 import StopIcon from '@mui/icons-material/Stop';
 import BuildIcon from '@mui/icons-material/Build';
+import SystemUpdateAltIcon from '@mui/icons-material/SystemUpdateAlt';
 import type { StationTestState } from '../../../src/types';
+import { FirmwareUpdateDialog } from './FirmwareUpdateDialog';
 import { StatusIcon } from './TeamChecksPanel';
 import { CheckResultRow, RobotAddresses, SettlingBanner, controllerFromChecks } from './SharedTestComponents';
 
@@ -15,6 +18,7 @@ interface InlineTestPortModeProps {
   testState: StationTestState;
   onStop: () => void;
   onConfigureRadio: (teamNumber: number, wpaKey6: string, wpaKey24?: string, ssidSuffix?: string) => void;
+  onUpdateFirmware: (wpaKey: string | undefined, wpaKey24: string | undefined, skipReconfigure: boolean) => void;
 }
 
 const phaseLabels: Record<string, string> = {
@@ -27,12 +31,14 @@ const phaseLabels: Record<string, string> = {
   complete: 'Checks complete',
 };
 
-export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: InlineTestPortModeProps) {
+export function InlineTestPortMode({ testState, onStop, onConfigureRadio, onUpdateFirmware }: InlineTestPortModeProps) {
+  const [firmwareDialogOpen, setFirmwareDialogOpen] = useState(false);
   const { testState: inner, portName, wpaKeyChecks, progress, timeoutRemaining } = testState;
   const { phase, teamNumber, checks, reconfiguredAt, reconfigureTimeoutMs, reconfigureType } = inner;
 
   const hasMismatch = wpaKeyChecks?.some(c => c.status === 'mismatch');
   const operationRunning = !!progress && progress.step !== 'complete' && progress.step !== 'error';
+  const firmwareOutdated = checks.some(c => c.name === 'Radio Firmware' && c.status === 'fail');
 
   return (
     <Box sx={{ px: 1, py: 1 }}>
@@ -90,6 +96,26 @@ export function InlineTestPortMode({ testState, onStop, onConfigureRadio }: Inli
           onFix={onConfigureRadio}
         />
       )}
+
+      {/* Outdated firmware: same trigger as the button on /test */}
+      {firmwareOutdated && (
+        <Button
+          size="small"
+          variant="outlined"
+          color="warning"
+          startIcon={<SystemUpdateAltIcon />}
+          disabled={operationRunning}
+          onClick={() => setFirmwareDialogOpen(true)}
+          sx={{ mb: 0.5 }}
+        >
+          Update Firmware
+        </Button>
+      )}
+      <FirmwareUpdateDialog
+        open={firmwareDialogOpen}
+        onClose={() => setFirmwareDialogOpen(false)}
+        onSubmit={onUpdateFirmware}
+      />
 
       {/* Check results */}
       {checks.length > 0 && (
