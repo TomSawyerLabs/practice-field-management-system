@@ -52,6 +52,8 @@ disabled ─► link_down ─► link_up ─► dhcp_requesting ─► ready ─
 
 Each `dhcpcd` attempt gets 15 seconds, enough for a fresh lease (about 7 seconds, most of it probing that the address is free). If nothing answers, the tester stops that `dhcpcd` and starts another 5 seconds later, so with no robot plugged in `dhcpcd` comes and goes rather than staying up, and a newly connected robot is found within about 25 seconds. A factory-default radio appearing at 192.168.69.1 skips the wait between attempts. `dhcpcd`'s own `--timeout` is not used, because it does nothing under `--nobackground`.
 
+`dhcpcd` runs with `--reboot 2`, so a saved lease gets 2 seconds before a fresh discover, which is all a radio that changed subnet can cost. It can't be 0 or 1: on `dhcpcd` 10.0.x the same value is how long a server gets to answer a REQUEST, so 0 fails every offer, at thousands of log lines a second, and 1 fails any answer slower than a second. This was checked on 10.0.6, 10.1.0 and 10.5.2.
+
 `dhcpcd` runs with the `resolv.conf` and `hostname` hooks disabled: the tester only needs the leased IP (to derive the team number), so DNS servers and hostnames offered by the lease are never applied to the host. Whenever the tester releases the lease it also runs `resolvectl revert` on the interface, clearing any per-link DNS state left behind by leases acquired before this isolation existed.
 
 ### VLAN Reset

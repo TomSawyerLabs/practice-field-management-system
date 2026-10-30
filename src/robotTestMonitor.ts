@@ -83,7 +83,11 @@ async function getInterfaceGateway(iface: string): Promise<string | undefined> {
  *   option's argument is optional, so `--waitip 4` makes "4" a second interface
  *   name, which puts dhcpcd in manager mode
  * --noipv4ll: don't fall back to link-local (169.254.x.x) if no DHCP server responds
- * --reboot 0: skip rebinding the last lease, always do a fresh discover
+ * --reboot 2: give up on the last lease after 2 s and do a fresh discover, for a
+ *   radio that changed subnet and stays silent. Not 0: on dhcpcd 10.0.x this is
+ *   also the time a server gets to answer a REQUEST, so 0 fails every offer and
+ *   spins at thousands of log lines a second, and 1 loses to a 1.5 s reply.
+ *   10.1 has a separate request_time. The default of 5 took 11 s in that case
  * --nohook resolv.conf: never register the lease's DNS servers with the host
  *   resolver — a robot radio's DNS must not affect name resolution for the
  *   rest of the host (we only need the IP to detect the team number)
@@ -101,7 +105,7 @@ export function dhcpcdArgs(iface: string): string[] {
     '--waitip=4',
     '--noipv4ll',
     '--reboot',
-    '0',
+    '2',
     '--nohook',
     'resolv.conf',
     '--nohook',

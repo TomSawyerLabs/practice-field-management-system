@@ -60,6 +60,7 @@ the tester as stuck as before.
 - [x] Reproduce and confirm the causes (lab plus steamboat journal)
 - [x] Fix `src/robotTestMonitor.ts`, with tests in `src/robotTestMonitor.test.ts`
 - [x] Update `docs/robot-tester.md`
-- [x] Log the separate `--reboot 0` problem on dhcpcd 10.0.x in `ISSUES.md`
+- [x] Log the separate `--reboot 0` problem on dhcpcd 10.0.x in `ISSUES.md`, since fixed
+      with `--reboot 2` (`plans/station-test-port-fixes.md`)
 - [ ] Confirm on steamboat after the next deploy: `ps` shows `dhcpcd: eno1.99 [ip4]`
       coming and going, not `[manager]` staying up

@@ -147,6 +147,11 @@ describe('RobotTestMonitor DHCP', () => {
       expect(dhcpcdArgs(IFACE)).toContain('--nobackground');
       expect(dhcpcdArgs(IFACE)).not.toContain('--timeout');
     });
+
+    test('--reboot leaves a server time to answer a REQUEST, which dhcpcd 10.0.x times with the same value', () => {
+      const args = dhcpcdArgs(IFACE);
+      expect(Number(args[args.indexOf('--reboot') + 1])).toBeGreaterThanOrEqual(2);
+    });
   });
 
   test('stops an attempt nothing answered, without mistaking its exit 0 for a lease, and tries again', async () => {
