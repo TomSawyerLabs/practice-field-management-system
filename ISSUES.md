@@ -2,11 +2,15 @@
 
 ## Global hook redundancy in StationStatus
 
+_in progress — issues/stationstatus-hooks_
+
 `StationStatus` renders 6 times (once per station). Each instance subscribes to several global hooks (`useLastLinked`, `usePortBridgeState`, `useLatest`, `useMatchState`, `useNetworkStats`, `useSubnetScan`, `useMdnsActivity`, etc.). Any update to these global states causes all 6 instances to re-render and diff their entire subtree, even if only one station's data changed.
 
 This is the established pattern throughout the codebase and isn't a bottleneck at 6 stations with infrequent updates. But if performance ever becomes a concern, the proper fix would be a React context with per-station selectors — a broader refactor, not a one-off fix.
 
 ## Per-station firmware/radio configure progress not surfaced in UI
+
+_in progress — issues/station-progress-ui_
 
 When a firmware update or radio reconfiguration runs through station test port mode, the `StationTestManager` receives per-station progress callbacks from the `RobotTestMonitor`. These are currently no-ops — the inline test port mode UI only shows settling banners (derived from `StationTestState.testState.reconfiguredAt`), not step-by-step progress (e.g., "Uploading firmware... 30%").
 
@@ -17,6 +21,8 @@ To add detailed progress UI to the inline view, we'd need:
 3. Care to avoid conflating with the global test monitor's progress handlers
 
 ## DS-client operator guard is IP-based and UI-only
+
+_in progress — issues/ws-admin-guard_
 
 The guard that blocks `/match` and `/staff` on Driver Station devices
 (`frontend/src/components/DsClientGuard.tsx`) compares the browser's IP to
@@ -34,6 +40,8 @@ connected DS IPs. Two accepted gaps (user decision 2026-07-24: fine for now):
 
 ## Admin-page actions the WebSocket accepts from anyone
 
+_in progress — issues/ws-admin-guard_
+
 Seen 2026-10-13 in `src/websocketServer.ts` (~L1450–1490): `createApiKey`,
 `revokeApiKey`, `reactivateApiKey`, `deleteApiKey`, `approvePendingDevice`,
 `dismissPendingDevice`, `scoreReset` and `portBridgeRequest` run without
@@ -46,6 +54,8 @@ which a staff or team page legitimately sends.
 
 ## Stop buttons
 
+_in progress — issues/audit-unverified_
+
 Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make
 A-Stop dominant through the countdown and auto. What's left:
 
@@ -55,6 +65,8 @@ A-Stop dominant through the countdown and auto. What's left:
 - The station page's new layout has not been looked at on a real phone.
 
 ## Unverified behaviour we depend on
+
+_in progress — issues/audit-unverified_
 
 Each of these is asserted by our code but was never confirmed against real
 hardware or a real deployment:
@@ -76,6 +88,8 @@ hardware or a real deployment:
 
 ## Depends on things outside this repo
 
+_in progress — issues/audit-unverified_
+
 - The balls-counter deployed on sentinel runs from the unmerged branch
   `fix/package-for-latest-uv` (PR #1 open), not its master. A `git pull` on
   master there silently breaks match score recording.
@@ -90,6 +104,8 @@ hardware or a real deployment:
 
 ## SystemCore gaps
 
+_in progress — issues/audit-unverified_
+
 - Passive robot telemetry (`robotPacketCapture.ts`) only captures packets to
   UDP port 1150. A SystemCore robot talks to its DS mostly over UDP 1110, so
   check whether battery voltage shows up for a SystemCore robot that isn't
@@ -97,10 +113,14 @@ hardware or a real deployment:
 
 ## Setup and packaging
 
+_in progress — issues/setup-and-packaging_
+
 - The Linux standalone-binary targets compile but have never been run, and
   the binary has no self-update path (`update.sh` doesn't apply to it).
 
 ## Two robots of one team
+
+_in progress — issues/two-robot-own-traffic (the robot-link wrong-slot bullet: issues/estop-warnings)_
 
 - pFMS's own traffic to a duplicated team's subnet (subnet-scanner fping,
   team-check HTTP to the radio/roboRIO, robot packet capture lookups) follows
@@ -121,6 +141,8 @@ hardware or a real deployment:
 
 ## Per-laptop `ip rule` entries pile up on steamboat
 
+_in progress — issues/ip-rule-cleanup_
+
 `ip rule list` on steamboat had 487 entries on 2026-10-28. Most are stale
 `from <laptop> to 10.TE.AM.0/24 lookup <slot table>` rules for teams that
 left days ago, with the same laptop/subnet pair repeated many times
@@ -131,11 +153,15 @@ the wrong slot's table, and priorities will eventually run out.
 
 ## Flaky under load: robotWifiScan "capitals-only difference is still tested automatically"
 
+_in progress — issues/test-reliability_
+
 `src/robotWifiScan.test.ts` › `the scanner > capitals-only difference is still tested automatically` failed once in a full `bun test` run (2026-10-13, 941 pass / 1 fail, while another thread's uncommitted work was in the tree) and passes on its own (`bun test src/robotWifiScan.test.ts`, 29/29). Looks timing-dependent under the full suite's load. Matters because a red full run hides real regressions.
 
 Also seen: `the scanner > a robot that goes quiet drops off the list` failed once in a full run (2026-10-13, 977 pass / 1 fail, with CPU-heavy binary builds running alongside); 29/29 three times on its own.
 
 ## The wizard's FMS address setting isn't applied
+
+_in progress — issues/setup-and-packaging_
 
 `SetupSettings.fmsAddress` (`src/types.ts`) is only read by the setup probe
 (`src/index.ts` passes it to `runSetupProbe`). Startup always adds the
@@ -145,6 +171,8 @@ setting would make the wizard check for an address pFMS never assigns. Either
 apply it everywhere or drop the setting.
 
 ## scripts/test-trunk-switch.ts connects its WebSocket before pFMS is listening
+
+_in progress — issues/test-reliability_
 
 `bun scripts/test-trunk-switch.ts` prints `PASS: pFMS came up`, then dies with
 `WebSocket connection to 'ws://127.0.0.1:<port>/ws' failed: Failed to connect`
@@ -157,6 +185,8 @@ report anything past its first line.
 
 ## fmsServer tests can still land on a Windows-reserved port
 
+_in progress — issues/test-reliability_
+
 A full `bun test` on Windows (2026-10-13, 950 pass / 2 fail) failed both
 `disconnectTeam closes the sessions of one team only` hooks with
 `listen EACCES: permission denied 127.0.0.1:28100`. 28100 sits in a Hyper-V
@@ -167,6 +197,8 @@ when probed but refused when the server bound it. Matters because a red full
 run hides real regressions.
 
 ## Robot tester's "one-shot" dhcpcd stays running
+
+_in progress — issues/robot-tester-dhcpcd_
 
 On steamboat, the dhcpcd the robot tester spawns on `TEST_INTERFACE`
 (`eno1.99`) was still running (`dhcpcd: [manager] [ip4] [ip6]` plus its
