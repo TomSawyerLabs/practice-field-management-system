@@ -148,11 +148,16 @@ import {
   StationNameList,
   isSubscribeTopic,
   isUnsubscribeTopic,
+  isDsClientDismiss,
+  type DsClientMatch,
+  type DsClientState,
+  type MatchState,
   type Topic,
   type ChallengeLeaderboardState,
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
+import { accessOf, dsClientMatch, type MessageAccess } from './wsAccess.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { installMissingTools } from './hostTools.js';
 import { installSystemdService } from './systemdService.js';
@@ -449,6 +454,13 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   /** Track which WebSocket connections are admin-authenticated */
   const adminConnections = new Set<WebSocket>();
 
+  /** Connections that said they aren't the Driver Station sharing their
+   *  hostname. Only a hostname match can be waved away, never an address. */
+  const dsNoticeDismissed = new Set<WebSocket>();
+
+  /** The DS verdict each connection last heard, to send only changes. */
+  const dsClientStateSent = new Map<WebSocket, string>();
+
   /** Track public (read-only) WebSocket connections (connected via /ws/scores).
    *  These only receive scoreState and matchState — no sensitive data. */
   const publicConnections = new Set<WebSocket>();
@@ -602,6 +614,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   // Broadcast match state to all clients
   matchEngine.addStateListener(broadcast);
 
+  // A DS starting or going stale changes what its laptop's pages may do. The
+  // engine broadcasts every couple of seconds while a DS talks, which also
+  // picks up hostnames as they resolve.
+  matchEngine.addStateListener(state => refreshDsClients(state.connectedStations));
+
   // Broadcast saved team config changes to all clients
   savedTeamStore?.addListener(broadcast);
 
@@ -639,6 +656,56 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   function setupWritesAllowed(ws: WebSocket): boolean {
     if (!adminAuth?.isConfigured()) return true;
     return adminConnections.has(ws);
+  }
+
+  /** The Driver Station this connection appears to be, unless it has already
+   *  said a hostname match is a coincidence. */
+  function dsClientOf(
+    ws: WebSocket,
+    connected: MatchState['connectedStations'] = matchEngine.getState().connectedStations,
+    hostnames: Record<string, string> = hostnameResolver?.getState().hostnames ?? {},
+  ): DsClientMatch | null {
+    const match = dsClientMatch(wsToIp.get(ws) ?? 'unknown', connected, hostnames);
+    return match?.by === 'hostname' && dsNoticeDismissed.has(ws) ? null : match;
+  }
+
+  function sendDsClientState(ws: WebSocket, match: DsClientMatch | null) {
+    const state: DsClientState = { type: 'dsClientState', station: match?.station ?? null, by: match?.by };
+    const json = JSON.stringify(state);
+    if (dsClientStateSent.get(ws) === json || ws.readyState !== WebSocket.OPEN) return;
+    dsClientStateSent.set(ws, json);
+    ws.send(json);
+  }
+
+  function refreshDsClients(connected: MatchState['connectedStations']) {
+    const hostnames = hostnameResolver?.getState().hostnames ?? {};
+    for (const [ws, ip] of wsToIp) {
+      // Keeps a long-lived page's name from ageing out of the resolver.
+      hostnameResolver?.track(ip);
+      sendDsClientState(ws, dsClientOf(ws, connected, hostnames));
+    }
+  }
+
+  /** Why this connection may not send a message of this tier, or null. */
+  function refusal(ws: WebSocket, access: MessageAccess): string | null {
+    switch (access) {
+      case 'anyone':
+        return null;
+      case 'admin':
+        return setupWritesAllowed(ws) ? null : 'Admin authentication required';
+      case 'adminOnly':
+        return adminConnections.has(ws) ? null : 'Admin authentication required';
+      case 'staff':
+        if (adminConnections.has(ws)) return null;
+        switch (dsClientOf(ws)?.by) {
+          case 'ip':
+            return 'This device is a Driver Station — use a phone or another device for this';
+          case 'hostname':
+            return "This device looks like a Driver Station — use another device, or tell this page it isn't one";
+          default:
+            return null;
+        }
+    }
   }
 
   /** Tell the asking client what its Wi-Fi request came to. Waits and
@@ -951,6 +1018,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         wsToIp.set(ws, v4);
         hostnameResolver?.track(v4);
         sendRouteState(ws, v4);
+        sendDsClientState(ws, dsClientOf(ws));
       });
     }
 
@@ -966,6 +1034,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
     // Send initial route preference state
     sendRouteState(ws, clientIp);
+
+    // Send whether this device is a Driver Station
+    sendDsClientState(ws, dsClientOf(ws));
 
     // Send initial pending commit state
     ws.send(
@@ -1061,6 +1132,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     ws.on('close', () => {
       wsToIp.delete(ws);
       adminConnections.delete(ws);
+      dsNoticeDismissed.delete(ws);
+      dsClientStateSent.delete(ws);
       topicSubs.drop(ws);
       wsToChatSession.delete(ws);
       setupWatchers.delete(ws);
@@ -1086,6 +1159,15 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
       // Log what arrived for debugging, without passphrases, tokens or keys.
       console.log('Received message:', redactForLog(data));
+
+      // Who may send what is decided in one place: see src/wsAccess.ts.
+      const type = (data as { type?: unknown } | null)?.type;
+      const refused = refusal(ws, accessOf(type));
+      if (refused) {
+        appWarn(`Refused ${String(type)} from ${whoIs(clientIp)}: ${refused}`);
+        ws.send(JSON.stringify({ error: refused }));
+        return;
+      }
 
       if (isStationUpdate(data)) {
         if (matchEngine.isMatchActive()) {
@@ -1134,8 +1216,6 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         setup?.queue?.store.leaveLine(data.team);
       } else if (isQueueAdmin(data)) {
         if (!setup?.queue) ws.send(JSON.stringify({ error: 'The match queue is not available' }));
-        else if (!setupWritesAllowed(ws))
-          ws.send(JSON.stringify({ error: 'Admin login required to manage the queue' }));
         else handleQueueAdmin(setup.queue, data, ws);
 
         // ── Team preferences: nudges and push (team-page trust, like the
@@ -1155,9 +1235,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         // Rate-limited per station inside the scanner.
         setup?.robotWifi?.test(data.station);
       } else if (isWifiTestJoin(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required to test a Wi-Fi network' }));
-        } else if (setup?.wifiCards) {
+        if (setup?.wifiCards) {
           // The result is broadcast in the card state; only a refusal comes back here.
           setup.wifiCards.testJoin(data.iface, data.ssid, data.passphrase || undefined).catch((err: Error) => {
             ws.send(JSON.stringify({ error: `Test join refused: ${err.message}` }));
@@ -1293,9 +1371,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         // showing "Reconfiguration in progress"). Gated like clearMatchHistory;
         // refused mid-match because both take every robot off the field.
       } else if (isAdminClearAllStations(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin login required to clear the radio' }));
-        } else if (matchEngine.isMatchActive()) {
+        if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot clear the radio during an active match' }));
         } else {
           console.log(`Admin cleared all robots from the radio (${clientIp})`);
@@ -1307,9 +1383,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           });
         }
       } else if (isAdminRestart(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin login required to restart pFMS' }));
-        } else if (matchEngine.isMatchActive()) {
+        if (matchEngine.isMatchActive()) {
           ws.send(JSON.stringify({ error: 'Cannot restart pFMS during an active match' }));
         } else if (!setup?.restart) {
           ws.send(JSON.stringify({ error: 'Restart is not available in this environment' }));
@@ -1318,21 +1392,13 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           setup.restart();
         }
       } else if (isSelfUpdateCheck(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin login required to check for updates' }));
-        } else {
-          setup?.selfUpdate?.check().catch(err => {
-            ws.send(JSON.stringify({ error: 'Could not check for updates', details: (err as Error).message }));
-          });
-        }
+        setup?.selfUpdate?.check().catch(err => {
+          ws.send(JSON.stringify({ error: 'Could not check for updates', details: (err as Error).message }));
+        });
       } else if (isSelfUpdateApply(data)) {
-        const refused = !setupWritesAllowed(ws)
-          ? 'Admin login required to update pFMS'
-          : !setup?.selfUpdate
-            ? 'Updating is not available here'
-            : setup.selfUpdate.refusal();
-        if (refused) {
-          ws.send(JSON.stringify({ error: refused }));
+        const blocked = !setup?.selfUpdate ? 'Updating is not available here' : setup.selfUpdate.refusal();
+        if (blocked) {
+          ws.send(JSON.stringify({ error: blocked }));
         } else {
           setup!.selfUpdate!.apply(`the admin page (${clientIp})`).catch(err => {
             ws.send(JSON.stringify({ error: 'Update failed', details: (err as Error).message }));
@@ -1717,6 +1783,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           }
         }
 
+        // ── Driver Station guard ────────────────────────────────────
+      } else if (isDsClientDismiss(data)) {
+        console.log(`${whoIs(clientIp)} says it isn't the Driver Station sharing its name`);
+        dsNoticeDismissed.add(ws);
+        sendDsClientState(ws, dsClientOf(ws));
+
         // ── Admin Auth ──────────────────────────────────────────────
       } else if (isAdminLogin(data)) {
         if (adminAuth) {
@@ -1795,103 +1867,79 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           void runAndBroadcastProbe();
         }
       } else if (isInstallSystemdService(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required to install the service' }));
-        } else {
-          console.log(`Setup: installing the systemd service (${clientIp})`);
-          void installSystemdService().then(result => {
-            if (result.ok) console.log('Setup: systemd service installed and enabled');
-            else console.warn(`Setup: service install failed: ${result.error}`);
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(
-                JSON.stringify({
-                  type: 'systemdServiceInstallResult',
-                  ok: result.ok,
-                  ...(result.ok ? {} : { error: result.error }),
-                } satisfies SystemdServiceInstallResult),
-              );
-            }
-            void runAndBroadcastProbe();
-          });
-        }
-      } else if (isInstallHostTools(data)) {
-        if (!setupWritesAllowed(ws)) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required to install tools' }));
-        } else {
-          // apt's output goes back to the asker as it arrives (last ~8 KB).
-          let log = '';
-          const send = (status: HostToolsInstallState['status'], error?: string) => {
-            if (ws.readyState !== WebSocket.OPEN) return;
+        console.log(`Setup: installing the systemd service (${clientIp})`);
+        void installSystemdService().then(result => {
+          if (result.ok) console.log('Setup: systemd service installed and enabled');
+          else console.warn(`Setup: service install failed: ${result.error}`);
+          if (ws.readyState === WebSocket.OPEN) {
             ws.send(
-              JSON.stringify({ type: 'hostToolsInstallState', status, log, error } satisfies HostToolsInstallState),
+              JSON.stringify({
+                type: 'systemdServiceInstallResult',
+                ok: result.ok,
+                ...(result.ok ? {} : { error: result.error }),
+              } satisfies SystemdServiceInstallResult),
             );
-          };
-          console.log(`Setup: installing missing host tools (${clientIp})`);
+          }
+          void runAndBroadcastProbe();
+        });
+      } else if (isInstallHostTools(data)) {
+        // apt's output goes back to the asker as it arrives (last ~8 KB).
+        let log = '';
+        const send = (status: HostToolsInstallState['status'], error?: string) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          ws.send(
+            JSON.stringify({ type: 'hostToolsInstallState', status, log, error } satisfies HostToolsInstallState),
+          );
+        };
+        console.log(`Setup: installing missing host tools (${clientIp})`);
+        send('running');
+        void installMissingTools(text => {
+          log = (log + text).slice(-8192);
           send('running');
-          void installMissingTools(text => {
-            log = (log + text).slice(-8192);
-            send('running');
-          }).then(result => {
-            if (result.ok) {
-              console.log(`Setup: installed ${result.installed.join(' ') || 'nothing (all present)'}`);
-              send('done');
-            } else {
-              console.warn(`Setup: tool install failed: ${result.error}`);
-              send('failed', result.error);
-            }
-            void runAndBroadcastProbe();
-          });
-        }
+        }).then(result => {
+          if (result.ok) {
+            console.log(`Setup: installed ${result.installed.join(' ') || 'nothing (all present)'}`);
+            send('done');
+          } else {
+            console.warn(`Setup: tool install failed: ${result.error}`);
+            send('failed', result.error);
+          }
+          void runAndBroadcastProbe();
+        });
       } else if (isUpdateSetupSettings(data)) {
         if (setup) {
-          if (!setupWritesAllowed(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to change setup settings' }));
-          } else {
-            // A masked secret coming back means "keep the stored one".
-            setup.configStore.updateSettings(
-              restoreSetupSecrets(settingsPatchFromWire(data.settings), setup.configStore.get().settings),
-            );
-            // Settings change what the probe reports, so re-run immediately.
-            void runAndBroadcastProbe();
-          }
+          // A masked secret coming back means "keep the stored one".
+          setup.configStore.updateSettings(
+            restoreSetupSecrets(settingsPatchFromWire(data.settings), setup.configStore.get().settings),
+          );
+          // Settings change what the probe reports, so re-run immediately.
+          void runAndBroadcastProbe();
         }
       } else if (isMarkSetupStep(data)) {
         if (setup) {
-          if (!setupWritesAllowed(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to change setup progress' }));
-          } else {
-            setup.configStore.markStep(data.step, data.status);
-          }
+          setup.configStore.markStep(data.step, data.status);
         }
       } else if (isTestRecordingStream(data)) {
         // Probing makes the server open a connection to whatever URL was
         // typed, so it is gated exactly like saving the setting would be.
         if (setup?.matchRecorder) {
-          if (!setupWritesAllowed(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to test a stream' }));
-          } else {
-            const recorder = setup.matchRecorder;
-            void recorder.testStream(data.url).then(result => {
-              if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(result));
-            });
-          }
+          const recorder = setup.matchRecorder;
+          void recorder.testStream(data.url).then(result => {
+            if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(result));
+          });
         }
 
         // ── Slack Config ────────────────────────────────────────────
       } else if (isSaveSlackConfig(data)) {
         if (slackBridge && adminAuth) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to configure Slack' }));
-          } else {
-            slackBridge
-              .saveConfig(data.botToken, data.appToken, data.channelId)
-              .then(() => {
-                ws.send(JSON.stringify({ info: 'Slack configuration saved and connected' }));
-              })
-              .catch(err => {
-                ws.send(JSON.stringify({ error: 'Failed to configure Slack', details: err.message }));
-              });
-          }
+          slackBridge
+            .saveConfig(data.botToken, data.appToken, data.channelId)
+            .then(() => {
+              ws.send(JSON.stringify({ info: 'Slack configuration saved and connected' }));
+            })
+            .catch(err => {
+              ws.send(JSON.stringify({ error: 'Failed to configure Slack', details: err.message }));
+            });
         }
       } else if (isTestSlackConnection(data)) {
         if (slackBridge) {
@@ -1907,39 +1955,21 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
         // ── External Access Tokens ─────────────────────────────────────
       } else if (isCreateExternalAccessToken(data)) {
-        if (externalAccessStore && adminConnections.has(ws)) {
+        if (externalAccessStore) {
           const { token, id } = externalAccessStore.createToken(data.label);
           ws.send(JSON.stringify({ type: 'externalAccessTokenCreated', token, id, label: data.label }));
-        } else if (externalAccessStore) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required' }));
         }
       } else if (isRevokeExternalAccessToken(data)) {
-        if (externalAccessStore && adminConnections.has(ws)) {
-          externalAccessStore.revokeToken(data.id);
-        } else if (externalAccessStore) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-        }
+        externalAccessStore?.revokeToken(data.id);
         // ── Audio Device Management ───────────────────────────────────
       } else if (isSaveAudioDeviceConfig(data)) {
-        if (matchAudio && adminConnections.has(ws)) {
-          matchAudio.selectDevice(data.deviceName);
-        } else if (matchAudio) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-        }
+        matchAudio?.selectDevice(data.deviceName);
       } else if (isTestAudioDevice(data)) {
-        if (matchAudio && adminConnections.has(ws)) {
-          matchAudio.play('start');
-        } else if (matchAudio) {
-          ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-        }
+        matchAudio?.play('start');
       } else if (isRefreshAudioDevices(data)) {
-        if (matchAudio && adminConnections.has(ws)) {
-          ws.send(JSON.stringify(matchAudio.getState()));
-        }
+        if (matchAudio) ws.send(JSON.stringify(matchAudio.getState()));
       } else if (isClearMatchHistory(data)) {
-        if (matchHistoryStore && adminConnections.has(ws)) {
-          matchHistoryStore.clear();
-        }
+        matchHistoryStore?.clear();
 
         // ── Practice recording ("record while enabled") ──────────────
       } else if (isSetPracticeRecording(data)) {
@@ -1965,88 +1995,68 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         }
       } else if (isDeleteRecording(data) || isDeleteRecordingsBefore(data)) {
         if (setup?.matchRecorder) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required to delete recordings' }));
-          } else {
-            const recorder = setup.matchRecorder;
-            const n = isDeleteRecording(data)
-              ? recorder.deleteRecording(data.id)
-                ? 1
-                : 0
-              : recorder.deleteRecordingsBefore(data.before);
-            ws.send(JSON.stringify({ info: `Deleted ${n} recording${n === 1 ? '' : 's'}` }));
-            ws.send(JSON.stringify(recordingsInventory(recorder)));
-          }
+          const recorder = setup.matchRecorder;
+          const n = isDeleteRecording(data)
+            ? recorder.deleteRecording(data.id)
+              ? 1
+              : 0
+            : recorder.deleteRecordingsBefore(data.before);
+          ws.send(JSON.stringify({ info: `Deleted ${n} recording${n === 1 ? '' : 's'}` }));
+          ws.send(JSON.stringify(recordingsInventory(recorder)));
         }
         // ── Long-term field timelapse ───────────────────────────────
       } else if (isCaptureTimelapseFrame(data)) {
         // Admin only: this can move the shop's lights, and it opens a
         // connection to whatever the actions point at.
         if (setup?.timelapse) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-          } else {
-            void setup.timelapse
-              .captureFrame('manual', data.withActions)
-              .then(entry =>
-                ws.send(
-                  JSON.stringify(
-                    entry.error
-                      ? { error: `Timelapse frame failed: ${entry.error}` }
-                      : { info: `Captured ${entry.files.length} frame(s)` },
-                  ),
+          void setup.timelapse
+            .captureFrame('manual', data.withActions)
+            .then(entry =>
+              ws.send(
+                JSON.stringify(
+                  entry.error
+                    ? { error: `Timelapse frame failed: ${entry.error}` }
+                    : { info: `Captured ${entry.files.length} frame(s)` },
                 ),
-              )
-              .catch((err: Error) => ws.send(JSON.stringify({ error: `Timelapse frame failed: ${err.message}` })));
-          }
+              ),
+            )
+            .catch((err: Error) => ws.send(JSON.stringify({ error: `Timelapse frame failed: ${err.message}` })));
         }
       } else if (isRenderTimelapse(data)) {
         if (setup?.timelapse) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-          } else {
-            // Minutes of ffmpeg for a season of frames, so the client hears
-            // about it through the state, not this reply.
-            void setup.timelapse
-              .renderFilm(data)
-              .catch((err: Error) => ws.send(JSON.stringify({ error: `Film failed: ${err.message}` })));
-            ws.send(JSON.stringify({ info: 'Building the film…' }));
-          }
+          // Minutes of ffmpeg for a season of frames, so the client hears
+          // about it through the state, not this reply.
+          void setup.timelapse
+            .renderFilm(data)
+            .catch((err: Error) => ws.send(JSON.stringify({ error: `Film failed: ${err.message}` })));
+          ws.send(JSON.stringify({ info: 'Building the film…' }));
         }
       } else if (isTestTimelapseLights(data)) {
         // Admin only: it spends the saved token against an admin-named host,
         // and hands back what that host knows.
         if (setup?.timelapse) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-          } else {
-            // No token in the message means "use the one already saved" —
-            // the page never has it to send back.
-            const saved = setup.configStore.get().settings.timelapse?.lights;
-            const token = data.token ?? (saved?.mode === 'homeAssistant' ? saved.token : undefined);
-            void setup.timelapse
-              .probeLights(data.baseUrl, token)
-              .then(probe => ws.send(JSON.stringify(probe)))
-              .catch((err: Error) =>
-                ws.send(
-                  JSON.stringify({
-                    type: 'timelapseLightsProbe',
-                    ok: false,
-                    error: err.message,
-                    lights: [],
-                  }),
-                ),
-              );
-          }
+          // No token in the message means "use the one already saved" —
+          // the page never has it to send back.
+          const saved = setup.configStore.get().settings.timelapse?.lights;
+          const token = data.token ?? (saved?.mode === 'homeAssistant' ? saved.token : undefined);
+          void setup.timelapse
+            .probeLights(data.baseUrl, token)
+            .then(probe => ws.send(JSON.stringify(probe)))
+            .catch((err: Error) =>
+              ws.send(
+                JSON.stringify({
+                  type: 'timelapseLightsProbe',
+                  ok: false,
+                  error: err.message,
+                  lights: [],
+                }),
+              ),
+            );
         }
       } else if (isDeleteTimelapseRender(data)) {
         if (setup?.timelapse) {
-          if (!adminConnections.has(ws)) {
-            ws.send(JSON.stringify({ error: 'Admin authentication required' }));
-          } else {
-            const ok = setup.timelapse.deleteRender(data.file);
-            ws.send(JSON.stringify(ok ? { info: `Deleted ${data.file}` } : { error: 'No such film' }));
-          }
+          const ok = setup.timelapse.deleteRender(data.file);
+          ws.send(JSON.stringify(ok ? { info: `Deleted ${data.file}` } : { error: 'No such film' }));
         }
       } else if (isRequestPracticeDayLink(data)) {
         // The token is answered to this client only, never broadcast.

@@ -12,37 +12,32 @@ To add detailed progress UI to the inline view, we'd need:
 2. Corresponding frontend hooks and UI components
 3. Care to avoid conflating with the global test monitor's progress handlers
 
-## DS-client operator guard is IP-based and UI-only
+## Operator pages have no login of their own
 
-_in progress — issues/ws-admin-guard_
+`/match`, `/staff`, `/csa`, `/test` and `/overview` need no credential, so the
+server can only refuse them to Driver Stations (`staff` tier in
+`src/wsAccess.ts`, seen 2026-10-30). A team's phone on guest Wi-Fi can open
+`/match` and run the field. Matters because the guard stops accidents, not
+someone who means it.
 
-The guard that blocks `/match` and `/staff` on Driver Station devices
-(`frontend/src/components/DsClientGuard.tsx`) compares the browser's IP to
-connected DS IPs. Two accepted gaps (user decision 2026-07-24: fine for now):
+## A Driver Station can still clear an e-stop over the WebSocket
 
-- **Multi-interface laptops slip through** — a machine wired to the field for
-  the DS but browsing over guest Wi-Fi has different IPs per interface and
-  won't match. Hardening path: join on device hostname via `hostnameResolver`
-  (same hostname on both interfaces), soft-block on hostname match to tolerate
-  hostname collisions.
-- **No backend enforcement** — the websocket still honors operator/staff
-  messages from DS-identified clients; only the UI is blocked. Hardening path:
-  compute a per-connection DS flag server-side and reject operator/staff
-  commands from flagged connections.
+`adminClearEStop` and `adminClearFieldEStop` stay `anyone` in `src/wsAccess.ts`
+(2026-10-30), left alone while e-stop behaviour is being reconsidered. Clearing
+a latch is an operator action, so revisit them when that's decided. The stops
+themselves (`adminStopMatch`, `matchAbortCountdown`, `stationPauseMatch`,
+`adminStationDisable`, the e-stops) are `anyone` on purpose: a false match must
+not block one.
 
-## Admin-page actions the WebSocket accepts from anyone
+## Timing-sensitive tests in a full run
 
-_in progress — issues/ws-admin-guard_
-
-Seen 2026-10-13 in `src/websocketServer.ts` (~L1450–1490): `createApiKey`,
-`revokeApiKey`, `reactivateApiKey`, `deleteApiKey`, `approvePendingDevice`,
-`dismissPendingDevice`, `scoreReset` and `portBridgeRequest` run without
-checking `adminConnections` / `setupWritesAllowed`. Only the admin page's UI
-gate stands in the way, so any page on the field network (a team's laptop on
-guest Wi-Fi) could mint a scoring key, revoke the real ones, or reset the
-score. Other admin actions (clear the radio, restart, setup writes) are
-checked. Needs a pass over every message type to decide which need admin and
-which a staff or team page legitimately sends.
+`src/matchEngine.test.ts` › `a challenge run end to end > finishing a stopwatch
+run stops the robot and ends the run` and `src/fieldTimelapse.test.ts` ›
+`the callback releases the shutter, and both webhooks are called` each failed
+once in a full `bun test` on 2026-10-30 (772 pass / 2 fail); the next full run
+was 774/0 and both pass on their own. The first sleeps 3.4 s and expects
+`finishedAt` between 0 and 2. Matters because a red full run hides real
+regressions.
 
 ## Stop buttons
 

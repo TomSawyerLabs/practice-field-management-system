@@ -74,6 +74,8 @@ import {
   isDriveSessionState,
   DriveSessionState,
   isHostnamesState,
+  isDsClientState,
+  type DsClientState,
   HostnamesState,
   isRobotWifiScanState,
   RobotWifiScanState,
@@ -154,6 +156,10 @@ import {
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
+/** Set once this tab has said a hostname match with a Driver Station is a
+ *  coincidence. */
+const NOT_A_DS_KEY = 'pfms-not-a-ds';
+
 /** Where an admin login's session token is kept (set by AdminAuthGate). */
 export const ADMIN_TOKEN_KEY = 'pfms-admin-token';
 
@@ -211,6 +217,10 @@ function connect() {
     // admin page keeps working and public pages know an admin is looking.
     const adminToken = wsPath === '/ws' ? localStorage.getItem(ADMIN_TOKEN_KEY) : null;
     if (adminToken) nws.send(JSON.stringify({ type: 'adminCheckAuth', token: adminToken }));
+    // Same for "this isn't a Driver Station", which lasts as long as the tab.
+    if (wsPath === '/ws' && sessionStorage.getItem(NOT_A_DS_KEY)) {
+      nws.send(JSON.stringify({ type: 'dsClientDismiss' }));
+    }
     // Likewise subscriptions: a new socket has none until this page asks.
     if (wsPath === '/ws') resubscribeAll(nws);
     wsConnected = true;
@@ -941,6 +951,11 @@ function receiveMessage(detail: Message) {
 
   if (isDriveSessionState(detail)) {
     handleDriveSessionState(detail);
+    return;
+  }
+
+  if (isDsClientState(detail)) {
+    handleDsClientState(detail);
     return;
   }
 
@@ -2332,6 +2347,36 @@ export function useMyDriveStation(): StationName | null {
     if (session?.dsIp === yourIp) return station as StationName;
   }
   return null;
+}
+
+// ── Driver Station guard ─────────────────────────────────────────────
+
+let currentDsClient: DsClientState | null = null;
+
+function handleDsClientState(state: DsClientState) {
+  currentDsClient = state;
+  events.dispatchEvent(new CustomEvent('dsClientState', { detail: state }));
+}
+
+/** Whether the server takes this device for a Driver Station. `null` until it
+ *  has said. Live: follows a DS starting up or going stale on this machine. */
+export function useDsClientState(): DsClientState | null {
+  const [state, setState] = useState(currentDsClient);
+
+  useEffect(() => {
+    setState(currentDsClient);
+    const handler = (e: Event) => setState((e as CustomEvent<DsClientState>).detail);
+    events.addEventListener('dsClientState', handler);
+    return () => events.removeEventListener('dsClientState', handler);
+  }, []);
+
+  return state;
+}
+
+/** Tell the server a hostname match is a coincidence. */
+export function sendDsClientDismiss() {
+  sessionStorage.setItem(NOT_A_DS_KEY, '1');
+  ws?.send(JSON.stringify({ type: 'dsClientDismiss' }));
 }
 
 // ── Guest Host Names ─────────────────────────────────────────────────

@@ -28,6 +28,7 @@ import {
   useRadioConfigureProgress,
   sendRadioConfigureRequest,
 } from '../hooks/useBackend';
+import { DsClientNotice } from './DsClientGuard';
 import { StatusIcon } from './TeamChecksPanel';
 import {
   CheckResultRow,
@@ -185,6 +186,7 @@ export function TestPage() {
 
   return (
     <Container maxWidth="sm" sx={{ py: 4 }}>
+      <DsClientNotice />
       <GlobalStyles styles={PULSE_STYLES} />
       <Typography variant="h4" gutterBottom>
         Robot Network Tester

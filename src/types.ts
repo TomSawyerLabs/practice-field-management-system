@@ -2212,6 +2212,37 @@ export function isHostnamesState(msg: unknown): msg is HostnamesState {
   return (msg as HostnamesState).type === 'hostnames';
 }
 
+// ── Driver Station guard ─────────────────────────────────────────────
+
+/** The Driver Station a client appears to be. An address match is certain; a
+ *  hostname match is a hint the client can dismiss (src/wsAccess.ts). */
+export interface DsClientMatch {
+  station: StationName;
+  by: 'ip' | 'hostname';
+}
+
+/** Sent to one client: whether the server takes it for a Driver Station. */
+export interface DsClientState {
+  type: 'dsClientState';
+  station: StationName | null;
+  by?: DsClientMatch['by'];
+}
+
+export function isDsClientState(msg: unknown): msg is DsClientState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as DsClientState).type === 'dsClientState';
+}
+
+/** "This isn't a Driver Station": clears a hostname match, for this socket. */
+export interface DsClientDismiss {
+  type: 'dsClientDismiss';
+}
+
+export function isDsClientDismiss(msg: unknown): msg is DsClientDismiss {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as DsClientDismiss).type === 'dsClientDismiss';
+}
+
 // ── App Log Messages ────────────────────────────────────────────────
 
 export type LogLevel = 'info' | 'warn' | 'error';

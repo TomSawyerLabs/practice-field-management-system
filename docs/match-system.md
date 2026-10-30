@@ -117,6 +117,19 @@ page can be reopened on a phone or spare device in one scan. The check is
 live — plugging a DS in (or unplugging it) flips the pages without a
 reload, and a blocked staff page also stops sending presence heartbeats.
 
+The server decides this, per connection, and refuses the same actions
+itself. A laptop wired to the field for its DS but browsing over guest Wi-Fi
+has a different address on each interface, so a device with the same
+**hostname** as a connected DS is treated the same way, except that teams do
+share names like DRIVERSTATION: the notice then offers **This isn't a Driver
+Station**, which lasts as long as that browser tab. `/csa`, `/test` and
+`/overview` show a warning rather than a block, since they are still useful
+to look at, and their staff actions are refused the same way.
+
+Team pages are unaffected, a logged-in admin overrides the check, and
+anything that stops robots (Stop match, abort countdown, pause, disable,
+E-Stop) is never refused. See [who may send what](internals.md#who-may-send-what).
+
 ## Setup checks on the scoreboard
 
 Turn on **✅ checks** on the scoreboard (`/scores?checks=1`, remembered per

@@ -1,28 +1,24 @@
 import { teamLabelAmong } from '../../../src/utils';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Container from '@mui/material/Container';
 import Typography from '@mui/material/Typography';
 import { QRCodeSVG } from 'qrcode.react';
 import { StationName } from '../../../src/types';
-import { useMatchState, useRoutePreferenceState } from '../hooks/useBackend';
+import { sendDsClientDismiss, useDsClientState, useMatchState } from '../hooks/useBackend';
 
 /**
- * The station whose Driver Station traffic comes from this device's IP.
- * `undefined` while the answer is unknown (state not yet received), `null`
- * once this device is confirmed not to be a DS. Live: a DS starting up (or
- * going stale) on this machine flips the answer via the match-state stream.
+ * The station this device appears to be the Driver Station of. `undefined`
+ * while the answer is unknown (state not yet received), `null` once this
+ * device is confirmed not to be a DS. The server decides, on the device's
+ * address or hostname, and refuses the same actions itself: see
+ * src/wsAccess.ts.
  */
 export function useDsClientStation(): StationName | null | undefined {
-  const matchState = useMatchState();
-  const yourIp = useRoutePreferenceState()?.yourIp;
-  const connected = matchState?.connectedStations;
-  if (!yourIp || !connected) return undefined;
-  for (const [station, conn] of Object.entries(connected)) {
-    if (conn?.ip === yourIp) return station as StationName;
-  }
-  return null;
+  return useDsClientState()?.station;
 }
 
 /**
@@ -32,6 +28,7 @@ export function useDsClientStation(): StationName | null | undefined {
  */
 export function DsClientBlock({ station, roleNoun }: { station: StationName; roleNoun: string }) {
   const matchState = useMatchState();
+  const unsure = useDsClientState()?.by === 'hostname';
   const own = matchState?.stationStates?.[station];
   const team = own && teamLabelAmong(own, Object.values(matchState?.stationStates ?? {}));
   const url = window.location.href;
@@ -41,11 +38,12 @@ export function DsClientBlock({ station, roleNoun }: { station: StationName; rol
       <Card>
         <CardContent sx={{ textAlign: 'center', py: 4 }}>
           <Typography variant="h4" sx={{ mb: 1, fontWeight: 700 }}>
-            This is a Driver Station
+            {unsure ? 'This looks like a Driver Station' : 'This is a Driver Station'}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1 }}>
-            This device is driving {team ? `team ${team}` : station.replace('slot', 'station ')} — you can't be a Driver
-            Station and {roleNoun} at the same time.
+            {unsure ? 'This device has the same name as the one' : 'This device is'} driving{' '}
+            {team ? `team ${team}` : station.replace('slot', 'station ')} — you can't be a Driver Station and {roleNoun}{' '}
+            at the same time.
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 3 }}>
             Open this page on a different device — scan the code:
@@ -56,8 +54,39 @@ export function DsClientBlock({ station, roleNoun }: { station: StationName; rol
           <Typography color="text.secondary" sx={{ mt: 2, wordBreak: 'break-all', fontSize: '0.9rem' }}>
             {url}
           </Typography>
+          {unsure && (
+            <Button sx={{ mt: 2 }} onClick={sendDsClientDismiss}>
+              This isn't a Driver Station
+            </Button>
+          )}
         </CardContent>
       </Card>
     </Container>
+  );
+}
+
+/**
+ * For the staff pages that are still useful to look at on a Driver Station
+ * (`/csa`, `/test`, `/overview`): a warning instead of a block, because the
+ * server refuses their actions from this device.
+ */
+export function DsClientNotice() {
+  const ds = useDsClientState();
+  if (!ds?.station) return null;
+  return (
+    <Alert
+      severity="warning"
+      sx={{ mb: 2 }}
+      action={
+        ds.by === 'hostname' ? (
+          <Button color="inherit" size="small" onClick={sendDsClientDismiss}>
+            This isn't a Driver Station
+          </Button>
+        ) : undefined
+      }
+    >
+      {ds.by === 'hostname' ? 'This device looks like a Driver Station' : 'This device is a Driver Station'}, so staff
+      actions on this page are turned off. Use a phone or another device for those.
+    </Alert>
   );
 }

@@ -300,6 +300,23 @@ All HTTP traffic shares the WebSocket server port:
 | `/admin/auth/<token>`           | Sets the external-access cookie from a token URL                                                                                                                                                                                                                                                     |
 | `/api/auth/check`               | Proxy access check: `200` for a valid external-access cookie or a client on one of the host's own networks (`src/onLink.ts`), else `401`                                                                                                                                                             |
 
+## Who may send what
+
+Every message a client can send has a line in `MESSAGE_ACCESS`
+(`src/wsAccess.ts`), checked once before the server acts on it. A message
+missing from the table is refused, so a new one has to be classified.
+
+| Tier        | Who                                                                                       | Examples                                                              |
+| ----------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `anyone`    | Team pages, and anything that stops robots                                                | Join, ready, `station`, `portBridge`, E-Stop, Stop match              |
+| `staff`     | Any device that isn't a Driver Station. There is no staff login. An admin login overrides | Create and start a match, kick, force ready, radio programming        |
+| `admin`     | An admin login, or anyone until the field has a passphrase, so first-time setup can run   | API keys, score reset, setup settings, restart, cast display controls |
+| `adminOnly` | An admin login, always                                                                    | Slack config, audio device, clearing history, deleting recordings     |
+
+`src/wsAccess.test.ts` checks that the table covers everything the server
+handles, and follows the frontend's imports to check that a team page sends
+nothing gated: a Driver Station laptop runs that page, and it has no login.
+
 ## Dry-Run Mode
 
 With the `DRY_RUN` environment variable set, pFMS changes **nothing
