@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RawPacketLog } from './rawPacketLog.js';
@@ -14,12 +14,6 @@ function record(len: number, fill = 0xab): Buffer {
   return r;
 }
 
-const flush = (log: RawPacketLog) =>
-  new Promise<void>(resolve => {
-    log.close();
-    setTimeout(resolve, 50);
-  });
-
 describe('RawPacketLog', () => {
   let dir: string;
   let clock: Date;
@@ -33,7 +27,7 @@ describe('RawPacketLog', () => {
     const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
     log.write(record(60));
     log.write(record(60));
-    await flush(log);
+    await log.close();
     const bytes = readFileSync(join(dir, 'sc-2026-10-29.pcap'));
     expect(bytes.readUInt32LE(0)).toBe(0xa1b2c3d4);
     expect(bytes.readUInt32LE(20)).toBe(1); // Ethernet
@@ -43,10 +37,10 @@ describe('RawPacketLog', () => {
   test('appends to the day’s file after a restart, without a second header', async () => {
     const first = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
     first.write(record(10));
-    await flush(first);
+    await first.close();
     const second = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
     second.write(record(10));
-    await flush(second);
+    await second.close();
     expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 26);
   });
 
@@ -55,9 +49,16 @@ describe('RawPacketLog', () => {
     for (let i = 0; i < 10; i++) log.write(record(60));
     clock = new Date(2026, 9, 30, 9, 0, 0);
     log.write(record(60));
-    await flush(log);
+    await log.close();
     expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 76);
     expect(readFileSync(join(dir, 'sc-2026-10-30.pcap')).length).toBe(24 + 76);
+  });
+
+  test('close still finishes when the file can not be written', async () => {
+    mkdirSync(join(dir, 'sc-2026-10-29.pcap'));
+    const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
+    log.write(record(10));
+    await log.close();
   });
 
   test('deletes the oldest days to stay under the total cap', async () => {
@@ -73,7 +74,7 @@ describe('RawPacketLog', () => {
       now: () => clock,
     });
     log.write(record(10));
-    await flush(log);
+    await log.close();
     expect(readdirSync(dir).sort()).toEqual([
       'sc-2026-10-26.pcap',
       'sc-2026-10-27.pcap',

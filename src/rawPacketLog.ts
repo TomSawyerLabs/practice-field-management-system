@@ -33,6 +33,8 @@ function pcapHeader(): Buffer {
 
 export class RawPacketLog {
   private stream: WriteStream | null = null;
+  /** Streams told to end whose last writes haven't reached the disk yet. */
+  private readonly finishing = new Set<Promise<void>>();
   private day: string | null = null;
   private bytes = 0;
   private full = false;
@@ -60,10 +62,21 @@ export class RawPacketLog {
     this.bytes += record.length;
   }
 
-  close(): void {
-    this.stream?.end();
+  /** Stop writing. Resolves once everything written so far is on disk,
+   *  including a previous day's file that is still flushing. */
+  async close(): Promise<void> {
+    if (this.stream) this.finish(this.stream);
     this.stream = null;
     this.day = null;
+    await Promise.all(this.finishing);
+  }
+
+  private finish(stream: WriteStream): void {
+    const finished: Promise<void> = new Promise<void>(resolve => stream.once('close', () => resolve())).finally(() =>
+      this.finishing.delete(finished),
+    );
+    this.finishing.add(finished);
+    stream.end();
   }
 
   private fileFor(day: string): string {
@@ -71,7 +84,7 @@ export class RawPacketLog {
   }
 
   private open(day: string): void {
-    this.close();
+    void this.close();
     this.day = day;
     this.full = false;
     try {
@@ -80,14 +93,16 @@ export class RawPacketLog {
       const file = this.fileFor(day);
       const exists = existsSync(file);
       this.bytes = exists ? statSync(file).size : 0;
-      this.stream = createWriteStream(file, { flags: 'a' });
-      this.stream.on('error', err => {
+      const stream = createWriteStream(file, { flags: 'a' });
+      this.stream = stream;
+      stream.on('error', err => {
         console.error(`RawPacketLog: writing ${file} failed: ${err.message}`);
-        this.stream = null;
+        // Yesterday's file failing late must not stop today's.
+        if (this.stream === stream) this.stream = null;
       });
       if (!exists) {
         const header = pcapHeader();
-        this.stream.write(header);
+        stream.write(header);
         this.bytes += header.length;
       }
     } catch (err) {
