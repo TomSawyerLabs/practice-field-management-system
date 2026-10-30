@@ -249,6 +249,7 @@ function readDnsName(buf: Buffer, offset: number): { name: string; endOffset: nu
   const labels: string[] = [];
   let pos = offset;
   let endOffset = -1;
+  let jumps = 0;
 
   while (pos < buf.length) {
     const len = buf[pos];
@@ -260,6 +261,7 @@ function readDnsName(buf: Buffer, offset: number): { name: string; endOffset: nu
     if ((len & 0xc0) === 0xc0) {
       if (pos + 1 >= buf.length) break;
       if (endOffset === -1) endOffset = pos + 2;
+      if (++jumps > 8) return { name: '', endOffset }; // pointer loop
       pos = ((len & 0x3f) << 8) | buf[pos + 1];
       continue;
     }

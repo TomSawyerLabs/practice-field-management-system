@@ -127,6 +127,15 @@ describe('SystemCore discovery reply', () => {
     empty.writeUInt16BE(0x8400, 2);
     expect(parseMdnsAnswers(empty)).toHaveLength(0);
   });
+
+  test('a name whose compression pointers loop is given up on, not followed forever', () => {
+    const header = Buffer.alloc(12);
+    header.writeUInt16BE(0x8400, 2);
+    header.writeUInt16BE(1, 6);
+    const record = Buffer.from([0, 1, 0, 1, 0, 0, 0, 120, 0, 4, 10, 59, 40, 2]);
+    const reply = Buffer.concat([header, Buffer.from([1, 97]), pointerTo(12), record]);
+    expect(parseMdnsAnswers(reply)).toEqual([{ type: 'A', name: '', address: '10.59.40.2' }]);
+  });
 });
 
 describe('radio SystemCore mode is judged against the controller that answered', () => {

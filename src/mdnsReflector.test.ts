@@ -123,6 +123,14 @@ describe('forwarded queries', () => {
     expect(withoutUnicastResponse(query).equals(query)).toBe(true);
   });
 
+  test('a name whose compression pointers loop is given up on, not followed forever', () => {
+    const header = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    const toItself = Buffer.from([...header, 0xc0, 12, 0, 1, 0x80, 1]);
+    const throughALabel = Buffer.from([...header, 1, 97, 0xc0, 12, 0, 1, 0x80, 1]);
+    expect(withoutUnicastResponse(toItself).length).toBe(toItself.length);
+    expect(withoutUnicastResponse(throughALabel).length).toBe(throughALabel.length);
+  });
+
   test('answers carry the ID each laptop expects', () => {
     const response = Buffer.alloc(12);
     response.writeUInt16BE(0x1234, 0);
