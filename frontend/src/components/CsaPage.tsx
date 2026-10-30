@@ -992,6 +992,7 @@ export function CsaPage() {
   const robotEStops = useRobotEStops();
   const setupConfig = useSetupConfig();
   const queue = useQueueState();
+  const hostTeams = useMemo(() => hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue), [setupConfig, queue]);
   const [selected, setSelected] = useState<StationName | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -1014,6 +1015,7 @@ export function CsaPage() {
       sixGhzWatch,
       robotDropouts,
       robotEStops,
+      hostTeams,
     }),
     [
       now,
@@ -1033,6 +1035,7 @@ export function CsaPage() {
       sixGhzWatch,
       robotDropouts,
       robotEStops,
+      hostTeams,
     ],
   );
   const issues = useMemo(() => detectFieldIssues(input), [input]);
@@ -1045,7 +1048,6 @@ export function CsaPage() {
   // Robots on the field, longest there first, the host team's last. Empty
   // slots are not shown at all: staff think in robots, and slot numbers mean
   // nothing to a CSA.
-  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue);
   const facts = releaseOrder(matchState, hostTeams)
     .map(s => stationFacts(input, issues, s, hostTeams))
     .filter(f => f.ssid);

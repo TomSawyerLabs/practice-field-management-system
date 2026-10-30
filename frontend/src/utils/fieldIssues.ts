@@ -170,6 +170,8 @@ export interface FieldIssueInputs {
   robotDropouts?: RobotDropoutsState | null;
   /** Robots e-stopped in the roboRIO itself. */
   robotEStops?: RobotEStopsState | null;
+  /** Teams hosting the field; empty during a scrimmage (hostTeamsInEffect). */
+  hostTeams?: number[];
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -250,6 +252,23 @@ export function releaseOrder(matchState: MatchState | null, hostTeams: number[])
   const isHost = (s: StationName) => hostTeams.includes(matchState?.stationStates[s]?.teamNumber ?? 0);
   // Array.sort is stable, so each group keeps stationOrder's order.
   return stationOrder(matchState).sort((a, b) => Number(isHost(a)) - Number(isHost(b)));
+}
+
+/** Every station has a robot's Wi-Fi on it. */
+export function fieldIsFull(latest: StatusEntry | undefined): boolean {
+  const stations = latest?.radioUpdate?.stationStatuses;
+  return !!stations && StationNameList.every(s => stations[s]?.ssid);
+}
+
+/** Stations held by a host robot that is not on the Wi-Fi: parked, with nobody
+ *  using the slot. Empty while the AP reconfigures, when no robot is on. */
+export function parkedHostStations(latest: StatusEntry | undefined, hostTeams: number[]): StationName[] {
+  const update = latest?.radioUpdate;
+  if (update?.status !== 'ACTIVE') return [];
+  return StationNameList.filter(s => {
+    const radio = update.stationStatuses[s];
+    return radio?.ssid && !radio.isLinked && hostTeams.includes(teamOfSsid(radio.ssid) ?? 0);
+  });
 }
 
 /** How a station is named to staff: its robot's SSID, else "team N", else
@@ -569,21 +588,38 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
       const last = input.lastLinked[station];
       const everLinked = last !== undefined;
       const inMatch = joined && (running || inSetup);
-      push({
-        id: `robot-not-linked-${station}`,
-        severity: inMatch ? 'critical' : 'warning',
-        station,
-        team,
-        title: everLinked ? `${label} dropped off the field Wi-Fi` : `${label} has not joined the field Wi-Fi`,
-        detail: everLinked
-          ? `Last linked ${shortAge(now - last)} ago.`
-          : 'Its Wi-Fi is on the field, but its radio has never associated.',
-        evidence: everLinked ? `last linked ${shortAge(now - last)} ago` : 'never linked',
-        fix: everLinked
-          ? 'Robot power? A brownout reboots the radio (about a minute). If it stays off, check the radio’s power lead and Ethernet to the roboRIO.'
-          : 'Radio still booting (up to 2 min after power-on)? Otherwise the robot radio is programmed for a different SSID or key — re-program it, or verify it on the robot tester (/test).',
-        actions: inSetup && joined ? [{ kind: 'kick', station }] : undefined,
-      });
+      if (!inMatch && input.hostTeams?.includes(team ?? 0)) {
+        // Host robots stay on the field between practices, so one being off
+        // is normal. It only matters once the slot could go to someone else.
+        const full = fieldIsFull(latest);
+        push({
+          id: `host-parked-${station}`,
+          severity: full ? 'warning' : 'info',
+          station,
+          team,
+          title: full ? `The field is full and ${label} is parked` : `${label} is parked`,
+          detail: 'This host robot is not on the field Wi-Fi.',
+          evidence: everLinked ? `last linked ${shortAge(now - last)} ago` : 'never linked',
+          fix: full ? 'Release it if a visiting team needs the slot.' : undefined,
+          actions: full ? [{ kind: 'release', station }] : undefined,
+        });
+      } else {
+        push({
+          id: `robot-not-linked-${station}`,
+          severity: inMatch ? 'critical' : 'warning',
+          station,
+          team,
+          title: everLinked ? `${label} dropped off the field Wi-Fi` : `${label} has not joined the field Wi-Fi`,
+          detail: everLinked
+            ? `Last linked ${shortAge(now - last)} ago.`
+            : 'Its Wi-Fi is on the field, but its radio has never associated.',
+          evidence: everLinked ? `last linked ${shortAge(now - last)} ago` : 'never linked',
+          fix: everLinked
+            ? 'Robot power? A brownout reboots the radio (about a minute). If it stays off, check the radio’s power lead and Ethernet to the roboRIO.'
+            : 'Radio still booting (up to 2 min after power-on)? Otherwise the robot radio is programmed for a different SSID or key — re-program it, or verify it on the robot tester (/test).',
+          actions: inSetup && joined ? [{ kind: 'kick', station }] : undefined,
+        });
+      }
     } else {
       if (radio.connectionQuality === 'warning') {
         push({

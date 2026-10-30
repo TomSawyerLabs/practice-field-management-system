@@ -3,7 +3,9 @@ import type { MatchState, RadioUpdate, StationControlState, StationDetails, Stat
 import {
   detectFieldIssues,
   fieldControlOf,
+  fieldIsFull,
   groupIssues,
+  parkedHostStations,
   releaseOrder,
   stationLabel,
   stationOrder,
@@ -650,6 +652,59 @@ describe('order by time on the field', () => {
     );
     expect(out.map(i => i.id)).toEqual(['robot-not-linked-slot4', 'robot-not-linked-slot1']);
     for (const i of out) expect(`${i.title} ${i.detail} ${i.fix}`).not.toMatch(/\bSlot [1-6]\b/);
+  });
+
+  describe('parked host robots', () => {
+    const host = station({ ssid: '111', isLinked: false });
+    const visitors = {
+      slot2: station({ ssid: '222' }),
+      slot3: station({ ssid: '333' }),
+      slot4: station({ ssid: '444' }),
+      slot5: station({ ssid: '555' }),
+      slot6: station({ ssid: '666' }),
+    };
+    const on = (latest: StatusEntry, over: Partial<FieldIssueInputs> = {}) =>
+      detectFieldIssues(inputs({ driveSession: null, latest, ...over })).filter(i => i.station === 'slot1');
+
+    test('a host robot off the Wi-Fi is a note while there is room', () => {
+      const [issue] = on(radio({ slot1: host }), { hostTeams: [111] });
+      expect(issue).toMatchObject({ id: 'host-parked-slot1', severity: 'info', actions: undefined });
+    });
+
+    test('on a full field it is the slot to release', () => {
+      const latest = radio({ slot1: host, ...visitors });
+      const [issue] = on(latest, { hostTeams: [111] });
+      expect(issue).toMatchObject({ id: 'host-parked-slot1', severity: 'warning' });
+      expect(issue.actions).toEqual([{ kind: 'release', station: 'slot1' }]);
+      expect(fieldIsFull(latest)).toBe(true);
+      expect(parkedHostStations(latest, [111])).toEqual(['slot1']);
+    });
+
+    test('a visitor, or anyone during a scrimmage, is still a problem', () => {
+      expect(on(radio({ slot1: host }), { hostTeams: [999] })[0].id).toBe('robot-not-linked-slot1');
+      expect(on(radio({ slot1: host }), { hostTeams: [] })[0].id).toBe('robot-not-linked-slot1');
+    });
+
+    test('a host robot joined to a match is missing, not parked', () => {
+      const [issue] = on(radio({ slot1: host }), {
+        hostTeams: [111],
+        matchState: match({ phase: 'created', stationStates: { slot1: control({ teamNumber: 111, joined: true }) } }),
+      });
+      expect(issue).toMatchObject({ id: 'robot-not-linked-slot1', severity: 'critical' });
+    });
+
+    test('nothing is parked while the AP reconfigures, or when the robot is on', () => {
+      const latest = radio({ slot1: host });
+      latest.radioUpdate!.status = 'CONFIGURING';
+      expect(parkedHostStations(latest, [111])).toEqual([]);
+      expect(parkedHostStations(radio({ slot1: station({ ssid: '111' }) }), [111])).toEqual([]);
+      expect(parkedHostStations(undefined, [111])).toEqual([]);
+    });
+
+    test('a field with an empty slot is not full', () => {
+      expect(fieldIsFull(radio({ slot1: host }))).toBe(false);
+      expect(fieldIsFull(undefined)).toBe(false);
+    });
   });
 
   test('stationLabel names a station by its robot', () => {

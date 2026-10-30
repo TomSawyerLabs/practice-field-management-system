@@ -100,6 +100,7 @@ import {
   useMatchRecordingState,
   sendUpdateSetupSettings,
 } from '../hooks/useBackend';
+import { fieldIsFull, parkedHostStations } from '../utils/fieldIssues';
 
 import Select from '@mui/material/Select';
 import MenuItem from '@mui/material/MenuItem';
@@ -390,6 +391,8 @@ function StationControlSection() {
   const setupConfig = useSetupConfig();
   const queue = useQueueState();
   const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue);
+  const latest = useLatest();
+  const parked = fieldIsFull(latest) ? parkedHostStations(latest, hostTeams) : [];
   const [sortKey, setSortKey] = useState<TeamSortKey>('connected');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(teamSortDefaultDirection.connected);
   const [, setTick] = useState(0);
@@ -431,6 +434,14 @@ function StationControlSection() {
           Slots with no team are not listed. Release takes a robot off the field; Forget also deletes its saved
           passphrase.
         </Typography>
+
+        {parked.length > 0 && (
+          <Alert severity="warning" sx={{ mb: 1.5 }}>
+            The field is full, and {parked.map(s => latest?.radioUpdate?.stationStatuses[s]?.ssid).join(', ')}{' '}
+            {parked.length === 1 ? 'is a parked host robot' : 'are parked host robots'}, not on the Wi-Fi. Release one
+            if a visiting team needs the slot.
+          </Alert>
+        )}
 
         {sorted.length === 0 ? (
           <Typography variant="body2" sx={{ color: 'text.secondary', py: 2 }}>
