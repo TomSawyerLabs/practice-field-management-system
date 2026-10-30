@@ -59,7 +59,7 @@ battery chart and recordings' telemetry work for SystemCore teams too.
        go to `systemcore-captures/systemcore-YYYY-MM-DD.pcap` on steamboat
        (`src/rawPacketLog.ts`; 50 MB/day, 300 MB total, oldest days pruned).
        They are no longer misread as NI packets. NI traffic is unchanged.
-2. [ ] Deploy (needs the user's OK).
+2. [x] Deployed (user OK, 2026-10-29).
 3. [ ] **Next:** when 5940 drives, note when they enable, disable and
        e-stop (or read their pFMS log lines), then decode the day's pcap in
        Wireshark: sequence number, the control-flags word (table above),
@@ -81,14 +81,15 @@ battery chart and recordings' telemetry work for SystemCore teams too.
 ## Progress log
 
 - [x] Research and raw capture built (2026-10-29)
-- [ ] Deployed
+- [x] Deployed 2026-10-29 7:19 PM PDT (02:19Z) as `9891816`. tcpdump
+      filter confirmed live: `udp and (dst port 1150 or dst port 1110 or src port 1110)`
 - [ ] First SystemCore capture recorded
 - [ ] Decoded
 - [ ] Parser shipped
 
 ## Open questions for the user
 
-1. OK to deploy the raw capture along with the dropout warnings?
+1. ~~OK to deploy?~~ Yes, deployed 2026-10-29.
 2. Can you ask 5940 (or whoever runs SystemCore) to drive through pFMS for a
    few minutes next visit, including an enable, a disable and a brownout if
    one happens naturally?

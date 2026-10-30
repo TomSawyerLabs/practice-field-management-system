@@ -53,8 +53,9 @@ with brownouts down to 6.6 V (see `plans/team-114-nt-drops-2026-10-29.md`).
        `frontend/src/utils/robotDropouts.ts`
 5. [x] `/csa` issue for recent dropouts
 6. [x] Typecheck, full test suite (1311 pass), docs/network.md, commit
-7. [ ] **Current:** deploy only with the user's OK, then watch the journal
-       for `Dropout on` lines the next time a team browns out
+7. [x] Deployed (user OK, 2026-10-29)
+8. [ ] **Current:** watch the journal for `Dropout on` lines the next time a
+       team browns out, and check the team page card looks right
 
 ## Findings / gotchas
 
@@ -78,10 +79,10 @@ with brownouts down to 6.6 V (see `plans/team-114-nt-drops-2026-10-29.md`).
 
 - [x] Design (2026-10-29)
 - [x] Implemented and tested (2026-10-29)
-- [ ] Deployed
+- [x] Deployed 2026-10-29 7:19 PM PDT (02:19Z) as `9891816`
 - [ ] Seen working on a real brownout
 
 ## Open questions for the user
 
 1. Also DM the team on Slack when one happens? (Not doing this by default.)
-2. Deploy once done? (Waiting for your yes.)
+2. ~~Deploy once done?~~ Yes, deployed 2026-10-29.
