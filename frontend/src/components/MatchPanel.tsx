@@ -358,6 +358,12 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
 
   return (
     <Card sx={{ mb: 2, ...(joined && isActive && { overflow: 'visible' }) }}>
+      {/* Out of a match, FreeplayControl says why a robot is held. */}
+      {joined && myState?.blockedReason && (
+        <Alert severity="error" sx={{ borderRadius: 0 }}>
+          {myState.blockedReason} The field will not enable this robot — see field staff.
+        </Alert>
+      )}
       <CardContent>
         {/* Phase display when active */}
         {(isActive || isPostMatch) && (
