@@ -92,16 +92,14 @@ capture attribution in `6e290fb`.
   station, moving it off the robot it was reaching. Conntrack has no interface,
   so that was always a guess.
 
-## Release order for addon 0.2.0
+## Addon releases
 
 `bun run build` fetches the addon for the crate's version and fails without that
-release, on steamboat and in `release.yml`. So the tag has to land first:
+release, on steamboat and in `release.yml`. So a version bump's tag has to be
+pushed, and its `mdns-socket` workflow finished, before master goes out. Pushing
+master first fails safely ("nothing deployed"), but the release run fails.
 
-1. `git push origin mdns-socket-v0.2.0` (created locally on master).
-2. Wait for the `mdns-socket` workflow to publish the release.
-3. Push master, then deploy.
-
-Pushing master first fails safely ("nothing deployed"), but the release run fails.
+Addon 0.2.0 went out in that order: published 2026-10-30 3:30 PM PDT (22:30Z).
 
 ## Progress log
 
@@ -111,8 +109,7 @@ Pushing master first fails safely ("nothing deployed"), but the release run fail
       `CheckSource` in `src/teamChecker.ts`; curl in `OPTIONAL_TOOLS`.
 - [x] Unit tests, docs, ISSUES.md.
 - [x] Pinned SystemCore probe: `sendTo` in the addon, version 0.2.0, proven in
-      the lab with all four controller pairings. The local tag exists; the
-      release needs the push above.
+      the lab with all four controller pairings. Released and pushed.
 - [x] Robot tester checked: wrong robot confirmed, logged, and handed to
       `issues/station-test-port` (user, 2026-10-30).
 - [x] Guest laptops of a duplicated team: listed only on the robot they chose,
