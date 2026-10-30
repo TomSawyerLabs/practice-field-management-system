@@ -145,46 +145,6 @@ it to. An explicit choice on the team page or `/route` is respected, because
 auto-connect skips a laptop with a preference; after Disconnect, its next traffic
 gets auto-connected again. Conntrack has no interface to go by.
 
-## Robot tester can't complete a lease on dhcpcd 10.0.x
-
-_in progress — issues/station-test-port_
-
-`dhcpcdArgs()` in `src/robotTestMonitor.ts` passes `--reboot 0`. dhcpcd 10.0.6
-(Ubuntu 24.04, seen in WSL) arms its REQUEST timeout from the `reboot` value, so
-every offer fails on the spot and it spins on `offered` / `failed to request the
-lease` at thousands of lines a second. 10.1.0 (steamboat, Debian) has a separate
-`request_time` and isn't affected. Matters because another site on a 10.0.x
-distro would get no tester lease and a flood of log lines.
-
-## No button starts a firmware update from station test port mode
-
-_in progress — issues/station-test-port_
-
-`stationFirmwareUpdateRequest` is handled on the backend and
-`sendStationFirmwareUpdateRequest` exists in `frontend/src/hooks/useBackend.ts`,
-but nothing calls it. The inline panel on a station card shows firmware progress
-now, yet the only way to start an update there is a hand-sent WebSocket message;
-users have to go to `/test`, which only drives the dedicated test interface.
-
-## /test progress bars keep animating after the operation ends
-
-_in progress — issues/station-test-port_
-
-In `frontend/src/components/TestPage.tsx`, `RadioConfigureSection` and
-`FirmwareUpdateSection` pass `variant={configuring ? 'determinate' : undefined}`
-to `LinearProgress`. `undefined` means indeterminate, so a finished or failed
-operation shows a looping green or red bar under its result.
-
-## Robot checks keep running during a radio configure or firmware update
-
-_in progress — issues/station-test-port_
-
-Seen with a fake radio on a station test port (2026-10-30): pressing Fix while a
-check was in flight left the phase on "Running checks...", and partway through
-the reboot wait it dropped to "Detecting robot..." with the team number gone,
-before the configure had finished. `docs/robot-tester.md` says both operations
-stop the periodic checks. The operation itself still completed.
-
 ## RawPacketLog daily-cap test fails often, even alone
 
 _in progress — issues/test-timing_
