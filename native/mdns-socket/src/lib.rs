@@ -9,9 +9,10 @@
 //! also get groups joined by other sockets on the host.
 //!
 //! JS sees one class, `InterfaceSocket(ifname, port, onPacket)`, with
-//! `send(packet)` (to 224.0.0.251:5353) and `close()`. Packets are delivered
-//! as `onPacket(data, address, port)` from a receive thread. Linux only; on
-//! other systems the constructor throws.
+//! `send(packet)` (to 224.0.0.251:5353), `sendTo(packet, address, port)`
+//! (unicast, for a host on this interface's subnet) and `close()`. Packets
+//! are delivered as `onPacket(data, address, port)` from a receive thread.
+//! Linux only; on other systems the constructor throws.
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
@@ -34,7 +35,8 @@ pub struct InterfaceSocket {
 #[napi]
 impl InterfaceSocket {
   /// Open an mDNS socket on `ifname` (e.g. "br-slot1"), bound to `port`
-  /// (5353 for a responder-style socket). `onPacket(data, address, port)` is
+  /// (5353 for a responder-style socket, 0 for any free port, so that a
+  /// unicast query is answered to that port). `onPacket(data, address, port)` is
   /// called for every datagram that arrives on that interface.
   #[napi(constructor)]
   pub fn new(env: Env, ifname: String, port: u32, on_packet: JsFunction) -> Result<Self> {
@@ -75,6 +77,27 @@ impl InterfaceSocket {
     #[cfg(not(target_os = "linux"))]
     {
       let _ = packet;
+      Err(unsupported())
+    }
+  }
+
+  /// Unicast `packet` to `address:port` out of this interface. Two bridges
+  /// can hold the same subnet, so the routing table can't choose the robot.
+  #[napi]
+  pub fn send_to(&self, packet: Buffer, address: String, port: u32) -> Result<()> {
+    let target: std::net::Ipv4Addr =
+      address.parse().map_err(|_| Error::from_reason(format!("bad IPv4 address {address}")))?;
+    let port = u16::try_from(port).map_err(|_| Error::from_reason(format!("bad port {port}")))?;
+    #[cfg(target_os = "linux")]
+    {
+      self
+        .inner
+        .send_to(&packet, target, port)
+        .map_err(|e| Error::from_reason(format!("send to {address} on {}: {e}", self.ifname)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+      let _ = (packet, target, port);
       Err(unsupported())
     }
   }
@@ -229,13 +252,17 @@ mod linux {
     }
 
     pub fn send(&self, packet: &[u8]) -> io::Result<()> {
+      self.send_to(packet, MDNS_GROUP, MDNS_PORT)
+    }
+
+    pub fn send_to(&self, packet: &[u8], address: Ipv4Addr, port: u16) -> io::Result<()> {
       if self.closed.load(Ordering::Acquire) {
         return Err(io::Error::new(io::ErrorKind::NotConnected, "closed"));
       }
       let mut to: libc::sockaddr_in = unsafe { zeroed() };
       to.sin_family = libc::AF_INET as libc::sa_family_t;
-      to.sin_port = MDNS_PORT.to_be();
-      to.sin_addr = in_addr(MDNS_GROUP);
+      to.sin_port = port.to_be();
+      to.sin_addr = in_addr(address);
       // SAFETY: `packet` and `to` are live for the call.
       let sent = unsafe {
         libc::sendto(

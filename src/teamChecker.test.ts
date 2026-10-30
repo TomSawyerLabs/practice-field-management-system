@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import dgram from 'node:dgram';
+import * as interfaceFetch from './interfaceFetch.js';
+import * as mdnsSocket from './mdnsSocket.js';
 import {
+  checkRobotController,
   controllerBlockReason,
   evaluateControllerPolicy,
   evaluateQosLimit,
@@ -246,5 +250,43 @@ describe('radio bandwidth limit', () => {
 
   test('firmware that does not report the setting is not a failure', () => {
     expect(evaluateQosLimit({}, 6).status).toBe('pass');
+  });
+});
+
+describe('a SystemCore next to a roboRIO of the same team', () => {
+  const spies: { mockRestore(): void }[] = [];
+  afterEach(() => {
+    while (spies.length) spies.pop()!.mockRestore();
+  });
+
+  test('the probe goes out of the station bridge and hears only its own robot', async () => {
+    spies.push(spyOn(interfaceFetch, 'fetchOnInterface').mockRejectedValue(new Error('no roboRIO here')));
+    const direct = spyOn(dgram, 'createSocket');
+    spies.push(direct);
+    const sent: string[] = [];
+    spies.push(
+      spyOn(mdnsSocket, 'openInterfaceSocket').mockImplementation((ifname, port, onPacket) => {
+        const socket: mdnsSocket.InterfaceSocket = {
+          ifname,
+          ifindex: 1,
+          send: () => {
+            throw new Error('the mDNS name check is not under test');
+          },
+          sendTo: (_packet, address, toPort) => {
+            sent.push(`${ifname}:${port} -> ${address}:${toPort}`);
+            onPacket(buildSystemCoreResponse(), '10.59.40.99', 5353); // someone else's reply
+            onPacket(buildSystemCoreResponse(), address, 5353);
+          },
+          close: () => {},
+        };
+        return socket;
+      }),
+    );
+
+    const found = await checkRobotController(5940, [], { ifname: 'br-slot2' });
+
+    expect(sent).toEqual(['br-slot2:0 -> 10.59.40.2:5353']);
+    expect(direct).not.toHaveBeenCalled();
+    expect(found.controller).toBe('systemcore');
   });
 });

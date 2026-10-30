@@ -635,7 +635,51 @@ interface SystemCoreInfo {
  * multicast from the wired side, but answers a query sent to its address
  * (verified with 5940's SystemCore on 2026-09-13).
  */
-function probeSystemCore(ip: string, timeoutMs = FETCH_TIMEOUT): Promise<SystemCoreInfo | null> {
+function probeSystemCore(ip: string, source?: CheckSource, timeoutMs = FETCH_TIMEOUT): Promise<SystemCoreInfo | null> {
+  return source && 'ifname' in source
+    ? pinnedSystemCoreProbe(ip, source.ifname, timeoutMs)
+    : routedSystemCoreProbe(ip, timeoutMs);
+}
+
+/** The SystemCore's answer to our query, or null if this packet isn't one. */
+function systemCoreFromReply(msg: Buffer, ip: string): SystemCoreInfo | null {
+  const answers = parseMdnsAnswers(msg);
+  const srv = answers.find(a => a.type === 'SRV' && a.name.toLowerCase().endsWith(SYSTEMCORE_SERVICE.toLowerCase()));
+  if (!srv || srv.type !== 'SRV') return null;
+  const a = answers.find(r => r.type === 'A' && r.name.toLowerCase() === srv.target.toLowerCase());
+  return { ip: a?.type === 'A' ? a.address : ip, hostname: srv.target, port: srv.port };
+}
+
+/** The probe out of one bridge. A free port, not 5353: the answer comes back
+ *  on this flow, so the drive session's DNAT leaves it alone. */
+function pinnedSystemCoreProbe(ip: string, ifname: string, timeoutMs: number): Promise<SystemCoreInfo | null> {
+  return new Promise(resolve => {
+    let timer: NodeJS.Timeout | undefined;
+    let sock: InterfaceSocket | undefined;
+    let settled = false;
+    const finish = (result: SystemCoreInfo | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sock?.close();
+      resolve(result);
+    };
+    try {
+      sock = openInterfaceSocket(ifname, 0, (msg, address) => {
+        if (address !== ip) return;
+        const core = systemCoreFromReply(msg, ip);
+        if (core) finish(core);
+      });
+      timer = setTimeout(() => finish(null), timeoutMs);
+      sock.sendTo(buildMdnsQuery(SYSTEMCORE_SERVICE, 12), ip, MDNS_PORT);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+/** The probe by the routing table, for the robot tester's own interface. */
+function routedSystemCoreProbe(ip: string, timeoutMs: number): Promise<SystemCoreInfo | null> {
   return new Promise(resolve => {
     const sock = dgram.createSocket('udp4');
     const finish = (result: SystemCoreInfo | null) => {
@@ -651,13 +695,8 @@ function probeSystemCore(ip: string, timeoutMs = FETCH_TIMEOUT): Promise<SystemC
     sock.on('error', () => finish(null));
     sock.on('message', (msg, rinfo) => {
       if (rinfo.address !== ip) return;
-      const answers = parseMdnsAnswers(msg);
-      const srv = answers.find(
-        a => a.type === 'SRV' && a.name.toLowerCase().endsWith(SYSTEMCORE_SERVICE.toLowerCase()),
-      );
-      if (!srv || srv.type !== 'SRV') return;
-      const a = answers.find(r => r.type === 'A' && r.name.toLowerCase() === srv.target.toLowerCase());
-      finish({ ip: a?.type === 'A' ? a.address : ip, hostname: srv.target, port: srv.port });
+      const core = systemCoreFromReply(msg, ip);
+      if (core) finish(core);
     });
     const query = buildMdnsQuery(SYSTEMCORE_SERVICE, 12);
     sock.send(query, 0, query.length, MDNS_PORT, ip, err => {
@@ -811,7 +850,7 @@ async function detectRobotController(
   const standardIp = expectedIP(team);
   const ipsToTry = [standardIp, ...extraIps.filter(ip => ip !== standardIp)];
   for (const ip of ipsToTry) {
-    const core = await probeSystemCore(ip);
+    const core = await probeSystemCore(ip, source);
     if (core) return { controller: 'systemcore', checks: await systemCoreChecks(team, core, source) };
   }
 

@@ -86,25 +86,32 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## A team on two stations: what still isn't per-robot
+## Robot tester can reach the wrong robot when its team is also on a station
 
 _in progress — issues/two-robot-own-traffic_
 
-Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
-`plans/two-robot-own-traffic.md`. These still aren't:
+The tester reaches the radio with plain `fetch` to `10.TE.AM.1`
+(`src/firmwareUpdater.ts`, `src/stationTestManager.ts`, `configureRadio` in
+`src/robotTestMonitor.ts`, plus the tester's own checks). dhcpcd installs the test
+port's route at metric 1000+ifindex and a station bridge's route is metric 0, so
+the bridge wins. Lab, 2026-10-30: three plain requests answered from the station's
+robot, and the test port's robot was reached only with `--interface testport`.
+So with a team's robot on a station and another of its robots on the tester, the
+checks describe the wrong robot, and a configure or firmware update goes to the
+radio on the field. Matters because that write hits a robot the team may be
+driving. Details in `plans/two-robot-own-traffic.md`.
 
-- `probeSystemCore` in `src/teamChecker.ts` sends unicast UDP with dgram, which
-  can't pin to a bridge, so it follows the main routing table to one robot. The
-  addon's `InterfaceSocket.send` only multicasts, so a pinned unicast send needs
-  an addon change and a tagged `mdns-socket` release. Matters when a duplicated
-  team's robots are not both SystemCores or both roboRIOs: the wrong robot can
-  answer, or a SystemCore can read as "not found".
-- `SubnetScanner.scanConntrack` maps a subnet to one station, so for a duplicated
-  team every guest host lands on the last station, and `index.ts` auto-connects
-  that laptop's route preference there. Conntrack has no interface to go by.
-- The robot tester's firmware update and WPA check (`src/firmwareUpdater.ts`,
-  `src/stationTestManager.ts`) fetch `10.TE.AM.1` unpinned. Not checked whether
-  that goes wrong while the same team is also on a station.
+## Guest laptops of a team on two stations land on the last station
+
+_in progress — issues/two-robot-own-traffic_
+
+`SubnetScanner.scanConntrack` maps a subnet to one station, so every guest host of
+a duplicated team is listed on the last of its stations. For a laptop that hasn't
+picked a robot, `index.ts` then auto-connects its route preference there, about
+10 s after its first traffic, moving it from the robot the main table was sending
+it to. An explicit choice on the team page or `/route` is respected, because
+auto-connect skips a laptop with a preference; after Disconnect, its next traffic
+gets auto-connected again. Conntrack has no interface to go by.
 
 ## Subnet scanner ignores DRY_RUN
 
@@ -184,7 +191,7 @@ stop the periodic checks. The operation itself still completed.
 
 _in progress — issues/test-timing_
 
-`src/rawPacketLog.test.ts` › `stops at the daily cap, and starts again the next day` failed 2 of 3 runs of that file alone on an idle-ish Windows machine (2026-10-30), and once in a full `bun test` (746 pass / 1 fail): `Expected: 176, Received: 24` at line 59. The test's `flush()` calls `log.close()` and then waits a fixed 50 ms. Matters because it turns a full run red on its own.
+`src/rawPacketLog.test.ts` › `stops at the daily cap, and starts again the next day` failed 2 of 3 runs of that file alone on an idle-ish Windows machine (2026-10-30), and once in a full `bun test` (746 pass / 1 fail): `Expected: 176, Received: 24` at line 59. `writes a pcap file per local day, header first` fails the same way (2026-10-30: 5 of 5 runs of the file alone showed a failure, and once in a full run). The test's `flush()` calls `log.close()` and then waits a fixed 50 ms. Matters because it turns a full run red on its own.
 
 ## Three more tests time out when the full suite runs under heavy load
 

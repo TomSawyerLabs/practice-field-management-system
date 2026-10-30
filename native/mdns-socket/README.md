@@ -2,7 +2,8 @@
 
 A Node native addon (Rust, [napi-rs](https://napi.rs)) that opens an mDNS
 socket pinned to one network interface. pFMS uses it for the robot side of
-its mDNS reflector and for the team checks' mDNS lookups.
+its mDNS reflector, for the team checks' mDNS lookups, and for the unicast
+query that identifies a SystemCore.
 
 The interface has to be picked by name: when one team runs two robots, two
 station bridges hold the same address (`10.TE.AM.254`), and Node's `dgram`
@@ -15,6 +16,7 @@ leaves by that bridge only, and only that bridge's answers arrive.
 import { openInterfaceSocket } from './mdnsSocket.js'; // src/mdnsSocket.ts
 const s = openInterfaceSocket('br-slot1', 5353, (data, address, port) => {});
 s.send(query); // to 224.0.0.251:5353, out of br-slot1
+s.sendTo(query, '10.19.67.2', 5353); // unicast, out of br-slot1
 s.close();
 ```
 

@@ -378,8 +378,9 @@ Each sweep is pinned to the station's bridge (`fping -I br-slotN`), and so is
 the HTTP in the team checks (`curl --interface br-slotN`). A team on two
 stations has the same subnet on two bridges, and the routing table would send
 everything to one robot, so pinning is what lets each station report its own
-robot. The check that identifies a SystemCore (a unicast mDNS query) is the
-exception: it still follows the routing table.
+robot. The unicast mDNS query that identifies a SystemCore is pinned too (by
+the `mdns-socket` addon), so one team can run a roboRIO and a SystemCore side
+by side.
 
 ### Guest Host Names
 

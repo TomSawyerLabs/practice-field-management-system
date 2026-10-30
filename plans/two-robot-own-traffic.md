@@ -35,6 +35,11 @@ capture attribution in `6e290fb`.
 - **Every team takes the same path** whenever pFMS runs the bridges, matching
   the "one system for every team" decision for mDNS. A duplicated-team special
   case would only be exercised when a team brings two robots.
+- **The SystemCore probe is pinned too** (user, 2026-10-30: one team running a
+  SystemCore and a roboRIO should work). No system tool sends pinned UDP, so
+  `InterfaceSocket` gained `sendTo`, released as addon 0.2.0. It opens on a free
+  port rather than 5353: the answer returns on that flow, so the drive session's
+  DNAT leaves it alone, and the query keeps the shape 5940's SystemCore answered.
 - **curl is an optional tool, not a required one.** Without it the field still
   runs; only the checks on station networks fail, and the setup wizard lists it.
 
@@ -68,6 +73,34 @@ capture attribution in `6e290fb`.
   - The counts are harmless and stay until steamboat reboots or a bridge is
     deleted. `br-slot1` reading 56 in future is not a new leak; only growth is.
 
+- **Lab, mixed controllers (2026-10-30):** the real `checkRobotController` and
+  addon 0.2.0, with rio+core, core+rio, core+core and rio+rio on two bridges of
+  one team. All four named the right controller and the right robot per bridge.
+- **Lab trap:** Bun loads an addon only from a `.node` filename. Given a `.so`, it
+  parsed the ELF as JavaScript, the load failed, and the probe returned null, which
+  looked like a probe bug. Also bind a multi-address fake robot's UDP socket to
+  `.2`, or its answer leaves from `.1` and the probe ignores it.
+- **Robot tester (2026-10-30), confirmed wrong:** plain requests go to the station
+  bridge, not the test port, when the same team is on both. dhcpcd's default metric
+  is 1000+ifindex (`man dhcpcd`) and the bridge's connected route is 0. Lab: three
+  plain requests answered from the station's robot; only `--interface testport`
+  reached the test port's. Writes (configure, firmware) follow the same route.
+  Logged in ISSUES.md; not fixed here.
+- **Laptop routing (read from the code, 2026-10-30):** each laptop can choose,
+  from the team page's Connect (route preference) or `/route` and Drive. The gap
+  is the default: see the ISSUES.md entry on guest laptops.
+
+## Release order for addon 0.2.0
+
+`bun run build` fetches the addon for the crate's version and fails without that
+release, on steamboat and in `release.yml`. So the tag has to land first:
+
+1. `git push origin mdns-socket-v0.2.0` (created locally on master).
+2. Wait for the `mdns-socket` workflow to publish the release.
+3. Push master, then deploy.
+
+Pushing master first fails safely ("nothing deployed"), but the release run fails.
+
 ## Progress log
 
 - [x] Read IGMP state and socket owners on steamboat (read-only).
@@ -75,6 +108,10 @@ capture attribution in `6e290fb`.
 - [x] `fping -I` in `src/subnetScanner.ts`; `src/interfaceFetch.ts` and
       `CheckSource` in `src/teamChecker.ts`; curl in `OPTIONAL_TOOLS`.
 - [x] Unit tests, docs, ISSUES.md.
+- [x] Pinned SystemCore probe: `sendTo` in the addon, version 0.2.0, proven in
+      the lab with all four controller pairings. The local tag exists; the
+      release needs the push above.
+- [x] Robot tester checked: wrong robot confirmed, logged.
 - [ ] Not yet seen live: two robots of one team both on. Check the Network page
       for both stations next time. The pinned path runs for every team from the
       next deploy, so ordinary team checks exercise it straight away.

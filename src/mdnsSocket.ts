@@ -17,6 +17,8 @@ export interface InterfaceSocket {
   readonly ifindex: number;
   /** Multicast to 224.0.0.251:5353 out of this interface. Throws on failure. */
   send(packet: Buffer): void;
+  /** Unicast to `address:port` out of this interface. Throws on failure. */
+  sendTo(packet: Buffer, address: string, port: number): void;
   /** Stop receiving and close. Idempotent. */
   close(): void;
 }
@@ -58,8 +60,8 @@ export function mdnsSocketUnavailable(): string | null {
 }
 
 /**
- * Open an mDNS socket on `ifname` (a station bridge), bound to `port` (5353)
- * and joined to 224.0.0.251 on that interface only. `onPacket` gets every
+ * Open an mDNS socket on `ifname` (a station bridge), bound to `port` (5353,
+ * or 0 for any free port) and joined to 224.0.0.251 on that interface only. `onPacket` gets every
  * datagram that arrives there. Throws if the addon isn't available or the
  * interface doesn't exist.
  */
