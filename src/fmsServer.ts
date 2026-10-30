@@ -470,6 +470,8 @@ type Events = {
  *  enabled on 2026-09-12). */
 export type FmsServer = EventEmitter<Events> & {
   udpSocket: Socket;
+  /** The TCP port it listens on: the one asked for, or the OS's pick for 0. */
+  tcpPort: number;
   /** Stop listening and drop every DS connection — the field network went
    *  away, so 10.0.100.5 is about to. */
   close(): Promise<void>;
@@ -498,6 +500,9 @@ export async function startFMSServer({
 } = {}) {
   return new Promise<FmsServer>((resolve, reject) => {
     let udpServer: Socket;
+    // Port 0 asks the OS to pick; these become its answer once bound.
+    let tcpPort = tcp;
+    let udpPort = udp;
 
     // Track active TCP connections per IP so we only emit dsDisconnected when the
     // last connection from an IP closes (avoids removing DNAT rules prematurely
@@ -586,7 +591,7 @@ export async function startFMSServer({
           // suppressed msgs/30s on 2026-07-17), destroying the useful logs.
           console.log('Received object from TCP stream:', obj);
         }
-        emitter.emit('message', { address: rawAddr, port: tcp, data: obj });
+        emitter.emit('message', { address: rawAddr, port: tcpPort, data: obj });
       });
 
       socket.on('close', () => {
@@ -651,7 +656,9 @@ export async function startFMSServer({
     tcpServer.on('error', error);
 
     tcpServer.listen(tcp, address, () => {
-      console.log(`FMS server listening on TCP ${address}:${tcp}`);
+      tcpPort = (tcpServer.address() as net.AddressInfo).port;
+      emitter.tcpPort = tcpPort;
+      console.log(`FMS server listening on TCP ${address}:${tcpPort}`);
       udpServer = dgram.createSocket('udp4');
       emitter.udpSocket = udpServer;
 
@@ -682,13 +689,14 @@ export async function startFMSServer({
           return;
         }
 
-        emitter.emit('message', { address: rinfo.address, port: udp, data: message });
+        emitter.emit('message', { address: rinfo.address, port: udpPort, data: message });
       });
 
       udpServer.on('error', error);
 
       udpServer.bind(udp, address, () => {
-        console.log(`UDP server listening on ${address}:${udp}`);
+        udpPort = udpServer.address().port;
+        console.log(`UDP server listening on ${address}:${udpPort}`);
 
         tcpServer.removeListener('error', error);
         tcpServer.on('error', err => {

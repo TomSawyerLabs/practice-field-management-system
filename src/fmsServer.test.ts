@@ -3,34 +3,11 @@ import dgram from 'node:dgram';
 import net from 'node:net';
 import { parseIncomingUdpMessage, startFMSServer, type FmsServer } from './fmsServer.js';
 
-// Loopback, on ports the OS says are free. The real server binds
-// 10.0.100.5:1750/1160, which a test cannot. Not a fixed or random range:
-// Windows reserves port ranges (Hyper-V, WinNAT) that move between boots,
-// and a random pick inside one fails with EACCES.
+// Loopback, on ports the OS picks as it binds (port 0). The real server binds
+// 10.0.100.5:1750/1160, which a test cannot. Never a port chosen first and bound
+// later: Windows reserves ranges (Hyper-V, WinNAT) that move while it runs, so
+// a port found free can refuse the bind with EACCES a moment later.
 const ADDRESS = '127.0.0.1';
-
-async function freeTcpPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>(r => server.listen(0, ADDRESS, r));
-  const { port } = server.address() as net.AddressInfo;
-  await new Promise(r => server.close(r));
-  return port;
-}
-
-async function freeUdpPort(): Promise<number> {
-  const socket = dgram.createSocket('udp4');
-  await new Promise<void>(r => socket.bind(0, ADDRESS, r));
-  const { port } = socket.address();
-  await new Promise<void>(r => socket.close(() => r()));
-  return port;
-}
-
-let TCP = 0;
-let UDP = 0;
-beforeAll(async () => {
-  TCP = await freeTcpPort();
-  UDP = await freeUdpPort();
-});
 
 /** Legacy NI DS team handshake: [size:2=3] [0x18] [team:2]. */
 function handshake(team: number) {
@@ -41,35 +18,50 @@ function handshake(team: number) {
   return b;
 }
 
-/** Connect a fake DS and send its handshake. Resolves once the frame is out. */
-function connectDs(team: number) {
-  return new Promise<net.Socket>((resolve, reject) => {
-    const socket = net.connect(TCP, ADDRESS, () => {
-      socket.write(handshake(team), err => (err ? reject(err) : resolve(socket)));
+/** Resolves once the server has read this team's handshake. */
+const handshaked = (fms: FmsServer, team: number) =>
+  new Promise<void>(resolve => {
+    fms.on('message', function heard({ data }) {
+      if (!('teamNumber' in data) || data.teamNumber !== team) return;
+      fms.off('message', heard);
+      resolve();
     });
-    socket.on('error', reject);
   });
+
+/** Connect a fake DS and send its handshake. Resolves once the server has read it. */
+async function connectDs(fms: FmsServer, team: number) {
+  const read = handshaked(fms, team);
+  const socket = await new Promise<net.Socket>((resolve, reject) => {
+    const s = net.connect(fms.tcpPort, ADDRESS, () => {
+      s.write(handshake(team), err => (err ? reject(err) : resolve(s)));
+    });
+    s.on('error', reject);
+  });
+  await read;
+  return socket;
 }
 
 const closed = (socket: net.Socket) => new Promise<void>(resolve => socket.once('close', () => resolve()));
+/** Time for something that must NOT happen to show itself. Anything a test
+ *  needs to have happened gets waited for by name instead: a fixed wait for
+ *  that fails on a busy machine. */
 const settle = () => Bun.sleep(150);
 
 describe('disconnectTeam closes the sessions of one team only', () => {
   let fms: FmsServer;
 
   beforeAll(async () => {
-    fms = await startFMSServer({ address: ADDRESS, tcp: TCP, udp: UDP });
+    fms = await startFMSServer({ address: ADDRESS, tcp: 0, udp: 0 });
   });
   afterAll(() => {
     fms.udpSocket.close();
   });
 
   test('a DS whose handshake named the team is closed; another team is left alone', async () => {
-    const moved = await connectDs(4159);
-    const bystander = await connectDs(581);
+    const moved = await connectDs(fms, 4159);
+    const bystander = await connectDs(fms, 581);
     let bystanderClosed = false;
     bystander.once('close', () => (bystanderClosed = true));
-    await settle(); // let the server parse both handshakes
 
     fms.emit('disconnectTeam', { teamNumber: 4159, reason: 'slot4 joined' });
     await closed(moved);
@@ -80,7 +72,7 @@ describe('disconnectTeam closes the sessions of one team only', () => {
 
   test('a connection that never handshaked is not touched', async () => {
     const silent = await new Promise<net.Socket>((resolve, reject) => {
-      const s = net.connect(TCP, ADDRESS, () => resolve(s));
+      const s = net.connect(fms.tcpPort, ADDRESS, () => resolve(s));
       s.on('error', reject);
     });
     let silentClosed = false;
@@ -94,8 +86,7 @@ describe('disconnectTeam closes the sessions of one team only', () => {
   });
 
   test('after disconnectDS by address, the team close finds nothing left to do', async () => {
-    const ds = await connectDs(1868);
-    await settle();
+    const ds = await connectDs(fms, 1868);
     fms.emit('disconnectDS', { address: ADDRESS });
     // Same tick: the socket is already flagged destroyed, so this is a no-op
     // rather than a second log line and a double destroy.
@@ -107,16 +98,14 @@ describe('disconnectTeam closes the sessions of one team only', () => {
 
 describe('handshake reply follows the resolver', () => {
   let fms: FmsServer;
-  let TCP2 = 0;
   const answers: Record<number, 'red2'> = { 254: 'red2' };
   const askedFrom: string[] = [];
 
   beforeAll(async () => {
-    TCP2 = await freeTcpPort();
     fms = await startFMSServer({
       address: ADDRESS,
-      tcp: TCP2,
-      udp: await freeUdpPort(),
+      tcp: 0,
+      udp: 0,
       resolveTeamSlot: (team, address) => {
         askedFrom.push(address);
         return answers[team];
@@ -129,13 +118,16 @@ describe('handshake reply follows the resolver', () => {
 
   /** Handshake as `team` and collect whatever the server sends back. */
   async function replyTo(team: number): Promise<Buffer> {
-    const socket = await new Promise<net.Socket>((resolve, reject) => {
-      const s = net.connect(TCP2, ADDRESS, () => s.write(handshake(team), err => (err ? reject(err) : resolve(s))));
-      s.on('error', reject);
-    });
+    const socket = await connectDs(fms, team);
     const chunks: Buffer[] = [];
-    socket.on('data', c => chunks.push(c));
-    await settle();
+    const replied = new Promise<void>(resolve =>
+      socket.on('data', c => {
+        chunks.push(c);
+        resolve();
+      }),
+    );
+    // Any reply was written before the server reported the handshake
+    if (answers[team]) await replied;
     socket.destroy();
     return Buffer.concat(chunks);
   }
@@ -194,11 +186,9 @@ describe('DS UDP status parsing', () => {
 
 describe('unparseable UDP status logging', () => {
   let fms: FmsServer;
-  let UDP3: number;
 
   beforeAll(async () => {
-    UDP3 = await freeUdpPort();
-    fms = await startFMSServer({ address: ADDRESS, tcp: await freeTcpPort(), udp: UDP3 });
+    fms = await startFMSServer({ address: ADDRESS, tcp: 0, udp: 0 });
   });
   afterAll(() => {
     fms.udpSocket.close();
@@ -207,12 +197,15 @@ describe('unparseable UDP status logging', () => {
   test('each new shape of bad packet from one address is logged with its payload', async () => {
     const log = spyOn(console, 'log');
     const client = dgram.createSocket('udp4');
-    const send = (b: Buffer) => new Promise<void>(r => client.send(b, UDP3, ADDRESS, () => r()));
+    const { port } = fms.udpSocket.address();
+    const send = (b: Buffer) => new Promise<void>(r => client.send(b, port, ADDRESS, () => r()));
     try {
       await send(Buffer.alloc(0));
       await send(Buffer.from([0xab, 0xcd, 0xef]));
       await send(Buffer.from([0xab, 0xcd, 0xef])); // same shape: counted, not re-logged
-      await settle();
+      const read = new Promise(resolve => fms.once('message', resolve));
+      await send(status()); // a good packet, so the ones before it have been read
+      await read;
       const lines = log.mock.calls.map(c => String(c[0])).filter(l => l.startsWith('Unparseable DS UDP status'));
       expect(lines).toHaveLength(2);
       expect(lines[0]).toContain('0 bytes');
@@ -226,14 +219,10 @@ describe('unparseable UDP status logging', () => {
 
 describe('stopping the server (the field network went away)', () => {
   test('drops every DS and frees both ports, so it can start again', async () => {
-    const tcp = await freeTcpPort();
-    const udp = await freeUdpPort();
-    const first = await startFMSServer({ address: ADDRESS, tcp, udp });
-    const ds = await new Promise<net.Socket>((resolve, reject) => {
-      const s = net.connect(tcp, ADDRESS, () => resolve(s));
-      s.on('error', reject);
-    });
-    await settle();
+    const first = await startFMSServer({ address: ADDRESS, tcp: 0, udp: 0 });
+    const tcp = first.tcpPort;
+    const { port: udp } = first.udpSocket.address();
+    const ds = await connectDs(first, 4159);
 
     await first.close();
     await closed(ds);
