@@ -246,13 +246,18 @@ describe('the WebSocket gate', () => {
       ws.once('open', res);
       ws.once('error', rej);
     });
-    /** Send, then wait for the server to have dealt with it (it answers
+    /** Wait for the server to have answered everything sent so far (it answers
      *  messages in order, and every socket gets an answer to a bad one). */
+    const settled = async (before: number) => {
+      ws.send('not json');
+      while (!replies.slice(before).some(r => r.error === 'Invalid JSON')) await Bun.sleep(2);
+    };
+    // The connection's opening burst must not land among a test's replies.
+    await settled(0);
     const send = async (msg: object) => {
       const before = replies.length;
       ws.send(JSON.stringify(msg));
-      ws.send('not json');
-      while (!replies.slice(before).some(r => r.error === 'Invalid JSON')) await Bun.sleep(2);
+      await settled(before);
       return replies.slice(before).filter(r => r.error !== 'Invalid JSON');
     };
     const dsState = () => replies.filter(r => r.type === 'dsClientState').at(-1);
