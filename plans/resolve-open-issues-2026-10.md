@@ -38,7 +38,8 @@ issue, and surface the entries that need a user decision or real hardware.
 
 - OFFSEASON firmware docs: do the OFFSEASON code paths stay?
 - DS-client guard hardening: user said "fine for now" (2026-07-24).
-- Space → A-Stop in the match window: deliberately deferred.
+- ~~Space → A-Stop in the match window~~: declined by the user (2026-10-30).
+  The risk on record: global key handlers that stop robots can misfire.
 - "Restart pFMS" action: needs a decision on how (systemd restart vs.
   in-process re-init) and who may trigger it.
 - The Blue Alliance reporting: a feature, needs scoping.

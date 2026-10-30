@@ -44,12 +44,6 @@ was 774/0 and both pass on their own. The first sleeps 3.4 s and expects
 `finishedAt` between 0 and 2. Matters because a red full run hides real
 regressions.
 
-## Stop buttons
-
-Deferred decision, not done on purpose: mapping Space in the match window to
-A-Stop during auto would match driver muscle memory (and A-Stop self-releases),
-but global key handlers that stop robots can misfire.
-
 ## Unverified behaviour we depend on
 
 Each needs a field visit. What to try and what each result means is in
