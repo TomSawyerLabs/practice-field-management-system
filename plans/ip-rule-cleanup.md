@@ -73,6 +73,15 @@ Read from steamboat on 2026-10-30: 485 rules, down to priority 31927.
 - [x] Tests, docs, ISSUES.md
 - [ ] Next deploy: check `ip rule list` on steamboat drops to about one rule per
       laptop on the field. The user does the deploy.
+- [ ] Same check, taken over from the robot-tester dhcpcd thread: confirm the
+      `[manager]` dhcpcd process is gone and `dhcpcd: eno1.99 [ip4]` comes and goes
+      (`plans/robot-tester-dhcpcd.md`).
+
+The deploy is not imminent. As of 2026-10-30 `origin/master` is still `6e290fb`:
+local master is held for one big push, after the remaining Issues threads and
+after tag `mdns-socket-v0.2.0` goes out. A message will arrive after the push, so
+do both checks then. The watcher started 2:37 PM PDT (21:37Z) stops about 4:37 PM
+PDT (23:37Z); that timing out is expected, not a failure, and it is not re-armed.
 
 ## Things not to do
 
