@@ -41,48 +41,37 @@ regressions.
 
 ## Stop buttons
 
-_in progress — issues/audit-unverified_
-
-Both surfaces now ignore keyboard-synthesized clicks on E-Stop and make
-A-Stop dominant through the countdown and auto. What's left:
-
-- Deferred decision: mapping Space in the match window to A-Stop during auto
-  would match driver muscle memory (and A-Stop self-releases), but global key
-  handlers that stop robots can misfire. Not done on purpose.
-- The station page's new layout has not been looked at on a real phone.
+Deferred decision, not done on purpose: mapping Space in the match window to
+A-Stop during auto would match driver muscle memory (and A-Stop self-releases),
+but global key handlers that stop robots can misfire.
 
 ## Unverified behaviour we depend on
 
-_in progress — issues/audit-unverified_
+Each needs a field visit. What to try and what each result means is in
+`plans/field-verification-checklist.md`.
 
-Each of these is asserted by our code but was never confirmed against real
-hardware or a real deployment:
-
-- **Out-of-match release.** A DS that isn't in the match gets a status-2
-  reply, meant to return it to local control. If a DS instead treats status 2
-  as "connected, waiting", this parks every freeplay DS rather than freeing
-  it. Default-on. `FMS_TCP_REPLY_STATIONS` (assign a real slot instead) has
-  never been bench-tested either.
-- **Re-enable after a DS-side disable.** `undisable()` clears the field's
-  latch and resumes enable packets; whether a DS that latched a local Enter
-  disable follows it back to enabled is untested.
-- **2027 DS stop reporting.** Neither a Disable nor an E-Stop pressed on the
-  2027 DS has been observed reaching pFMS.
-- **Public match links need a proxy change.** The post-match QR and
-  `/matches/<token>` links only work from outside once the reverse proxy
-  rewrites `/matches/*` and exempts `/api/public/*` from its access check.
-  That change was staged in the ops repo; there's no record it was applied.
+- **Re-enable after a DS-side disable (check 1).** `undisable()` clears the
+  field's latch and resumes enable packets, but a DS that latched a local Enter
+  disable may not follow. There's no clean sample: since telemetry began on
+  2026-09-27, every disable followed by a re-enable was a dropped DS or a lost
+  robot link.
+- **2027 DS stop reporting (check 2).** pFMS can't see a Disable pressed on a
+  2027 DS: `dsReportedStatus` only counts a disable after seeing the enabled
+  bit, which that DS never sets (0 of 37,736 telemetry rows for team 5940, whose
+  e-stop and a-stop bits were never set either). The field would show that
+  robot as enabled. Whether the DS signals a stop some other way is unknown.
+- **DSes that keep reporting outside a match (checks 3, 4).** pFMS drops a DS
+  that streams status while not in a match, so it returns to local control. It
+  doesn't always take: 590 drops from 2026-10-09 to 2026-10-28, repeating every
+  15 s, including 173 in 43 minutes for one DS of team 2813 on 2026-10-25. Nobody
+  has looked at such a laptop, so it isn't known if the team could still drive.
 
 ## Depends on things outside this repo
 
-_in progress — issues/audit-unverified_
-
 - The balls-counter deployed on sentinel runs from the unmerged branch
-  `fix/package-for-latest-uv` (PR #1 open), not its master. A `git pull` on
-  master there silently breaks match score recording.
-- Score review and match recording rely on fields in the `/ws/scores`
-  broadcast (`phase`, `matchId`, `subPeriod`, `inactiveGoalAlliance`, pause
-  spans) — see `docs/scoring.md`. Don't rename or drop them.
+  `fix/package-for-latest-uv` (`897046d`, PR #1 open, mergeable, 9 ahead of
+  master, as of 2026-10-30), not its master. A `git pull` on master there
+  silently breaks match score recording.
 
 ## Not started
 
@@ -91,12 +80,12 @@ _in progress — issues/audit-unverified_
 
 ## SystemCore gaps
 
-_in progress — issues/audit-unverified_
-
-- Passive robot telemetry (`robotPacketCapture.ts`) only captures packets to
-  UDP port 1150. A SystemCore robot talks to its DS mostly over UDP 1110, so
-  check whether battery voltage shows up for a SystemCore robot that isn't
-  in a match. Unverified on hardware.
+- pFMS can't read a SystemCore robot's own traffic yet. Since `cb0db29` it
+  records UDP 1110 both ways but doesn't decode it, so outside a match there's
+  no battery, link or dropout data for these robots. In a match, battery does
+  show, because the DS reports it to the field. Waiting on a first capture
+  (check 5 in `plans/field-verification-checklist.md`), then a parser:
+  `plans/systemcore-robot-capture.md`.
 
 ## Setup and packaging
 
@@ -191,3 +180,9 @@ retry/timeout path described in the code isn't what happens.
 ## StationStatus `full` mode looks unreachable
 
 `StationStatus` takes a `full` prop that switches on `FreeplayControl`, `MatchPanel`, `StationNetworkCard`, the mDNS table and the full chart set, but its only callers (`SlotGroup` and the deprecated `AllianceStatus` in `frontend/src/components/AllianceStatus.tsx`) never pass it. Worth deciding whether that code is dead and removable.
+
+## Page header icons are too small to tap on a phone
+
+Seen 2026-10-30 at 320px wide: the status bar's Get Help, Scoreboard and GitHub
+icons are 14×14 px and 4 px apart, on every page. Get Help is the one a team
+needs when something is wrong.
