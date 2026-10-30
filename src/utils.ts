@@ -1,4 +1,4 @@
-import type { Alliance, DiscoveredHost, SetupSettings, StationName } from './types.js';
+import type { Alliance, DiscoveredHost, QueueState, SetupSettings, StationName } from './types.js';
 import CIDRMatcher from 'cidr-matcher';
 
 /** `10.TE.AM` for a team — the first three octets every robot-side address
@@ -85,15 +85,28 @@ export function teamOfSsid(ssid: string | null | undefined): number | null {
   return Number.isNaN(num) ? null : num;
 }
 
-/** The teams getting the host's treatment right now: none in a scrimmage. */
-export function hostTeamsInEffect(settings: Pick<SetupSettings, 'hostTeams' | 'scrimmageMode'>): number[] {
-  return settings.scrimmageMode ? [] : (settings.hostTeams ?? []);
+/** Matches are being run from the queue: its line is open, or a match is
+ *  lined up or playing. */
+export function queueInUse(queue: Pick<QueueState, 'settings' | 'entries'>): boolean {
+  return (
+    queue.settings.lineOpen ||
+    queue.entries.some(e => e.status === 'queued' || e.status === 'onDeck' || e.status === 'playing')
+  );
 }
 
-/** Whether a robot gets the host's treatment right now. */
-export function isHostRobot(ssid: string, settings: Pick<SetupSettings, 'hostTeams' | 'scrimmageMode'>): boolean {
+/** The teams getting the host's treatment right now. None while the queue is
+ *  in use, which is what a scrimmage looks like: everyone is treated alike. */
+export function hostTeamsInEffect(
+  settings: Pick<SetupSettings, 'hostTeams'>,
+  queue: Pick<QueueState, 'settings' | 'entries'> | null,
+): number[] {
+  return queue && queueInUse(queue) ? [] : (settings.hostTeams ?? []);
+}
+
+/** Whether a robot belongs to one of these teams, whatever its suffix. */
+export function isRobotOfTeams(ssid: string, teams: number[]): boolean {
   const team = teamOfSsid(ssid);
-  return team !== null && hostTeamsInEffect(settings).includes(team);
+  return team !== null && teams.includes(team);
 }
 
 /**

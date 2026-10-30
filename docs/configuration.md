@@ -62,8 +62,7 @@ service restart — no `systemctl daemon-reload` needed.
 | `RADIO_CLEAR_TIMEZONE` | _(none)_ | Timezone for scheduled clearing (e.g., `America/Los_Angeles`)            |
 
 The host team's robots stay configured through a scheduled clear, unless the
-admin page's Scrimmage box is ticked. See
-[Host team](match-system.md#host-team).
+match queue is in use. See [Host team](match-system.md#host-team).
 
 ## Scoring & Scoreboard
 

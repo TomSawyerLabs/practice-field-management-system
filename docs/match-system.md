@@ -392,11 +392,15 @@ This only changes what pFMS proposes. Staff and the team can still release a
 host robot, and **Clear all robots from the radio** still takes everything
 off: it is for a stuck field.
 
-Ticking **Scrimmage** on that card (setting `scrimmageMode`) suspends all of
-this, so the host team's robots come and go like everyone else's. It stays
-on until an admin unticks it; pFMS has no way to tell a scrimmage is over.
+A scrimmage suspends all of this, and the [match queue](#match-queue) is how
+pFMS knows one is on: while its line is open or a match is queued, on deck
+or playing, the host team's robots come and go like everyone else's, and the
+card shows **Scrimmage**. It ends by itself once the line is closed and no
+match is left in the queue. This is the same test that turns practice clips
+off. A match left in the queue keeps it on, so clear the queue after a
+scrimmage.
 
-Both settings are admin-only, like every other setup setting.
+`hostTeams` is admin-only, like every other setup setting.
 
 ## Match queue
 

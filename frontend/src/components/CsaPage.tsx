@@ -47,6 +47,7 @@ import {
   useLastLinked,
   useLatest,
   useMatchState,
+  useQueueState,
   useSetupConfig,
   useNetworkStats,
   usePendingCommitState,
@@ -980,6 +981,7 @@ export function CsaPage() {
   const robotDropouts = useRobotDropouts();
   const robotEStops = useRobotEStops();
   const setupConfig = useSetupConfig();
+  const queue = useQueueState();
   const [selected, setSelected] = useState<StationName | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -1033,7 +1035,7 @@ export function CsaPage() {
   // Robots on the field, longest there first, the host team's last. Empty
   // slots are not shown at all: staff think in robots, and slot numbers mean
   // nothing to a CSA.
-  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {});
+  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue);
   const facts = releaseOrder(matchState, hostTeams)
     .map(s => stationFacts(input, issues, s, hostTeams))
     .filter(f => f.ssid);

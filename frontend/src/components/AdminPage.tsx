@@ -24,7 +24,7 @@ import TableSortLabel from '@mui/material/TableSortLabel';
 
 import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
-import { hostTeamsInEffect, prettyStationName, teamLabelAmong } from '../../../src/utils';
+import { hostTeamsInEffect, prettyStationName, queueInUse, teamLabelAmong } from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -90,6 +90,7 @@ import {
   sendSaveAudioDeviceConfig,
   sendTestAudioDevice,
   sendRefreshAudioDevices,
+  useQueueState,
   useSetupConfig,
   useRobotWifiScan,
   useSixGhzWatch,
@@ -386,7 +387,8 @@ function ConnectedTeamRow({ row, isHost }: { row: TeamRow; isHost: boolean }) {
 function StationControlSection() {
   const rows = useConnectedTeamRows();
   const setupConfig = useSetupConfig();
-  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {});
+  const queue = useQueueState();
+  const hostTeams = hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue);
   const [sortKey, setSortKey] = useState<TeamSortKey>('connected');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(teamSortDefaultDirection.connected);
   const [, setTick] = useState(0);
@@ -1058,11 +1060,12 @@ function SixGhzWatchSection() {
 
 /** Who hosts the field: their robots keep their slots through the daily reset
  *  and after matches, and are the last staff are pointed at to release. The
- *  scrimmage switch suspends all of that without losing the list. */
+ *  match queue being in use suspends all of that: it means a scrimmage. */
 function HostTeamSection() {
   const setupConfig = useSetupConfig();
   const hostTeams = setupConfig?.config.settings.hostTeams ?? [];
-  const scrimmage = setupConfig?.config.settings.scrimmageMode === true;
+  const queue = useQueueState();
+  const scrimmage = queue !== null && queueInUse(queue);
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
@@ -1088,19 +1091,10 @@ function HostTeamSection() {
           The host team&rsquo;s robots stay on the field through the daily reset and when a match ends, and are listed
           last when choosing who to release. Staff and the team can still release them.
         </Typography>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={scrimmage}
-              onChange={e => sendUpdateSetupSettings({ scrimmageMode: e.target.checked })}
-            />
-          }
-          label="Scrimmage: treat the host team like everyone else"
-        />
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
           {scrimmage
-            ? 'The host team’s robots are cleared by the daily reset and queued to leave after a match, like every other robot. Untick this when the scrimmage is over.'
-            : 'Tick this for a scrimmage. It stays on, across days, until you untick it.'}
+            ? 'The match queue is in use, so this counts as a scrimmage: the host team’s robots are cleared by the daily reset and queued to leave after a match, like every other robot. That ends once the line is closed and no match is left in the queue.'
+            : 'While the match queue is in use (its line is open, or a match is lined up), this counts as a scrimmage and the host team is treated like everyone else.'}
         </Typography>
       </CardContent>
     </Card>

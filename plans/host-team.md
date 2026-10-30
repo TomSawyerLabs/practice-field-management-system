@@ -25,9 +25,10 @@ set and managed by admins only.
 
 - **Host teams are a list of team numbers** (`hostTeams`), not SSIDs, so every
   robot a team brings counts. One team is the usual case; a list costs nothing.
-- **Scrimmage is an explicit admin switch** (`scrimmageMode`). pFMS has no
-  other signal for it. It is manual both ways, because a scrimmage can run over
-  several days.
+- **A scrimmage is the match queue being in use** (user, 2026-10-30): its line
+  is open, or a match is queued, on deck or playing. This replaced an admin
+  checkbox from the first pass (`a04ab2e`). It is the test that already turned
+  practice clips off, now shared as `queueInUse` in `src/utils.ts`.
 - **Only the scheduled reset spares the host.** Admin "Clear all robots from
   the radio" stays total: it is the escape hatch for a stuck field.
 - **Post-match, host robots are not queued to leave.** Staff can still release
@@ -48,13 +49,26 @@ set and managed by admins only.
 
 ## Progress log
 
-- [x] Backend: `hostTeams` and `scrimmageMode` settings, `keep` on the clear,
-      `stays` on the post-match release, scheduler and match-end wiring.
+- [x] Backend: `hostTeams` setting, `keep` on the clear, `stays` on the
+      post-match release, scheduler and match-end wiring.
+- [x] Scrimmage follows the queue instead of a checkbox.
+- [x] Steamboat runs the reset: `RADIO_CLEAR_SCHEDULE=0 6 * * *` in
+      `/etc/pfms/environment`, last fired 2026-10-30 6:00 AM PDT (13:00Z).
 - [x] Frontend: Host team card on `/admin`, host last and labelled on Teams &
       Controls and the CSA page.
 - [x] Docs: `docs/match-system.md`, `docs/configuration.md`.
 - [x] Tests: `radioManager.test.ts`, `utils.test.ts`, `fieldIssues.test.ts`.
 - [ ] Not deployed. The admin card has not been opened in a browser.
+
+## Findings / gotchas
+
+- The unit on steamboat is `practice-field-management-system.service`, not
+  `pfms`.
+- The last match of a queue still counts as a scrimmage. The release listener
+  runs before the queue's own listener marks the match played, so a host robot
+  is queued to leave after it.
+- A match left in the queue keeps "scrimmage" on, so the 6:00 AM reset clears
+  the host team too. The card shows Scrimmage when this happens.
 
 ## Things not to do
 

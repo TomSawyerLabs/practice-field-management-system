@@ -11,7 +11,7 @@ import dgram from 'node:dgram';
 import { startConfigurationScheduler } from './scheduler.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
-import { isHostRobot, teamOfSsid, teamSubnet, toCidr } from './utils.js';
+import { hostTeamsInEffect, isRobotOfTeams, queueInUse, teamOfSsid, teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine, teamStopCut } from './matchEngine.js';
 import {
@@ -434,14 +434,16 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // When a match ends, every robot on the field is queued to leave unless it
   // plays on: joining the next match, or pressing Keep / Enable Wi-Fi,
   // withdraws its release. Nothing leaves until staff apply. The host team's
-  // robots aren't queued, outside a scrimmage.
+  // robots aren't queued, unless the match queue is in use (a scrimmage).
+  const isHostRobot = (ssid: string) =>
+    isRobotOfTeams(ssid, hostTeamsInEffect(setupConfigStore.get().settings, matchQueue.getState()));
   let phaseBeforeRelease = matchEngine.getState().phase;
   matchEngine.addStateListener(state => {
     const previous = phaseBeforeRelease;
     phaseBeforeRelease = state.phase;
     if (state.phase !== 'postMatch' || previous === 'postMatch') return;
     if (setupConfigStore.get().settings.releaseAfterMatch === false) return;
-    radioManager.stageReleaseAll('postMatch', ssid => isHostRobot(ssid, setupConfigStore.get().settings));
+    radioManager.stageReleaseAll('postMatch', isHostRobot);
   });
   matchEngine.setStationJoinHook(station => {
     const ssid = radioManager.getStationConfig(station)?.ssid;
@@ -782,11 +784,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // the recordings volume is short of space.
     pauseReason: () => {
       if (matchRecorder.space() !== 'ok') return 'The field is short of disk space, so practice clips are paused.';
-      const queue = matchQueue.getState();
-      const queueInUse =
-        queue.settings.lineOpen ||
-        queue.entries.some(e => e.status === 'queued' || e.status === 'onDeck' || e.status === 'playing');
-      if (matchEngine.getState().phase !== 'idle' || queueInUse) {
+      if (matchEngine.getState().phase !== 'idle' || queueInUse(matchQueue.getState())) {
         return 'Matches are being run, so practice clips are off — every match is recorded instead.';
       }
       return undefined;
@@ -1413,9 +1411,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Initialize scheduled configuration clearing
   if (RadioClearSchedule) {
-    startConfigurationScheduler(radioManager, RadioClearSchedule, RadioClearTimezone, matchEngine, ssid =>
-      isHostRobot(ssid, setupConfigStore.get().settings),
-    );
+    startConfigurationScheduler(radioManager, RadioClearSchedule, RadioClearTimezone, matchEngine, isHostRobot);
   } else {
     console.log('RADIO_CLEAR_SCHEDULE environment variable is not set. Skipping scheduled configuration clearing.');
   }
