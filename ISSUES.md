@@ -1,5 +1,20 @@
 # Known Issues & Technical Debt
 
+## Check per-laptop `ip rule` entries on steamboat on a day with teams
+
+The cleanup (`480bc89`) deployed in `0586d9a` with no team on the field, so two
+things have only run against a fake kernel. Read-only on steamboat, while laptops
+are driving or routed:
+
+- `ip rule list` should show rules numbered from 32765 down, one per laptop, no
+  duplicates. This is the first real use of `ip rule add ... priority N`.
+- After a graceful reload (`systemctl reload`) with teams on, the journal should
+  show `Restored route preference`, and those laptops' rules should still be there.
+
+If rules don't appear, or the journal shows `Could not remove stale ip rule`, that
+matters: Drive and auto-connect depend on them. Close this entry once both are
+seen. Background: `plans/ip-rule-cleanup.md`.
+
 ## The WebSocket takes field commands from the internet
 
 Seen reading the code and the ops repo's `servers/steamboat/sites.d/pfms.caddy`

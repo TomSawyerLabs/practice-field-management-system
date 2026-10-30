@@ -77,11 +77,10 @@ Read from steamboat on 2026-10-30: 485 rules, down to priority 31927.
 - [x] Same check, taken over from the robot-tester dhcpcd thread: confirm the
       `[manager]` dhcpcd process is gone and `dhcpcd: eno1.99 [ip4]` comes and goes
       (`plans/robot-tester-dhcpcd.md`).
-- [ ] Still unseen on real hardware, because no team was on the field: a rule added
-      with an explicit priority (expect 32765 first), and a graceful reload that
-      keeps a live rule. On a day with teams, `ip rule list` should show numbers
-      from 32765 down with no duplicates, and a reload should log
-      `Restored route preference`.
+- [x] Handed off: a rule added with an explicit priority and a graceful reload that
+      keeps a live rule were not seen on real hardware, because no team was on the
+      field. Tracked in `ISSUES.md`, "Check per-laptop `ip rule` entries on steamboat
+      on a day with teams".
 
 The deploy was a graceful reload at 3:33 PM PDT (22:33Z). The journal says
 `Removed 482 stale per-laptop ip rule(s)`, taking 485 rules to the 3 system ones,
