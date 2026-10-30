@@ -42,11 +42,11 @@ service restart — no `systemctl daemon-reload` needed.
 
 ## FMS Protocol
 
-| Variable                 | Default   | Description                                                                                                                                                                      |
-| ------------------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FMS_TCP_REPLY_STATIONS` | _(none)_  | Experimental: stations whose DS gets the FMS TCP station-assignment reply outside a match (`slot1,slot2` or `all`). For testing whether a TCP-only reply locks out local enable. |
-| `FMS_LOG_DS_MESSAGES`    | _(unset)_ | Set to log verbose per-message DS TCP/UDP hex dumps (debugging)                                                                                                                  |
-| `SYSLOG_ENDPOINT`        | `false`   | Set to `true` to enable the syslog server (radio log collection)                                                                                                                 |
+| Variable                 | Default   | Description                                                                                                                                                               |
+| ------------------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FMS_TCP_REPLY_STATIONS` | _(none)_  | Testing only: stations whose DS gets the station-assignment reply outside a match (`slot1,slot2` or `all`). An assignment hides the DS's Enable button (docs/network.md). |
+| `FMS_LOG_DS_MESSAGES`    | _(unset)_ | Set to log verbose per-message DS TCP/UDP hex dumps (debugging)                                                                                                           |
+| `SYSLOG_ENDPOINT`        | `false`   | Set to `true` to enable the syslog server (radio log collection)                                                                                                          |
 
 ## Robot Tester
 

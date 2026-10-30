@@ -95,8 +95,10 @@ Control packets to the 2027 DS must come **from** the FMS's UDP port 1160.
 Sent from an ephemeral port, the DS showed "connected" but never enabled and
 sent no status back; from 1160 it worked. It never sets the "enabled" bit in its
 status, even while the robot runs. During a live match its TCP traffic was
-only `0x1e` handshakes and `0x1d` keepalives. Whether a Disable pressed on
-the DS reaches pFMS is untested.
+only `0x1e` handshakes and `0x1d` keepalives. pFMS only counts a status as a
+disable after it has seen that bit set, so it can't see a Disable pressed on
+this DS. Whether the DS signals a Disable or an E-Stop some other way is
+untested (`plans/field-verification-checklist.md`).
 
 Seen between a 2027 DS and a SystemCore robot on the field: UDP 1110 in
 both directions (the robot replies to the DS's source port, so NAT works
@@ -115,7 +117,8 @@ match" reply instead (what Cheesy Arena sends). Every DS 26.0 takes that as
 `[ ] \` enable key combo still enables with the button hidden
 (`plans/csa-fms-control-status.md`). If a DS out of a match keeps streaming
 status to the field (it still thinks it is under FMS control), pFMS drops its
-connection again and logs it.
+connection again and logs it, every 15 s until the stream stops. That doesn't
+always work: some DSes have kept streaming through this for over 40 minutes.
 
 A second laptop for a robot another laptop is driving gets no reply either:
 it is held off the robot's network anyway, and an assignment would lock it.
