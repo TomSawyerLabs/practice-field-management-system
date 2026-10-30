@@ -162,14 +162,6 @@ _in progress — issues/ui-cleanup_
 
 `StationStatus` takes a `full` prop that switches on `FreeplayControl`, `MatchPanel`, `StationNetworkCard`, the mDNS table and the full chart set, but its only callers (`SlotGroup` and the deprecated `AllianceStatus` in `frontend/src/components/AllianceStatus.tsx`) never pass it. Worth deciding whether that code is dead and removable.
 
-## Page header icons are too small to tap on a phone
-
-_in progress — issues/ui-cleanup_
-
-Seen 2026-10-30 at 320px wide: the status bar's Get Help, Scoreboard and GitHub
-icons are 14×14 px and 4 px apart, on every page. Get Help is the one a team
-needs when something is wrong.
-
 ## No button starts a firmware update from station test port mode
 
 _in progress — issues/station-test-port_

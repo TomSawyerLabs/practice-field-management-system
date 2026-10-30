@@ -21,6 +21,14 @@ import {
 
 type DotColor = 'success.main' | 'error.main' | 'warning.main' | 'text.disabled';
 
+/** The bar is thin for a mouse. On a touch screen it grows to fit thumb targets. */
+const TOUCH = '@media (pointer: coarse)';
+// Square, not MUI's circle: a round button leaves dead corners between neighbours.
+const LINK_BUTTON = { p: 0, [TOUCH]: { width: 44, height: 44, borderRadius: 1 } };
+const LINK_ICON = { fontSize: 14, [TOUCH]: { fontSize: 24 } };
+/** Get Help is what a team reaches for when something is wrong: the biggest icon. */
+const SUPPORT_ICON = { fontSize: 14, [TOUCH]: { fontSize: 30 } };
+
 function StatusDot({ color, label, tooltip }: { color: DotColor; label: string; tooltip: string }) {
   return (
     <Tooltip title={tooltip} arrow>
@@ -118,6 +126,7 @@ function SupportCalloutBubble({ onClick }: { onClick: () => void }) {
           position: 'absolute',
           top: -6,
           right: 4,
+          [TOUCH]: { right: 16 }, // the middle of the larger button
           width: 0,
           height: 0,
           borderLeft: '6px solid transparent',
@@ -152,14 +161,14 @@ function SupportButton() {
     return (
       <Box sx={{ position: 'relative' }}>
         <Tooltip title="Get Help / Report Issue" arrow disableHoverListener={!noticed}>
-          <IconButton onClick={handleClick} size="small" sx={{ p: 0, color: 'warning.main' }}>
+          <IconButton onClick={handleClick} size="small" sx={{ ...LINK_BUTTON, color: 'warning.main' }}>
             <Badge
               badgeContent={unreadCount || undefined}
               color="error"
               invisible={!unreadCount}
               sx={{ '& .MuiBadge-badge': { fontSize: '0.55rem', minWidth: 14, height: 14 } }}
             >
-              <SupportAgentIcon sx={{ fontSize: 14 }} />
+              <SupportAgentIcon sx={SUPPORT_ICON} />
             </Badge>
           </IconButton>
         </Tooltip>
@@ -179,10 +188,10 @@ function SupportButton() {
             component="a"
             href="/support"
             size="small"
-            sx={{ p: 0, color: 'warning.main' }}
+            sx={{ ...LINK_BUTTON, color: 'warning.main' }}
             onClick={handleClick}
           >
-            <SupportAgentIcon sx={{ fontSize: 14 }} />
+            <SupportAgentIcon sx={SUPPORT_ICON} />
           </IconButton>
         </Tooltip>
         {!noticed && <SupportCalloutBubble onClick={handleClick} />}
@@ -241,30 +250,55 @@ export function StatusBar() {
         justifyContent: 'center',
         height: 24,
         px: 1,
+        [TOUCH]: { height: 'auto', pr: 0.5 },
         backgroundColor: pending.pending ? 'info.dark' : 'background.paper',
         borderBottom: 1,
         borderColor: 'divider',
         transition: 'background-color 0.3s',
       }}
     >
-      <StatusDot color={internet.color} label="Internet" tooltip={internet.tooltip} />
-      <StatusDot color={pfms.color} label="PFMS" tooltip={pfms.tooltip} />
-      {serverStartTime != null && <UptimeDisplay serverStartTime={serverStartTime} />}
-      {pending.pending && (
-        <Tooltip title={<PendingChangeList />} arrow enterTouchDelay={0} leaveTouchDelay={4000}>
-          <Typography
-            component="span"
-            sx={{ ml: 1, fontSize: '0.65rem', lineHeight: 1.2, cursor: 'default', whiteSpace: 'nowrap' }}
-          >
-            ⏳ Wi-Fi changes waiting
-          </Typography>
-        </Tooltip>
-      )}
-      <Box sx={{ position: 'absolute', right: 4, display: 'flex', gap: 0.5, alignItems: 'center' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          // Beside the larger icons a narrow phone has no room for every status on one line
+          [TOUCH]: { flex: 1, minWidth: 0, flexWrap: 'wrap' },
+        }}
+      >
+        <StatusDot color={internet.color} label="Internet" tooltip={internet.tooltip} />
+        <StatusDot color={pfms.color} label="PFMS" tooltip={pfms.tooltip} />
+        {serverStartTime != null && <UptimeDisplay serverStartTime={serverStartTime} />}
+        {pending.pending && (
+          <Tooltip title={<PendingChangeList />} arrow enterTouchDelay={0} leaveTouchDelay={4000}>
+            <Typography
+              component="span"
+              sx={{ ml: 1, fontSize: '0.65rem', lineHeight: 1.2, cursor: 'default', whiteSpace: 'nowrap' }}
+            >
+              ⏳ Wi-Fi changes waiting
+            </Typography>
+          </Tooltip>
+        )}
+      </Box>
+      <Box
+        sx={{
+          position: 'absolute',
+          right: 4,
+          display: 'flex',
+          gap: 0.5,
+          alignItems: 'center',
+          [TOUCH]: { position: 'static', gap: 0, flexShrink: 0 },
+        }}
+      >
         <SupportButton />
         <Tooltip title="Scoreboard" arrow>
-          <IconButton component="a" href="/scores" target="_blank" size="small" sx={{ p: 0, color: 'text.secondary' }}>
-            <ScoreboardIcon sx={{ fontSize: 14 }} />
+          <IconButton
+            component="a"
+            href="/scores"
+            target="_blank"
+            size="small"
+            sx={{ ...LINK_BUTTON, color: 'text.secondary' }}
+          >
+            <ScoreboardIcon sx={LINK_ICON} />
           </IconButton>
         </Tooltip>
         <Tooltip title="View source on GitHub" arrow>
@@ -274,9 +308,9 @@ export function StatusBar() {
             target="_blank"
             rel="noopener"
             size="small"
-            sx={{ p: 0, color: 'text.secondary' }}
+            sx={{ ...LINK_BUTTON, color: 'text.secondary' }}
           >
-            <GitHubIcon sx={{ fontSize: 14 }} />
+            <GitHubIcon sx={LINK_ICON} />
           </IconButton>
         </Tooltip>
       </Box>
