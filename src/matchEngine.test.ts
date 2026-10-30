@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, jest, setSystemTime, test } from 'bun:test';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,6 +45,15 @@ function dsGoesQuiet(engine: MatchEngine, station: Station) {
 function sweepReadiness(engine: MatchEngine) {
   (engine as unknown as { unreadyStationsWithoutDs(): boolean }).unreadyStationsWithoutDs();
 }
+
+/** The tests in a describe run the engine on a fake clock: timers and
+ *  Date.now only move through elapse(), however busy the machine is. */
+function useFakeClock() {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+}
+
+const elapse = (ms: number) => jest.advanceTimersByTime(ms);
 
 describe('official match timing stays locked', () => {
   test('durations sent by a client are ignored', () => {
@@ -214,6 +223,8 @@ describe('the challenge tally', () => {
 });
 
 describe('a challenge run end to end', () => {
+  useFakeClock();
+
   /** Get a single robot onto the field and start the run. */
   function startRun(timing: 'window' | 'stopwatch') {
     const engine = new MatchEngine(() => 5940);
@@ -228,11 +239,11 @@ describe('a challenge run end to end', () => {
     return engine;
   }
 
-  test('counts down, runs the window with no auto, and tallies laps', async () => {
+  test('counts down, runs the window with no auto, and tallies laps', () => {
     const engine = startRun('window');
     expect(engine.getState().phase).toBe('countdown');
 
-    await Bun.sleep(3400);
+    elapse(3400);
     const running = engine.getState();
     // Straight to the run — a challenge has no autonomous period
     expect(running.phase).toBe('teleop');
@@ -251,11 +262,11 @@ describe('a challenge run end to end', () => {
     engine.challengeAdjust('red', -5, -5);
     expect(engine.getState().challenge!.red).toMatchObject({ laps: 0, penalties: 0 });
     engine.stopMatch();
-  }, 10_000);
+  });
 
-  test('finishing a stopwatch run stops the robot and ends the run', async () => {
+  test('finishing a stopwatch run stops the robot and ends the run', () => {
     const engine = startRun('stopwatch');
-    await Bun.sleep(3400);
+    elapse(3400);
     expect(engine.getState().phase).toBe('teleop');
 
     engine.challengeFinish('red');
@@ -265,20 +276,22 @@ describe('a challenge run end to end', () => {
     // The run proper started after the 3 s countdown
     expect(finished.challenge!.red.finishedAt).toBeGreaterThan(0);
     expect(finished.challenge!.red.finishedAt).toBeLessThan(2);
-  }, 10_000);
+  });
 
-  test('finish is refused when the run is timed by the window', async () => {
+  test('finish is refused when the run is timed by the window', () => {
     const engine = startRun('window');
-    await Bun.sleep(3400);
+    elapse(3400);
     engine.challengeFinish('red');
     expect(engine.getState().phase).toBe('teleop');
     expect(engine.getState().challenge!.red.finishedAt).toBeUndefined();
     engine.stopMatch();
-  }, 10_000);
+  });
 });
 
 describe('a challenge run lands in match history', () => {
-  test('carries its timing and per-alliance tally, and follows post-buzzer corrections', async () => {
+  useFakeClock();
+
+  test('carries its timing and per-alliance tally, and follows post-buzzer corrections', () => {
     const file = join(tmpdir(), `pfms-history-${randomUUID()}.json`);
     const engine = new MatchEngine(() => 5940);
     const history = new MatchHistoryStore(file);
@@ -293,7 +306,7 @@ describe('a challenge run lands in match history', () => {
     engine.setReady('slot1', true);
     engine.startMatch();
 
-    await Bun.sleep(3400);
+    elapse(3400);
     engine.challengeAdjust('red', 4);
     engine.stopMatch();
 
@@ -313,11 +326,13 @@ describe('a challenge run lands in match history', () => {
     expect(history.getState().matches.at(-1)!.challenge!.tally.red!.laps).toBe(5);
 
     rmSync(file, { force: true });
-  }, 10_000);
+  });
 });
 
 describe('a match everyone walked away from', () => {
-  test('is still recorded, with every team that played', async () => {
+  useFakeClock();
+
+  test('is still recorded, with every team that played', () => {
     const file = join(tmpdir(), `pfms-history-${randomUUID()}.json`);
     const engine = new MatchEngine(station => (station === 'slot1' ? 5940 : 254));
     const history = new MatchHistoryStore(file);
@@ -334,7 +349,7 @@ describe('a match everyone walked away from', () => {
       engine.setReady(station, true);
     }
     engine.startMatch();
-    await Bun.sleep(3400);
+    elapse(3400);
 
     // One leaves, then the other — the last departure ends the match
     engine.leaveStation('slot1');
@@ -351,11 +366,13 @@ describe('a match everyone walked away from', () => {
 
     engine.clearMatch();
     rmSync(file, { force: true });
-  }, 10_000);
+  });
 });
 
 describe('a robot in the match with no Driver Station', () => {
-  test('is warned about once, and again if its DS drops a second time', async () => {
+  useFakeClock();
+
+  test('is warned about once, and again if its DS drops a second time', () => {
     const warnings: string[] = [];
     setBroadcast(msg => {
       const m = msg as { type?: string; level?: string; message?: string };
@@ -373,30 +390,32 @@ describe('a robot in the match with no Driver Station', () => {
     dsAttached(engine, 'slot1');
     engine.setReady('slot1', true);
     engine.startMatch();
-    await Bun.sleep(3400);
+    elapse(3400);
     expect(warnings).toEqual([]);
 
     engine.clearDSAddress('slot1');
-    await Bun.sleep(600);
+    elapse(600);
     expect(warnings).toEqual([
       "Team 5940 (slot1) has no Driver Station connected to the field, so its robot can't be enabled",
     ]);
 
     // Back, then gone again: a fresh warning
     engine.setDSAddress('slot1', '10.59.40.5');
-    await Bun.sleep(600);
+    elapse(600);
     engine.clearDSAddress('slot1');
-    await Bun.sleep(600);
+    elapse(600);
     expect(warnings.length).toBe(2);
 
     engine.stopMatch();
     engine.clearMatch();
     setBroadcast(() => {});
-  }, 15_000);
+  });
 });
 
 describe('after the buzzer', () => {
-  test('a robot that connects to a station outside the match shows straight away', async () => {
+  useFakeClock();
+
+  test('a robot that connects to a station outside the match shows straight away', () => {
     const onRadio: Partial<Record<Station, number>> = { slot1: 5940 };
     const engine = new MatchEngine(station => onRadio[station] ?? null);
     engine.createMatch();
@@ -407,7 +426,7 @@ describe('after the buzzer', () => {
     dsAttached(engine, 'slot1');
     engine.setReady('slot1', true);
     engine.startMatch();
-    await Bun.sleep(3400);
+    elapse(3400);
 
     // Mid-match, the roster is frozen
     onRadio.slot2 = 254;
@@ -421,11 +440,11 @@ describe('after the buzzer', () => {
     expect(engine.getState().stationStates.slot1!.teamNumber).toBe(5940);
 
     engine.clearMatch();
-  }, 10_000);
+  });
 });
 
 /** Robots on both alliances, all readied, started. Returns after the horn. */
-async function startRace(config: Partial<MatchConfig>, stations: Record<string, 'red' | 'blue'>) {
+function startRace(config: Partial<MatchConfig>, stations: Record<string, 'red' | 'blue'>) {
   const engine = new MatchEngine(() => 5940);
   engine.createMatch();
   engine.updateMatchConfig(request({ format: 'challenge', teleopDuration: 60, ...config }));
@@ -439,14 +458,16 @@ async function startRace(config: Partial<MatchConfig>, stations: Record<string, 
     engine.setReady(station as 'slot1', true);
   }
   engine.startMatch();
-  await Bun.sleep(3400);
+  elapse(3400);
   expect(engine.getState().phase).toBe('teleop');
   return engine;
 }
 
 describe('a stopwatch race holds a finished alliance down', () => {
-  test('through a pause and resume, and against the re-enable button', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+  useFakeClock();
+
+  test('through a pause and resume, and against the re-enable button', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
     engine.challengeFinish('red');
     let s = engine.getState();
     expect(s.stationStates.slot1?.enabled).toBe(false);
@@ -462,32 +483,34 @@ describe('a stopwatch race holds a finished alliance down', () => {
 
     engine.pauseMatch();
     engine.resumeMatch();
-    await Bun.sleep(3200);
+    elapse(3200);
     s = engine.getState();
     expect(s.phase).toBe('teleop');
     expect(s.stationStates.slot1?.enabled).toBe(false);
     expect(s.stationStates.slot2?.enabled).toBe(true);
     engine.stopMatch();
-  }, 15_000);
+  });
 
-  test('finish is refused for an alliance with nobody on the field', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+  test('finish is refused for an alliance with nobody on the field', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
     engine.challengeFinish('blue');
     expect(engine.getState().challenge!.blue.finishedAt).toBeUndefined();
     engine.stopMatch();
-  }, 10_000);
+  });
 
-  test('ends when the last robot still on the clock leaves', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+  test('ends when the last robot still on the clock leaves', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
     engine.challengeFinish('red');
     engine.leaveStation('slot2');
     expect(engine.getState().phase).toBe('postMatch');
-  }, 10_000);
+  });
 });
 
 describe('a relay with staff hand-offs', () => {
-  test('runs one robot per alliance at a time and stops the clock on the last', async () => {
-    const engine = await startRace(
+  useFakeClock();
+
+  test('runs one robot per alliance at a time and stops the clock on the last', () => {
+    const engine = startRace(
       { challengeTiming: 'relay', relayHandoff: 'staff' },
       { slot1: 'red', slot2: 'red', slot3: 'blue' },
     );
@@ -517,7 +540,7 @@ describe('a relay with staff hand-offs', () => {
     // Pausing and resuming brings back only the current runners
     engine.pauseMatch();
     engine.resumeMatch();
-    await Bun.sleep(3200);
+    elapse(3200);
     s = engine.getState();
     expect(s.stationStates.slot1?.enabled).toBe(false);
     expect(s.stationStates.slot2?.enabled).toBe(true);
@@ -537,12 +560,14 @@ describe('a relay with staff hand-offs', () => {
     s = engine.getState();
     expect(s.challenge!.blue.finishedAt).toBeDefined();
     expect(s.phase).toBe('postMatch');
-  }, 15_000);
+  });
 });
 
 describe('a relay with driver-station hand-offs', () => {
-  test('the runner disabling itself sends the next robot', async () => {
-    const engine = await startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
+  useFakeClock();
+
+  test('the runner disabling itself sends the next robot', () => {
+    const engine = startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
     // The station console's own Disable counts
     engine.stationDisable('slot1', 'self');
     let s = engine.getState();
@@ -550,26 +575,28 @@ describe('a relay with driver-station hand-offs', () => {
     expect(s.challenge!.red.splits).toHaveLength(1);
 
     // A DS-reported disable counts too, once the post-enable grace has passed
-    await Bun.sleep(2100);
+    elapse(2100);
     engine.dsReportedStatus('slot2', false, false, false, 0x00, true);
     s = engine.getState();
     expect(s.challenge!.red.finishedAt).toBeDefined();
     expect(s.phase).toBe('postMatch');
-  }, 15_000);
+  });
 
-  test('a disable from a robot that is not running is just a disable', async () => {
-    const engine = await startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
+  test('a disable from a robot that is not running is just a disable', () => {
+    const engine = startRace({ challengeTiming: 'relay', relayHandoff: 'ds' }, { slot1: 'red', slot2: 'red' });
     engine.stationDisable('slot2', 'self');
     expect(engine.getState().challenge!.red.splits ?? []).toHaveLength(0);
     expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
     engine.stopMatch();
-  }, 10_000);
+  });
 });
 
 describe('a driver station that drops off the field mid-match', () => {
-  test('comes back enabled when its last word was a disable', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
-    await Bun.sleep(2100);
+  useFakeClock();
+
+  test('comes back enabled when its last word was a disable', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red', slot2: 'blue' });
+    elapse(2100);
     engine.dsReportedStatus('slot1', false, false, false, 0x78, true);
     let s = engine.getState();
     expect(s.stationStates.slot1?.enabled).toBe(false);
@@ -584,20 +611,20 @@ describe('a driver station that drops off the field mid-match', () => {
     engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
     expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
     engine.stopMatch();
-  }, 15_000);
+  });
 
-  test('a disable from a DS that keeps talking is the driver, and stays', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
-    await Bun.sleep(2100);
+  test('a disable from a DS that keeps talking is the driver, and stays', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+    elapse(2100);
     engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
     engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
     expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
     expect(engine.getState().stationStates.slot1?.disabledBy).toBe('ds');
     engine.stopMatch();
-  }, 10_000);
+  });
 
-  test('an admin Disable right behind an admin Enable is a double click and is ignored', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+  test('an admin Disable right behind an admin Enable is a double click and is ignored', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
     engine.stationDisable('slot1', 'admin');
     expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
     engine.undisable('slot1', true);
@@ -605,22 +632,22 @@ describe('a driver station that drops off the field mid-match', () => {
     engine.stationDisable('slot1', 'admin');
     expect(engine.getState().stationStates.slot1?.enabled).toBe(true);
     // Repeated after the debounce it is a decision
-    await Bun.sleep(1600);
+    elapse(1600);
     engine.stationDisable('slot1', 'admin');
     expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
     expect(engine.getState().stationStates.slot1?.disabledBy).toBe('admin');
     engine.stopMatch();
-  }, 10_000);
+  });
 
-  test('a staff disable survives the DS coming back', async () => {
-    const engine = await startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
+  test('a staff disable survives the DS coming back', () => {
+    const engine = startRace({ challengeTiming: 'stopwatch' }, { slot1: 'red' });
     engine.stationDisable('slot1', 'admin');
     dsGoesQuiet(engine, 'slot1');
     engine.dsReportedStatus('slot1', false, false, false, 0x38, true);
     expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
     expect(engine.getState().stationStates.slot1?.disabledBy).toBe('admin');
     engine.stopMatch();
-  }, 10_000);
+  });
 });
 
 describe('a set-up match nobody joins', () => {
@@ -699,8 +726,10 @@ describe('a set-up match nobody joins', () => {
 });
 
 describe('a manual relay', () => {
-  test('enables everyone and ends on Finish', async () => {
-    const engine = await startRace(
+  useFakeClock();
+
+  test('enables everyone and ends on Finish', () => {
+    const engine = startRace(
       { challengeTiming: 'relay', relayHandoff: 'manual' },
       { slot1: 'red', slot2: 'red', slot3: 'blue' },
     );
@@ -712,7 +741,7 @@ describe('a manual relay', () => {
     engine.challengeFinish('red');
     engine.challengeFinish('blue');
     expect(engine.getState().phase).toBe('postMatch');
-  }, 10_000);
+  });
 });
 
 describe('the roster names the robot that joined, not the slot radio', () => {
