@@ -285,6 +285,26 @@ A later `Robot link back … after Ns` shows when it recovered (a DS restart,
 say). The 2027 DS isn't judged: its robot answers on the DS's own port, which
 the capture doesn't watch.
 
+**Short dropouts** (0.5–10 s) are too quick for those checks, but they are
+what drops NetworkTables and dashboards. The same capture pairs each control
+packet with the robot's reply by sequence number
+(`src/robotDropouts.ts`), and logs one `Dropout on <slot> (<team>): …` line
+per dropout:
+
+- `the robot answered none of N control packets for Xs`: the DS kept
+  sending and the robot went quiet. The line ends in
+  `— brownout, battery down to V` when a reply within 2 s before or 3 s after
+  had the brownout bit or a battery under 7 V. A brownout that deep cuts the
+  robot's network (team 114, 2026-10-29: ~1 s each, down to 6.6 V).
+- `the Driver Station sent its robot nothing for Xs (laptop side)`: the
+  laptop or its Wi-Fi went quiet.
+
+Only control packets pFMS actually forwarded count towards the robot's
+silence, so the field's own stop cut isn't mistaken for one. The team's page
+shows a warning with the last 15 minutes' dropouts, what they mean and what
+to try, plus a brownout count for the visit. `/csa` lists the robot too.
+Like the link checks, this needs a legacy DS routed through pFMS.
+
 The match engine still records a Driver Station per station; the drive
 sessions keep it in step, so a station shows the laptop of the robot on it
 now.

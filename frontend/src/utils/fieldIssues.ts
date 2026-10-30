@@ -21,6 +21,7 @@ import type {
   RobotWifiScanState,
   SixGhzWatchState,
   RoutePreferenceState,
+  RobotDropoutsState,
   StationName,
   StatusEntry,
   SubnetScanResults,
@@ -31,6 +32,7 @@ import { StationNameList } from '../../../src/types';
 import { prettyStationName, teamOfSsid } from '../../../src/utils';
 import { robotWifiStaffIssues } from './robotWifi';
 import { isSixGhzWatching, sixGhzStaffIssues } from './sixGhzWatch';
+import { dropoutStaffIssues } from './robotDropouts';
 
 export type IssueSeverity = 'critical' | 'warning' | 'info';
 
@@ -162,6 +164,8 @@ export interface FieldIssueInputs {
   /** Other access points using teams' network names on 6 GHz, when the
    *  watch is set up. */
   sixGhzWatch?: SixGhzWatchState | null;
+  /** Short robot connection dropouts this visit. */
+  robotDropouts?: RobotDropoutsState | null;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -883,6 +887,16 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
       detail: w.detail,
       fix: w.fix,
     });
+  }
+
+  // ── Short dropouts (src/robotDropouts.ts): over in a second, so the live
+  //    telemetry above never shows them ──
+  if (input.robotDropouts) {
+    for (const d of dropoutStaffIssues(input.robotDropouts.stations, input.now, station =>
+      stationLabel(input, station),
+    )) {
+      push(d);
+    }
   }
 
   const rank = new Map(stationOrder(matchState).map((s, i) => [s, i]));

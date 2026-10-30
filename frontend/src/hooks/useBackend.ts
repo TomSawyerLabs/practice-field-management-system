@@ -130,6 +130,7 @@ import {
   StagedStationChange,
   QueueState,
   StationChecksState,
+  RobotDropoutsState,
   QueueAdmin,
   isQueueState,
   isHostToolsInstallState,
@@ -142,6 +143,7 @@ import {
   type LeaderboardScope,
   type ChallengeLeaderboardTables,
   isStationChecksState,
+  isRobotDropoutsState,
   TeamPrefsState,
   isTeamPrefsState,
   NudgeChannels,
@@ -448,6 +450,7 @@ let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
+let currentRobotDropouts: RobotDropoutsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
 let currentPendingCommit = false;
@@ -952,6 +955,12 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isRobotDropoutsState(detail)) {
+    currentRobotDropouts = detail;
+    events.dispatchEvent(new CustomEvent('robotDropouts', { detail }));
+    return;
+  }
+
   if (isSystemdServiceInstallResult(detail)) {
     events.dispatchEvent(new CustomEvent('systemdServiceInstallResult', { detail }));
     return;
@@ -1214,6 +1223,22 @@ export function useStationChecks(): StationChecksState | null {
     const handler = (e: Event) => setState((e as CustomEvent<StationChecksState>).detail);
     events.addEventListener('stationChecks', handler);
     return () => events.removeEventListener('stationChecks', handler);
+  }, []);
+
+  return state;
+}
+
+// ── Robot dropouts ──────────────────────────────────────────────────
+
+/** Short robot connection dropouts and brownouts this visit, per station. */
+export function useRobotDropouts(): RobotDropoutsState | null {
+  const [state, setState] = useState<RobotDropoutsState | null>(currentRobotDropouts);
+
+  useEffect(() => {
+    setState(currentRobotDropouts);
+    const handler = (e: Event) => setState((e as CustomEvent<RobotDropoutsState>).detail);
+    events.addEventListener('robotDropouts', handler);
+    return () => events.removeEventListener('robotDropouts', handler);
   }, []);
 
   return state;

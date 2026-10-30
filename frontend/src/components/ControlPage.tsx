@@ -41,6 +41,7 @@ import {
   useTeamCheckResults,
   sendRobotWifiTest,
   useSixGhzWatch,
+  useRobotDropouts,
   getServerTime,
   sendStationClearEmptyMatch,
   serverToBrowserTime,
@@ -60,6 +61,7 @@ import {
   suffixOf,
 } from '../utils/robotWifi';
 import { clashesForTeam, describeClashForTeam, isSixGhzWatching } from '../utils/sixGhzWatch';
+import { describeDropoutRow, describeDropoutsForTeam } from '../utils/robotDropouts';
 import { FreeplayControl, FreeplayStopButton, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
 import { TeamEStopBanner } from './FieldEStop';
@@ -1503,7 +1505,53 @@ function StationAlerts({ station }: { station: StationName }) {
           </Typography>
         </Alert>
       )}
+      <DropoutAlert station={station} />
     </>
+  );
+}
+
+/**
+ * The robot's short connection dropouts and brownouts this visit. They last
+ * about a second, far too short to catch on the live status chips, and they
+ * are what drops NetworkTables and dashboards (src/robotDropouts.ts).
+ */
+function DropoutAlert({ station }: { station: StationName }) {
+  const dropouts = useRobotDropouts();
+  // Re-render as dropouts age out of the "last 15 minutes" window.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const advice = describeDropoutsForTeam(dropouts?.stations[station], getServerTime());
+  if (!advice) return null;
+  const clock = (at: number) =>
+    new Date(serverToBrowserTime(at)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  return (
+    <Alert severity={advice.severity} sx={{ mb: 1, '& .MuiAlert-message': { width: '100%' } }}>
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        {advice.title}
+      </Typography>
+      {advice.lines.map(line => (
+        <Typography key={line} variant="body2" sx={{ mt: 0.5 }}>
+          {line}
+        </Typography>
+      ))}
+      {advice.recent.length > 0 && (
+        <Box component="ul" sx={{ m: 0, mt: 0.5, pl: 2.5 }}>
+          {advice.recent.map(d => (
+            <Typography component="li" variant="caption" key={d.startedAt} sx={{ display: 'list-item' }}>
+              {clock(d.startedAt)}: {describeDropoutRow(d)}
+            </Typography>
+          ))}
+          {advice.earlier > 0 && (
+            <Typography component="li" variant="caption" sx={{ display: 'list-item' }} color="text.secondary">
+              and {advice.earlier} earlier this visit
+            </Typography>
+          )}
+        </Box>
+      )}
+    </Alert>
   );
 }
 

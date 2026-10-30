@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import type { RobotDropoutTracker } from './robotDropouts.js';
 import type { LinkHop } from './robotLinkWatch.js';
 import type { StationName, TelemetryUpdate } from './types.js';
 
@@ -39,6 +40,9 @@ export class RobotPacketCapture {
     /** Every control and reply packet with its addresses, for telling which
      *  leg of a DS's robot link is broken (src/robotLinkWatch.ts). */
     private readonly onHop?: (hop: LinkHop) => void,
+    /** Every control and reply packet with its sequence number, for spotting
+     *  sub-second dropouts and brownouts (src/robotDropouts.ts). */
+    private readonly dropouts?: Pick<RobotDropoutTracker, 'control' | 'reply'>,
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -207,8 +211,11 @@ export class RobotPacketCapture {
 
     this.onHop?.({ station, kind: 'reply', src: srcIp, dst: dstIp, at: capturedAt });
 
+    const seq = data.readUInt16BE(payloadOffset);
+    this.dropouts?.reply(station, team, seq, capturedAt, { brownout, batteryVoltage });
+
     const timer = this.linkTimer(station);
-    timer.reply(data.readUInt16BE(payloadOffset), capturedAt);
+    timer.reply(seq, capturedAt);
     const link = timer.stats(capturedAt);
 
     const update: TelemetryUpdate = {
@@ -256,7 +263,16 @@ export class RobotPacketCapture {
     // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
     if (payload.length >= 4 && payload[2] === 0x01) {
       const station = this.resolveStation(team, vlanId);
-      if (station) this.onDsControl?.(station, Boolean(payload[3] & 0x04));
+      if (station) {
+        this.onDsControl?.(station, Boolean(payload[3] & 0x04));
+        // The copy pFMS forwards onto the robot's network comes from its
+        // gateway there; the arriving copy from the laptop's own address.
+        const onRobotNet = sameSubnet24(srcIp, dstIp);
+        this.dropouts?.control(station, team, payload.readUInt16BE(0), capturedAt, {
+          arriving: srcIp !== gatewayOf(dstIp),
+          forwarded: onRobotNet,
+        });
+      }
     }
     const count = countDsJoysticks(payload);
     if (count === null) return;
@@ -373,6 +389,15 @@ export function countDsJoysticks(payload: Buffer): number | null {
     i += 1 + size;
   }
   return count;
+}
+
+function sameSubnet24(a: string, b: string): boolean {
+  return a.slice(0, a.lastIndexOf('.')) === b.slice(0, b.lastIndexOf('.'));
+}
+
+/** The field's gateway address on a robot's network (10.TE.AM.254). */
+function gatewayOf(ip: string): string {
+  return `${ip.slice(0, ip.lastIndexOf('.'))}.254`;
 }
 
 /** Parse team number from 10.TE.AM.x IP. */

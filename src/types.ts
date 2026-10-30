@@ -1998,6 +1998,48 @@ export function isTelemetryUpdate(msg: unknown): msg is TelemetryUpdate {
   return (msg as TelemetryUpdate).type === 'telemetry';
 }
 
+// ── Robot Dropouts ──────────────────────────────────────────────────
+
+/** A short stretch (0.5–10 s) when the robot and its Driver Station stopped
+ *  hearing each other (src/robotDropouts.ts). */
+export interface RobotDropout {
+  /** 'robot': the DS kept sending and the robot answered nothing.
+   *  'laptop': the DS itself sent nothing. */
+  kind: 'robot' | 'laptop';
+  /** 'brownout' when a reply just before or after had the brownout bit or a
+   *  battery below 7 V. Only ever set for 'robot' dropouts. */
+  cause: 'brownout' | 'unknown';
+  startedAt: number;
+  endedAt: number;
+  durationMs: number;
+  /** Control packets the robot left unanswered ('robot' only). */
+  unanswered?: number;
+  /** Lowest battery reading in the replies around the dropout. */
+  minBatteryVoltage?: number;
+}
+
+export interface StationDropouts {
+  team: number;
+  /** When this visit's history starts. */
+  since: number;
+  /** Oldest first. */
+  dropouts: RobotDropout[];
+  /** Brownout episodes this visit, dropout or not. */
+  brownouts: { count: number; minVoltage?: number; lastAt?: number };
+}
+
+/** Per-station dropout and brownout history for the current visit. Only
+ *  stations with something to report are present. */
+export interface RobotDropoutsState {
+  type: 'robotDropouts';
+  stations: Partial<Record<StationName, StationDropouts>>;
+}
+
+export function isRobotDropoutsState(msg: unknown): msg is RobotDropoutsState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RobotDropoutsState).type === 'robotDropouts';
+}
+
 // ── Station Setup Checks ────────────────────────────────────────────
 
 /** Verdict for one setup check. `waiting`: not asked for yet (Ready before

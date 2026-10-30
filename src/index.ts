@@ -42,6 +42,7 @@ import { MdnsReflector } from './mdnsReflector.js';
 import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotLinkWatch } from './robotLinkWatch.js';
+import { describeDropout, RobotDropoutTracker } from './robotDropouts.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
 import { handleFirmwareRequest } from './firmwareApi.js';
@@ -1219,6 +1220,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Which leg of each drive session's robot link is broken, if any. Created
   // with the drive sessions below; the capture feeds it.
   let robotLinkWatch: RobotLinkWatch | undefined;
+  // Sub-second dropouts between each robot and its DS, and brownouts, for
+  // the team page's warning. Each one gets a journal line too: the journal
+  // otherwise has nothing finer than the 5 s link checks.
+  const robotDropouts = new RobotDropoutTracker((station, team, d) => appInfo(describeDropout(station, team, d)));
   const stationChecks = new StationChecksTracker({
     getMatchState: () => matchEngine.getState(),
     captureActive: () => robotPacketCapture?.isRunning() ?? false,
@@ -1250,6 +1255,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (station, count) => stationChecks.noteJoysticks(station, count),
       (station, enabled) => matchEngine.noteDsControl(station, enabled),
       hop => robotLinkWatch?.hop(hop),
+      robotDropouts,
     );
     robotPacketCapture.start();
   };
@@ -1270,6 +1276,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     broadcast(snapshot);
   }, 500);
 
+  // Dropouts are finalized a few seconds after they end; broadcast when the
+  // history changes.
+  let robotDropoutsVersion = robotDropouts.getVersion();
+  setInterval(() => {
+    robotDropouts.tick(Date.now());
+    const version = robotDropouts.getVersion();
+    if (version === robotDropoutsVersion) return;
+    robotDropoutsVersion = version;
+    broadcast(robotDropouts.snapshot());
+  }, 1_000);
+
   wss.on('connection', ws => {
     // Public connections (/ws/scores) only receive score state and the
     // scoreboard's setup checks — all other initial data is private (subnet
@@ -1277,6 +1294,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     ws.send(JSON.stringify(scoringEngine.getState()));
     ws.send(latestStationChecks);
     if (publicConnections.has(ws)) return;
+
+    ws.send(JSON.stringify(robotDropouts.snapshot()));
 
     if (latestSubnetScan) ws.send(JSON.stringify(latestSubnetScan));
     for (const results of latestCheckResults.values()) {
