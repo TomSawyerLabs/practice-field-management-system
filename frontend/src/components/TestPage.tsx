@@ -463,7 +463,7 @@ function RadioConfigureSection({ teamNumber }: { teamNumber?: number }) {
             </Typography>
           </Box>
           <LinearProgress
-            variant={configuring ? 'determinate' : undefined}
+            variant="determinate"
             value={progress.progress}
             color={progress.step === 'error' ? 'error' : progress.step === 'complete' ? 'success' : 'primary'}
             sx={{ height: 6, borderRadius: 3 }}
@@ -597,7 +597,7 @@ function FirmwareUpdateSection() {
             </Typography>
           </Box>
           <LinearProgress
-            variant={updating ? 'determinate' : undefined}
+            variant="determinate"
             value={progress.progress}
             color={progress.step === 'error' ? 'error' : progress.step === 'complete' ? 'success' : 'primary'}
             sx={{ height: 6, borderRadius: 3 }}
