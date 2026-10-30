@@ -11,6 +11,10 @@ import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks
 import { StatusBar } from '../components/StatusBar';
 import { SupportWidgetProvider } from '../components/SupportChatWidget';
 
+// Enable dark mode for the entire app (system default). Built once: a new
+// theme object re-renders everything that reads the theme.
+const theme = createTheme({ colorSchemes: { dark: true } });
+
 export function WrapAll({
   children,
   showReconfigOverlay = true,
@@ -25,9 +29,6 @@ export function WrapAll({
   const { isConfiguring, elapsedSec } = useReconfigProgress();
 
   const serverResponse = useServerResponse();
-
-  // Enable dark mode for the entire app (system default)
-  const theme = createTheme({ colorSchemes: { dark: true } });
 
   return (
     <StrictMode>

@@ -19,22 +19,24 @@ import TableRow from '@mui/material/TableRow';
 import TableHead from '@mui/material/TableHead';
 import { StationName, SavedWiFiSetting } from '../../../src/types';
 import {
-  useLatest,
-  useMatchState,
   sendNewConfig,
   sendInternetToggle,
   useUpdateCallback,
   useLatestTelemetry,
   useTelemetryCallback,
-  useNetworkStats,
-  useSubnetScan,
-  useMdnsActivity,
   useRoutePreferenceState,
-  useDriveSessionState,
   useMyDriveStation,
   sendDrive,
-  useLastLinked,
   usePortBridgeState,
+  useStationDriveSession,
+  useStationDsInfo,
+  useStationLastLinked,
+  useStationMdnsActivity,
+  useStationNetworkStats,
+  useStationRadioStatus,
+  useStationStagedChange,
+  useStationSubnetScan,
+  useYourIp,
   useStationTestState,
   sendStationTestModeRequest,
   sendStationTestModeStop,
@@ -43,7 +45,7 @@ import {
 import { FreeplayControl, FreeplayStopButton, MatchPanel } from './MatchPanel';
 import { StationNetworkCard } from './NetworkPage';
 import { useSavedWiFiSettings } from '../hooks/useSavedWiFiSettings';
-import { useBackendStagedChanges } from '../hooks/useBackend';
+import { useSecondTick } from '../hooks/useSecondTick';
 import { TimeDisplay } from './TimeDisplay';
 import { describeIp, formatAge, formatBytes, prettyStationName } from '../../../src/utils';
 import { Alert, Box, FormControlLabel, Switch, Tooltip, useMediaQuery, useTheme } from '@mui/material';
@@ -119,6 +121,12 @@ function RoutePreferenceBanner({ station }: { station: StationName }) {
   );
 }
 
+/** A time as "5s ago", kept current without re-rendering the card around it. */
+function LiveAge({ timestamp }: { timestamp: number }) {
+  useSecondTick();
+  return <>{formatAge(timestamp)}</>;
+}
+
 export function StationStatus({ station, full }: { station: StationName; full?: boolean }) {
   const [open, setOpen] = useState(false);
   const [ssid, setSsid] = useState('');
@@ -130,15 +138,14 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const latest = useLatest();
-  const matchState = useMatchState();
-  const routeState = useRoutePreferenceState();
-  const driveSession = useDriveSessionState();
-  const yourIp = routeState?.yourIp;
-  const dsHostname = useHostname(driveSession?.sessions?.[station]?.dsIp);
+  const stationStatus = useStationRadioStatus(station);
+  const dsInfo = useStationDsInfo(full ? station : null);
+  const { session, blocked } = useStationDriveSession(station);
+  const yourIp = useYourIp();
+  const dsHostname = useHostname(session?.dsIp);
   const { recentSettings, saveSetting, clearSettings, removeSetting } = useSavedWiFiSettings();
-  const stagedChanges = useBackendStagedChanges();
-  const hasStagedChange = (s: StationName) => s in stagedChanges;
+  const stagedChange = useStationStagedChange(station);
+  const hasStagedChange = stagedChange !== undefined;
 
   // Always register the chart data collection handler, even if charts aren't visible
   // This ensures chart data is collected from page load, not just when charts are first shown
@@ -146,10 +153,10 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
   useTelemetryCallback(handleTelemetryUpdate);
 
   const telemetry = useLatestTelemetry(station);
-  const networkStats = useNetworkStats();
-  const subnetScan = useSubnetScan();
-  const mdnsActivity = useMdnsActivity();
-  const lastLinked = useLastLinked();
+  const fwd = useStationNetworkStats(station);
+  const scan = useStationSubnetScan(station);
+  const mdns = useStationMdnsActivity(full ? station : null);
+  const lastLinked = useStationLastLinked(station);
   const portBridgeState = usePortBridgeState();
   const stationTestState = useStationTestState(station);
 
@@ -170,7 +177,9 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
     txBytes,
     bandwidthUsedMbps,
     connectionQuality,
-  } = latest?.radioUpdate?.stationStatuses[station] || {};
+  } = stationStatus || {};
+
+  useSecondTick(open); // for the "Last used" tooltips in the dialog
 
   const handleOpen = () => {
     setSsid(stationSsid || '');
@@ -208,7 +217,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
 
   const handleClearStation = () => {
     // Only clear if the station is actually configured
-    if (stationSsid || hasStagedChange(station)) {
+    if (stationSsid || hasStagedChange) {
       // A release of an empty station just withdraws whatever was waiting for it.
       sendNewConfig(station, '', '');
     }
@@ -237,8 +246,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
       <RoutePreferenceBanner station={station} />
       {/* Drive session info: DS IP, blocked DSes, timeout countdown */}
       {(() => {
-        const session = driveSession?.sessions?.[station];
-        const blocked = driveSession?.blockedDs?.[station];
         const isYouBlocked = blocked?.includes(yourIp ?? '');
         const isSessionStale = session && session.timeoutRemaining < 20;
 
@@ -314,11 +321,11 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               {pretty}
               <SSIDDisplay ssid={stationSsid} hashedWpaKey={hashedWpaKey} />
-              {hasStagedChange(station) && (
+              {hasStagedChange && (
                 <>
                   <span style={{ userSelect: 'none' }}> → </span>
-                  {stagedChanges[station]?.ssid ? (
-                    <SSIDDisplay ssid={stagedChanges[station]?.ssid} secure={stagedChanges[station]?.secured} />
+                  {stagedChange?.ssid ? (
+                    <SSIDDisplay ssid={stagedChange.ssid} secure={stagedChange.secured} />
                   ) : (
                     <Chip label="(release)" size="small" variant="outlined" color="warning" sx={{ height: 20 }} />
                   )}
@@ -326,15 +333,15 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                 </>
               )}
               {/* DS IP indicator */}
-              {driveSession?.sessions?.[station] && (
+              {session && (
                 <Tooltip
-                  title={`Driver Station: ${driveSession.sessions[station]!.dsIp}${driveSession.sessions[station]!.timeoutRemaining < 20 ? ` (timeout in ${driveSession.sessions[station]!.timeoutRemaining}s)` : ''}`}
+                  title={`Driver Station: ${session.dsIp}${session.timeoutRemaining < 20 ? ` (timeout in ${session.timeoutRemaining}s)` : ''}`}
                 >
                   <Chip
-                    label={`DS ${dsHostname ?? driveSession.sessions[station]!.dsIp}`}
+                    label={`DS ${dsHostname ?? session.dsIp}`}
                     size="small"
                     variant="outlined"
-                    color={driveSession.sessions[station]!.timeoutRemaining < 20 ? 'warning' : 'success'}
+                    color={session.timeoutRemaining < 20 ? 'warning' : 'success'}
                     sx={{ height: 20, fontSize: '0.65rem', ml: 1 }}
                   />
                 </Tooltip>
@@ -343,7 +350,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               {full && <FreeplayStopButton station={station} />}
               {/** CLEAR BUTTON */}
-              {(stationSsid || hasStagedChange(station)) && (
+              {(stationSsid || hasStagedChange) && (
                 <Tooltip title="Clear station configuration">
                   <IconButton
                     onClick={handleClearStation}
@@ -408,7 +415,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
             </Box>
           </Typography>
 
-          {stationSsid || hasStagedChange(station) ? (
+          {stationSsid || hasStagedChange ? (
             <>
               {stationSsid &&
                 (isLinked ? (
@@ -463,7 +470,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
               ) : stationSsid && !isLinked ? (
                 <WaitingForRobot
                   stationSsid={stationSsid}
-                  lastLinkedTimestamp={lastLinked[station]}
+                  lastLinkedTimestamp={lastLinked}
                   portBridgeState={portBridgeState}
                   onStartTestPortMode={portVlanId => sendStationTestModeRequest(station, portVlanId)}
                 />
@@ -640,76 +647,72 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                       </Table>
 
                       {/* IP Forwarding Counters (iptables FORWARD rules) */}
-                      {networkStats?.stations[station] &&
-                        (() => {
-                          const fwd = networkStats.stations[station]!;
-                          return (
-                            <Table
-                              size="small"
-                              sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
-                            >
-                              <TableHead>
-                                <TableRow>
-                                  <TableCell>IP Forwarding</TableCell>
-                                  <Tooltip title="Packet count">
-                                    <TableCell sx={{ textAlign: 'right' }}>Packets</TableCell>
-                                  </Tooltip>
-                                  <Tooltip title="Byte count">
-                                    <TableCell sx={{ textAlign: 'right' }}>Bytes</TableCell>
-                                  </Tooltip>
-                                </TableRow>
-                              </TableHead>
-                              <TableBody>
-                                <TableRow>
-                                  <TableCell>From robot</TableCell>
-                                  <TableCell
-                                    sx={{
-                                      whiteSpace: 'nowrap',
-                                      color: 'error.main',
-                                      textAlign: 'right',
-                                      fontFamily: 'monospace',
-                                    }}
-                                  >
-                                    {fwd.rxPackets.toLocaleString()}
-                                  </TableCell>
-                                  <TableCell
-                                    sx={{
-                                      whiteSpace: 'nowrap',
-                                      color: 'error.main',
-                                      textAlign: 'right',
-                                      fontFamily: 'monospace',
-                                    }}
-                                  >
-                                    {formatBytes(fwd.rxBytes)}
-                                  </TableCell>
-                                </TableRow>
-                                <TableRow>
-                                  <TableCell>To robot</TableCell>
-                                  <TableCell
-                                    sx={{
-                                      whiteSpace: 'nowrap',
-                                      color: 'success.main',
-                                      textAlign: 'right',
-                                      fontFamily: 'monospace',
-                                    }}
-                                  >
-                                    {fwd.txPackets.toLocaleString()}
-                                  </TableCell>
-                                  <TableCell
-                                    sx={{
-                                      whiteSpace: 'nowrap',
-                                      color: 'success.main',
-                                      textAlign: 'right',
-                                      fontFamily: 'monospace',
-                                    }}
-                                  >
-                                    {formatBytes(fwd.txBytes)}
-                                  </TableCell>
-                                </TableRow>
-                              </TableBody>
-                            </Table>
-                          );
-                        })()}
+                      {fwd && (
+                        <Table
+                          size="small"
+                          sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
+                        >
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>IP Forwarding</TableCell>
+                              <Tooltip title="Packet count">
+                                <TableCell sx={{ textAlign: 'right' }}>Packets</TableCell>
+                              </Tooltip>
+                              <Tooltip title="Byte count">
+                                <TableCell sx={{ textAlign: 'right' }}>Bytes</TableCell>
+                              </Tooltip>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            <TableRow>
+                              <TableCell>From robot</TableCell>
+                              <TableCell
+                                sx={{
+                                  whiteSpace: 'nowrap',
+                                  color: 'error.main',
+                                  textAlign: 'right',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {fwd.rxPackets.toLocaleString()}
+                              </TableCell>
+                              <TableCell
+                                sx={{
+                                  whiteSpace: 'nowrap',
+                                  color: 'error.main',
+                                  textAlign: 'right',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {formatBytes(fwd.rxBytes)}
+                              </TableCell>
+                            </TableRow>
+                            <TableRow>
+                              <TableCell>To robot</TableCell>
+                              <TableCell
+                                sx={{
+                                  whiteSpace: 'nowrap',
+                                  color: 'success.main',
+                                  textAlign: 'right',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {fwd.txPackets.toLocaleString()}
+                              </TableCell>
+                              <TableCell
+                                sx={{
+                                  whiteSpace: 'nowrap',
+                                  color: 'success.main',
+                                  textAlign: 'right',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {formatBytes(fwd.txBytes)}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      )}
 
                       {/* Robot Telemetry Group (only shown when telemetry data exists) */}
                       {telemetry && (
@@ -836,7 +839,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                       )}
                       {/* Subnet Scan — discovered devices on the team VLAN */}
                       {(() => {
-                        const scan = subnetScan?.stations[station];
                         if (!scan || scan.hosts.length === 0) return null;
                         const aliveCount = scan.hosts.filter(h => h.alive).length;
                         return (
@@ -886,7 +888,9 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                                       />
                                     </TableCell>
                                     <TableCell>{describeIp(host) ?? ''}</TableCell>
-                                    <TableCell>{formatAge(host.lastSeen)}</TableCell>
+                                    <TableCell>
+                                      <LiveAge timestamp={host.lastSeen} />
+                                    </TableCell>
                                   </TableRow>
                                 ))}
                               </TableBody>
@@ -897,7 +901,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                       {/* mDNS Activity (full view only) */}
                       {full &&
                         (() => {
-                          const mdns = mdnsActivity?.stations[station];
                           if (!mdns) return null;
                           return (
                             <Box sx={{ mt: 0.5 }}>
@@ -971,15 +974,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
         </CardContent>
       </Card>
 
-      {full && (
-        <StationNetworkCard
-          station={station}
-          stats={networkStats?.stations[station]}
-          scan={subnetScan?.stations[station]}
-          mdns={mdnsActivity?.stations[station]}
-          dsInfo={matchState?.connectedStations[station]}
-        />
-      )}
+      {full && <StationNetworkCard station={station} stats={fwd} scan={scan} mdns={mdns} dsInfo={dsInfo} />}
 
       <Dialog
         open={open}

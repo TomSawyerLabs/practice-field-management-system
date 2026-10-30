@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSecondTick } from '../hooks/useSecondTick';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
@@ -36,6 +37,7 @@ export function WaitingForRobot({
   const timerExpired = deadline !== null && remaining <= 0;
   const timerRunning = deadline !== null && remaining > 0;
   const wasLinkedBefore = lastLinkedTimestamp !== undefined;
+  useSecondTick(wasLinkedBefore); // for the "N min ago" below
 
   const startTimer = useCallback(() => {
     setDeadline(Date.now() + TIMER_SECONDS * 1000);

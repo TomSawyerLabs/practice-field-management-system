@@ -1,13 +1,5 @@
 # Known Issues & Technical Debt
 
-## Global hook redundancy in StationStatus
-
-_in progress — issues/stationstatus-hooks_
-
-`StationStatus` renders 6 times (once per station). Each instance subscribes to several global hooks (`useLastLinked`, `usePortBridgeState`, `useLatest`, `useMatchState`, `useNetworkStats`, `useSubnetScan`, `useMdnsActivity`, etc.). Any update to these global states causes all 6 instances to re-render and diff their entire subtree, even if only one station's data changed.
-
-This is the established pattern throughout the codebase and isn't a bottleneck at 6 stations with infrequent updates. But if performance ever becomes a concern, the proper fix would be a React context with per-station selectors — a broader refactor, not a one-off fix.
-
 ## Per-station firmware/radio configure progress not surfaced in UI
 
 _in progress — issues/station-progress-ui_
@@ -212,3 +204,7 @@ and retries from its `exit` handler, so it's expected to exit within seconds
 when nothing answers. Only one instance, so not a leak, but it means the
 tester sits in `dhcp_requesting` on a process that never times out, and the
 retry/timeout path described in the code isn't what happens.
+
+## StationStatus `full` mode looks unreachable
+
+`StationStatus` takes a `full` prop that switches on `FreeplayControl`, `MatchPanel`, `StationNetworkCard`, the mDNS table and the full chart set, but its only callers (`SlotGroup` and the deprecated `AllianceStatus` in `frontend/src/components/AllianceStatus.tsx`) never pass it. Worth deciding whether that code is dead and removable.

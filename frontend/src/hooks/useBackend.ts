@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { jsonEqual } from '../utils/jsonEqual';
 import {
   Alliance,
   ApiKeyCreated,
@@ -420,6 +421,35 @@ function useEventListener(
     events.addEventListener(type, cb);
     return () => events.removeEventListener(type, cb);
   }, [type, cb]);
+}
+
+/**
+ * One slice of a module-level state. `event` must fire after `getState` has
+ * the new value. The caller re-renders only when the slice changes by value,
+ * so a broadcast that touched another station costs it nothing. Not
+ * useSyncExternalStore: that renders once per message, this keeps React's
+ * batching of a burst of them.
+ */
+function useStateSlice<T, S>(event: string, getState: () => T, select: (state: T) => S): S {
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+
+  const selected = select(getState());
+  const last = useRef(selected);
+  if (!jsonEqual(last.current, selected)) last.current = selected;
+
+  const changed = useRef<() => boolean>(() => false);
+  changed.current = () => !jsonEqual(last.current, select(getState()));
+
+  useEffect(() => {
+    const onEvent = () => {
+      if (changed.current()) rerender();
+    };
+    onEvent(); // Anything that arrived between render and this effect
+    events.addEventListener(event, onEvent);
+    return () => events.removeEventListener(event, onEvent);
+  }, [event]);
+
+  return last.current;
 }
 
 const MaxHistoryAge = 1000 * 60 * 5; // 5 minutes
@@ -1417,6 +1447,95 @@ export function useMdnsActivity(): MdnsActivity | null {
   return state;
 }
 
+// ── Per-station slices ──────────────────────────────────────────────
+
+/** This station's radio status, or undefined while the radio says nothing about it. */
+export function useStationRadioStatus(station: StationName) {
+  return useStateSlice(
+    'update',
+    () => history[history.length - 1] as StatusEntry | undefined,
+    entry => entry?.radioUpdate?.stationStatuses[station],
+  );
+}
+
+/** This station's drive session and blocked DS IPs. */
+export function useStationDriveSession(station: StationName) {
+  return useStateSlice(
+    'driveSessionState',
+    () => currentDriveSessionState,
+    state => ({ session: state?.sessions?.[station], blocked: state?.blockedDs?.[station] }),
+  );
+}
+
+export function useStationNetworkStats(station: StationName) {
+  return useStateSlice(
+    'networkStats',
+    () => currentNetworkStats,
+    state => state?.stations[station],
+  );
+}
+
+export function useStationSubnetScan(station: StationName) {
+  return useStateSlice(
+    'subnetScan',
+    () => currentSubnetScan,
+    state => state?.stations[station],
+  );
+}
+
+/** This station's mDNS activity. Pass null where it isn't shown. */
+export function useStationMdnsActivity(station: StationName | null) {
+  return useStateSlice(
+    'mdnsActivity',
+    () => currentMdnsActivity,
+    state => (station ? state?.stations[station] : undefined),
+  );
+}
+
+/** This station's connected DS. Pass null where it isn't shown. */
+export function useStationDsInfo(station: StationName | null) {
+  return useStateSlice(
+    'matchState',
+    () => currentMatchState,
+    state => (station ? state?.connectedStations[station] : undefined),
+  );
+}
+
+/** The change waiting for this station: undefined if none, null to release it. */
+export function useStationStagedChange(station: StationName): StagedStationChange | null | undefined {
+  return useStateSlice(
+    'pendingCommitState',
+    () => currentStagedChanges,
+    staged => staged[station],
+  );
+}
+
+export function useStationLastLinked(station: StationName): number | undefined {
+  return useStateSlice(
+    'lastLinkedState',
+    () => currentLastLinked,
+    timestamps => timestamps[station],
+  );
+}
+
+/** This browser's IP as the server sees it. */
+export function useYourIp(): string | undefined {
+  return useStateSlice(
+    'routePreferenceState',
+    () => currentRoutePreferenceState,
+    state => state?.yourIp,
+  );
+}
+
+/** The resolved name for one guest-network IP, or null. */
+export function useHostnameFor(ip: string | undefined): string | null {
+  return useStateSlice(
+    'hostnamesState',
+    () => currentHostnames,
+    hostnames => (ip && hostnames[ip]) || null,
+  );
+}
+
 // ── Station match commands ───────────────────────────────────────────
 
 export function sendStationJoin(station: StationName) {
@@ -2350,16 +2469,11 @@ export function sendScoreReset() {
 // ── Port Bridge ─────────────────────────────────────────────────────
 
 export function usePortBridgeState(): PortBridgeState | null {
-  const [state, setState] = useState<PortBridgeState | null>(currentPortBridgeState);
-
-  useEffect(() => {
-    setState(currentPortBridgeState);
-    const handler = (e: Event) => setState((e as CustomEvent<PortBridgeState>).detail);
-    events.addEventListener('portBridgeState', handler);
-    return () => events.removeEventListener('portBridgeState', handler);
-  }, []);
-
-  return state;
+  return useStateSlice(
+    'portBridgeState',
+    () => currentPortBridgeState,
+    state => state,
+  );
 }
 
 /** Request to bridge a physical port to a station, or unbind (portVlanId=null). */

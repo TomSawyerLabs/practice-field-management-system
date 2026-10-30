@@ -1,11 +1,10 @@
 import Tooltip from '@mui/material/Tooltip';
 
-import { useHostnames } from '../hooks/useBackend';
+import { useHostnameFor } from '../hooks/useBackend';
 
 /** Resolved device name for a guest-network host, or null if not (yet) known. */
 export function useHostname(ip: string | undefined): string | null {
-  const hostnames = useHostnames();
-  return (ip && hostnames[ip]) || null;
+  return useHostnameFor(ip);
 }
 
 /**
