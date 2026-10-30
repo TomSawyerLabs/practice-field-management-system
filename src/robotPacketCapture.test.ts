@@ -192,3 +192,77 @@ describe('RobotPacketCapture SystemCore robots', () => {
     expect(f.telemetry).toHaveLength(1);
   });
 });
+
+describe('RobotPacketCapture two robots of one team', () => {
+  const MAIN_DS = '10.55.150.65';
+  const BIRD_DS = '10.55.231.82';
+  const GW = '10.1.14.254';
+  const RIO = '10.1.14.2';
+  const STATUS_ESTOP = [0x12, 0x34, 0x01, 0x80, 0x20, 12, 128, 0];
+  const CONTROL_ESTOP = [0x12, 0x35, 0x01, 0x80, 0x00, 0x00];
+
+  function capture() {
+    const telemetry: TelemetryUpdate[] = [];
+    const hops: LinkHop[] = [];
+    const controls: unknown[][] = [];
+    const replies: unknown[][] = [];
+    const drives: Record<string, 'slot1' | 'slot2'> = { [MAIN_DS]: 'slot1', [BIRD_DS]: 'slot2' };
+    const c = new RobotPacketCapture(
+      'eno1',
+      () => ({ 114: 'slot1' }),
+      u => telemetry.push(u),
+      true,
+      vlan => (vlan === 10 ? 'slot1' : vlan === 20 ? 'slot2' : undefined),
+      undefined,
+      undefined,
+      hop => hops.push(hop),
+      undefined,
+      undefined,
+      { control: (...a) => controls.push(a), reply: (...a) => replies.push(a) },
+      laptop => drives[laptop],
+      () => true,
+    );
+    const parse = (data: Buffer, at: number) =>
+      (c as unknown as { parsePacket(d: Buffer, at: number, r: Buffer): void }).parsePacket(
+        data,
+        at,
+        Buffer.concat([Buffer.alloc(16), data]),
+      );
+    return { parse, telemetry, hops, controls, replies };
+  }
+
+  test('a reply on its way to a laptop stays on that laptop’s robot', () => {
+    const f = capture();
+    f.parse(frame(RIO, GW, 1150, ROBOT_STATUS, 20), 1);
+    f.parse(frame(RIO, BIRD_DS, 1150, ROBOT_STATUS, 3), 2);
+    expect(f.telemetry.map(t => t.station)).toEqual(['slot2', 'slot2']);
+  });
+
+  test('a laptop pFMS can’t place is dropped, not guessed', () => {
+    const f = capture();
+    f.parse(frame(RIO, '10.55.1.1', 1150, ROBOT_STATUS, 3), 1);
+    expect(f.telemetry).toEqual([]);
+  });
+
+  test('a laptop’s control packet is reported on its own robot', () => {
+    const f = capture();
+    f.parse(frame(BIRD_DS, RIO, 1110, HEADER, 3, 59142), 1);
+    expect(f.hops).toEqual([{ station: 'slot2', kind: 'control', src: BIRD_DS, dst: RIO, at: 1 }]);
+  });
+
+  test('an e-stop is traced from the forwarded copy back to its laptop', () => {
+    const f = capture();
+    f.parse(frame(MAIN_DS, RIO, 1110, CONTROL_ESTOP, 3, 61305), 1);
+    // Arriving copies don't count: the field may yet drop them.
+    expect(f.controls).toEqual([]);
+    // It left on slot2's VLAN, so it reached TestBird, whoever usually drives what.
+    f.parse(frame(GW, RIO, 1110, CONTROL_ESTOP, 20, 61305), 2);
+    expect(f.controls).toEqual([['slot2', 114, MAIN_DS, true, 2]]);
+  });
+
+  test('the robot’s e-stop flag is reported from its status byte', () => {
+    const f = capture();
+    f.parse(frame(RIO, GW, 1150, STATUS_ESTOP, 20), 1);
+    expect(f.replies).toEqual([['slot2', 114, { eStop: true, enabled: false }, 1]]);
+  });
+});

@@ -131,6 +131,7 @@ import {
   QueueState,
   StationChecksState,
   RobotDropoutsState,
+  RobotEStopsState,
   QueueAdmin,
   isQueueState,
   isHostToolsInstallState,
@@ -144,6 +145,7 @@ import {
   type ChallengeLeaderboardTables,
   isStationChecksState,
   isRobotDropoutsState,
+  isRobotEStopsState,
   TeamPrefsState,
   isTeamPrefsState,
   NudgeChannels,
@@ -451,6 +453,7 @@ let currentQueueState: QueueState | null = null;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
 let currentRobotDropouts: RobotDropoutsState | null = null;
+let currentRobotEStops: RobotEStopsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
 let currentRoutePreferenceState: RoutePreferenceState | null = null;
 let currentPendingCommit = false;
@@ -961,6 +964,12 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isRobotEStopsState(detail)) {
+    currentRobotEStops = detail;
+    events.dispatchEvent(new CustomEvent('robotEStops', { detail }));
+    return;
+  }
+
   if (isSystemdServiceInstallResult(detail)) {
     events.dispatchEvent(new CustomEvent('systemdServiceInstallResult', { detail }));
     return;
@@ -1239,6 +1248,22 @@ export function useRobotDropouts(): RobotDropoutsState | null {
     const handler = (e: Event) => setState((e as CustomEvent<RobotDropoutsState>).detail);
     events.addEventListener('robotDropouts', handler);
     return () => events.removeEventListener('robotDropouts', handler);
+  }, []);
+
+  return state;
+}
+
+// ── Robot e-stops ───────────────────────────────────────────────────
+
+/** Robots e-stopped in the roboRIO itself, which only a reboot clears. */
+export function useRobotEStops(): RobotEStopsState | null {
+  const [state, setState] = useState<RobotEStopsState | null>(currentRobotEStops);
+
+  useEffect(() => {
+    setState(currentRobotEStops);
+    const handler = (e: Event) => setState((e as CustomEvent<RobotEStopsState>).detail);
+    events.addEventListener('robotEStops', handler);
+    return () => events.removeEventListener('robotEStops', handler);
   }, []);
 
   return state;

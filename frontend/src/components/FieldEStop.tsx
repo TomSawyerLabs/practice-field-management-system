@@ -5,7 +5,8 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import type { EStopSource, MatchState, StationControlState, StationName } from '../../../src/types';
-import { sendAdminClearFieldEStop, sendAdminGlobalEStop, useMatchState } from '../hooks/useBackend';
+import { sendAdminClearFieldEStop, sendAdminGlobalEStop, useMatchState, useRobotEStops } from '../hooks/useBackend';
+import { describeRobotEStop } from '../utils/robotEStop';
 
 // ── Why a robot is e-stopped ────────────────────────────────────────
 
@@ -68,7 +69,10 @@ function clockTime(epochMs: number): string {
  *  team knows whether it's theirs to sort out or the whole field's. */
 export function TeamEStopBanner({ station }: { station?: StationName }) {
   const matchState = useMatchState();
+  const robotEStops = useRobotEStops();
   if (!matchState) return null;
+  // First: this is the one no field button clears.
+  if (station && robotEStops?.stations[station]) return <RobotEStopBanner station={station} />;
   const state = station ? matchState.stationStates[station] : undefined;
   const reason = eStopReason(state, matchState.fieldEStop);
   if (!reason) return <OutOfEStopNotice state={state} />;
@@ -86,6 +90,34 @@ export function TeamEStopBanner({ station }: { station?: StationName }) {
         </Typography>
       </AlertTitle>
       {reason.detail}
+    </Alert>
+  );
+}
+
+/** The robot is latched in the roboRIO: it won't enable until it reboots.
+ *  Renders nothing otherwise. `robot` names it for a team with several. */
+export function RobotEStopBanner({ station, robot }: { station: StationName; robot?: string }) {
+  const robotEStop = useRobotEStops()?.stations[station];
+  if (!robotEStop) return null;
+  const advice = describeRobotEStop(robotEStop);
+  return (
+    <Alert
+      severity="error"
+      variant="filled"
+      sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' }, '& .MuiAlert-icon': { fontSize: '2.5rem' } }}
+    >
+      <AlertTitle sx={{ fontSize: '2rem', fontWeight: 900, lineHeight: 1.1, mb: 0.5 }}>
+        {advice.title}
+        <Typography component="span" sx={{ display: 'block', fontSize: '1.1rem', fontWeight: 700 }}>
+          {robot ? `${robot}: ` : ''}
+          {advice.subtitle}
+        </Typography>
+      </AlertTitle>
+      {advice.lines.map(line => (
+        <Typography key={line} variant="body2" sx={{ mt: 0.5 }}>
+          {line}
+        </Typography>
+      ))}
     </Alert>
   );
 }

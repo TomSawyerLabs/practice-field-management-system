@@ -68,10 +68,10 @@ with brownouts down to 6.6 V (see `plans/team-114-nt-drops-2026-10-29.md`).
   masqueraded gateway `.254`), and laptop silence only arriving ones.
 - A reply's sequence matches the control packet it answers, and that packet
   was already counted, so "unanswered" is the count minus one.
-- Known limit: with two robots of one team, the laptop's arriving copy
-  (on VLAN 3) resolves its station by team number, so it may be counted on
-  the other robot's slot. That can only hide a laptop-side dropout, never
-  invent one.
+- Fixed 2026-10-30 in `plans/robot-estop-warnings.md`: with two robots of one
+  team, laptop-side copies were counted on the wrong slot, so one robot's
+  brownout bit and battery could land on the other's station too (not only
+  "hide a laptop-side dropout", as this note first said).
 - Not verified visually: the card has only been typechecked and
   unit-tested, not rendered with real data.
 

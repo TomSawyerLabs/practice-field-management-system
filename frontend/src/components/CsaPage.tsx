@@ -43,6 +43,7 @@ import {
   useRobotWifiScan,
   useSixGhzWatch,
   useRobotDropouts,
+  useRobotEStops,
   useLastLinked,
   useLatest,
   useMatchState,
@@ -967,6 +968,7 @@ export function CsaPage() {
   const robotWifi = useRobotWifiScan();
   const sixGhzWatch = useSixGhzWatch();
   const robotDropouts = useRobotDropouts();
+  const robotEStops = useRobotEStops();
   const [selected, setSelected] = useState<StationName | null>(null);
   const [showNotes, setShowNotes] = useState(false);
 
@@ -988,6 +990,7 @@ export function CsaPage() {
       robotWifi,
       sixGhzWatch,
       robotDropouts,
+      robotEStops,
     }),
     [
       now,
@@ -1006,6 +1009,7 @@ export function CsaPage() {
       robotWifi,
       sixGhzWatch,
       robotDropouts,
+      robotEStops,
     ],
   );
   const issues = useMemo(() => detectFieldIssues(input), [input]);

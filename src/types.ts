@@ -2040,6 +2040,45 @@ export function isRobotDropoutsState(msg: unknown): msg is RobotDropoutsState {
   return (msg as RobotDropoutsState).type === 'robotDropouts';
 }
 
+// ── Robot E-Stops ───────────────────────────────────────────────────
+
+/** Who e-stopped a robot, as far as the field could see. */
+export type RobotEStopOrigin =
+  /** A laptop whose packet with the e-stop bit reached this robot. */
+  | {
+      kind: 'ds';
+      laptop: string;
+      hostname?: string;
+      /** The station whose robot this laptop drives, if any. */
+      drives?: StationName;
+      drivesRobot?: string;
+      /** It drives this very robot, rather than another of the team's. */
+      drivesThis: boolean;
+    }
+  /** The bit crossed the field, but the sender's address wasn't known. */
+  | { kind: 'ds-unknown' }
+  /** No e-stop bit crossed the field: a DS reached the robot another way. */
+  | { kind: 'unseen' }
+  /** The robot was already e-stopped when pFMS first heard it. */
+  | { kind: 'already' };
+
+/** A robot e-stopped in the roboRIO itself. Only a reboot clears that. */
+export interface RobotEStop {
+  team: number;
+  since: number;
+  origin: RobotEStopOrigin;
+}
+
+export interface RobotEStopsState {
+  type: 'robotEStops';
+  stations: Partial<Record<StationName, RobotEStop>>;
+}
+
+export function isRobotEStopsState(msg: unknown): msg is RobotEStopsState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RobotEStopsState).type === 'robotEStops';
+}
+
 // ── Station Setup Checks ────────────────────────────────────────────
 
 /** Verdict for one setup check. `waiting`: not asked for yet (Ready before

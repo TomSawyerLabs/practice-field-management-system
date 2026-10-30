@@ -11,7 +11,7 @@ import dgram from 'node:dgram';
 import { startConfigurationScheduler } from './scheduler.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
-import { teamSubnet, toCidr } from './utils.js';
+import { teamOfSsid, teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine } from './matchEngine.js';
 import {
@@ -43,6 +43,7 @@ import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from 
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotLinkWatch } from './robotLinkWatch.js';
 import { describeDropout, RobotDropoutTracker } from './robotDropouts.js';
+import { RobotEStopWatch } from './robotEStopWatch.js';
 import { RawPacketLog } from './rawPacketLog.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
@@ -1225,6 +1226,29 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // the team page's warning. Each one gets a journal line too: the journal
   // otherwise has nothing finer than the 5 s link checks.
   const robotDropouts = new RobotDropoutTracker((station, team, d) => appInfo(describeDropout(station, team, d)));
+  // The station a laptop's traffic belongs to: the robot it drives, else the
+  // one its route preference picks. Set once the drive sessions exist.
+  let stationDrivenBy: (laptop: string, team: number) => StationName | undefined = () => undefined;
+  const stationOfLaptop = (laptop: string, team: number): StationName | undefined => {
+    const driven = stationDrivenBy(laptop, team);
+    if (driven) return driven;
+    const routed = getPreference(laptop);
+    const ssid = routed ? radioManager.getStationConfig(routed)?.ssid : undefined;
+    return routed && ssid && teamOfSsid(ssid) === team ? routed : undefined;
+  };
+  const isDuplicateTeam = (team: number): boolean =>
+    StationNameList.filter(s => {
+      const ssid = radioManager.getStationConfig(s)?.ssid;
+      return ssid !== undefined && teamOfSsid(ssid) === team;
+    }).length > 1;
+  // Robots e-stopped in the roboRIO, which only a reboot clears, and who sent it.
+  const robotEStops = new RobotEStopWatch({
+    robotOn: station => radioManager.getStationConfig(station)?.ssid,
+    stationDrivenBy: (laptop, team) => stationOfLaptop(laptop, team),
+    hostnameOf: laptop => hostnameResolver.getState().hostnames[laptop],
+    info: appInfo,
+    warn: appWarn,
+  });
   const stationChecks = new StationChecksTracker({
     getMatchState: () => matchEngine.getState(),
     captureActive: () => robotPacketCapture?.isRunning() ?? false,
@@ -1260,6 +1284,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // SystemCore robots' packets, kept until their layout can be decoded
       // (plans/systemcore-robot-capture.md).
       new RawPacketLog({ directory: 'systemcore-captures', prefix: 'systemcore' }),
+      robotEStops,
+      stationOfLaptop,
+      isDuplicateTeam,
     );
     robotPacketCapture.start();
   };
@@ -1283,12 +1310,20 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Dropouts are finalized a few seconds after they end; broadcast when the
   // history changes.
   let robotDropoutsVersion = robotDropouts.getVersion();
+  let robotEStopsVersion = robotEStops.getVersion();
   setInterval(() => {
     robotDropouts.tick(Date.now());
+    robotEStops.tick(Date.now());
     const version = robotDropouts.getVersion();
-    if (version === robotDropoutsVersion) return;
-    robotDropoutsVersion = version;
-    broadcast(robotDropouts.snapshot());
+    if (version !== robotDropoutsVersion) {
+      robotDropoutsVersion = version;
+      broadcast(robotDropouts.snapshot());
+    }
+    const eStopsVersion = robotEStops.getVersion();
+    if (eStopsVersion !== robotEStopsVersion) {
+      robotEStopsVersion = eStopsVersion;
+      broadcast(robotEStops.snapshot());
+    }
   }, 1_000);
 
   wss.on('connection', ws => {
@@ -1300,6 +1335,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if (publicConnections.has(ws)) return;
 
     ws.send(JSON.stringify(robotDropouts.snapshot()));
+    ws.send(JSON.stringify(robotEStops.snapshot()));
 
     if (latestSubnetScan) ws.send(JSON.stringify(latestSubnetScan));
     for (const results of latestCheckResults.values()) {
@@ -1877,6 +1913,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // End sessions whose laptop went quiet (DS_STALE_TIMEOUT_MS), re-sync the
       // kernel rules, and keep the UI's timeout countdown fresh. A laptop swap
       // needs no button: close the old DS, and the new one takes over ~20 s later.
+      stationDrivenBy = (laptop, team) => driveSessions.stationDrivenBy(laptop, team);
       robotLinkWatch = new RobotLinkWatch({
         laptopOn: station => driveSessions.laptopOn(station),
         isLegacyDs: dsIp => matchEngine.dsProtocolOf(dsIp) === 'legacy',

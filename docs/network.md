@@ -127,8 +127,9 @@ which shows at most 8 characters), the same mechanism that holds a
 policy-blocked control system (`Blocked`). Flipping the switch re-handshakes
 every unjoined DS so it takes effect at once. Joining a match lifts the hold.
 
-**E-stop** reaches robots out of a match too. The primary path is the DS:
-pFMS takes it under field control and sends it the e-stop (below). The cut
+**E-stop** reaches robots out of a match too. pFMS never sets the e-stop bit
+in a control packet: it takes the DS under field control and disables it
+(below), which is why clearing a field stop really clears it. The cut
 described next is only a backstop, in case a DS misbehaves (it ignores the
 field, or its own state is stuck at Enabled). It drops nothing but DS→robot
 control packets, so cameras, NetworkTables and telemetry are untouched. While
@@ -304,6 +305,29 @@ silence, so the field's own stop cut isn't mistaken for one. The team's page
 shows a warning with the last 15 minutes' dropouts, what they mean and what
 to try, plus a brownout count for the visit. `/csa` lists the robot too.
 Like the link checks, this needs a legacy DS routed through pFMS.
+
+**Robots e-stopped in the roboRIO.** An e-stop from a Driver Station (its
+button, or the Space bar, even when the DS isn't the focused window) latches
+in the roboRIO until it reboots. Nothing in pFMS clears that. The capture
+reads it from two bits (`src/robotEStopWatch.ts`): the robot's status byte
+says it is latched, and the e-stop bit in the control packets that reached
+the robot says who sent it. Each packet is traced to its laptop by source
+port, because forwarding rewrites the address but not the port, and the VLAN
+of the forwarded copy says which robot it really reached. The journal then
+says one of:
+
+- `DS <ip> sent an e-stop to <slot> (<robot>): …`, with whether that laptop
+  drives this robot or another one;
+- `Robot e-stopped on <slot> (<robot>), N ms after it enabled: …`, with the
+  sender and every laptop sending to it at the time. `no DS on the field
+network sent it` means a DS is reaching the robot another way, tethered or on
+  its own Wi-Fi;
+- `Robot e-stop gone on <slot> … the robot rebooted`.
+
+The team's page and `/csa` say to power cycle the robot, and who sent it.
+Presses of pFMS's own stop and clear buttons log who pressed them
+(`Field E-Stop pressed by <ip> (<hostname>)`). SystemCore robots aren't
+covered until their packets are decoded.
 
 A SystemCore robot (2027 DS) answers from UDP 1110 to the DS's own port, in
 an unpublished layout. The capture recognizes it by that and keeps its

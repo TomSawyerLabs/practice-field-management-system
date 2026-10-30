@@ -1681,7 +1681,7 @@ export class MatchEngine {
       state.eStop = true;
       state.eStopBy = 'ds';
       state.enabled = false;
-      console.log(`DS e-stop reported: ${station}`);
+      console.log(`DS e-stop reported: ${station}${ip ? ` by ${ip}` : ''}`);
       changed = true;
     } else if (dsAStop && !state.aStop && state.joined && this.canAStop()) {
       state.aStop = true;

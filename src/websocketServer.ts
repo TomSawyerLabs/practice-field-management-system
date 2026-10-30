@@ -564,6 +564,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     });
   }, 10_000);
 
+  /** A client's address and name, for logs that say who did something. */
+  function whoIs(clientIp: string): string {
+    const host = hostnameResolver?.getState().hostnames[clientIp];
+    return host ? `${clientIp} (${host})` : clientIp;
+  }
+
   function buildRouteState(clientIp: string): RoutePreferenceState {
     return {
       type: 'routePreferenceState',
@@ -1265,16 +1271,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isAdminStopMatch(data)) {
         matchEngine.stopMatch();
       } else if (isAdminGlobalEStop(data)) {
+        console.log(`Field E-Stop pressed by ${whoIs(clientIp)}`);
         matchEngine.fieldEStop();
       } else if (isAdminClearFieldEStop(data)) {
+        console.log(`Field E-Stop clear pressed by ${whoIs(clientIp)}`);
         matchEngine.clearFieldEStop();
       } else if (isAdminStationEStop(data)) {
+        console.log(`E-Stop for ${data.station} pressed by staff at ${whoIs(clientIp)}`);
         matchEngine.stationEStop(data.station, 'staff');
       } else if (isAdminStationDisable(data)) {
         matchEngine.stationDisable(data.station, 'admin');
       } else if (isAdminStationEnable(data)) {
         matchEngine.undisable(data.station, true);
       } else if (isAdminClearEStop(data)) {
+        console.log(`E-Stop clear for ${data.station} pressed by ${whoIs(clientIp)}`);
         matchEngine.clearEStop(data.station);
 
         // ── Field reset ──────────────────────────────────────────────
@@ -1373,8 +1383,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isStationSelfUndisable(data)) {
         matchEngine.undisable(data.station, false);
       } else if (isStationSelfEStop(data)) {
+        console.log(`E-Stop for ${data.station} pressed on its team page at ${whoIs(clientIp)}`);
         matchEngine.stationEStop(data.station, 'team');
       } else if (isStationTeamStop(data)) {
+        console.log(
+          `${data.stop ? 'Stop' : 'Release'} for ${data.station} pressed on its team page at ${whoIs(clientIp)}`,
+        );
         matchEngine.teamStop(data.station, data.stop);
       } else if (isStationSelfAStop(data)) {
         matchEngine.stationAStop(data.station);

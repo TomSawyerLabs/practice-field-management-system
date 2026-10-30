@@ -64,7 +64,7 @@ import { clashesForTeam, describeClashForTeam, isSixGhzWatching } from '../utils
 import { describeDropoutRow, describeDropoutsForTeam } from '../utils/robotDropouts';
 import { FreeplayControl, FreeplayStopButton, MatchPanelForControl } from './MatchPanel';
 import { QueueBanner } from './QueueBanner';
-import { TeamEStopBanner } from './FieldEStop';
+import { RobotEStopBanner, TeamEStopBanner } from './FieldEStop';
 import { NudgeSettings } from './NudgeSettings';
 import { MatchVideoCard } from './MatchVideoCard';
 import { LaptopWifiCheck } from './LaptopWifiCheck';
@@ -403,6 +403,11 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       {/* E-STOPPED, and why: the field E-Stop (shown to every team) or this
           robot's own e-stop. Above everything, so it can't be missed. */}
       <TeamEStopBanner station={selectedStation ?? undefined} />
+      {[...activeStations]
+        .filter(([, station]) => station !== selectedStation)
+        .map(([ssid, station]) => (
+          <RobotEStopBanner key={ssid} station={station} robot={ssid} />
+        ))}
 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
       <QueueBanner teamNumber={teamNumber} />

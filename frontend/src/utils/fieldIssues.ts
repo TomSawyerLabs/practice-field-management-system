@@ -22,6 +22,7 @@ import type {
   SixGhzWatchState,
   RoutePreferenceState,
   RobotDropoutsState,
+  RobotEStopsState,
   StationName,
   StatusEntry,
   SubnetScanResults,
@@ -33,6 +34,7 @@ import { prettyStationName, teamOfSsid } from '../../../src/utils';
 import { robotWifiStaffIssues } from './robotWifi';
 import { isSixGhzWatching, sixGhzStaffIssues } from './sixGhzWatch';
 import { dropoutStaffIssues } from './robotDropouts';
+import { robotEStopStaffIssues } from './robotEStop';
 
 export type IssueSeverity = 'critical' | 'warning' | 'info';
 
@@ -166,6 +168,8 @@ export interface FieldIssueInputs {
   sixGhzWatch?: SixGhzWatchState | null;
   /** Short robot connection dropouts this visit. */
   robotDropouts?: RobotDropoutsState | null;
+  /** Robots e-stopped in the roboRIO itself. */
+  robotEStops?: RobotEStopsState | null;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -896,6 +900,13 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
       stationLabel(input, station),
     )) {
       push(d);
+    }
+  }
+
+  // ── E-stopped in the roboRIO: no button here clears these ──
+  if (input.robotEStops) {
+    for (const issue of robotEStopStaffIssues(input.robotEStops.stations, station => stationLabel(input, station))) {
+      push(issue);
     }
   }
 

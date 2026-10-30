@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { RobotDropoutTracker } from './robotDropouts.js';
+import type { RobotEStopWatch } from './robotEStopWatch.js';
 import type { LinkHop } from './robotLinkWatch.js';
 import type { StationName, TelemetryUpdate } from './types.js';
 
@@ -29,6 +30,10 @@ export class RobotPacketCapture {
   private debuggedTeams = new Set<number>();
   /** SystemCore robots seen answering from UDP 1110, by address. */
   private systemCoreRobots = new Set<string>();
+  /** Source port → laptop, from control packets arriving from a laptop.
+   *  Forwarding rewrites a packet's address but leaves its port, which is how
+   *  the copy that reached the robot is traced back to who sent it. */
+  private laptopByPort = new Map<number, string>();
   /** Per station: pairs the DS's control packets with the robot's replies. */
   private linkTimers = new Map<StationName, RobotLinkTimer>();
 
@@ -53,6 +58,14 @@ export class RobotPacketCapture {
     private readonly dropouts?: Pick<RobotDropoutTracker, 'control' | 'reply'>,
     /** Where SystemCore robots' traffic is kept raw until it can be decoded. */
     private readonly rawLog?: { write(record: Buffer): void },
+    /** Robots' e-stop bit, and who sent one (src/robotEStopWatch.ts). */
+    private readonly eStops?: Pick<RobotEStopWatch, 'control' | 'reply'>,
+    /** The station a laptop's traffic belongs to. Packets on the laptops' side
+     *  carry no station's VLAN, and team number alone can't tell apart two
+     *  robots of one team. */
+    private readonly stationOfLaptop?: (laptop: string, team: number) => StationName | undefined,
+    /** Whether a team has robots on more than one station. */
+    private readonly isDuplicateTeam?: (team: number) => boolean,
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -195,7 +208,7 @@ export class RobotPacketCapture {
     }
     if (dstPort === DS_TO_ROBOT_PORT) {
       if (this.systemCoreRobots.has(dstIp)) this.rawLog?.write(record);
-      this.parseDsToRobot(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt);
+      this.parseDsToRobot(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt, srcPort);
       return;
     }
     if (data.length < payloadOffset + 6) return; // Need at least 6 bytes of robot payload
@@ -229,7 +242,7 @@ export class RobotPacketCapture {
 
     const now = Date.now();
 
-    const station = this.resolveStation(team, vlanId);
+    const station = this.resolveStation(team, vlanId, dstIp);
     if (!station) return;
 
     // Status byte: bit7=eStop, bit4=brownout, bit3=codeStart, bit2=enabled, bits1-0=mode (0=teleop,1=test,2=auto)
@@ -246,6 +259,7 @@ export class RobotPacketCapture {
 
     const seq = data.readUInt16BE(payloadOffset);
     this.dropouts?.reply(station, team, seq, capturedAt, { brownout, batteryVoltage });
+    this.eStops?.reply(station, team, { eStop, enabled }, capturedAt);
 
     const timer = this.linkTimer(station);
     timer.reply(seq, capturedAt);
@@ -288,28 +302,32 @@ export class RobotPacketCapture {
     dstIp: string,
     vlanId: number | undefined,
     capturedAt: number,
+    srcPort = 0,
   ): void {
     const team = teamFromIp(dstIp);
     if (!team) return;
-    const hopStation = this.resolveStation(team, vlanId);
-    if (hopStation) this.onHop?.({ station: hopStation, kind: 'control', src: srcIp, dst: dstIp, at: capturedAt });
+    const station = this.resolveStation(team, vlanId, srcIp);
+    const forwarded = sameSubnet24(srcIp, dstIp);
+    const laptop = srcIp !== gatewayOf(dstIp) ? srcIp : this.laptopByPort.get(srcPort);
+    if (!forwarded) this.laptopByPort.set(srcPort, srcIp);
+    if (station) this.onHop?.({ station, kind: 'control', src: srcIp, dst: dstIp, at: capturedAt });
     // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
     if (payload.length >= 4 && payload[2] === 0x01) {
-      const station = this.resolveStation(team, vlanId);
       if (station) {
         this.onDsControl?.(station, Boolean(payload[3] & 0x04));
         // The copy pFMS forwards onto the robot's network comes from its
         // gateway there; the arriving copy from the laptop's own address.
-        const onRobotNet = sameSubnet24(srcIp, dstIp);
         this.dropouts?.control(station, team, payload.readUInt16BE(0), capturedAt, {
           arriving: srcIp !== gatewayOf(dstIp),
-          forwarded: onRobotNet,
+          forwarded,
         });
+        // Byte 3 bit 7 is e-stop. Only the copy that reached the robot counts,
+        // and its VLAN says which robot that was.
+        if (forwarded) this.eStops?.control(station, team, laptop, Boolean(payload[3] & 0x80), capturedAt);
       }
     }
     const count = countDsJoysticks(payload);
     if (count === null) return;
-    const station = this.resolveStation(team, vlanId);
     if (!station) return;
     this.linkTimer(station).sent(payload.readUInt16BE(0), capturedAt);
     this.onJoysticks?.(station, count);
@@ -324,11 +342,17 @@ export class RobotPacketCapture {
   /** Resolve team to station. When a team is duplicated across stations,
    *  prefer the VLAN-based resolution (the VLAN ID in the 802.1Q tag maps
    *  directly to a station via the radio VLAN map). */
-  private resolveStation(team: number, vlanId: number | undefined): StationName | undefined {
+  private resolveStation(team: number, vlanId: number | undefined, laptop?: string): StationName | undefined {
     if (vlanId !== undefined && this.vlanToStation) {
       const vlanStation = this.vlanToStation(vlanId);
       if (vlanStation) return vlanStation;
     }
+    // The laptops' side of a forwarded packet carries no station's VLAN. For
+    // two robots of one team the laptop says which it was. Unknown is better
+    // than guessing: the copy on the robot's VLAN is reported anyway, and a
+    // guess puts one robot's status on the other's station (enable flapping
+    // hundreds of times a second, 2026-10-28).
+    if (laptop && this.isDuplicateTeam?.(team)) return this.stationOfLaptop?.(laptop, team);
     return this.getTeamMappings()[team];
   }
 }

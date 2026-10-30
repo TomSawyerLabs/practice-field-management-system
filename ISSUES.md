@@ -120,7 +120,7 @@ _in progress — issues/setup-and-packaging_
 
 ## Two robots of one team
 
-_in progress — issues/two-robot-own-traffic (the robot-link wrong-slot bullet: issues/estop-warnings)_
+_in progress — issues/two-robot-own-traffic_
 
 - pFMS's own traffic to a duplicated team's subnet (subnet-scanner fping,
   team-check HTTP to the radio/roboRIO, robot packet capture lookups) follows
@@ -133,11 +133,6 @@ _in progress — issues/two-robot-own-traffic (the robot-link wrong-slot bullet:
   `br-slot1` (35 on slot2, 19, 18, 12, 10 on the rest) on 2026-10-12. A
   handful is expected, so memberships are probably leaking (team-check mDNS
   sockets, or reflector re-joins). Check with `cat /proc/net/igmp` over time.
-- The robot-link log puts a duplicated team's second laptop on the wrong
-  slot. 2026-10-28 5:15 PM PDT, 114 on slot1 and 114-TestBird on slot2:
-  `Robot link down for 10.55.231.82 on slot1: ... it has no drive session`.
-  10.55.231.82 was the slot2 (TestBird) laptop. The message probably looks
-  the slot up by team number, which is wrong when one team has two robots.
 
 ## Per-laptop `ip rule` entries pile up on steamboat
 
