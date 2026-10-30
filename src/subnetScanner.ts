@@ -7,6 +7,16 @@ import { teamSubnet } from './utils.js';
 const execFile = promisify(execFileCb);
 
 type TeamLookup = (station: StationName) => number | null;
+type RunTool = (tool: string, args: string[], options: { timeout: number }) => Promise<{ stdout: string }>;
+
+/**
+ * fping arguments for a subnet sweep. `ifname` pins it to a station's bridge:
+ * a team on two stations has its subnet on two bridges, and the routing table
+ * would send both sweeps to the same robot.
+ */
+export function fpingArgs(rangeStart: string, rangeEnd: string, ifname?: string): string[] {
+  return [...(ifname ? ['-I', ifname] : []), '-a', '-r', '0', '-t', '200', '-q', '-g', rangeStart, rangeEnd];
+}
 
 interface HostState {
   firstSeen: number;
@@ -27,7 +37,10 @@ export class SubnetScanner {
   constructor(
     private readonly getTeamForStation: TeamLookup,
     private readonly onScanComplete?: (results: SubnetScanResults) => void,
+    /** A station's bridge interface, when pFMS runs the station networks. */
+    private readonly bridgeOf?: (station: StationName) => string | undefined,
     private readonly dryRun = false,
+    private readonly run: RunTool = execFile,
   ) {}
 
   start(intervalMs = 10_000): void {
@@ -164,7 +177,7 @@ export class SubnetScanner {
 
   private async runFping(station: StationName, rangeStart: string, rangeEnd: string): Promise<Set<string> | null> {
     try {
-      const { stdout } = await execFile('fping', ['-a', '-r', '0', '-t', '200', '-q', '-g', rangeStart, rangeEnd], {
+      const { stdout } = await this.run('fping', fpingArgs(rangeStart, rangeEnd, this.bridgeOf?.(station)), {
         timeout: 15_000,
       });
       return SubnetScanner.parseAliveIps(stdout);
@@ -209,7 +222,7 @@ export class SubnetScanner {
 
     let stdout: string;
     try {
-      ({ stdout } = await execFile('conntrack', ['-L'], { timeout: 5_000 }));
+      ({ stdout } = await this.run('conntrack', ['-L'], { timeout: 5_000 }));
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'code' in err && (err as { code: string | number }).code === 'ENOENT') {
         return; // conntrack not installed — skip silently (already warned by DNAT flush)

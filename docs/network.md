@@ -366,6 +366,13 @@ first/last-seen timestamps, and broadcast to frontend clients. Results
 appear in the **Discovered Devices** section on the Network page and are
 cleared when station config is cleared.
 
+Each sweep is pinned to the station's bridge (`fping -I br-slotN`), and so is
+the HTTP in the team checks (`curl --interface br-slotN`). A team on two
+stations has the same subnet on two bridges, and the routing table would send
+everything to one robot, so pinning is what lets each station report its own
+robot. The check that identifies a SystemCore (a unicast mDNS query) is the
+exception: it still follows the routing table.
+
 ### Guest Host Names
 
 Guest-network hosts (DS laptops, phones) are shown by device name wherever

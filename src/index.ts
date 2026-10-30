@@ -1096,6 +1096,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         }
       }
     },
+    station => (vlanInterface ? bridgeName(station) : undefined),
   );
   let latestSubnetScan: ReturnType<SubnetScanner['getResults']> | null = null;
   subnetScanner.start(10_000);

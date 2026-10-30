@@ -118,21 +118,29 @@ _in progress — issues/setup-and-packaging_
 - The Linux standalone-binary targets compile but have never been run, and
   the binary has no self-update path (`update.sh` doesn't apply to it).
 
-## Two robots of one team
+## A team on two stations: what still isn't per-robot
 
-_in progress — issues/two-robot-own-traffic_
+Own traffic (subnet scanner, radio/roboRIO HTTP) is pinned to the bridge since
+`plans/two-robot-own-traffic.md`. These still aren't:
 
-- pFMS's own traffic to a duplicated team's subnet (subnet-scanner fping,
-  team-check HTTP to the radio/roboRIO, robot packet capture lookups) follows
-  the main routing table, which holds one connected `10.TE.AM.0/24` route per
-  bridge, so it all goes to one of the two robots. The Network page and team
-  checks for the other robot show the first robot's devices. Seen with 1967
-  on 2026-10-12. mDNS is fixed separately (per-station addresses, see
-  `plans/two-robot-mdns.md`).
-- `/proc/net/igmp` on steamboat showed 57 members of 224.0.0.251 on
-  `br-slot1` (35 on slot2, 19, 18, 12, 10 on the rest) on 2026-10-12. A
-  handful is expected, so memberships are probably leaking (team-check mDNS
-  sockets, or reflector re-joins). Check with `cat /proc/net/igmp` over time.
+- `probeSystemCore` in `src/teamChecker.ts` sends unicast UDP with dgram, which
+  can't pin to a bridge, so it follows the main routing table to one robot. The
+  addon's `InterfaceSocket.send` only multicasts, so a pinned unicast send needs
+  an addon change and a tagged `mdns-socket` release. Matters when a duplicated
+  team's robots are not both SystemCores or both roboRIOs: the wrong robot can
+  answer, or a SystemCore can read as "not found".
+- `SubnetScanner.scanConntrack` maps a subnet to one station, so for a duplicated
+  team every guest host lands on the last station, and `index.ts` auto-connects
+  that laptop's route preference there. Conntrack has no interface to go by.
+- The robot tester's firmware update and WPA check (`src/firmwareUpdater.ts`,
+  `src/stationTestManager.ts`) fetch `10.TE.AM.1` unpinned. Not checked whether
+  that goes wrong while the same team is also on a station.
+
+## Subnet scanner ignores DRY_RUN
+
+`src/index.ts` never passes `dryRun` to `SubnetScanner`, so the
+`[dry-run] Would fping` branch is dead and a DRY_RUN instance sweeps real team
+subnets. Matters because this PC reaches the real field network.
 
 ## Per-laptop `ip rule` entries pile up on steamboat
 

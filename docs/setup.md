@@ -45,9 +45,11 @@ For how to keep pFMS running across reboots — systemd or Docker — see
    missing):
 
    ```bash
-   sudo apt install alsa-utils dhcpcd5
+   sudo apt install alsa-utils dhcpcd5 curl
    ```
 
+   `curl` carries the radio and roboRIO checks out of each station's
+   bridge; most hosts already have it.
    - `alsa-utils` — provides `aplay` for field match audio. Without an
      audio player (`aplay`, `paplay`, `ffplay`, `mpv`, `play`), the field
      speaker stays silent. You also need a real sound device.
