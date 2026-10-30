@@ -197,24 +197,18 @@ export async function updateRadioFirmware(
 
   if (skipReconfigure) {
     const verifyUrl = rebootedToFactory ? factoryUrl : teamUrl;
+    let message = 'Firmware flashed. Radio may need manual configuration.';
     try {
       const res = await fetchWithTimeout(verifyUrl);
       if (res.ok) {
         const newStatus = (await res.json()) as RadioStatus;
         const newVersion = newStatus.version ?? 'unknown';
-        onProgress({
-          step: 'complete',
-          message: `Firmware updated to ${newVersion}. Radio is in ${rebootedToFactory ? 'factory default' : 'configured'} state.`,
-          progress: 100,
-        });
+        message = `Firmware updated to ${newVersion}. Radio is in ${rebootedToFactory ? 'factory default' : 'configured'} state.`;
       }
     } catch {
-      onProgress({
-        step: 'complete',
-        message: 'Firmware flashed. Radio may need manual configuration.',
-        progress: 100,
-      });
+      // Not reachable right now, so the flash itself is all we can report
     }
+    onProgress({ step: 'complete', message, progress: 100 });
     return;
   }
 
@@ -261,18 +255,17 @@ export async function updateRadioFirmware(
 
   try {
     const res = await fetchWithTimeout(teamUrl);
-    if (res.ok) {
-      const newStatus = (await res.json()) as RadioStatus;
-      const newVersion = newStatus.version ?? 'unknown';
-      if (store.needsUpdate(newVersion)) {
-        throw new Error(`Firmware update may have failed — radio reports version ${newVersion}`);
-      }
-      onProgress({
-        step: 'complete',
-        message: `Firmware updated to ${newVersion}. Team ${newStatus.teamNumber}, SSID suffix "${newStatus.ssidSuffix}"`,
-        progress: 100,
-      });
+    if (!res.ok) throw new Error(`radio returned HTTP ${res.status}`);
+    const newStatus = (await res.json()) as RadioStatus;
+    const newVersion = newStatus.version ?? 'unknown';
+    if (store.needsUpdate(newVersion)) {
+      throw new Error(`Firmware update may have failed — radio reports version ${newVersion}`);
     }
+    onProgress({
+      step: 'complete',
+      message: `Firmware updated to ${newVersion}. Team ${newStatus.teamNumber}, SSID suffix "${newStatus.ssidSuffix}"`,
+      progress: 100,
+    });
   } catch (err) {
     if (err instanceof Error && err.message.includes('Firmware update may have failed')) throw err;
     throw new Error(`Cannot verify radio after update: ${err instanceof Error ? err.message : err}`);
