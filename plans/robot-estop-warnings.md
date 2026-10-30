@@ -71,6 +71,9 @@ continues` lines, and 706 of the 765 e-stop rows above were TestBird's, filed
 - [x] Merged to local master
 - [x] Deployed on its own: `6e290fb`, 2026-10-30 9:53 AM PDT (16:53Z)
 - [ ] Seen on a real e-stop
+- [x] Stop cut removed from e-stops, re-arm wait dropped, e-stop clears are
+      `staff`
+- [ ] Out-of-match e-stop timed at the field (checklist check 7)
 
 ## Stop cut and follow-up threads (2026-10-30)
 
@@ -78,6 +81,26 @@ The user doesn't want to cut comms, saying it shouldn't ever be needed. Agreed
 change, in `issues/stop-cut`: remove the `pfms-estop-*` cut from the field and
 station e-stops, keep it for the team page's Stop until a replacement exists,
 and drop the wait that keeps it on after a clear until the DS shows Disabled.
+
+Done on 2026-10-30:
+
+- E-stops (field and station) rely on field control alone. The cut remains only
+  for the team page's Stop (`teamStopCut`), and `ISSUES.md` has an entry for
+  replacing it. The rule keeps its `pfms-estop-` name, so startup still removes
+  one left by an older version.
+- The re-arm wait is gone, with `reArming`, `noteDsControl` and the capture's
+  `onDsControl`, plus the team page notice that went with it.
+- `/csa` link warnings used to skip e-stopped robots as "cut by the field". They
+  now skip only team-stopped ones.
+- `adminClearEStop` and `adminClearFieldEStop` are `staff`. A team's own e-stop
+  never had a Clear on its team page, so nothing a team page does needed them,
+  and `/match` has no login, which rules out `admin`.
+
+What a DS that ignores the field can now do: keep driving through any e-stop,
+in or out of a match, while pFMS shows it e-stopped. A cooperating DS out of a
+match takes the stop at its next handshake, about 8 s, where the cut took ~100
+ms. Not measured: check 7 in `plans/field-verification-checklist.md`. pFMS
+doesn't warn about it yet (`ISSUES.md`).
 
 Remaining `ISSUES.md` entries went to seven threads, each claimed by branch name
 in that file. Left out on purpose:

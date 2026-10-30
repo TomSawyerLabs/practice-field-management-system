@@ -530,14 +530,15 @@ export async function dropHairpinForwarding(physicalInterface: string): Promise<
 const DS_TO_ROBOT_CONTROL_PORT = 1110;
 
 /**
- * Field e-stop, network layer: drop every Driver Station → robot control
- * packet going into a station's bridge. A robot disables its outputs about
- * 100 ms after its control packets stop, whatever its Driver Station thinks —
- * so this stops a robot even when its DS is not listening to the field (any
- * robot out of a match). Robot → DS traffic is untouched, so the field still
- * sees the robot's status. Idempotent both ways.
+ * A team Stop, network layer: drop every Driver Station → robot control packet
+ * going into a station's bridge. A robot disables its outputs about 100 ms
+ * after its control packets stop, whatever its Driver Station thinks — so this
+ * stops a robot whose DS is not under field control (any robot out of a
+ * match). Robot → DS traffic is untouched, so the field still sees the robot's
+ * status. Idempotent both ways. The rule keeps its `estop-` name so that
+ * startup still removes one left by an older version.
  */
-export async function setEStopCut(station: StationName, on: boolean): Promise<void> {
+export async function setTeamStopCut(station: StationName, on: boolean): Promise<void> {
   await net().iptables({
     action: on ? '-I' : '-D',
     chain: 'FORWARD',
@@ -549,9 +550,9 @@ export async function setEStopCut(station: StationName, on: boolean): Promise<vo
   });
 }
 
-/** Remove every e-stop cut — at startup, where no station is e-stopped yet
- *  (a graceful restart keeps rules, but not the e-stop state behind them). */
-export async function clearEStopCuts(): Promise<void> {
+/** Remove every team Stop cut — at startup, where no station is stopped yet
+ *  (a graceful restart keeps rules, but not the stop state behind them). */
+export async function clearTeamStopCuts(): Promise<void> {
   await net().flushRulesByComment(`${commentPrefix}estop-`);
 }
 

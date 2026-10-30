@@ -1374,11 +1374,6 @@ export type StationControlState = {
    *  never lift an 'estop' disable: someone has to press Enable. Null when
    *  enabled or when disabled by phase control. */
   disabledBy: DisabledBy | null;
-  /** The robot just came out of an e-stop and the field still cuts its
-   *  Driver Station's control traffic, waiting to see the DS command it
-   *  disabled — so a DS still set to Enabled can't bring the robot back by
-   *  itself. Lifts when the DS shows Disabled (or sends the robot nothing). */
-  reArming?: boolean;
   /** Set when the field's control-system policy forbids this robot: why it
    *  cannot be enabled. The field holds it disabled in and out of matches. */
   blockedReason?: string;

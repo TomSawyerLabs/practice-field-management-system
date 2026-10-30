@@ -122,18 +122,9 @@ export function RobotEStopBanner({ station, robot }: { station: StationName; rob
   );
 }
 
-/** After the e-stop clears, the robot stays disabled until the team presses
- *  Enable — this says which Enable, and why nothing moved yet. */
+/** After the e-stop clears mid-match, the robot stays disabled until the team
+ *  presses Enable — this says which Enable, and why nothing moved yet. */
 function OutOfEStopNotice({ state }: { state: StationControlState | undefined }) {
-  if (state?.reArming) {
-    return (
-      <Alert severity="warning" sx={{ mb: 2 }}>
-        <AlertTitle sx={{ fontWeight: 700 }}>E-Stop cleared: your robot is still stopped</AlertTitle>
-        The field keeps your robot stopped until your Driver Station shows <strong>Disabled</strong>. If it still says
-        Enabled, click <strong>Disable</strong> on it, then <strong>Enable</strong> when you’re ready to drive.
-      </Alert>
-    );
-  }
   if (state?.joined && !state.enabled && state.disabledBy === 'estop') {
     return (
       <Alert severity="warning" sx={{ mb: 2 }}>

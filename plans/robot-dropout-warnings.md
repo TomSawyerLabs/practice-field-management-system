@@ -61,7 +61,7 @@ with brownouts down to 6.6 V (see `plans/team-114-nt-drops-2026-10-29.md`).
 
 - Telemetry is coalesced to ~4 Hz before broadcast. Detection must run on
   raw packets (in the capture callback), not on `TelemetryUpdate`.
-- The field's stop cut (`pfms-estop-<slot>` FORWARD DROP on UDP 1110) drops
+- A team Stop's cut (`pfms-estop-<slot>` FORWARD DROP on UDP 1110) drops
   control packets after the capture sees them arriving. Counting arriving
   copies would make every short stop look like a robot dropout. So robot
   silence counts only forwarded copies (source on the robot's /24, i.e. the

@@ -127,6 +127,21 @@ toolbars and real thumbs. Use an iPhone in Safari and an Android in Chrome.
 | Toolbars cover the pinned row.                      | `PINNED_STOPS` in `MatchPanel.tsx` needs a safe-area inset. |
 | Pop Out loses the team page or does nothing useful. | Hide the button on phones.                                  |
 
+### 7. How long does an e-stop take to reach a DS out of a match?
+
+E-stops no longer cut traffic (2026-10-30), so an out-of-match e-stop rests on
+the DS taking field control at its next handshake. With a robot on blocks,
+enabled from its own DS and not in a match, press the field E-Stop and time the
+robot's enabled bit from the press. Then clear it. Try the `[ ] \` enable key
+combo while held.
+
+| Result                                                           | Meaning                                                                                                |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Disables within about 8 s, 3 s on a 2027 DS.                     | Works as documented in `docs/network.md`. Note the real time there.                                    |
+| Doesn't disable until someone touches the DS, or at all.         | E-stops don't stop a free-driving robot. Tell the user at once: out-of-match e-stops need another way. |
+| After the clear, the robot comes back on with no Enable pressed. | The DS doesn't stay disabled when the field lets go. Nothing covers that now the re-arm wait is gone.  |
+| The key combo enables the robot while held.                      | A held DS can be overridden from its keyboard. Note it in `docs/network.md`, then decide what to do.   |
+
 ## Settled by the audit (2026-10-30)
 
 - **Out-of-match release.** The status-2 reply was removed on 2026-10-04. A DS
@@ -178,9 +193,6 @@ toolbars and real thumbs. Use an iPhone in Safari and an Android in Chrome.
 ## Things not to do
 
 - Don't test any of this from a development PC against the real radio.
-- The field E-Stop and the stop cut are out of scope: the user is reconsidering
-  them. That's why the 2026-10-04 "E-STOP ALL stops a freeplaying robot" check
-  isn't listed.
 - Don't ship a SystemCore parser from the header alone
   (`plans/systemcore-robot-capture.md`).
 
@@ -193,4 +205,5 @@ toolbars and real thumbs. Use an iPhone in Safari and an Android in Chrome.
 - [ ] Check 3: Enable outside a match
 - [ ] Check 4: repeated drops
 - [ ] Check 5: first SystemCore capture
+- [ ] Check 7: e-stop out of a match
 - [ ] Check 6: real phones

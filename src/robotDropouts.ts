@@ -90,7 +90,7 @@ export class RobotDropoutTracker {
    * the robot's own network has only the one copy, which is both.
    *
    * The laptop's silence is judged by arriving copies, the robot's by
-   * forwarded ones: while the field's stop cut drops a robot's control
+   * forwarded ones: while a team Stop's cut drops a robot's control
    * traffic the laptop is still sending, but nothing reaches the robot to
    * answer.
    */

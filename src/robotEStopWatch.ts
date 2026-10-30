@@ -66,7 +66,7 @@ export class RobotEStopWatch {
   /**
    * A control packet that reached this station's robot. `laptop` is where it
    * came from, undefined if that isn't known. Only the forwarded copy counts:
-   * what the field's stop cut drops never reached the robot.
+   * what a team Stop's cut drops never reached the robot.
    */
   control(station: StationName, team: number, laptop: string | undefined, eStopBit: boolean, at: number): void {
     const s = this.station(station, team, at);

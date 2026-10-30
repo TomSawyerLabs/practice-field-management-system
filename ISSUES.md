@@ -47,6 +47,23 @@ Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
 2026-10-30), including on the Safety Monitor's page. Matters because that role
 is the one most likely to want one.
 
+## Team Stop still cuts comms
+
+The team page's **Stop robot** out of a match is the last user of the
+`pfms-estop-slotN` cut (`teamStopCut` in `src/matchEngine.ts`, `setTeamStopCut`
+in `src/networkManager.ts`). It stays because nothing else stops that robot yet.
+Replace it with field control of that DS, the way e-stops work, then remove the
+cut and `teamStopCuts` in `src/index.ts`. Matters because the user doesn't want
+to cut comms, and it shouldn't ever be needed. Note a held DS takes the stop at
+its next TCP handshake (about 8 s), not the cut's ~100 ms.
+
+## Nothing warns that an e-stopped robot is still enabled
+
+Since the cut came off e-stops (2026-10-30), a DS that ignores the field keeps
+driving while `/match`, `/csa` and the team's page say E-STOPPED. The robot's
+status bit crosses the field either way (UDP 1150, or `tele.dsStatus`), so pFMS
+can see it. Matters because staff would believe a running robot is stopped.
+
 ## A Driver Station can still clear an e-stop over the WebSocket
 
 _in progress — issues/stop-cut_

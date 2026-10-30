@@ -847,6 +847,15 @@ describe('robot link timed by the field', () => {
     expect(ids(input)).not.toContain('robot-link-loss-slot1');
   });
 
+  test('still while it is e-stopped: the DS is held disabled, not cut off', () => {
+    const input = inputs({
+      latest: radio({ slot1: station() }),
+      matchState: match({ stationStates: { slot1: control({ eStop: true, eStopBy: 'staff' }) } }),
+      telemetry: linkTele(100),
+    });
+    expect(ids(input)).toContain('robot-link-loss-slot1');
+  });
+
   test('a slow field-to-robot round trip is reported when the DS gives no trip time', () => {
     const input = inputs({
       latest: radio({ slot1: station() }),

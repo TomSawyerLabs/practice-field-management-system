@@ -14,7 +14,7 @@ import { checkInterfaceIps } from './startupChecks.js';
 import { REQUIRED_TOOLS, aptInstallCommand, missingTools } from './hostTools.js';
 import {
   cleanupOldVlanInterfaces,
-  clearEStopCuts,
+  clearTeamStopCuts,
   dropHairpinForwarding,
   flushManagedNetworkState,
   networkBackend,
@@ -121,9 +121,9 @@ export async function bringUpTrunk(iface: string, { keepNetwork, fieldControl }:
   // first deploy of it installed nothing until the next radio change).
   await dropHairpinForwarding(iface);
 
-  // No station starts e-stopped, so no e-stop cut may survive a graceful
+  // No station starts stopped, so no team Stop cut may survive a graceful
   // restart (KEEP_NETWORK keeps rules but not the engine state behind them).
-  await clearEStopCuts();
+  await clearTeamStopCuts();
 
   // Size the kernel neighbor (ARP/NDP) table for what this host does: the
   // subnet scanner sweeps every configured team /24 every 10 s, and each

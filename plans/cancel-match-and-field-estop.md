@@ -143,6 +143,8 @@ Design:
 
 - Cancel Match on a real running match (needs a DS); covered by engine
   tests only.
+- Superseded 2026-10-30: e-stops no longer cut traffic and the re-arm wait
+  is gone (`plans/robot-estop-warnings.md`). The rest of this list stands.
 - The re-arm cut on the field: that the capture sees DS→robot control
   packets for a station whose DS routes through pFMS (it already reads them
   for joysticks), and what the real FRC DS does when the cut starts (does it

@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MatchEngine, REARM_QUIET_MS, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS } from './matchEngine.js';
+import { MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS, teamStopCut } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { setBroadcast } from './appLogger.js';
 import { ScoringEngine } from './scoringEngine.js';
@@ -947,6 +947,23 @@ describe('a team Stop out of a match', () => {
     expect(engine.getState().stationStates.slot1?.teamStopped).toBe(false);
   });
 
+  test('is the only stop that cuts a Driver Station off its robot', () => {
+    const engine = new MatchEngine(() => 8);
+    const cut = (station: 'slot1' | 'slot2') => teamStopCut(engine.getState().stationStates[station]);
+    engine.teamStop('slot1', true);
+    expect(cut('slot1')).toBe(true);
+    expect(cut('slot2')).toBe(false);
+    engine.teamStop('slot1', false);
+    expect(cut('slot1')).toBe(false);
+
+    engine.stationEStop('slot1', 'staff');
+    expect(cut('slot1')).toBe(false);
+    engine.clearEStop('slot1');
+    engine.fieldEStop();
+    expect(cut('slot1')).toBe(false);
+    expect(cut('slot2')).toBe(false);
+  });
+
   test('e-stop is visible cheaply to the hold resolvers', () => {
     const engine = new MatchEngine(() => 8);
     expect(engine.isEStopped('slot1')).toBe(false);
@@ -1136,55 +1153,6 @@ describe('coming out of an e-stop starts disabled', () => {
     expect(engine.getState().phase).toBe('postMatch');
     engine.clearFieldEStop();
     expect(engine.getState().stationStates.slot1?.enabled).toBe(false);
-  });
-
-  test('out of a match: the cut holds until the DS shows Disabled', () => {
-    const engine = new MatchEngine(() => 1967);
-    engine.fieldEStop();
-    engine.clearFieldEStop();
-    for (const s of ['slot1', 'slot2'] as const) {
-      expect(engine.isReArming(s)).toBe(true);
-      expect(engine.getState().stationStates[s]?.reArming).toBe(true);
-    }
-    // A DS still set to Enabled keeps its robot cut off
-    engine.noteDsControl('slot1', true);
-    expect(engine.isReArming('slot1')).toBe(true);
-    // Once it shows Disabled, the next Enable on the DS is the one that counts
-    engine.noteDsControl('slot1', false);
-    expect(engine.isReArming('slot1')).toBe(false);
-    expect(engine.isReArming('slot2')).toBe(true);
-  });
-
-  test('out of a match: with no DS commanding the robot, the cut lifts after a quiet spell', () => {
-    const now = Date.now();
-    setSystemTime(new Date(now));
-    const engine = new MatchEngine(() => 1967);
-    engine.stationEStop('slot3', 'staff');
-    engine.clearEStop('slot3');
-    engine.noteDsControl('slot4', true); // another station's DS, irrelevant
-    const check = () => (engine as unknown as { checkReArm(): void }).checkReArm();
-
-    setSystemTime(new Date(now + REARM_QUIET_MS - 1));
-    check();
-    expect(engine.isReArming('slot3')).toBe(true);
-    setSystemTime(new Date(now + REARM_QUIET_MS));
-    check();
-    expect(engine.isReArming('slot3')).toBe(false);
-  });
-
-  test('a DS that keeps saying Enabled keeps the cut, however long', () => {
-    const now = Date.now();
-    setSystemTime(new Date(now));
-    const engine = new MatchEngine(() => 1967);
-    engine.stationEStop('slot2', 'ds');
-    engine.clearEStop('slot2');
-    const check = () => (engine as unknown as { checkReArm(): void }).checkReArm();
-    for (let t = 0; t <= 5 * REARM_QUIET_MS; t += 500) {
-      setSystemTime(new Date(now + t));
-      engine.noteDsControl('slot2', true);
-      check();
-    }
-    expect(engine.isReArming('slot2')).toBe(true);
   });
 
   test('a robot e-stopped in setup stays e-stopped when the match starts', () => {

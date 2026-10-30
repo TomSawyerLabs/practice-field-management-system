@@ -264,7 +264,7 @@ export function stationLabel(input: Pick<FieldIssueInputs, 'latest' | 'matchStat
 
 /** Who decides whether a robot may drive right now, from the field's side. */
 export type FieldControlKind =
-  | 'estop' // e-stopped: the field cuts the DS's control of the robot until staff clear it
+  | 'estop' // e-stopped: the field holds the DS disabled until staff clear it
   | 'stopped' // out of a match, stopped from the team's page: the field cuts the DS's control
   | 'blocked' // field policy forbids this control system; held disabled
   | 'held' // out of a match, held disabled (freeplay held by staff)
@@ -328,8 +328,8 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
     short = field ? 'FIELD E-STOP' : 'E-STOP';
     label = field ? 'Field E-Stop: every robot stopped' : 'E-stopped';
     why = field
-      ? 'Staff pressed the field E-Stop. The field is cutting every Driver Station’s control of its robot until staff clear it.'
-      : 'The field is cutting the Driver Station’s control of the robot until staff clear the e-stop.';
+      ? 'Staff pressed the field E-Stop. The field holds every Driver Station disabled until staff clear it.'
+      : 'The field holds the Driver Station disabled until staff clear the e-stop.';
   } else if (!joined && control?.teamStopped) {
     kind = 'stopped';
     short = 'Stopped';
@@ -814,7 +814,7 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
 
     // ── Robot link, timed by pFMS from the DS's control packets and the
     //    robot's replies (works out of a match, unlike the DS's own report) ──
-    const cutByField = fc.kind === 'estop' || fc.kind === 'stopped';
+    const cutByField = fc.kind === 'stopped';
     if (teleFresh && !cutByField) {
       if (tele.robotLinkLossPct !== undefined && tele.robotLinkLossPct >= LINK_LOSS_WARN_PCT) {
         push({

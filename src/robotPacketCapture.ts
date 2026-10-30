@@ -46,10 +46,6 @@ export class RobotPacketCapture {
     private readonly vlanToStation?: (vlanId: number) => StationName | undefined,
     /** A DS→robot control packet was seen, carrying this many joysticks. */
     private readonly onJoysticks?: (station: StationName, count: number) => void,
-    /** A DS→robot control packet was seen, commanding the robot enabled or
-     *  not. Captured at ingress, so it is seen even while the field's stop
-     *  cut drops the packet before it reaches the robot. */
-    private readonly onDsControl?: (station: StationName, enabled: boolean) => void,
     /** Every control and reply packet with its addresses, for telling which
      *  leg of a DS's robot link is broken (src/robotLinkWatch.ts). */
     private readonly onHop?: (hop: LinkHop) => void,
@@ -314,7 +310,6 @@ export class RobotPacketCapture {
     // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
     if (payload.length >= 4 && payload[2] === 0x01) {
       if (station) {
-        this.onDsControl?.(station, Boolean(payload[3] & 0x04));
         // The copy pFMS forwards onto the robot's network comes from its
         // gateway there; the arriving copy from the laptop's own address.
         this.dropouts?.control(station, team, payload.readUInt16BE(0), capturedAt, {

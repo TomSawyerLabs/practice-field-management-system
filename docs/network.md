@@ -131,33 +131,41 @@ policy-blocked control system (`Blocked`). Flipping the switch re-handshakes
 every unjoined DS so it takes effect at once. Joining a match lifts the hold.
 
 **E-stop** reaches robots out of a match too. pFMS never sets the e-stop bit
-in a control packet: it takes the DS under field control and disables it
-(below), which is why clearing a field stop really clears it. The cut
-described next is only a backstop, in case a DS misbehaves (it ignores the
-field, or its own state is stuck at Enabled). It drops nothing but DS→robot
-control packets, so cameras, NetworkTables and telemetry are untouched. While
-a station is e-stopped (the field E-Stop, the station's e-stop, or its DS's
-own), pFMS drops every DS→robot
+in a control packet, and it doesn't cut any traffic: it takes the DS under
+field control and disables it, which is why clearing a field stop really
+clears it. An unjoined DS is held like any other (game data `E-Stop`, or
+`Field E-Stop` for the field E-Stop) until staff clear the e-stop (the field
+E-Stop's Clear on `/match` or `/admin`, or per station on the match page). It
+then goes back to local control, disabled, and the driver enables it again.
+
+An e-stop therefore depends on the DS listening to the field:
+
+- A DS in a match is already under field control, so it gets disabled packets
+  at once.
+- A DS out of a match takes the stop at its next TCP handshake. pFMS drops its
+  connection, but a DS in local control usually has none open and retries about
+  every 8 s (3 s on the 2027 DS), so its robot can keep running that long. The
+  time hasn't been measured (`plans/field-verification-checklist.md`, check 7).
+- A DS that ignores the field, or never reaches it, keeps driving its robot
+  while pFMS shows it e-stopped: firewalled from pFMS, or connected to the
+  robot some other way (tethered, or the robot's own Wi-Fi). Nothing on the
+  network stops it. The field's pages have no warning for this yet
+  (`ISSUES.md`).
+
+**Team Stop** is the one stop that still cuts traffic, because that DS isn't
+under field control and nothing else would stop it. The team's pages offer it
+out of a match: **Stop robot** (a team can stop its robot even when its Driver
+Station doesn't respond) and **Let it drive again**. pFMS drops every DS→robot
 control packet (UDP 1110) going into that station's bridge
 (`FORWARD -o br-slotN -p udp --dport 1110 -j DROP`, comment
-`pfms-estop-slotN`). A robot disables its outputs ~100 ms after its control
-packets stop, whatever its DS thinks. Robot→DS traffic still flows, so the
-field keeps seeing the robot. An unjoined DS is also taken under field control
-like a held one (game data `E-Stop`). Both last until staff clear the e-stop
-(the field E-Stop's Clear on `/match` or `/admin`, or per station on the
-match page) — and the cut a little longer: it stays until the packet capture
-sees the DS's own control packets to the robot (UDP 1110, read at ingress,
-so before the DROP) command it **disabled**, or sees none for 2 s. A DS that
-never noticed the stop and still says Enabled therefore can't re-enable the
-robot by itself; the driver has to click Disable and then Enable. Startup
-removes any leftover cut, since no station starts e-stopped.
-
-The team's pages offer the same cut out of a match: **Stop robot** (a team
-can stop its robot even when its Driver Station doesn't respond) and **Let it
-drive again**. A team Stop doesn't take the DS under field control. The DS
-just loses the robot, drops to disabled, and the team enables from it again
-once they let the robot drive. Joining a match clears a team Stop; in a match
-the team's console has Disable and E-Stop instead.
+`pfms-estop-slotN`, a name left from when e-stops used it too). A robot disables
+its outputs ~100 ms after its control packets stop, whatever its DS thinks. It
+drops nothing but control packets, so cameras, NetworkTables and telemetry are
+untouched, and the field keeps seeing the robot. The DS just loses the robot,
+drops to disabled, and the team enables from it again once they let the robot
+drive. Joining a match clears a team Stop; in a match the team's console has
+Disable and E-Stop instead. Startup removes any leftover cut, since no station
+starts stopped.
 
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
@@ -311,7 +319,7 @@ per dropout:
   laptop or its Wi-Fi went quiet.
 
 Only control packets pFMS actually forwarded count towards the robot's
-silence, so the field's own stop cut isn't mistaken for one. The team's page
+silence, so a team Stop's cut isn't mistaken for one. The team's page
 shows a warning with the last 15 minutes' dropouts, what they mean and what
 to try, plus a brownout count for the visit. `/csa` lists the robot too.
 Like the link checks, this needs a legacy DS routed through pFMS.

@@ -199,11 +199,10 @@ only after someone presses **Enable**. Nothing brings it back by itself:
 - **In a match**, the robot is marked disabled-after-e-stop. The next phase
   change (auto → teleop, a resume) passes it by; the team presses
   **Re-enable** on their page (or staff press Enable on `/match`).
-- **Out of a match**, the field keeps cutting the Driver Station's control
-  traffic to the robot until it sees the DS command the robot _disabled_
-  (or sees no control traffic for the robot for 2 s). A DS still set to
-  Enabled can't put the robot straight back on; the team page tells the
-  team to click Disable, then Enable on their DS.
+- **Out of a match**, the field lets go of the Driver Station it was holding
+  disabled. The DS returns to local control, still disabled, and the team
+  enables from it. A DS that never took the field's stop was never stopped:
+  see [e-stop](network.md#driver-station-generations) for what depends on the DS.
 - An e-stop latched while a match is being set up stays latched through
   the start: that robot sits the match out until staff clear it and the
   team enables it.

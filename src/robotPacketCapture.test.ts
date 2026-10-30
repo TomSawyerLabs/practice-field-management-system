@@ -118,7 +118,6 @@ describe('RobotPacketCapture hops', () => {
       true,
       vlan => (vlan === 20 ? 'slot2' : undefined),
       undefined,
-      undefined,
       hop => hops.push(hop),
     );
     const parse = (data: Buffer, at: number) =>
@@ -150,7 +149,6 @@ describe('RobotPacketCapture SystemCore robots', () => {
       () => ({ 5940: 'slot3' }),
       u => telemetry.push(u),
       true,
-      undefined,
       undefined,
       undefined,
       hop => hops.push(hop),
@@ -213,7 +211,6 @@ describe('RobotPacketCapture two robots of one team', () => {
       u => telemetry.push(u),
       true,
       vlan => (vlan === 10 ? 'slot1' : vlan === 20 ? 'slot2' : undefined),
-      undefined,
       undefined,
       hop => hops.push(hop),
       undefined,

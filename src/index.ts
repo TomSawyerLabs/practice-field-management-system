@@ -13,13 +13,13 @@ import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
 import { isHostRobot, teamOfSsid, teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
-import { MatchEngine } from './matchEngine.js';
+import { MatchEngine, teamStopCut } from './matchEngine.js';
 import {
   stopAllDHCP,
   vlanMap,
   bridgeName,
   restorePreviousStations,
-  setEStopCut,
+  setTeamStopCut,
   migrateAllBridgeNat,
   networkBackend,
   flushManagedNetworkState,
@@ -366,26 +366,23 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
   matchEngine.setOutOfMatchHold(outOfMatchHoldReason);
 
-  // Stopping a robot, network layer: while a station is e-stopped, or
-  // stopped from its team's page out of a match, steamboat drops its Driver
-  // Station's control packets to the robot, so the robot stops within ~100 ms
-  // even if its DS isn't listening to the field (every robot out of a match).
-  // For an e-stop the hold loop also takes the DS under field control, and
-  // the cut stays until staff clear it; a team Stop lasts until the team lets
-  // the robot drive again. Applied in order per station.
-  const eStopCut = new Map<StationName, boolean>();
-  let eStopCutChain: Promise<void> = Promise.resolve();
+  // A team Stop, network layer: while a station is stopped from its team's
+  // page out of a match, steamboat drops its Driver Station's control packets
+  // to the robot, so the robot stops within ~100 ms. That DS isn't under field
+  // control, so nothing else would stop it (ISSUES.md: replacing this with
+  // field control). The cut lasts until the team lets the robot drive again.
+  // E-stops don't cut: they rely on the hold loop taking the DS under field
+  // control and disabling it. Applied in order per station.
+  const teamStopCuts = new Map<StationName, boolean>();
+  let teamStopCutChain: Promise<void> = Promise.resolve();
   matchEngine.addStateListener(state => {
     for (const station of StationNameList) {
-      const st = state.stationStates[station];
-      // E-stop (and, after one, until the DS shows Disabled), or a team Stop
-      // on a robot out of a match.
-      const want = (st?.eStop ?? false) || (st?.reArming ?? false) || (!st?.joined && (st?.teamStopped ?? false));
-      if (want === (eStopCut.get(station) ?? false)) continue;
-      eStopCut.set(station, want);
+      const want = teamStopCut(state.stationStates[station]);
+      if (want === (teamStopCuts.get(station) ?? false)) continue;
+      teamStopCuts.set(station, want);
       if (!vlanInterface || process.env.DRY_RUN) continue;
-      eStopCutChain = eStopCutChain
-        .then(() => setEStopCut(station, want))
+      teamStopCutChain = teamStopCutChain
+        .then(() => setTeamStopCut(station, want))
         .then(
           () =>
             appInfo(`${station}: ${want ? 'cut DS→robot control traffic (stop)' : 'stop cleared, traffic restored'}`),
@@ -396,10 +393,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // A trunk rebuild flushed the cuts; a station still stopped needs its back.
   afterTrunkRebuild.push(() => {
     if (!vlanInterface || process.env.DRY_RUN) return;
-    for (const [station, want] of eStopCut) {
+    for (const [station, want] of teamStopCuts) {
       if (!want) continue;
-      eStopCutChain = eStopCutChain
-        .then(() => setEStopCut(station, true))
+      teamStopCutChain = teamStopCutChain
+        .then(() => setTeamStopCut(station, true))
         .catch(err => console.error(`${station}: failed to re-apply the stop cut:`, err));
     }
   });
@@ -1284,7 +1281,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         return undefined;
       },
       (station, count) => stationChecks.noteJoysticks(station, count),
-      (station, enabled) => matchEngine.noteDsControl(station, enabled),
       hop => robotLinkWatch?.hop(hop),
       robotDropouts,
       // SystemCore robots' packets, kept until their layout can be decoded
