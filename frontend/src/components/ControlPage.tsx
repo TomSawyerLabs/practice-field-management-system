@@ -458,7 +458,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       <Tabs
         value={tab}
         onChange={(_, v: ControlTab) => selectTab(v)}
-        variant="fullWidth"
+        variant="scrollable"
+        scrollButtons="auto"
+        allowScrollButtonsMobile
         sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
       >
         {CONTROL_TABS.map(t => (
@@ -474,7 +476,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
               ) : undefined;
             })()}
             iconPosition="end"
-            sx={{ minHeight: 48 }}
+            sx={{ minHeight: 48, flexGrow: 1 }}
           />
         ))}
       </Tabs>

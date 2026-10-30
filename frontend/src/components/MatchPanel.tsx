@@ -38,6 +38,21 @@ const phaseColors: Record<MatchPhase, string> = {
   postMatch: 'text.secondary',
 };
 
+/** A stop button is a thumb target on a phone, whatever size it has with a mouse. */
+const STOP_TAP_TARGET = { '@media (pointer: coarse)': { minHeight: 44 } };
+
+/** The action row while a match runs: pinned to the bottom of the screen. A
+ *  phone held sideways is under 400px tall, and the timer alone would push the
+ *  stop buttons below the fold. The card must not clip it (overflow). */
+const PINNED_STOPS = {
+  position: 'sticky',
+  bottom: 0,
+  zIndex: 1,
+  py: 1,
+  bgcolor: 'background.paper',
+  backgroundImage: 'var(--Paper-overlay)',
+};
+
 function MatchTimer({ remainingTime, phase }: { remainingTime: number; phase: MatchPhase }) {
   const display = Math.ceil(Math.max(0, remainingTime));
   const minutes = Math.floor(display / 60);
@@ -207,7 +222,7 @@ function SelfServiceControls({
           variant={aStopPhase ? 'outlined' : 'contained'}
           color="error"
           size="small"
-          sx={aStopPhase ? { flex: '0 0 auto', px: 1.5 } : undefined}
+          sx={{ ...STOP_TAP_TARGET, ...(aStopPhase && { flex: '0 0 auto', px: 1.5 }) }}
           onClick={tapOnly(() => sendStationSelfEStop(station))}
         >
           E-Stop
@@ -248,7 +263,12 @@ export function FreeplayStopButton({ station }: { station: StationName }) {
   const myState = useFreeplayState(station);
   if (!myState || myState.eStop || myState.teamStopped || myState.blockedReason || myState.heldReason) return null;
   return (
-    <Button color="error" variant="contained" onClick={tapOnly(() => sendStationTeamStop(station, true))}>
+    <Button
+      color="error"
+      variant="contained"
+      sx={STOP_TAP_TARGET}
+      onClick={tapOnly(() => sendStationTeamStop(station, true))}
+    >
       Stop robot
     </Button>
   );
@@ -560,7 +580,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
   const blueStations = joinedStations.filter(s => stationStates[s]?.alliance === 'blue');
 
   return (
-    <Card sx={{ mb: 2 }}>
+    <Card sx={{ mb: 2, ...(joined && isActive && { overflow: 'visible' }) }}>
       <CardContent>
         {/* Phase display when active */}
         {(isActive || isPostMatch) && (
@@ -674,7 +694,7 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
         )}
 
         {/* Action buttons */}
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', ...(joined && isActive && PINNED_STOPS) }}>
           {/* Not joined, match created: Join Red / Join Blue buttons */}
           {!joined && isCreated && (
             <>
@@ -757,7 +777,13 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
                   </Button>
                 </>
               ) : (
-                <Button variant="outlined" color="warning" size="small" onClick={() => sendStationSelfAStop(station)}>
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  size="small"
+                  sx={STOP_TAP_TARGET}
+                  onClick={() => sendStationSelfAStop(station)}
+                >
                   A-Stop
                 </Button>
               )}
