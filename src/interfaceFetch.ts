@@ -7,6 +7,7 @@
  */
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import { dryRunRefusal } from './dryRun.js';
 
 const execFile = promisify(execFileCb);
 
@@ -59,6 +60,9 @@ export async function fetchOnInterface(
   timeoutMs: number,
   run: RunCurl = runCurl,
 ): Promise<HttpReply> {
+  // The guard on fetch can't see curl
+  const refused = dryRunRefusal(url, init.method ?? (init.body === undefined ? 'GET' : 'POST'));
+  if (refused) throw refused;
   try {
     const { stdout } = await run(curlArgs(ifname, url, init, timeoutMs));
     return parseReply(stdout);

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { curlArgs, fetchOnInterface } from './interfaceFetch.js';
 import * as interfaceFetch from './interfaceFetch.js';
 import { checkRadio, checkRoboRIO } from './teamChecker.js';
@@ -70,6 +70,43 @@ describe('fetchOnInterface', () => {
     await expect(fetchOnInterface('br-slot1', 'http://x/', {}, 1000, failing({ code: 'ENOENT' }))).rejects.toThrow(
       'curl is not installed',
     );
+  });
+});
+
+describe('fetchOnInterface in a dry run', () => {
+  const saved = process.env.DRY_RUN;
+  const ran = spyOn({ run: reply('{}\n200') }, 'run');
+
+  beforeEach(() => {
+    process.env.DRY_RUN = '1';
+    ran.mockClear();
+    spies.push(spyOn(console, 'log').mockImplementation(() => {}));
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = saved;
+    while (spies.length) spies.pop()!.mockRestore();
+  });
+
+  const spies: { mockRestore(): void }[] = [];
+
+  test('refuses a write to another machine, without running curl', async () => {
+    const write = fetchOnInterface('br-slot1', 'http://10.12.34.1/configuration', { method: 'POST' }, 1000, ran);
+    await expect(write).rejects.toThrow('dry run: POST http://10.12.34.1/configuration not sent');
+    expect(ran).not.toHaveBeenCalled();
+  });
+
+  test('a body with no method counts as a write', async () => {
+    const write = fetchOnInterface('br-slot1', 'http://10.12.34.1/x', { body: 'a=1' }, 1000, ran);
+    await expect(write).rejects.toThrow('dry run');
+    expect(ran).not.toHaveBeenCalled();
+  });
+
+  test('reads go, and so do writes to a fake on this machine', async () => {
+    await fetchOnInterface('br-slot1', 'http://10.12.34.1/status', {}, 1000, ran);
+    await fetchOnInterface('lo', 'http://127.0.0.1:8080/configuration', { method: 'POST' }, 1000, ran);
+    expect(ran).toHaveBeenCalledTimes(2);
   });
 });
 

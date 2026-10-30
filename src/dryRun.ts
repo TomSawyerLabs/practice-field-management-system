@@ -12,7 +12,8 @@
  *
  * Each write site checks `skippedInDryRun()`. As a backstop for any it
  * misses, `installDryRunFetchGuard()` makes every non-GET HTTP request to a
- * non-loopback host fail. Fakes on this machine (a stand-in radio on
+ * non-loopback host fail, and `fetchOnInterface()`, which sends with curl
+ * rather than fetch, refuses the same requests. Fakes on this machine (a stand-in radio on
  * 127.0.0.1 in scripts/test-radio-reconcile.ts) still get their writes —
  * see `skippedInDryRunUnlessLocal()`.
  */
@@ -67,17 +68,21 @@ export function dryRunAllowsRequest(url: string, method: string | undefined): bo
   return isLoopbackUrl(url);
 }
 
+/** Why a dry run refuses this request, logged, or null if it may go. */
+export function dryRunRefusal(url: string, method: string): Error | null {
+  if (!isDryRun() || dryRunAllowsRequest(url, method)) return null;
+  console.log(`[dry-run] Blocked ${method.toUpperCase()} ${url}`);
+  return new Error(`dry run: ${method.toUpperCase()} ${url} not sent`);
+}
+
 /** In a dry run, refuse every write over HTTP to another machine. */
 export function installDryRunFetchGuard(): void {
   if (!isDryRun()) return;
   const realFetch = globalThis.fetch;
   const guarded = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = input instanceof Request ? input.url : String(input);
-    const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
-    if (!dryRunAllowsRequest(url, method)) {
-      console.log(`[dry-run] Blocked ${method.toUpperCase()} ${url}`);
-      return Promise.reject(new Error(`dry run: ${method.toUpperCase()} ${url} not sent`));
-    }
+    const refused = dryRunRefusal(url, init?.method ?? (input instanceof Request ? input.method : 'GET'));
+    if (refused) return Promise.reject(refused);
     return realFetch(input, init);
   };
   globalThis.fetch = Object.assign(guarded, realFetch);
