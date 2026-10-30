@@ -64,17 +64,6 @@ driving while `/match`, `/csa` and the team's page say E-STOPPED. The robot's
 status bit crosses the field either way (UDP 1150, or `tele.dsStatus`), so pFMS
 can see it. Matters because staff would believe a running robot is stopped.
 
-## A Driver Station can still clear an e-stop over the WebSocket
-
-_in progress — issues/stop-cut_
-
-`adminClearEStop` and `adminClearFieldEStop` stay `anyone` in `src/wsAccess.ts`
-(2026-10-30), left alone while e-stop behaviour is being reconsidered. Clearing
-a latch is an operator action, so revisit them when that's decided. The stops
-themselves (`adminStopMatch`, `matchAbortCountdown`, `stationPauseMatch`,
-`adminStationDisable`, the e-stops) are `anyone` on purpose: a false match must
-not block one.
-
 ## Timing-sensitive tests in a full run
 
 _in progress — issues/test-timing_
