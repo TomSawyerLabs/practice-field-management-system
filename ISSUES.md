@@ -145,14 +145,6 @@ it to. An explicit choice on the team page or `/route` is respected, because
 auto-connect skips a laptop with a preference; after Disconnect, its next traffic
 gets auto-connected again. Conntrack has no interface to go by.
 
-## Subnet scanner ignores DRY_RUN
-
-_in progress — issues/host-robustness_
-
-`src/index.ts` never passes `dryRun` to `SubnetScanner`, so the
-`[dry-run] Would fping` branch is dead and a DRY_RUN instance sweeps real team
-subnets. Matters because this PC reaches the real field network.
-
 ## pFMS crashes at startup if the mDNS reflector can't join multicast
 
 _in progress — issues/host-robustness_

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { SubnetScanner, fpingArgs } from './subnetScanner.js';
 import type { StationName, SubnetScanResults } from './types.js';
 
@@ -9,6 +9,39 @@ describe('fpingArgs', () => {
 
   test('leaves routing to the host without one', () => {
     expect(fpingArgs('10.19.67.1', '10.19.67.253')).not.toContain('-I');
+  });
+});
+
+describe('dry run', () => {
+  const savedDryRun = process.env.DRY_RUN;
+  afterEach(() => {
+    if (savedDryRun === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = savedDryRun;
+  });
+
+  test('sends nothing to team subnets when DRY_RUN is set, with no help from the caller', async () => {
+    process.env.DRY_RUN = '1';
+    const ran: string[] = [];
+
+    const results = await new Promise<SubnetScanResults>(resolve => {
+      const scanner = new SubnetScanner(
+        station => (station === 'slot1' ? 1967 : null),
+        scan => {
+          scanner.stop();
+          resolve(scan);
+        },
+        undefined,
+        undefined,
+        async tool => {
+          ran.push(tool);
+          return { stdout: '' };
+        },
+      );
+      scanner.start(60_000);
+    });
+
+    expect(ran).toEqual([]);
+    expect(results.stations).toEqual({});
   });
 });
 

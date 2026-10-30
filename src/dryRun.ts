@@ -1,10 +1,11 @@
 /**
  * DRY_RUN: run pFMS without changing anything outside this machine.
  *
- * Reads stay live — the radio's status, team checks, subnet scans — so the
- * UI shows real data. Every write to something real is logged as
- * "[dry-run] Would …" and skipped: the field radio and robot radios, Driver
- * Stations, the host's network and Wi-Fi cards, lights, Slack, push. A dev
+ * Reads stay live — the radio's status, team checks — so the UI shows real
+ * data. Every write to something real is logged as "[dry-run] Would …" and
+ * skipped: the field radio and robot radios, Driver Stations, the host's
+ * network and Wi-Fi cards, lights, Slack, push. Subnet sweeps are skipped
+ * too: they only read, but they ping every address on a team's subnet. A dev
  * machine on the field network can reach all of those (2026-10-12: local
  * dry runs wiped the field radio twice, because DRY_RUN only covered the
  * host's own network commands).

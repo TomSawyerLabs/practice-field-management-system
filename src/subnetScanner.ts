@@ -1,5 +1,6 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
+import { isDryRun, skippedInDryRunOnce } from './dryRun.js';
 import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost } from './types.js';
 import { FIELD_CONTROL_ADDRESS, StationNameList } from './types.js';
 import { teamSubnet } from './utils.js';
@@ -39,7 +40,9 @@ export class SubnetScanner {
     private readonly onScanComplete?: (results: SubnetScanResults) => void,
     /** A station's bridge interface, when pFMS runs the station networks. */
     private readonly bridgeOf?: (station: StationName) => string | undefined,
-    private readonly dryRun = false,
+    /** From DRY_RUN by default, so no caller can forget it: a dry run on the
+     *  field network must not sweep real team subnets. */
+    private readonly dryRun = isDryRun(),
     private readonly run: RunTool = execFile,
   ) {}
 
@@ -141,7 +144,7 @@ export class SubnetScanner {
     const now = Date.now();
 
     if (this.dryRun) {
-      console.log(`[dry-run] Would fping ${rangeStart} - ${rangeEnd} for ${station}`);
+      skippedInDryRunOnce(`fping ${station} ${team}`, `fping ${rangeStart} - ${rangeEnd} for ${station}`);
       this.lastScanTime.set(station, now);
       return;
     }

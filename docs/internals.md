@@ -335,6 +335,8 @@ skipped:
   are never sent
 - Robot radios on the test port: no configuration or firmware upload
 - Driver Stations: no control packets and no FMS station assignment
+- Team subnets: no `fping` sweeps or conntrack scan, so the UI lists no
+  discovered devices
 - Host Wi-Fi cards: the robot Wi-Fi scan and 6 GHz watch don't start, and
   test joins are refused
 - Field lights (timelapse), Slack, web push: nothing is sent; the mDNS
