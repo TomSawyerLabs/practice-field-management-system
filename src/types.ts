@@ -185,6 +185,12 @@ export function translateRadioUpdate(raw: RawRadioUpdate): RadioUpdate {
   return { ...raw, stationStatuses };
 }
 
+/** pFMS's address on field control: the trunk's untagged network, or the
+ *  field-control interface when one is set. Fixed by the Driver Station
+ *  protocol, not ours to choose: a DS looks for its FMS at this address, so
+ *  it can't be a setting. */
+export const FIELD_CONTROL_ADDRESS = '10.0.100.5';
+
 // ── Setup wizard probe ──────────────────────────────────────────────
 
 /** Ordered setup stages — each one only makes sense once the prior one passes.
@@ -222,7 +228,6 @@ export interface SetupSettings {
    *  tagged sub-interface (`eno1.100`) or a separate NIC. */
   fieldControlInterface?: string;
   radioUrl?: string;
-  fmsAddress?: string;
   /** Base URL of a WHEP server for the scoreboard's video view. */
   videoProxyTarget?: string;
   /** Operator confirmed casting works on a real TV. */
@@ -870,7 +875,6 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   vlanInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{1,32}$/.test(v),
   fieldControlInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{1,15}$/.test(v),
   radioUrl: v => typeof v === 'string' && isPrivateHostUrl(v),
-  fmsAddress: v => typeof v === 'string' && /^\d{1,3}(\.\d{1,3}){3}$/.test(v),
   videoProxyTarget: v => typeof v === 'string' && isPrivateHostUrl(v),
   castVerified: v => typeof v === 'boolean',
   audioVerified: v => typeof v === 'boolean',

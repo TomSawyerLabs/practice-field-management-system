@@ -15,7 +15,9 @@ the network model see [network.md](network.md).
      field network, the setup wizard shows why, and the bring-up is
      retried every 30 s.
    - **Set the link up and check interface IPs** — field control must
-     carry `10.0.100.5` (the FMS address); it is **added if missing**. By
+     carry `10.0.100.5` (the FMS address, which Driver Stations look for
+     at that exact address, so it isn't configurable); it is **added if
+     missing**. By
      default that's the bare trunk interface (field control is the
      native/untagged VLAN). With a field-control interface set (setup
      wizard, else `FIELD_CONTROL_INTERFACE`), it goes there instead. A

@@ -4,7 +4,7 @@ import dgram, { Socket } from 'dgram';
 import { EventEmitter } from 'events';
 import { Transform, TransformCallback } from 'stream';
 import { BufferOverflowError, BufferReader, BufferWriter } from './BufferWrappers.js';
-import { MatchSlot, StationName, Mode } from './types.js';
+import { FIELD_CONTROL_ADDRESS, MatchSlot, StationName, Mode } from './types.js';
 
 const DefaultTcpPort = 1750;
 const DefaultUdpPort = 1160;
@@ -22,8 +22,6 @@ export const UdpSendPort = 1121;
  *    names its own UDP control port, game data as UDP tag 0x20.
  *  Reference: Team254/cheesy-arena field/driver_station_connection.go (PR #284). */
 export type DsProtocol = 'legacy' | 'ds2027';
-
-const DefaultAddress = '10.0.100.5';
 
 type TeamNumberMessage = {
   type: 0x18;
@@ -481,7 +479,7 @@ export type FmsServer = EventEmitter<Events> & {
 export type FmsEvents = Events;
 
 export async function startFMSServer({
-  address = DefaultAddress,
+  address = FIELD_CONTROL_ADDRESS,
   tcp = DefaultTcpPort,
   udp = DefaultUdpPort,
   resolveTeamSlot,

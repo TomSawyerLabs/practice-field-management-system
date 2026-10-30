@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import { useNetworkBackend } from './networkManager.js';
-import { FIELD_CONTROL_ADDRESS, bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
+import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
+import { FIELD_CONTROL_ADDRESS } from './types.js';
 
 /** A host with a couple of NICs, recording what pFMS does to it. Nothing
  *  here touches a real interface. */

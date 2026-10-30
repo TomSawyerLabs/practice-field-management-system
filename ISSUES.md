@@ -126,17 +126,6 @@ _in progress — issues/test-reliability_
 
 Also seen: `the scanner > a robot that goes quiet drops off the list` failed once in a full run (2026-10-13, 977 pass / 1 fail, with CPU-heavy binary builds running alongside); 29/29 three times on its own.
 
-## The wizard's FMS address setting isn't applied
-
-_in progress — issues/setup-and-packaging_
-
-`SetupSettings.fmsAddress` (`src/types.ts`) is only read by the setup probe
-(`src/index.ts` passes it to `runSetupProbe`). Startup always adds the
-hardcoded `10.0.100.5` (`FIELD_CONTROL_ADDRESS` in `src/trunkInterface.ts`),
-and the FMS server, syslog and subnet scanner hardcode it too. A changed
-setting would make the wizard check for an address pFMS never assigns. Either
-apply it everywhere or drop the setting.
-
 ## scripts/test-trunk-switch.ts connects its WebSocket before pFMS is listening
 
 _in progress — issues/test-reliability_

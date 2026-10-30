@@ -9,6 +9,7 @@
  * next commit; index.ts orchestrates the services that use the trunk.
  */
 import { isDryRun } from './dryRun.js';
+import { FIELD_CONTROL_ADDRESS } from './types.js';
 import { checkInterfaceIps } from './startupChecks.js';
 import { REQUIRED_TOOLS, aptInstallCommand, missingTools } from './hostTools.js';
 import {
@@ -22,10 +23,6 @@ import {
   vlanMap,
 } from './networkManager.js';
 import type { NetworkBackend } from './node-ip/index.js';
-
-/** pFMS's address on field control: the trunk's untagged network, or the
- *  field-control interface when one is set. */
-export const FIELD_CONTROL_ADDRESS = '10.0.100.5';
 
 export type TrunkResult = { ok: true } | { ok: false; reason: string };
 

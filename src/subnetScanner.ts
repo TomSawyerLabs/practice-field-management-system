@@ -1,7 +1,7 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost } from './types.js';
-import { StationNameList } from './types.js';
+import { FIELD_CONTROL_ADDRESS, StationNameList } from './types.js';
 import { teamSubnet } from './utils.js';
 
 const execFile = promisify(execFileCb);
@@ -217,9 +217,6 @@ export class SubnetScanner {
     }
     if (subnetToStation.size === 0) return;
 
-    // Our FMS IP — filter it out of guest host lists
-    const selfIp = '10.0.100.5';
-
     let stdout: string;
     try {
       ({ stdout } = await this.run('conntrack', ['-L'], { timeout: 5_000 }));
@@ -259,12 +256,12 @@ export class SubnetScanner {
       // in conntrack, but we only care about local guest network hosts.
       if (srcStation && !dstStation && SubnetScanner.isPrivateIp(dst)) {
         // src is in team subnet → dst is the guest (skip our own IPs)
-        if (dst === selfIp) continue;
+        if (dst === FIELD_CONTROL_ADDRESS) continue;
         if (!activeGuests.has(srcStation)) activeGuests.set(srcStation, new Set());
         activeGuests.get(srcStation)!.add(dst);
       } else if (dstStation && !srcStation && SubnetScanner.isPrivateIp(src)) {
         // dst is in team subnet → src is the guest (skip our own IPs)
-        if (src === selfIp) continue;
+        if (src === FIELD_CONTROL_ADDRESS) continue;
         if (!activeGuests.has(dstStation)) activeGuests.set(dstStation, new Set());
         activeGuests.get(dstStation)!.add(src);
       }

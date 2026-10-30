@@ -105,6 +105,7 @@ import {
   SixGhzWatchState,
   SelfUpdateStatus,
   WifiCardsState,
+  FIELD_CONTROL_ADDRESS,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -1009,7 +1010,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           fieldControlInterface: fieldControlSetting(),
           trunk: { active: vlanInterface, problem: trunkProblem },
           radioUrl: radioUrl(),
-          fmsAddress: settings.fmsAddress ?? '10.0.100.5',
           dryRun: process.env.DRY_RUN !== undefined,
           videoProxyTarget: settings.videoProxyTarget ?? process.env.VIDEO_PROXY_TARGET,
           audioVerified: settings.audioVerified,
@@ -1427,15 +1427,14 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   }
 
   if (StartSyslog) {
-    runSyslogServer('10.0.100.5').then(syslogServer => {
+    runSyslogServer(FIELD_CONTROL_ADDRESS).then(syslogServer => {
       if (!syslogServer) return;
 
       syslogServer.on('message', msg => {
         broadcast(msg);
       });
 
-      // TODO: Load system IP
-      radioManager.setSyslogIP('10.0.100.5').catch(err => {
+      radioManager.setSyslogIP(FIELD_CONTROL_ADDRESS).catch(err => {
         console.error('Failed to set Syslog IP:', err);
       });
     });

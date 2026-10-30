@@ -12,7 +12,6 @@ const state = await runSetupProbe({
   vlanInterface: process.env.VLAN_INTERFACE,
   fieldControlInterface: process.env.FIELD_CONTROL_INTERFACE || undefined,
   radioUrl: process.env.RADIO_URL ?? 'http://10.0.100.2',
-  fmsAddress: '10.0.100.5',
   dryRun: process.env.DRY_RUN !== undefined,
   // This script has no API key store, so it can only reason from the env flag.
   // The running server passes the real answer (keys present AND flag unset).

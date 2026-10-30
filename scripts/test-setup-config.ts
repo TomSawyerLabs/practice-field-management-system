@@ -41,12 +41,12 @@ process.env.VLAN_INTERFACE = 'eth9';
 const fromSetup = resumed.resolveSetting('vlanInterface', 'VLAN_INTERFACE');
 check('stored setting wins over env', fromSetup.value === 'eno1' && fromSetup.source === 'setup');
 
-const fromEnv = resumed.resolveSetting('fmsAddress', 'PFMS_TEST_FMS_ADDRESS');
+const fromEnv = resumed.resolveSetting('videoProxyTarget', 'PFMS_TEST_VIDEO_PROXY');
 check('falls back to default when neither is set', fromEnv.value === undefined && fromEnv.source === 'default');
 
-process.env.PFMS_TEST_FMS_ADDRESS = '10.0.100.5';
-const envWins = resumed.resolveSetting('fmsAddress', 'PFMS_TEST_FMS_ADDRESS');
-check('env is used when nothing is stored', envWins.value === '10.0.100.5' && envWins.source === 'env');
+process.env.PFMS_TEST_VIDEO_PROXY = 'http://10.0.100.9';
+const envWins = resumed.resolveSetting('videoProxyTarget', 'PFMS_TEST_VIDEO_PROXY');
+check('env is used when nothing is stored', envWins.value === 'http://10.0.100.9' && envWins.source === 'env');
 
 // These two are exactly how src/index.ts resolves them at startup, so this
 // covers the real code path rather than a parallel copy of the rule.

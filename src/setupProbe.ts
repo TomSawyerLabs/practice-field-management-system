@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { bundledPath } from './assetRoot.js';
 import { SOUND_NAMES } from './matchAudio.js';
-import { isValidRawRadioUpdate, translateRadioUpdate } from './types.js';
+import { FIELD_CONTROL_ADDRESS, isValidRawRadioUpdate, translateRadioUpdate } from './types.js';
 import { detectFirmwareMode } from './startupChecks.js';
 import { createBackend, createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import type { SetupCheck, SetupProbeState, SetupStepId, SetupStep, DeploymentMode } from './types.js';
@@ -213,7 +213,6 @@ async function probeFieldControl(
   net: NetworkBackend,
   vlanInterface: string | undefined,
   fieldControlInterface: string | undefined,
-  fmsAddress: string,
 ): Promise<SetupCheck[]> {
   if (!vlanInterface) {
     return [warn('address', 'Field control address', 'Waiting on a trunk interface selection')];
@@ -231,24 +230,26 @@ async function probeFieldControl(
   }
 
   const target = interfaces.find(i => i.name === expected);
-  if (target?.addresses.some(a => a.address === fmsAddress)) {
-    return [pass('address', 'Field control address', `${fmsAddress} is on ${expected}`)];
+  if (target?.addresses.some(a => a.address === FIELD_CONTROL_ADDRESS)) {
+    return [pass('address', 'Field control address', `${FIELD_CONTROL_ADDRESS} is on ${expected}`)];
   }
 
   // The address on some other interface: someone (netplan, an earlier
   // setting) put it there, and it will fight the one pFMS adds.
-  const elsewhere = interfaces.find(i => i.name !== expected && i.addresses.some(a => a.address === fmsAddress));
+  const elsewhere = interfaces.find(
+    i => i.name !== expected && i.addresses.some(a => a.address === FIELD_CONTROL_ADDRESS),
+  );
   if (elsewhere) {
     return [
       fail(
         'address',
         'Field control address',
-        `${fmsAddress} is on ${elsewhere.name}, not on ${expected}. ` +
+        `${FIELD_CONTROL_ADDRESS} is on ${elsewhere.name}, not on ${expected}. ` +
           (fieldControlInterface
             ? `pFMS puts it on the field-control interface, ${expected}.`
             : `pFMS puts it on the bare trunk interface, so field control is the native (untagged) VLAN there. If your switch tags field control on that port, set the field-control interface to ${elsewhere.name}.`),
         fieldControlInterface
-          ? `Remove ${fmsAddress} from ${elsewhere.name}`
+          ? `Remove ${FIELD_CONTROL_ADDRESS} from ${elsewhere.name}`
           : `Set the field-control interface to ${elsewhere.name}, or make field control the native VLAN on the ${vlanInterface} switch port`,
       ),
     ];
@@ -262,7 +263,7 @@ async function probeFieldControl(
     fail(
       'address',
       'Field control address',
-      `${fmsAddress} is not on ${expected}. pFMS adds it when it sets up the field network, so if it's missing the field network isn't up yet (see Interfaces) or pFMS isn't running as root.`,
+      `${FIELD_CONTROL_ADDRESS} is not on ${expected}. pFMS adds it when it sets up the field network, so if it's missing the field network isn't up yet (see Interfaces) or pFMS isn't running as root.`,
     ),
   ];
 }
@@ -627,7 +628,6 @@ export interface SetupProbeOptions {
   /** Where field control lives, when it isn't the trunk's native VLAN. */
   fieldControlInterface?: string;
   radioUrl: string;
-  fmsAddress: string;
   dryRun?: boolean;
   videoProxyTarget?: string;
   /** Human confirmations the wizard has recorded — checks can't prove these. */
@@ -673,7 +673,7 @@ export async function runSetupProbe(opts: SetupProbeOptions): Promise<SetupProbe
     probeHost(),
     net ? probeInterfaces(net, opts.vlanInterface, opts.trunk ?? {}) : unavailable('selected', 'Trunk interface'),
     net
-      ? probeFieldControl(net, opts.vlanInterface, opts.fieldControlInterface, opts.fmsAddress)
+      ? probeFieldControl(net, opts.vlanInterface, opts.fieldControlInterface)
       : unavailable('address', 'Field control address'),
     // Reaching the radio is plain HTTP, so it's worth trying from anywhere.
     probeRadio(opts.radioUrl),
