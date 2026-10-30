@@ -1540,13 +1540,6 @@ export function isMatchState(msg: unknown): msg is MatchState {
 
 // ── Station-driven match messages ────────────────────────────────────
 
-export type StationJoin = { type: 'stationJoin'; station: StationName };
-export function isStationJoin(msg: unknown): msg is StationJoin {
-  if (typeof msg !== 'object' || !msg) return false;
-  const m = msg as StationJoin;
-  return m.type === 'stationJoin' && StationNameRegex.test(m.station);
-}
-
 /** Join a station to a specific alliance (decoupled from physical port). */
 export type StationJoinAlliance = { type: 'stationJoinAlliance'; station: StationName; alliance: Alliance };
 export function isStationJoinAlliance(msg: unknown): msg is StationJoinAlliance {

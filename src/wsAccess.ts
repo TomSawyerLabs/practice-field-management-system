@@ -38,7 +38,6 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   setPracticeRecording: 'anyone',
   requestPracticeDayLink: 'anyone',
   stationJoinAlliance: 'anyone',
-  stationJoin: 'anyone',
   stationLeave: 'anyone',
   stationReady: 'anyone',
   stationClearEmptyMatch: 'anyone',

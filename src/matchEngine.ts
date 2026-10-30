@@ -826,13 +826,6 @@ export class MatchEngine {
 
   // ── Station self-service ──────────────────────────────────────────
 
-  /** @deprecated Use joinStationAlliance() instead. Kept for backward compatibility.
-   *  With slot-based naming, defaults to 'red' since alliance can't be inferred from slot name. */
-  joinStation(station: StationName) {
-    appWarn(`joinStation() is deprecated — use joinStationAlliance() with an explicit alliance`);
-    this.joinStationAlliance(station, 'red');
-  }
-
   /** Join a station to a specific alliance (decoupled from physical port). */
   joinStationAlliance(station: StationName, alliance: Alliance) {
     // Only allow joining during 'created' phase

@@ -1,5 +1,5 @@
 import { createRoot } from 'react-dom/client';
-import { SlotGroup } from '../components/AllianceStatus';
+import { SlotGroup } from '../components/SlotGroup';
 import { DsClientNotice } from '../components/DsClientGuard';
 import { WrapAll } from './wrap';
 import Grid from '@mui/material/Grid';

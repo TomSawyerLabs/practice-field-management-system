@@ -29,9 +29,7 @@ import {
   sendDrive,
   usePortBridgeState,
   useStationDriveSession,
-  useStationDsInfo,
   useStationLastLinked,
-  useStationMdnsActivity,
   useStationNetworkStats,
   useStationRadioStatus,
   useStationStagedChange,
@@ -42,8 +40,6 @@ import {
   sendStationTestModeStop,
   sendStationRadioConfigureRequest,
 } from '../hooks/useBackend';
-import { FreeplayControl, FreeplayStopButton, MatchPanel } from './MatchPanel';
-import { StationNetworkCard } from './NetworkPage';
 import { useSavedWiFiSettings } from '../hooks/useSavedWiFiSettings';
 import { useSecondTick } from '../hooks/useSecondTick';
 import { TimeDisplay } from './TimeDisplay';
@@ -57,7 +53,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ClearIcon from '@mui/icons-material/Clear';
 import PublicIcon from '@mui/icons-material/Public';
 import PublicOffIcon from '@mui/icons-material/PublicOff';
-import { StationChart, GroupedChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
+import { GroupedChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
 import { TeamChecksPanel } from './TeamChecksPanel';
 import { WaitingForRobot } from './WaitingForRobot';
 import { InlineTestPortMode } from './InlineTestPortMode';
@@ -127,19 +123,18 @@ function LiveAge({ timestamp }: { timestamp: number }) {
   return <>{formatAge(timestamp)}</>;
 }
 
-export function StationStatus({ station, full }: { station: StationName; full?: boolean }) {
+export function StationStatus({ station }: { station: StationName }) {
   const [open, setOpen] = useState(false);
   const [ssid, setSsid] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [internetAccess, setInternetAccess] = useState(false);
   const [showPassphrases, setShowPassphrases] = useState(false);
-  const [chartMode, setChartMode] = useState(full ?? false);
+  const [chartMode, setChartMode] = useState(false);
   const ssidInputRef = useRef<HTMLInputElement | null>(null);
 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const stationStatus = useStationRadioStatus(station);
-  const dsInfo = useStationDsInfo(full ? station : null);
   const { session, blocked } = useStationDriveSession(station);
   const yourIp = useYourIp();
   const dsHostname = useHostname(session?.dsIp);
@@ -155,7 +150,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
   const telemetry = useLatestTelemetry(station);
   const fwd = useStationNetworkStats(station);
   const scan = useStationSubnetScan(station);
-  const mdns = useStationMdnsActivity(full ? station : null);
   const lastLinked = useStationLastLinked(station);
   const portBridgeState = usePortBridgeState();
   const stationTestState = useStationTestState(station);
@@ -241,8 +235,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
 
   return (
     <>
-      {full && <FreeplayControl station={station} />}
-      {full && <MatchPanel station={station} />}
       <RoutePreferenceBanner station={station} />
       {/* Drive session info: DS IP, blocked DSes, timeout countdown */}
       {(() => {
@@ -312,11 +304,11 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
       })()}
       <Card
         style={{
-          marginBottom: full ? undefined : '1rem',
-          height: full ? undefined : '22em',
+          marginBottom: '1rem',
+          height: '22em',
         }}
       >
-        <CardContent sx={full ? { height: '100%', display: 'flex', flexDirection: 'column' } : {}}>
+        <CardContent>
           <Typography variant="h5" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
               {pretty}
@@ -348,7 +340,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
               )}
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              {full && <FreeplayStopButton station={station} />}
               {/** CLEAR BUTTON */}
               {(stationSsid || hasStagedChange) && (
                 <Tooltip title="Clear station configuration">
@@ -475,60 +466,35 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                   onStartTestPortMode={portVlanId => sendStationTestModeRequest(station, portVlanId)}
                 />
               ) : chartMode && stationSsid ? (
-                <Box
-                  sx={{
-                    overflowY: 'auto',
-                    ...(full ? { flex: 1, minHeight: 0 } : { height: 'calc(22em - 95px + 5px)' }),
-                  }}
-                >
-                  {full ? (
-                    <>
-                      {/* Full view: show all charts separately */}
-                      <StationChart station={station} metric="signalLevels" height="60px" />
-                      <StationChart station={station} metric="snr" height="60px" />
-                      <StationChart station={station} metric="rates" height="60px" />
-                      <StationChart station={station} metric="packets" height="60px" />
-                      <StationChart station={station} metric="bytes" height="60px" />
-                      <StationChart station={station} metric="bandwidth" height="60px" />
-                      <StationChart station={station} metric="dataAge" height="60px" />
-                      <StationChart station={station} metric="quality" height="60px" />
-                      <StationChart station={station} metric="batteryVoltage" height="60px" />
-                      <StationChart station={station} metric="dsCpuPercent" height="60px" />
-                      <StationChart station={station} metric="robotStatus" height="60px" />
-                    </>
-                  ) : (
-                    <>
-                      {/* Non-full view: use grouped charts */}
-                      <GroupedChart
-                        station={station}
-                        metrics={['snr', 'signalLevels']}
-                        height="60px"
-                        defaultMetricIndex={0}
-                        marginBottom={0.5}
-                      />
-                      <GroupedChart
-                        station={station}
-                        metrics={['rates', 'packets', 'bytes']}
-                        height="60px"
-                        defaultMetricIndex={0}
-                        marginBottom={0.5}
-                      />
-                      <GroupedChart
-                        station={station}
-                        metrics={['quality', 'bandwidth', 'dataAge']}
-                        height="60px"
-                        defaultMetricIndex={0}
-                        marginBottom={0.5}
-                      />
-                      <GroupedChart
-                        station={station}
-                        metrics={['batteryVoltage', 'dsCpuPercent', 'robotStatus']}
-                        height="60px"
-                        defaultMetricIndex={0}
-                        marginBottom={0.5}
-                      />
-                    </>
-                  )}
+                <Box sx={{ overflowY: 'auto', height: 'calc(22em - 95px + 5px)' }}>
+                  <GroupedChart
+                    station={station}
+                    metrics={['snr', 'signalLevels']}
+                    height="60px"
+                    defaultMetricIndex={0}
+                    marginBottom={0.5}
+                  />
+                  <GroupedChart
+                    station={station}
+                    metrics={['rates', 'packets', 'bytes']}
+                    height="60px"
+                    defaultMetricIndex={0}
+                    marginBottom={0.5}
+                  />
+                  <GroupedChart
+                    station={station}
+                    metrics={['quality', 'bandwidth', 'dataAge']}
+                    height="60px"
+                    defaultMetricIndex={0}
+                    marginBottom={0.5}
+                  />
+                  <GroupedChart
+                    station={station}
+                    metrics={['batteryVoltage', 'dsCpuPercent', 'robotStatus']}
+                    height="60px"
+                    defaultMetricIndex={0}
+                    marginBottom={0.5}
+                  />
                 </Box>
               ) : (
                 <>
@@ -898,69 +864,7 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
                           </Box>
                         );
                       })()}
-                      {/* mDNS Activity (full view only) */}
-                      {full &&
-                        (() => {
-                          if (!mdns) return null;
-                          return (
-                            <Box sx={{ mt: 0.5 }}>
-                              <Box
-                                sx={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'center',
-                                  px: 1,
-                                  mb: 0.25,
-                                }}
-                              >
-                                <Typography variant="caption" color="text.secondary">
-                                  mDNS Reflector
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                                  {mdns.queriesForwarded}q / {mdns.responsesForwarded}r
-                                </Typography>
-                              </Box>
-                              {mdns.recentNames.length > 0 && (
-                                <Table
-                                  size="small"
-                                  sx={{ '& .MuiTableCell-root': { padding: '2px 8px', fontSize: '0.875rem' } }}
-                                >
-                                  <TableHead>
-                                    <TableRow>
-                                      <TableCell>Name</TableCell>
-                                      <TableCell>IP</TableCell>
-                                      <TableCell>Requester</TableCell>
-                                    </TableRow>
-                                  </TableHead>
-                                  <TableBody>
-                                    {mdns.recentNames.map(entry => (
-                                      <TableRow key={entry.name}>
-                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                          {entry.services && entry.services.length > 0 ? (
-                                            <Tooltip title={entry.services.join(', ')} arrow placement="right">
-                                              <span style={{ cursor: 'help', textDecoration: 'underline dotted' }}>
-                                                {entry.name}
-                                              </span>
-                                            </Tooltip>
-                                          ) : (
-                                            entry.name
-                                          )}
-                                        </TableCell>
-                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                          {entry.resolvedIp ?? '—'}
-                                        </TableCell>
-                                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                          {entry.requester ?? '—'}
-                                        </TableCell>
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              )}
-                            </Box>
-                          );
-                        })()}
-                      {!full && <TeamChecksPanel station={station} />}
+                      <TeamChecksPanel station={station} />
                     </Box>
                   )}
                 </>
@@ -973,8 +877,6 @@ export function StationStatus({ station, full }: { station: StationName; full?: 
           )}
         </CardContent>
       </Card>
-
-      {full && <StationNetworkCard station={station} stats={fwd} scan={scan} mdns={mdns} dsInfo={dsInfo} />}
 
       <Dialog
         open={open}

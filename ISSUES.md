@@ -156,12 +156,6 @@ lease` at thousands of lines a second. 10.1.0 (steamboat, Debian) has a separate
 `request_time` and isn't affected. Matters because another site on a 10.0.x
 distro would get no tester lease and a flood of log lines.
 
-## StationStatus `full` mode looks unreachable
-
-_in progress — issues/ui-cleanup_
-
-`StationStatus` takes a `full` prop that switches on `FreeplayControl`, `MatchPanel`, `StationNetworkCard`, the mDNS table and the full chart set, but its only callers (`SlotGroup` and the deprecated `AllianceStatus` in `frontend/src/components/AllianceStatus.tsx`) never pass it. Worth deciding whether that code is dead and removable.
-
 ## No button starts a firmware update from station test port mode
 
 _in progress — issues/station-test-port_

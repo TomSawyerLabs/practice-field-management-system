@@ -35,7 +35,6 @@ import {
   isAdminStationEStop,
   isAdminStationDisable,
   isAdminClearEStop,
-  isStationJoin,
   isStationJoinAlliance,
   isStationLeave,
   isStationReady,
@@ -1322,9 +1321,6 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         }
       } else if (isStationJoinAlliance(data)) {
         matchEngine.joinStationAlliance(data.station, data.alliance);
-      } else if (isStationJoin(data)) {
-        // Backward compat: infer alliance from station name prefix
-        matchEngine.joinStation(data.station);
       } else if (isStationLeave(data)) {
         matchEngine.leaveStation(data.station);
       } else if (isStationReady(data)) {

@@ -1498,24 +1498,6 @@ export function useStationSubnetScan(station: StationName) {
   );
 }
 
-/** This station's mDNS activity. Pass null where it isn't shown. */
-export function useStationMdnsActivity(station: StationName | null) {
-  return useStateSlice(
-    'mdnsActivity',
-    () => currentMdnsActivity,
-    state => (station ? state?.stations[station] : undefined),
-  );
-}
-
-/** This station's connected DS. Pass null where it isn't shown. */
-export function useStationDsInfo(station: StationName | null) {
-  return useStateSlice(
-    'matchState',
-    () => currentMatchState,
-    state => (station ? state?.connectedStations[station] : undefined),
-  );
-}
-
 /** The change waiting for this station: undefined if none, null to release it. */
 export function useStationStagedChange(station: StationName): StagedStationChange | null | undefined {
   return useStateSlice(
@@ -1552,10 +1534,6 @@ export function useHostnameFor(ip: string | undefined): string | null {
 }
 
 // ── Station match commands ───────────────────────────────────────────
-
-export function sendStationJoin(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'stationJoin', station }));
-}
 
 /** Join a station to a specific alliance (decoupled from physical port). */
 export function sendStationJoinAlliance(station: StationName, alliance: Alliance) {

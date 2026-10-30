@@ -12,7 +12,6 @@ import { AStopPopout, openMatchPopup } from './AStopPopout';
 import { MatchPhase, StationName, StationControlState } from '../../../src/types';
 import {
   useMatchState,
-  sendStationJoin,
   sendStationJoinAlliance,
   sendStationLeave,
   sendStationReady,
@@ -73,17 +72,6 @@ function MatchTimer({ remainingTime, phase }: { remainingTime: number; phase: Ma
   );
 }
 
-/** Build a display label for a joined station chip: the team number, plus
- *  the robot's name when the team has two robots on the field. */
-function stationChipLabel(
-  state: StationControlState | undefined,
-  allStates: Partial<Record<StationName, StationControlState>>,
-) {
-  const label = state && teamLabelAmong(state, Object.values(allStates));
-  if (!label) return 'No Team';
-  return `${label}${state?.ready ? ' \u2713' : ''}`;
-}
-
 /** Shown under a greyed Ready button while the field can't hear the Driver
  *  Station. The usual cure is on the laptop: the DS app closed, or holding a
  *  stale field session from before the robot was moved to another station
@@ -117,14 +105,6 @@ function computeBarProgress(
   return Math.min(1, elapsed / barTotal);
 }
 
-/**
- * Match control panel.
- * - With `station` prop: per-station view with join/leave/ready buttons (for station pages)
- * - Without `station` prop: master overview (for main page)
- *
- * NOTE: Start/Pause/Resume/Cancel are NOT available from station views.
- * Those controls are only on the /match controller page.
- */
 /** Self-service controls while a match is running: disable / re-enable,
  *  A-Stop, and E-Stop. E-Stop fires on the first tap — an emergency stop must
  *  never wait, and field staff can clear an accidental one. The `blurring`
@@ -317,209 +297,6 @@ export function FreeplayControl({ station }: { station: StationName }) {
     );
   }
   return null;
-}
-
-export function MatchPanel({ station }: { station?: StationName }) {
-  const matchState = useMatchState();
-  if (!matchState) return null;
-
-  const { phase, remainingTime, totalMatchTime, config, stationStates, readyRequested } = matchState;
-
-  const isActive = phase !== 'idle' && phase !== 'postMatch' && phase !== 'created';
-  const isPostMatch = phase === 'postMatch';
-  const isCreated = phase === 'created';
-
-  const joinedStations = (Object.entries(stationStates) as [StationName, StationControlState | undefined][])
-    .filter(([, s]) => s?.joined)
-    .map(([name]) => name);
-
-  // Per-station state (only when station prop is provided)
-  const myState = station ? stationStates[station] : undefined;
-  const joined = myState?.joined ?? false;
-  const ready = myState?.ready ?? false;
-  const dsOffline = myState?.dsAttached === false;
-
-  // Master view: any station joined means we show controls
-  const anyJoined = joinedStations.length > 0;
-
-  const progress = useMemo(() => computeBarProgress(totalMatchTime, config), [totalMatchTime, config]);
-
-  // Don't render at all if phase is idle (no match created)
-  if (phase === 'idle') return null;
-
-  // Don't render the master panel at all if nothing is happening
-  if (!station && !anyJoined && !isActive && !isPostMatch && !isCreated) return null;
-
-  // Don't render per-station panel if no team is configured and no match is active
-  if (station && !myState?.teamNumber && !isActive && !isPostMatch && !isCreated) return null;
-
-  return (
-    <Card sx={{ mb: 2 }}>
-      {/* Out of a match, FreeplayControl says why a robot is held. */}
-      {joined && myState?.blockedReason && (
-        <Alert severity="error" sx={{ borderRadius: 0 }}>
-          {myState.blockedReason} The field will not enable this robot — see field staff.
-        </Alert>
-      )}
-      <CardContent>
-        {/* Phase display when active or post-match */}
-        {(isActive || isPostMatch) && (
-          <>
-            <Box sx={{ textAlign: 'center', mb: 1 }}>
-              <Chip
-                label={matchState.awaitingAutoWinner ? 'Awaiting Auto Winner' : phaseLabel(phase, matchState.config)}
-                sx={{
-                  fontSize: '1rem',
-                  py: 2,
-                  px: 1.5,
-                  fontWeight: 'bold',
-                  color: phaseColors[phase],
-                  borderColor: phaseColors[phase],
-                }}
-                variant="outlined"
-              />
-            </Box>
-            <MatchTimer remainingTime={remainingTime} phase={phase} />
-            <Box sx={{ mb: 2 }}>
-              <MatchTimeline
-                config={config}
-                progress={progress}
-                autoWinnerAlliance={matchState.autoWinnerAlliance}
-                phase={matchState.phase}
-                remainingTime={matchState.remainingTime}
-              />
-            </Box>
-          </>
-        )}
-
-        {/* Created state: show who has joined */}
-        {isCreated && (
-          <Box sx={{ textAlign: 'center', mb: 1 }}>
-            <Chip
-              label={phaseLabel('created', matchState.config)}
-              sx={{
-                fontSize: '1rem',
-                py: 2,
-                px: 1.5,
-                fontWeight: 'bold',
-                color: phaseColors.created,
-                borderColor: phaseColors.created,
-              }}
-              variant="outlined"
-            />
-          </Box>
-        )}
-
-        {/* Idle/created/waiting: show who has joined */}
-        {!isActive && !isPostMatch && (
-          <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 1.5 }}>
-            {joinedStations.length === 0 && (
-              <Typography variant="body2" color="text.secondary">
-                No stations joined yet
-              </Typography>
-            )}
-            {joinedStations.map(s => (
-              <Chip
-                key={s}
-                avatar={<TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />}
-                label={stationChipLabel(stationStates[s], stationStates)}
-                size="small"
-                color={stationStates[s]?.ready ? 'success' : 'default'}
-                variant="outlined"
-              />
-            ))}
-          </Box>
-        )}
-
-        {/* Action buttons */}
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-          {station && (
-            <>
-              {/* Not joined, match created: join button. Opening the guide
-                  window inside the click keeps it pop-up-blocker-proof. */}
-              {!joined && isCreated && (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  onClick={() => {
-                    openMatchPopup();
-                    sendStationJoin(station);
-                  }}
-                >
-                  Join Match
-                </Button>
-              )}
-
-              {/* Joined, match created (not active): ready / leave */}
-              {joined && isCreated && (
-                <>
-                  <Button
-                    variant={ready ? 'outlined' : 'contained'}
-                    color={ready ? 'warning' : 'success'}
-                    disabled={!ready && (!readyRequested || dsOffline)}
-                    onClick={() => sendStationReady(station, !ready)}
-                  >
-                    {readyLabel(ready, readyRequested, dsOffline)}
-                  </Button>
-                  <Button variant="outlined" color="error" onClick={() => sendStationLeave(station)} disabled={ready}>
-                    Leave
-                  </Button>
-                  {myState?.aStop ? (
-                    <>
-                      <Chip label="A-Stop armed — robot sits out auto" size="small" color="warning" />
-                      <Button
-                        variant="outlined"
-                        color="warning"
-                        size="small"
-                        onClick={() => sendStationClearAStop(station)}
-                      >
-                        Cancel A-Stop
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      color="warning"
-                      size="small"
-                      onClick={() => sendStationSelfAStop(station)}
-                    >
-                      A-Stop
-                    </Button>
-                  )}
-                  {!ready && dsOffline && (
-                    <Typography variant="caption" color="warning.main" sx={{ width: '100%' }}>
-                      {DS_OFFLINE_HELP}
-                    </Typography>
-                  )}
-                  <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
-                    Robot is under field control and disabled until the match starts — leave the match to drive freely.
-                  </Typography>
-                </>
-              )}
-
-              {/* Active match: self-service controls */}
-              {joined && isActive && <SelfServiceControls station={station} phase={phase} myState={myState} />}
-
-              {/* Post-match: leave to get control back */}
-              {joined && isPostMatch && (
-                <Button variant="outlined" color="primary" onClick={() => sendStationLeave(station)}>
-                  Leave Match
-                </Button>
-              )}
-
-              {/* Match pop-out window controller — always mounted so the
-                  window survives phase transitions instead of being torn
-                  down between blocks */}
-              <AStopPopout station={station} />
-            </>
-          )}
-        </Box>
-
-        {/* What's about to run — read-only; the setup is only editable on /match */}
-        {isCreated && (station ? joined : anyJoined) && <MatchTimeline config={config} readOnly />}
-      </CardContent>
-    </Card>
-  );
 }
 
 /**
