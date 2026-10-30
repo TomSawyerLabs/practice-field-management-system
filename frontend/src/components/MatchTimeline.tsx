@@ -747,8 +747,9 @@ function OfficialTimeline({
 
       {/* ── Duration labels — flex row mirrors bar proportions ──── */}
       {!isProgressMode && (
-        <Box sx={{ display: 'flex', mt: 0.5 }}>
-          <Box sx={{ flex: autoDuration + pauseDuration, minWidth: 0 }}>
+        <Box sx={{ display: 'flex', columnGap: 1, mt: 0.5 }}>
+          {/* On a phone the auto segment is narrower than this label */}
+          <Box sx={{ flex: autoDuration + pauseDuration, minWidth: 'max-content' }}>
             <Typography variant="caption" color="text.secondary" noWrap>
               Total: {formatDuration(matchTotal)}
             </Typography>
