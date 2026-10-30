@@ -21,6 +21,43 @@ server can only refuse them to Driver Stations (`staff` tier in
 `/match` and run the field. Matters because the guard stops accidents, not
 someone who means it.
 
+## The WebSocket takes field commands from the internet
+
+Seen reading the code and the ops repo's `servers/steamboat/sites.d/pfms.caddy`
+on 2026-10-30, not tried against the live site. Caddy exempts `/ws` from the
+access check so external login works, and `src/websocketServer.ts` has no address
+or `Origin` check. So a visitor with no cookie should be able to send every
+`anyone` and `staff` message, such as `matchCreate`, `station` or
+`adminGlobalEStop`. Matters because `docs/support.md` says pFMS assumes everyone
+who can reach it is trusted. An address-based fix also needs
+`plans/caddy-xff-perimeter-spoof.md` in the ops repo.
+
+## Admin login has no rate limit
+
+`adminLogin` is open to any `/ws` client, and `src/adminAuth.ts` allows unlimited
+tries against one round of salted SHA-256 with a 4-character minimum (seen
+2026-10-30). Matters because that socket reaches the internet (see above).
+
+## Firmware API takes uploads with no credential
+
+`POST /api/firmware/upload` and `/api/firmware/download` in `src/firmwareApi.ts`
+have no auth and send `Access-Control-Allow-Origin: *` (seen 2026-10-30). Any
+guest device, or any web page open on one, can add a firmware entry. Matters
+because `/test` flashes radios from that store.
+
+## A false Driver Station match hides E-STOP on /match
+
+`MatchControlPage.tsx:469` returns `DsClientBlock` before `FieldEStopControl`
+renders (seen 2026-10-30), so a device that only shares a DS's hostname has no
+E-STOP on screen until someone presses "This isn't a Driver Station". Matters
+because a false match isn't meant to get in the way of a stop.
+
+## /staff and /csa have no stop button
+
+Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
+2026-10-30), including on the Safety Monitor's page. Matters because that role
+is the one most likely to want one.
+
 ## A Driver Station can still clear an e-stop over the WebSocket
 
 _in progress — issues/stop-cut_
