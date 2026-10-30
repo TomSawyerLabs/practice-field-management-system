@@ -35,6 +35,14 @@ set and managed by admins only.
   them; pFMS just never proposes it.
 - **Staff lists put host robots last and label them Host.** Making room stays
   field staff's call: pFMS does not auto-release a host robot for a visitor.
+- **Parked means a host robot off the Wi-Fi** (user asked for all three
+  follow-ups, 2026-10-30). The CSA page shows a note instead of a problem, a
+  full field turns it into a warning with Release, and the team page's
+  field-full message counts them. A host robot joined to a match that is
+  missing stays critical.
+- **For usage, parked means no Driver Station and no drive session.** Time off
+  the Wi-Fi never counted, so the only hours to remove are a host robot left
+  powered on. Old sessions in `usage-data.json` are not rewritten.
 - **At the reset, waiting changes about host robots stay on the list**; the
   rest are dropped as before. A reset that removes nothing does not touch the
   radio, so a host robot left on overnight keeps its Wi-Fi.
@@ -58,7 +66,15 @@ set and managed by admins only.
       Controls and the CSA page.
 - [x] Docs: `docs/match-system.md`, `docs/configuration.md`.
 - [x] Tests: `radioManager.test.ts`, `utils.test.ts`, `fieldIssues.test.ts`.
-- [ ] Not deployed. The admin card has not been opened in a browser.
+- [x] Queue-driven scrimmage deployed (`0586d9a`, per `plans/deploy-log.md`).
+- [x] Parked host robots on the CSA and admin pages (`ba4fbf7`).
+- [x] Field-full message counts parked host robots (`656230f`).
+- [x] Usage ignores a host robot with no Driver Station (`8d0c5ee`).
+- [ ] `ba4fbf7`, `656230f`, `8d0c5ee` deployed. Pushes and deploys belong to
+      the deploy thread; these need its pickup and the user's yes there.
+- [ ] Host team card and the new alerts seen in a browser. Covered by unit tests
+      and typecheck only: a live run needs a fake radio and an isolated data
+      directory, and this PC can reach the real field radio.
 
 ## Findings / gotchas
 
@@ -69,6 +85,14 @@ set and managed by admins only.
   is queued to leave after it.
 - A match left in the queue keeps "scrimmage" on, so the 6:00 AM reset clears
   the host team too. The card shows Scrimmage when this happens.
+
+- `usage-data.json` sessions advance only while linked, so a parked robot that
+  is off never ran up hours. The reset used to close any linked session; with
+  the host spared, a robot left on would have run one session indefinitely.
+- `driveSessions` is created inside a nested block of `src/index.ts`, after the
+  tracker attaches, so `laptopDriving` is a `let` assigned there.
+- Team pages learn the host from `setupConfigState`. If it never arrives they
+  show the plain field-full message.
 
 ## Things not to do
 
