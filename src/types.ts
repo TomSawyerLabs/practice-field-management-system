@@ -3731,6 +3731,163 @@ export function isAdminAuthResult(msg: unknown): msg is AdminAuthResult {
   return (msg as AdminAuthResult).type === 'adminAuthResult';
 }
 
+// ── Operator Auth Types ─────────────────────────────────────────────
+
+/** A remembered device that may run the field. */
+export interface OperatorDevice {
+  id: string;
+  name: string;
+  /** Whether it typed the operator code or scanned a pairing QR code. */
+  via: 'code' | 'pairing';
+  /** The device that paired this one. */
+  pairedBy?: string;
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+/** Client → Server: unlock this device with the operator code. */
+export interface OperatorLogin {
+  type: 'operatorLogin';
+  code: string;
+  name?: string;
+}
+
+export function isOperatorLogin(msg: unknown): msg is OperatorLogin {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorLogin;
+  if (m.type !== 'operatorLogin') return false;
+  if (typeof m.code !== 'string') return false;
+  if (m.name !== undefined && typeof m.name !== 'string') return false;
+  return true;
+}
+
+/** Client → Server: present a remembered device's token on a new socket. */
+export interface OperatorCheckAuth {
+  type: 'operatorCheckAuth';
+  token: string;
+}
+
+export function isOperatorCheckAuth(msg: unknown): msg is OperatorCheckAuth {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorCheckAuth;
+  if (m.type !== 'operatorCheckAuth') return false;
+  if (typeof m.token !== 'string') return false;
+  return true;
+}
+
+/** Client → Server: this device logs itself out. */
+export interface OperatorLogout {
+  type: 'operatorLogout';
+}
+
+export function isOperatorLogout(msg: unknown): msg is OperatorLogout {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as OperatorLogout).type === 'operatorLogout';
+}
+
+/** Client → Server: make a one-time pairing secret for a new device. */
+export interface OperatorPairStart {
+  type: 'operatorPairStart';
+  name?: string;
+}
+
+export function isOperatorPairStart(msg: unknown): msg is OperatorPairStart {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorPairStart;
+  if (m.type !== 'operatorPairStart') return false;
+  if (m.name !== undefined && typeof m.name !== 'string') return false;
+  return true;
+}
+
+/** Client → Server: a new device spends a pairing secret from a QR code. */
+export interface OperatorPairRedeem {
+  type: 'operatorPairRedeem';
+  secret: string;
+  name?: string;
+}
+
+export function isOperatorPairRedeem(msg: unknown): msg is OperatorPairRedeem {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorPairRedeem;
+  if (m.type !== 'operatorPairRedeem') return false;
+  if (typeof m.secret !== 'string') return false;
+  if (m.name !== undefined && typeof m.name !== 'string') return false;
+  return true;
+}
+
+/** Client → Server: set or change the operator code, or remove it with null. */
+export interface OperatorSetCode {
+  type: 'operatorSetCode';
+  code: string | null;
+}
+
+export function isOperatorSetCode(msg: unknown): msg is OperatorSetCode {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorSetCode;
+  if (m.type !== 'operatorSetCode') return false;
+  if (m.code !== null && typeof m.code !== 'string') return false;
+  return true;
+}
+
+/** Client → Server: sign out one device, or every device with no id. */
+export interface OperatorRevokeDevice {
+  type: 'operatorRevokeDevice';
+  id?: string;
+}
+
+export function isOperatorRevokeDevice(msg: unknown): msg is OperatorRevokeDevice {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as OperatorRevokeDevice;
+  if (m.type !== 'operatorRevokeDevice') return false;
+  if (m.id !== undefined && typeof m.id !== 'string') return false;
+  return true;
+}
+
+/** Server → Client: where this socket stands. */
+export interface OperatorAuthResult {
+  type: 'operatorAuthResult';
+  /** Whether operator actions need a login on this field. */
+  required: boolean;
+  authenticated: boolean;
+  /** This device, when logged in. */
+  device?: { id: string; name: string };
+  /** Token to remember (only on a new login or pairing). */
+  token?: string;
+  /** The stored token is no good any more: forget it. */
+  tokenRejected?: boolean;
+  /** Why the last login or pairing failed. */
+  error?: string;
+}
+
+export function isOperatorAuthResult(msg: unknown): msg is OperatorAuthResult {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as OperatorAuthResult).type === 'operatorAuthResult';
+}
+
+/** Server → Client: a pairing secret, to the device that asked. */
+export interface OperatorPairing {
+  type: 'operatorPairing';
+  secret: string;
+  expiresAt: number;
+}
+
+export function isOperatorPairing(msg: unknown): msg is OperatorPairing {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as OperatorPairing).type === 'operatorPairing';
+}
+
+/** Server → Client: for /admin. Sent only to admin connections. */
+export interface OperatorDevicesState {
+  type: 'operatorDevicesState';
+  hasCode: boolean;
+  devices: OperatorDevice[];
+}
+
+export function isOperatorDevicesState(msg: unknown): msg is OperatorDevicesState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as OperatorDevicesState).type === 'operatorDevicesState';
+}
+
 // ── Slack Config Types ──────────────────────────────────────────────
 
 /** Client → Server: save Slack configuration. */

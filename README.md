@@ -22,6 +22,9 @@ and provides:
 - **Self-service matches** — teams join, ready up, and run official-timing
   matches with field-staff ready checks, hold-to-start, E-Stop/A-Stop, and
   match audio ([details](docs/match-system.md))
+- **Operator login** — an optional code or QR pairing for the pages that run
+  the field, which stop buttons never need
+  ([details](docs/support.md#operator-login))
 - **Speed challenges and relay races** — non-match formats for field
   events: one robot (or two racing) enabled for a window you choose, laps
   and penalties tallied from a phone, or a relay where the FMS sends each

@@ -65,6 +65,7 @@ import { SupportStore } from './supportStore.js';
 import { SlackBridge } from './slackBridge.js';
 import { announceDeploy } from './deployAnnouncer.js';
 import { AdminAuth } from './adminAuth.js';
+import { OperatorAuth } from './operatorAuth.js';
 import { handleExternalAccessAuth } from './externalAccessAuth.js';
 import { OnLinkChecker } from './onLink.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
@@ -758,6 +759,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     console.warn('Deploy announcement failed:', (err as Error).message);
   });
   const adminAuth = new AdminAuth();
+  const operatorAuth = new OperatorAuth();
   const externalAccessStore = new ExternalAccessStore();
 
   // What was happening while each video ran: every score event and every
@@ -937,6 +939,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     supportStore,
     slackBridge,
     adminAuth,
+    operatorAuth,
     externalAccessStore,
     // Station test port mode callbacks
     onStationTestMode: (station, portVlanId) => {

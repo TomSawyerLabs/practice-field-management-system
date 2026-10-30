@@ -5,11 +5,12 @@
  * them for weeks. Admin logins carry the passphrase, every reconnect of an
  * admin page carries its session token, and settings saves carry Slack and
  * Home Assistant tokens, webhook ids and HTTP Authorization headers — none
- * of which belong in a log anyone with shell access can read.
+ * of which belong in a log anyone with shell access can read. Nor does the
+ * operator code.
  */
 
 /** Field names whose values are credentials, wherever they are nested. */
-const SECRET_KEY = /token|secret|passphrase|password|webhookid|wpakey|apikey|^authorization$|^cookie$/i;
+const SECRET_KEY = /token|secret|passphrase|password|webhookid|wpakey|apikey|^authorization$|^cookie$|^code$/i;
 
 export const REDACTED = '***';
 

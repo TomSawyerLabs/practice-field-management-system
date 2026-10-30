@@ -14,6 +14,7 @@ import { clearSetupConfig, SETUP_CONFIG_DEFAULT_FILE } from './setupConfigStore.
 /** Config written by the app that a "start over" might reasonably keep. */
 const OTHER_CONFIG_FILES: [file: string, holds: string][] = [
   ['admin-auth.json', 'admin passphrase and sessions'],
+  ['operator-auth.json', 'operator code and devices'],
   ['api-keys.json', 'scoring API keys'],
   ['external-access.json', 'external access tokens'],
   ['slack-config.json', 'Slack integration'],

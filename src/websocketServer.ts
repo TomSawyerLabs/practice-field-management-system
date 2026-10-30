@@ -103,6 +103,15 @@ import {
   isAdminLogin,
   isAdminCheckAuth,
   isAdminSetPassphrase,
+  isOperatorCheckAuth,
+  isOperatorLogin,
+  isOperatorLogout,
+  isOperatorPairRedeem,
+  isOperatorPairStart,
+  isOperatorRevokeDevice,
+  isOperatorSetCode,
+  type OperatorAuthResult,
+  type OperatorDevicesState,
   isSaveSlackConfig,
   isRequestSetupProbe,
   isInstallHostTools,
@@ -175,6 +184,7 @@ import type { PortBridgeManager } from './portBridgeManager.js';
 import type { SupportStore } from './supportStore.js';
 import type { SlackBridge } from './slackBridge.js';
 import type { AdminAuth } from './adminAuth.js';
+import { MIN_CODE_LENGTH, type OperatorAuth } from './operatorAuth.js';
 import type { ExternalAccessStore } from './externalAccessStore.js';
 import type { MatchAudio } from './matchAudio.js';
 import type { MatchHistoryStore } from './matchHistoryStore.js';
@@ -266,6 +276,7 @@ export interface SetupWebSocketOptions {
   supportStore?: SupportStore;
   slackBridge?: SlackBridge;
   adminAuth?: AdminAuth;
+  operatorAuth?: OperatorAuth;
   externalAccessStore?: ExternalAccessStore;
   onStationTestMode?: StationTestModeCallback;
   onStationTestModeStop?: StationTestModeStopCallback;
@@ -349,6 +360,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     supportStore,
     slackBridge,
     adminAuth,
+    operatorAuth,
     externalAccessStore,
     onStationTestMode,
     onStationTestModeStop,
@@ -452,6 +464,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
   /** Track which WebSocket connections are admin-authenticated */
   const adminConnections = new Set<WebSocket>();
+
+  /** Connections logged in as an operator, and as which device. */
+  const operatorConnections = new Map<WebSocket, { id: string; name: string }>();
+
+  /** The operator state each connection last heard, to send only changes. */
+  const operatorStateSent = new Map<WebSocket, string>();
 
   /** Connections that said they aren't the Driver Station sharing their
    *  hostname. Only a hostname match can be waved away, never an address. */
@@ -685,6 +703,64 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     }
   }
 
+  function operatorResult(ws: WebSocket): OperatorAuthResult {
+    const device = operatorConnections.get(ws);
+    return {
+      type: 'operatorAuthResult',
+      required: operatorAuth?.isRequired() ?? false,
+      authenticated: device !== undefined,
+      device,
+    };
+  }
+
+  function sendOperatorState(ws: WebSocket) {
+    const json = JSON.stringify(operatorResult(ws));
+    if (operatorStateSent.get(ws) === json || ws.readyState !== WebSocket.OPEN) return;
+    operatorStateSent.set(ws, json);
+    ws.send(json);
+  }
+
+  /** A login's answer. Extras like the token aren't state, so they always go. */
+  function sendOperatorReply(ws: WebSocket, extra: Partial<OperatorAuthResult>) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const result = operatorResult(ws);
+    operatorStateSent.set(ws, JSON.stringify(result));
+    ws.send(JSON.stringify({ ...result, ...extra }));
+  }
+
+  function sendOperatorDevices(ws: WebSocket) {
+    if (!operatorAuth || ws.readyState !== WebSocket.OPEN) return;
+    const state: OperatorDevicesState = {
+      type: 'operatorDevicesState',
+      hasCode: operatorAuth.isRequired(),
+      devices: operatorAuth.listDevices(),
+    };
+    ws.send(JSON.stringify(state));
+  }
+
+  /** Called after anything changes who is an operator: a signed-out device
+   *  loses its rights on the spot, and every page learns if logins changed. */
+  function operatorsChanged() {
+    for (const [ws, device] of operatorConnections) {
+      if (operatorAuth?.hasDevice(device.id)) continue;
+      operatorConnections.delete(ws);
+      sendOperatorReply(ws, { tokenRejected: true });
+    }
+    for (const ws of wsToIp.keys()) sendOperatorState(ws);
+    for (const ws of adminConnections) sendOperatorDevices(ws);
+  }
+
+  function dsRefusal(ws: WebSocket): string | null {
+    switch (dsClientOf(ws)?.by) {
+      case 'ip':
+        return 'This device is a Driver Station — use a phone or another device for this';
+      case 'hostname':
+        return "This device looks like a Driver Station — use another device, or tell this page it isn't one";
+      default:
+        return null;
+    }
+  }
+
   /** Why this connection may not send a message of this tier, or null. */
   function refusal(ws: WebSocket, access: MessageAccess): string | null {
     switch (access) {
@@ -694,16 +770,16 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         return setupWritesAllowed(ws) ? null : 'Admin authentication required';
       case 'adminOnly':
         return adminConnections.has(ws) ? null : 'Admin authentication required';
+      case 'operator':
+        if (adminConnections.has(ws)) return null;
+        if (!operatorConnections.has(ws)) return setupWritesAllowed(ws) ? null : 'Admin authentication required';
+        return dsRefusal(ws);
       case 'staff':
         if (adminConnections.has(ws)) return null;
-        switch (dsClientOf(ws)?.by) {
-          case 'ip':
-            return 'This device is a Driver Station — use a phone or another device for this';
-          case 'hostname':
-            return "This device looks like a Driver Station — use another device, or tell this page it isn't one";
-          default:
-            return null;
-        }
+        return (
+          dsRefusal(ws) ??
+          (operatorAuth?.isRequired() && !operatorConnections.has(ws) ? 'Operator login required' : null)
+        );
     }
   }
 
@@ -1031,6 +1107,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       ws.send(JSON.stringify(hostnameResolver.getState()));
     }
 
+    // Whether this page needs an operator login
+    sendOperatorState(ws);
+
     // Send initial route preference state
     sendRouteState(ws, clientIp);
 
@@ -1131,6 +1210,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     ws.on('close', () => {
       wsToIp.delete(ws);
       adminConnections.delete(ws);
+      operatorConnections.delete(ws);
+      operatorStateSent.delete(ws);
       dsNoticeDismissed.delete(ws);
       dsClientStateSent.delete(ws);
       topicSubs.drop(ws);
@@ -1166,6 +1247,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         appWarn(`Refused ${String(type)} from ${whoIs(clientIp)}: ${refused}`);
         ws.send(JSON.stringify({ error: refused }));
         return;
+      }
+      const operator = operatorConnections.get(ws);
+      if (operator && type !== 'staffHeartbeat' && accessOf(type) === 'staff') {
+        console.log(`${String(type)} by operator device "${operator.name}" at ${whoIs(clientIp)}`);
       }
 
       if (isStationUpdate(data)) {
@@ -1791,6 +1876,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           const token = adminAuth.login(data.passphrase);
           if (token) {
             adminConnections.add(ws);
+            sendOperatorDevices(ws);
             // Auto-create an external access token so the admin's browser
             // gets a cookie for remote access without a separate step.
             const extToken = externalAccessStore?.createToken(`Admin login`);
@@ -1816,7 +1902,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isAdminCheckAuth(data)) {
         if (adminAuth) {
           const valid = adminAuth.validateToken(data.token);
-          if (valid) adminConnections.add(ws);
+          if (valid) {
+            adminConnections.add(ws);
+            sendOperatorDevices(ws);
+          }
           ws.send(
             JSON.stringify({
               type: 'adminAuthResult',
@@ -1834,7 +1923,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
             if (success) {
               // Auto-login the user who set the passphrase
               const token = adminAuth.login(data.passphrase);
-              if (token) adminConnections.add(ws);
+              if (token) {
+                adminConnections.add(ws);
+                sendOperatorDevices(ws);
+              }
               ws.send(
                 JSON.stringify({
                   type: 'adminAuthResult',
@@ -1850,6 +1942,77 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
             ws.send(JSON.stringify({ error: 'Not authorized to change passphrase' }));
           }
         }
+
+        // ── Operator Auth ───────────────────────────────────────────
+      } else if (isOperatorLogin(data)) {
+        if (operatorAuth) {
+          const name = data.name?.trim().slice(0, 60) || whoIs(clientIp);
+          void operatorAuth.login(data.code, name, clientIp).then(result => {
+            if (result.ok) {
+              operatorConnections.set(ws, { id: result.device.id, name: result.device.name });
+              console.log(`Operator login: "${name}" at ${whoIs(clientIp)}`);
+              sendOperatorReply(ws, { token: result.token });
+              operatorsChanged();
+            } else if (result.retryAfterMs !== undefined) {
+              appWarn(`Too many operator code attempts from ${whoIs(clientIp)}`);
+              const seconds = Math.ceil(result.retryAfterMs / 1000);
+              sendOperatorReply(ws, { error: `Too many tries. Wait ${seconds} seconds and try again.` });
+            } else {
+              appWarn(`Wrong operator code from ${whoIs(clientIp)}`);
+              sendOperatorReply(ws, { error: "That code isn't right." });
+            }
+          });
+        }
+      } else if (isOperatorCheckAuth(data)) {
+        const device = operatorAuth?.validateToken(data.token);
+        if (device) {
+          operatorConnections.set(ws, { id: device.id, name: device.name });
+          sendOperatorState(ws);
+          for (const admin of adminConnections) sendOperatorDevices(admin);
+        } else {
+          sendOperatorReply(ws, { tokenRejected: true });
+        }
+      } else if (isOperatorLogout(data)) {
+        const device = operatorConnections.get(ws);
+        if (device) {
+          console.log(`Operator logout: "${device.name}" at ${whoIs(clientIp)}`);
+          operatorAuth?.revokeDevice(device.id);
+          operatorsChanged();
+        }
+      } else if (isOperatorPairStart(data)) {
+        if (operatorAuth && !operatorAuth.isRequired()) {
+          ws.send(JSON.stringify({ error: 'Set an operator code first' }));
+        } else if (operatorAuth) {
+          const by = operatorConnections.get(ws)?.name ?? 'Admin';
+          const { secret, expiresAt } = operatorAuth.startPairing(by, data.name?.trim().slice(0, 60) || undefined);
+          ws.send(JSON.stringify({ type: 'operatorPairing', secret, expiresAt }));
+        }
+      } else if (isOperatorPairRedeem(data)) {
+        const name = data.name?.trim().slice(0, 60) || whoIs(clientIp);
+        const paired = operatorAuth?.redeemPairing(data.secret, name);
+        if (paired) {
+          operatorConnections.set(ws, { id: paired.device.id, name: paired.device.name });
+          console.log(`Operator device paired: "${paired.device.name}" at ${whoIs(clientIp)}`);
+          sendOperatorReply(ws, { token: paired.token });
+          operatorsChanged();
+        } else {
+          sendOperatorReply(ws, { error: 'That QR code has expired or was already used. Ask for a new one.' });
+        }
+      } else if (isOperatorSetCode(data)) {
+        if (operatorAuth) {
+          if (data.code === null) {
+            operatorAuth.clearCode();
+            operatorsChanged();
+          } else if (data.code.length < MIN_CODE_LENGTH) {
+            ws.send(JSON.stringify({ error: `The operator code must be at least ${MIN_CODE_LENGTH} characters` }));
+          } else {
+            void operatorAuth.setCode(data.code).then(operatorsChanged);
+          }
+        }
+      } else if (isOperatorRevokeDevice(data)) {
+        if (data.id) operatorAuth?.revokeDevice(data.id);
+        else operatorAuth?.revokeAllDevices();
+        operatorsChanged();
 
         // ── Setup wizard ────────────────────────────────────────────
         // Open only while no admin passphrase exists — the same

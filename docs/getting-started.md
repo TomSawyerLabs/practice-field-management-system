@@ -268,6 +268,8 @@ Optional, when you need them:
 
 - **Scoring devices** — `/admin` → API keys, then point devices at
   `/api/score`. See [scoring.md](scoring.md).
+- **Operator code** — `/admin` → Access, so that teams can't run the field
+  from their phones. See [support.md](support.md#operator-login).
 - **Field staff pages** — `/staff?role=headRef` (also `scorekeeper`,
   `safety`).
 - **Field network triage** — `/csa` on a CSA's tablet: shows only what is

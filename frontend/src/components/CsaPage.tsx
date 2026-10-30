@@ -56,6 +56,7 @@ import {
   useTeamCheckResults,
   useTelemetryCallback,
   useWsConnected,
+  useOperatorLocked,
 } from '../hooks/useBackend';
 import {
   detectFieldIssues,
@@ -77,6 +78,7 @@ import {
 import LinearProgress from '@mui/material/LinearProgress';
 import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks/useReconfigProgress';
 import { DsClientNotice } from './DsClientGuard';
+import { OperatorBar } from './OperatorAccess';
 import { HostDisplay } from './HostDisplay';
 import { TeamAvatar } from './TeamAvatar';
 import { StatusIcon } from './TeamChecksPanel';
@@ -127,14 +129,20 @@ function useTeamChecksByStation(): Partial<Record<StationName, TeamCheckResults>
 
 const ACTION_META: Record<
   IssueAction['kind'],
-  { label: string; color: 'primary' | 'warning' | 'error' | 'success' | 'inherit'; confirm: boolean }
+  {
+    label: string;
+    color: 'primary' | 'warning' | 'error' | 'success' | 'inherit';
+    confirm: boolean;
+    /** Needs an operator login. The rest are things a team can do too. */
+    operator: boolean;
+  }
 > = {
-  applyWifi: { label: 'Apply now', color: 'warning', confirm: true },
-  reenable: { label: 'Re-enable', color: 'success', confirm: true },
-  readyAnyway: { label: 'Ready anyway', color: 'warning', confirm: true },
-  kick: { label: 'Kick from match', color: 'warning', confirm: true },
-  release: { label: 'Release', color: 'error', confirm: true },
-  runChecks: { label: 'Re-run checks', color: 'primary', confirm: false },
+  applyWifi: { label: 'Apply now', color: 'warning', confirm: true, operator: true },
+  reenable: { label: 'Re-enable', color: 'success', confirm: true, operator: true },
+  readyAnyway: { label: 'Ready anyway', color: 'warning', confirm: true, operator: true },
+  kick: { label: 'Kick from match', color: 'warning', confirm: true, operator: true },
+  release: { label: 'Release', color: 'error', confirm: true, operator: false },
+  runChecks: { label: 'Re-run checks', color: 'primary', confirm: false, operator: false },
 };
 
 function runAction(a: IssueAction) {
@@ -164,6 +172,7 @@ function runAction(a: IssueAction) {
  *  for five seconds, the second fires. One tap for read-only actions. */
 function ActionButton({ action, names }: { action: IssueAction; names: Names }) {
   const meta = ACTION_META[action.kind];
+  const locked = useOperatorLocked();
   const [armed, setArmed] = useState(false);
   useEffect(() => {
     if (!armed) return;
@@ -179,6 +188,7 @@ function ActionButton({ action, names }: { action: IssueAction; names: Names }) 
       size="small"
       variant={armed ? 'contained' : 'outlined'}
       color={meta.color}
+      disabled={locked && meta.operator}
       onClick={() => {
         if (meta.confirm && !armed) {
           setArmed(true);
@@ -1048,6 +1058,7 @@ export function CsaPage() {
   return (
     <Container maxWidth="md" sx={{ py: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       <DsClientNotice />
+      <OperatorBar />
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         <Typography variant="h5" sx={{ fontWeight: 700, lineHeight: 1.1 }}>

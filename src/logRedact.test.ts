@@ -2,6 +2,22 @@ import { describe, expect, test } from 'bun:test';
 import { REDACTED, redactForLog } from './logRedact.js';
 
 describe('redactForLog', () => {
+  test('an operator login never logs its code or token', () => {
+    expect(redactForLog({ type: 'operatorLogin', code: 'hunter22', name: 'Phone' })).toEqual({
+      type: 'operatorLogin',
+      code: REDACTED,
+      name: 'Phone',
+    });
+    expect(redactForLog({ type: 'operatorPairRedeem', secret: 'abc' })).toEqual({
+      type: 'operatorPairRedeem',
+      secret: REDACTED,
+    });
+    expect(redactForLog({ type: 'operatorCheckAuth', token: 'abc' })).toEqual({
+      type: 'operatorCheckAuth',
+      token: REDACTED,
+    });
+  });
+
   test('an admin login or reconnect never logs its passphrase or token', () => {
     expect(redactForLog({ type: 'adminLogin', passphrase: 'hunter2' })).toEqual({
       type: 'adminLogin',

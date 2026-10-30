@@ -130,6 +130,12 @@ Team pages are unaffected, a logged-in admin overrides the check, and
 anything that stops robots (Stop match, abort countdown, pause, disable,
 E-Stop) is never refused. See [who may send what](internals.md#who-may-send-what).
 
+A field with an [operator code](support.md#operator-login) also needs a login
+to run a match. The pages stay visible without one, with the stop buttons
+working and everything else held back. A logged-in device can show a QR code
+to bring another phone in. An operator login doesn't get past the Driver
+Station check; an admin login does.
+
 ## Setup checks on the scoreboard
 
 Turn on **✅ checks** on the scoreboard (`/scores?checks=1`, remembered per

@@ -104,6 +104,7 @@ State files are JSON, written to the working directory by default:
 | `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
 | `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
 | `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                                                       |
+| `OPERATOR_AUTH_FILE`   | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
 | `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                                                       |
 | `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                                                        |
 | `SUPPORT_CHATS_FILE`   | `support-chats.json`    | Support chat sessions                                                                                                                                        |

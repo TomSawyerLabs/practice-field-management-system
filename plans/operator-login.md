@@ -1,6 +1,6 @@
 # Operator login
 
-**Status: waiting on the user's choice of option. Nothing is implemented.**
+**Status: built and verified, not deployed. Set a code on `/admin` → Access to turn it on.**
 
 ## Goal
 
@@ -94,100 +94,46 @@ Say this plainly so the login isn't mistaken for more than it is.
 - **The internet.** See the first finding below. An operator login covers the
   `staff` messages there, but not the `anyone` ones.
 
-## Options
+## Decisions (don't re-ask)
 
-### A. One shared operator code, separate from the admin passphrase (recommended)
+- **Both the shared code and device pairing, not one or the other** (the user,
+  2026-10-30). They end in the same place: a remembered device with its own
+  token, in one list on `/admin`.
+- **The code is the one on/off switch.** No code means no logins and no devices,
+  and pairing needs a code first. Letting paired devices hold a field locked on
+  their own meant that logging out the last one silently unlocked it.
+- **The admin login is not reused for operators.** It would give referees Slack,
+  API keys and restart, and its 20-token cap and 365-day external access tokens
+  don't fit volunteer phones.
+- **No allow-by-network.** Volunteers are on guest Wi-Fi alongside teams, and it
+  leans on a client address that can be forged.
+- One code for all five pages, with no separate roles for CSAs or referees.
+- An operator login doesn't override the Driver Station guard; an admin login
+  still does.
+- The code is at least 8 characters, hashed with scrypt off the event loop, and
+  limited to 5 wrong tries a minute per address and 30 overall. Attempts count
+  before the slow hash, so a burst can't all get through at once.
+- Changing the code logs out devices that typed it, not paired ones.
+- A device logging itself out is removed from the list.
+- An operator login mints no external access token, and has its own store.
+- Queue buttons on `/match` (`queueSetupNext`, `queueSkip`, `queueReplaceTeam`,
+  `queueForm`) get a new `operator` tier rather than `staff`. `staff` would have
+  opened them to anyone on a field with no code, where they were `admin`.
+- The e-stop clears stay `anyone`, including the field E-Stop's. `d7761ad` put them
+  back while this was being built: a team may clear its own e-stop from its
+  Driver Station, which has no login to give. So the Clear buttons aren't held
+  back on a locked page.
 
-Admin sets it on `/admin`, and it can be changed there at any time. A volunteer
-types it once per browser and the device stays logged in.
+## What was built
 
-- **On a page without it:** everything is visible, stops work, and a slim
-  "Enter the operator code" bar takes the place of the locked actions.
-- **For:** one thing to tell a new volunteer, and no admin needed on the day.
-  It also works on any network and at any field. It builds directly on the
-  existing token pattern, and it keeps volunteers away from Slack, API keys
-  and restarts.
-- **Against:** everyone shares it, so one leak means changing it for everyone,
-  and a log can't say who pressed Start. A mentor who learned it last month
-  keeps it until it changes.
-- **Size:** medium. Backend store and tier change, a login bar on five pages,
-  an `/admin` card, tests and docs.
-
-### B. Pair each device
-
-An admin, or a device already paired, shows a one-time QR code, and scanning it
-pairs the new phone. `/admin` lists the devices with names and can revoke one.
-
-- **For:** no secret to leak or type, one device can be cut off alone, and the
-  logs can name the device. It fits the QR habit `/match` and `/staff` already
-  have.
-- **Against:** someone paired has to be there for every new volunteer, so the
-  first morning or a dead phone means finding an admin. Clearing a browser or
-  using a private tab means pairing again.
-- **Size:** large. Device store, pairing flow, revocation UI, and everything A
-  needs on the pages.
-
-### C. Require the admin login for operator actions
-
-Change `staff` to mean an admin login, and add no new credential.
-
-- **For:** the smallest change, and nothing new to manage.
-- **Against:** every referee gets Slack settings, API keys, restart and
-  deleting recordings. Only 20 tokens are kept, so a busy day logs people out,
-  which is exactly what a match must not suffer. Each admin login also mints a
-  365-day external access token, so every volunteer phone would get the
-  internal UI from home.
-- **Size:** small, but the cost lands on the field's security.
-
-### Considered and dropped: allow by network
-
-Refusing `staff` messages from guest Wi-Fi needs no prompt at all, but
-volunteers are on guest Wi-Fi with teams, so it would lock out the people it is
-meant for. It would also need configuring for each field, and it leans on the
-same client address the first finding below shows can be forged.
-
-## Recommendation
-
-**Option A.** The threat is a curious student or a mischievous team, on a field
-where volunteers change daily, so the cheapest thing that keeps them out and
-never gets in a volunteer's way wins. Pairing (B) can be added later as a
-faster way in, without changing anything in A. It shouldn't come first, because
-it makes the worst morning harder: one person at the field with no admin.
-
-Defaults within A, decided unless the user says otherwise:
-
-- The tier stays called `staff`. It means an operator login, or an admin login,
-  once a code exists. With no code set, it behaves as it does today.
-- One code for all five pages. CSAs and referees get no separate roles.
-- The Driver Station guard stays: an operator login doesn't override it, and an
-  admin login still does.
-- The code is at least 8 characters, stored with a slow salted hash and limited
-  to a few wrong attempts a minute per address, because `/ws` is reachable by
-  strangers. A short PIN is not safe here.
-- An operator login mints no external access token.
-- Operator tokens get their own store, so they can't push admin tokens out.
-- The queue buttons on `/match`'s Next up card (`queueSetupNext`, `queueSkip`,
-  `queueReplaceTeam`, `queueForm`) move from `admin` to `staff`. They are `admin`
-  today, so a controller without the admin login is refused.
-- The e-stop clears stay with `issues/stop-cut`. Once that lands, the clears
-  fit `staff` naturally.
-
-## Plan if A is chosen
-
-1. Credential store with its own file, token list and rate limit, plus
-   `operatorLogin` and `operatorCheckAuth` messages, added to `logRedact`.
-2. `staff` tier checks it in `refusal()`, and the queue buttons move tier.
-3. `useBackend` presents the token first in `onopen`, like admin.
-4. A login bar on the five pages, with stops outside it. `/staff` sends no
-   heartbeat until unlocked.
-5. An `/admin` card to set, change and clear the code, and a mention in setup.
-6. Tests: every stop still works from a locked socket, a locked socket can't
-   send `staff` messages, no code means no change, tokens survive a reconnect,
-   and wrong attempts get limited.
-7. Headless browser check with a fake `RADIO_URL`: E-STOP visible and working
-   on a locked `/match`.
-8. Docs: `docs/internals.md`, `docs/match-system.md`, `docs/support.md`,
-   `docs/getting-started.md`.
+- `src/operatorAuth.ts`: the code, devices, pairing and rate limit.
+- `src/wsAccess.ts`, `src/websocketServer.ts`: the gate and the messages. The
+  operator list goes only to admin sockets.
+- `frontend/src/components/OperatorAccess.tsx`: `OperatorBar` on the five pages,
+  `OperatorOnly` around what needs a login, and the `/admin` card.
+- A pairing QR is the current page plus `#pair=<secret>`, so no new page or
+  Caddy change is needed, the phone lands where it was going, and the secret
+  never reaches a server log.
 
 ## Findings
 
@@ -221,12 +167,11 @@ Defaults within A, decided unless the user says otherwise:
 
 - [x] Read the access table, admin login, proxy config, pages and docs
 - [x] Write this plan and log the side findings
-- [ ] User picks an option
-- [ ] Implement
-
-## Open questions for the user
-
-1. Which option: A, B or C? Recommendation: A.
+- [x] User chose: both the code and pairing (2026-10-30)
+- [x] Backend, frontend, `/admin` card, docs
+- [x] Tests: `src/operatorAuth.test.ts`, and a real socket in `src/wsAccess.test.ts`
+- [x] Headless Chrome against the built pages, with a stub engine and radio
+- [ ] Deployed. Waiting on the user's one big push, then setting a code
 
 ## Things not to do
 
@@ -236,4 +181,5 @@ Defaults within A, decided unless the user says otherwise:
 - Don't expire a token on a timer, or add a confirm-your-login step to a stop.
 - Don't touch Caddy, steamboat or the ops repo for this. Don't test against the
   live site or the real radio.
-- Don't change e-stop behaviour, or the clears, here. `issues/stop-cut` owns them.
+- Don't change e-stop behaviour here. `issues/stop-cut` owns it.
+- Don't show the pairing QR in a dialog: on `/match` it would cover the E-STOP.

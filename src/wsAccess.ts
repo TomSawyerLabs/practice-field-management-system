@@ -5,15 +5,18 @@ import type { DsClientMatch, StationName } from './types.js';
  *
  * - `anyone`: team pages and everything else. Team pages have no login, so
  *   nothing a team page sends may ever move out of this tier.
- * - `staff`: any device that isn't a Driver Station. There is no staff login;
- *   the operator pages are open, and all the server can tell is that a laptop
- *   driving a robot shouldn't also be running the field. An admin login
- *   overrides.
+ * - `staff`: any device that isn't a Driver Station, because a laptop driving
+ *   a robot shouldn't also be running the field. Once the field has an operator
+ *   code or paired devices, it must also be logged in as an operator. An admin
+ *   login overrides both.
+ * - `operator`: like `staff` for an operator login, but with none it falls back
+ *   to `admin`. For actions that were admin-only before operator logins, so a
+ *   field without them doesn't lose its guard.
  * - `admin`: an admin login, or anyone until the field has a passphrase (the
  *   setup wizard's trust-on-first-use window).
  * - `adminOnly`: an admin login, always.
  */
-export type MessageAccess = 'anyone' | 'staff' | 'admin' | 'adminOnly';
+export type MessageAccess = 'anyone' | 'staff' | 'operator' | 'admin' | 'adminOnly';
 
 /** Every message the server acts on. Missing from here means refused. */
 const MESSAGE_ACCESS: Record<string, MessageAccess> = {
@@ -71,6 +74,10 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   adminLogin: 'anyone',
   adminCheckAuth: 'anyone',
   adminSetPassphrase: 'anyone', // has its own check: first use, then admin
+  operatorLogin: 'anyone', // rate limited in OperatorAuth
+  operatorCheckAuth: 'anyone',
+  operatorLogout: 'anyone',
+  operatorPairRedeem: 'anyone',
   dsClientDismiss: 'anyone',
   requestRecordingsInventory: 'anyone',
   requestSetupProbe: 'anyone',
@@ -110,6 +117,13 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   firmwareUpdateRequest: 'staff',
   radioConfigureRequest: 'staff',
 
+  // ── The queue card on /match, and adding a device ───────────────────
+  queueSetupNext: 'operator',
+  queueSkip: 'operator',
+  queueReplaceTeam: 'operator',
+  queueForm: 'operator',
+  operatorPairStart: 'operator',
+
   // ── Admin and queue pages, and setup ────────────────────────────────
   createApiKey: 'admin',
   revokeApiKey: 'admin',
@@ -139,19 +153,17 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   queueUpdate: 'admin',
   queueRemove: 'admin',
   queueReorder: 'admin',
-  queueSkip: 'admin',
   queueRequeue: 'admin',
-  queueForm: 'admin',
   queueSettings: 'admin',
   queueLineRemove: 'admin',
   queueLineMove: 'admin',
-  queueReplaceTeam: 'admin',
-  queueSetupNext: 'admin',
   queueClear: 'admin',
   queueImport: 'admin',
 
   // ── Always a login, even before the field has a passphrase ──────────
   saveSlackConfig: 'adminOnly',
+  operatorSetCode: 'adminOnly',
+  operatorRevokeDevice: 'adminOnly',
   createExternalAccessToken: 'adminOnly',
   revokeExternalAccessToken: 'adminOnly',
   saveAudioDeviceConfig: 'adminOnly',

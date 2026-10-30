@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import CIDRMatcher from 'cidr-matcher';
 import { WebSocket } from 'ws';
 import { AdminAuth } from './adminAuth.js';
+import { OperatorAuth } from './operatorAuth.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
@@ -70,6 +71,8 @@ describe('the access table', () => {
   /** The ones that really are `adminOnly`, to tell them from unclassified. */
   const ADMIN_ONLY = new Set([
     'saveSlackConfig',
+    'operatorSetCode',
+    'operatorRevokeDevice',
     'createExternalAccessToken',
     'revokeExternalAccessToken',
     'saveAudioDeviceConfig',
@@ -155,6 +158,7 @@ describe('the WebSocket gate', () => {
 
   const authDir = mkdtempSync(join(tmpdir(), 'pfms-ws-access-'));
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'));
+  let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
   let context: WebSocketContext;
   let url: string;
   let engineCalls: string[] = [];
@@ -212,6 +216,12 @@ describe('the WebSocket gate', () => {
         validateToken: (token: string) => adminAuth.validateToken(token),
         setPassphrase: (passphrase: string, force?: boolean) => adminAuth.setPassphrase(passphrase, force),
       } as AdminAuth,
+      operatorAuth: new Proxy({} as OperatorAuth, {
+        get: (_, key: keyof OperatorAuth) => {
+          const member = operatorAuth[key];
+          return typeof member === 'function' ? member.bind(operatorAuth) : member;
+        },
+      }),
       hostnameResolver,
     });
     if (!context.server.listening) await new Promise(r => context.server.once('listening', r));
@@ -229,9 +239,21 @@ describe('the WebSocket gate', () => {
     connectedStations = { slot2: { ip: DS_IP, lastSeen: Date.now() } };
     Object.assign(hostnames, { [DS_IP]: 'TEAM1678-DS', [SAME_NAME_IP]: 'team1678-ds' });
     adminAuth = new AdminAuth(join(authDir, 'unused.json'));
+    operatorAuth = new OperatorAuth(join(authDir, `operator-${Math.random()}.json`));
   });
 
-  type Reply = { type?: string; error?: string; station?: string | null; by?: string };
+  type Reply = {
+    type?: string;
+    error?: string;
+    station?: string | null;
+    by?: string;
+    required?: boolean;
+    authenticated?: boolean;
+    token?: string;
+    tokenRejected?: boolean;
+    secret?: string;
+    devices?: { id: string; name: string }[];
+  };
 
   async function client(ip: string) {
     const ws = new WebSocket(url, { headers: { 'x-forwarded-for': ip } });
@@ -260,7 +282,15 @@ describe('the WebSocket gate', () => {
       return replies.slice(before).filter(r => r.error !== 'Invalid JSON');
     };
     const dsState = () => replies.filter(r => r.type === 'dsClientState').at(-1);
-    return { ws, send, dsState };
+    const operatorState = () => replies.filter(r => r.type === 'operatorAuthResult').at(-1);
+    /** The code check is slow on purpose, so a login answers later than `send`. */
+    const login = async (code: string) => {
+      const before = replies.length;
+      ws.send(JSON.stringify({ type: 'operatorLogin', code, name: 'Test phone' }));
+      while (!replies.slice(before).some(r => r.type === 'operatorAuthResult')) await Bun.sleep(2);
+      return replies.slice(before).find(r => r.type === 'operatorAuthResult')!;
+    };
+    return { ws, send, dsState, operatorState, login, replies };
   }
 
   const claimField = () => {
@@ -318,6 +348,171 @@ describe('the WebSocket gate', () => {
     expect(laptop.dsState()).toEqual({ type: 'dsClientState', station: null });
     expect(await laptop.send({ type: 'matchCreate' })).toEqual([]);
     expect(engineCalls).toEqual(['createMatch']);
+  });
+
+  describe('with an operator code', () => {
+    const CODE = 'correct horse';
+    const STOPS = [
+      { type: 'adminStopMatch' },
+      { type: 'matchAbortCountdown' },
+      { type: 'stationPauseMatch' },
+      { type: 'adminGlobalEStop' },
+      { type: 'adminStationEStop', station: 'slot1' },
+      { type: 'adminStationDisable', station: 'slot1' },
+    ];
+
+    beforeEach(async () => {
+      await operatorAuth.setCode(CODE);
+    });
+
+    test('a page learns on connecting that it needs a login', async () => {
+      const phone = await client(STAFF_IP);
+      expect(phone.operatorState()).toMatchObject({ required: true, authenticated: false });
+    });
+
+    test('a device with no login cannot run the field', async () => {
+      const phone = await client(STAFF_IP);
+      for (const type of ['matchCreate', 'stationStartMatch']) {
+        expect((await phone.send({ type }))[0]?.error).toBe('Operator login required');
+      }
+      expect(engineCalls).toEqual([]);
+    });
+
+    test('every stop still works with no login', async () => {
+      const phone = await client(STAFF_IP);
+      for (const stop of STOPS) expect(await phone.send(stop)).toEqual([]);
+      expect(engineCalls).toEqual([
+        'stopMatch',
+        'abortCountdown',
+        'pauseMatch',
+        'fieldEStop',
+        'stationEStop',
+        'stationDisable',
+      ]);
+    });
+
+    test('clearing an e-stop needs no login, so a Driver Station can', async () => {
+      const ds = await client(DS_IP);
+      expect(await ds.send({ type: 'adminClearEStop', station: 'slot2' })).toEqual([]);
+      expect(await ds.send({ type: 'adminClearFieldEStop' })).toEqual([]);
+      expect(engineCalls).toEqual(['clearEStop', 'clearFieldEStop']);
+    });
+
+    test('every stop still works after a wrong code', async () => {
+      const phone = await client(STAFF_IP);
+      expect((await phone.login('wrong code'))?.error).toContain("isn't right");
+      for (const stop of STOPS) expect(await phone.send(stop)).toEqual([]);
+      expect(engineCalls).toHaveLength(STOPS.length);
+    });
+
+    test('a team page works with no login', async () => {
+      const ds = await client(DS_IP);
+      expect(await ds.send({ type: 'stationReady', station: 'slot2', ready: true })).toEqual([]);
+      expect(engineCalls).toEqual(['setReady']);
+    });
+
+    test('the right code unlocks the device, and its token survives a reconnect', async () => {
+      const phone = await client(STAFF_IP);
+      const { token, authenticated } = await phone.login(CODE);
+      expect(authenticated).toBe(true);
+      expect(await phone.send({ type: 'matchCreate' })).toEqual([]);
+
+      const reconnected = await client(STAFF_IP);
+      expect(reconnected.operatorState()?.authenticated).toBe(false);
+      await reconnected.send({ type: 'operatorCheckAuth', token });
+      expect(reconnected.operatorState()?.authenticated).toBe(true);
+      expect(await reconnected.send({ type: 'matchCreate' })).toEqual([]);
+      expect(engineCalls).toEqual(['createMatch', 'createMatch']);
+    });
+
+    test('an operator login does not get past the Driver Station guard', async () => {
+      const ds = await client(DS_IP);
+      await ds.login(CODE);
+      expect((await ds.send({ type: 'matchCreate' }))[0]?.error).toContain('Driver Station');
+      expect(engineCalls).toEqual([]);
+    });
+
+    test('an admin login needs no operator login', async () => {
+      claimField();
+      const admin = await client(STAFF_IP);
+      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      expect(await admin.send({ type: 'matchCreate' })).toEqual([]);
+      expect(engineCalls).toEqual(['createMatch']);
+    });
+
+    test('a logged-in device pairs a new one with a QR code that works once', async () => {
+      const phone = await client(STAFF_IP);
+      await phone.login(CODE);
+      const [pairing] = await phone.send({ type: 'operatorPairStart', name: 'Head ref' });
+
+      const fresh = await client('10.55.65.21');
+      await fresh.send({ type: 'operatorPairRedeem', secret: pairing.secret });
+      expect(fresh.operatorState()).toMatchObject({ authenticated: true, device: { name: 'Head ref' } });
+      expect(await fresh.send({ type: 'matchCreate' })).toEqual([]);
+
+      const late = await client('10.55.65.22');
+      const [refused] = await late.send({ type: 'operatorPairRedeem', secret: pairing.secret });
+      expect(refused.error).toContain('expired or was already used');
+      expect(refused.authenticated).toBe(false);
+    });
+
+    test('a device with no login cannot start a pairing', async () => {
+      claimField();
+      await operatorAuth.setCode(CODE);
+      const phone = await client(STAFF_IP);
+      expect((await phone.send({ type: 'operatorPairStart' }))[0]?.error).toBe('Admin authentication required');
+    });
+
+    test('revoking a device takes its rights on the spot', async () => {
+      claimField();
+      const phone = await client(STAFF_IP);
+      await phone.login(CODE);
+      const admin = await client('10.55.65.23');
+      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      const [{ id }] = operatorAuth.listDevices();
+      await admin.send({ type: 'operatorRevokeDevice', id });
+
+      expect(phone.operatorState()).toMatchObject({ authenticated: false, tokenRejected: true });
+      expect((await phone.send({ type: 'matchCreate' }))[0]?.error).toBe('Operator login required');
+    });
+
+    test('only an admin can set the code or see the device list', async () => {
+      claimField();
+      const phone = await client(STAFF_IP);
+      await phone.login(CODE);
+      expect((await phone.send({ type: 'operatorSetCode', code: null }))[0]?.error).toContain('Admin');
+      expect((await phone.send({ type: 'operatorRevokeDevice' }))[0]?.error).toContain('Admin');
+      expect(phone.replies.some(r => r.type === 'operatorDevicesState')).toBe(false);
+    });
+
+    test('the queue card on /match takes an operator login', async () => {
+      claimField();
+      const phone = await client(STAFF_IP);
+      expect((await phone.send({ type: 'queueSkip', id: 'x' }))[0]?.error).toBe('Admin authentication required');
+      await phone.login(CODE);
+      // Past the gate: this stand-in server just has no queue.
+      expect((await phone.send({ type: 'queueSkip', id: 'x' }))[0]?.error).toBe('The match queue is not available');
+    });
+
+    test('with no code there is nothing to pair with', async () => {
+      claimField();
+      const admin = await client(STAFF_IP);
+      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.send({ type: 'operatorSetCode', code: null });
+      expect((await admin.send({ type: 'operatorPairStart' }))[0]?.error).toBe('Set an operator code first');
+    });
+
+    test('with no code the field is back to how it was', async () => {
+      claimField();
+      const admin = await client(STAFF_IP);
+      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.send({ type: 'operatorSetCode', code: null });
+
+      const phone = await client('10.55.65.21');
+      expect(phone.operatorState()?.required).toBe(false);
+      expect(await phone.send({ type: 'matchCreate' })).toEqual([]);
+      expect((await phone.send({ type: 'queueSkip', id: 'x' }))[0]?.error).toBe('Admin authentication required');
+    });
   });
 
   test('an address match cannot be dismissed', async () => {

@@ -1,15 +1,5 @@
 # Known Issues & Technical Debt
 
-## Operator pages have no login of their own
-
-_in progress — issues/operator-login_
-
-`/match`, `/staff`, `/csa`, `/test` and `/overview` need no credential, so the
-server can only refuse them to Driver Stations (`staff` tier in
-`src/wsAccess.ts`, seen 2026-10-30). A team's phone on guest Wi-Fi can open
-`/match` and run the field. Matters because the guard stops accidents, not
-someone who means it.
-
 ## The WebSocket takes field commands from the internet
 
 Seen reading the code and the ops repo's `servers/steamboat/sites.d/pfms.caddy`

@@ -43,6 +43,9 @@ import {
   isSupportState,
   isSupportChatIncoming,
   isAdminAuthResult,
+  isOperatorAuthResult,
+  isOperatorDevicesState,
+  isOperatorPairing,
   isSlackConfigState,
   isSetupProbeState,
   isSetupConfigState,
@@ -125,6 +128,9 @@ import {
   SupportChatMessage,
   SupportMetadata,
   AdminAuthResult,
+  OperatorAuthResult,
+  OperatorDevicesState,
+  OperatorPairing,
   SlackConfigState,
   SetupProbeState,
   SetupConfigState,
@@ -162,6 +168,27 @@ const NOT_A_DS_KEY = 'pfms-not-a-ds';
 
 /** Where an admin login's session token is kept (set by AdminAuthGate). */
 export const ADMIN_TOKEN_KEY = 'pfms-admin-token';
+
+/** Where this device's operator token is kept. It doesn't expire: a device
+ *  stays logged in until it is signed out, so no login lands mid-match. */
+const OPERATOR_TOKEN_KEY = 'pfms-operator-token';
+
+/** A QR code from "Add a device" opens the page with `#pair=<secret>`. The
+ *  fragment never reaches a server or its logs. Taken off the URL straight
+ *  away, so it isn't left in the history or copied along with a link. */
+function takePairingSecret(): string | null {
+  const match = /^#pair=([\w-]+)$/.exec(window.location.hash);
+  if (!match) return null;
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  return match[1];
+}
+
+/** A rough name for this device, until an admin sees it in the device list. */
+function deviceLabel(): string {
+  const ua = navigator.userAgent;
+  const device = ['iPhone', 'iPad', 'Android', 'Windows', 'Mac', 'Linux'].find(d => ua.includes(d));
+  return device ? `${device} browser` : '';
+}
 
 let ws: WebSocket | null = null;
 let wsConnected = false;
@@ -217,6 +244,13 @@ function connect() {
     // admin page keeps working and public pages know an admin is looking.
     const adminToken = wsPath === '/ws' ? localStorage.getItem(ADMIN_TOKEN_KEY) : null;
     if (adminToken) nws.send(JSON.stringify({ type: 'adminCheckAuth', token: adminToken }));
+    // Operator rights too, and a QR code this page was just opened from.
+    if (wsPath === '/ws') {
+      const operatorToken = localStorage.getItem(OPERATOR_TOKEN_KEY);
+      if (operatorToken) nws.send(JSON.stringify({ type: 'operatorCheckAuth', token: operatorToken }));
+      const secret = takePairingSecret();
+      if (secret) nws.send(JSON.stringify({ type: 'operatorPairRedeem', secret, name: deviceLabel() }));
+    }
     // Same for "this isn't a Driver Station", which lasts as long as the tab.
     if (wsPath === '/ws' && sessionStorage.getItem(NOT_A_DS_KEY)) {
       nws.send(JSON.stringify({ type: 'dsClientDismiss' }));
@@ -661,6 +695,9 @@ let currentAudioDeviceState: AudioDeviceState | null = null;
 let currentMatchHistoryState: MatchHistoryState | null = null;
 let currentUsageState: UsageState | null = null;
 let currentAdminAuth: AdminAuthResult | null = null;
+let currentOperatorAuth: OperatorAuthResult | null = null;
+let currentOperatorDevices: OperatorDevicesState | null = null;
+let currentOperatorPairing: OperatorPairing | null = null;
 let currentSetupProbeState: SetupProbeState | null = null;
 let currentSetupConfigState: SetupConfigState | null = null;
 
@@ -686,6 +723,28 @@ function handleAdminAuthResult(result: AdminAuthResult) {
       // Cookie-setting failed — not critical, admin can create tokens manually
     });
   }
+}
+
+function handleOperatorAuthResult(result: OperatorAuthResult) {
+  if (result.token) localStorage.setItem(OPERATOR_TOKEN_KEY, result.token);
+  if (result.tokenRejected) localStorage.removeItem(OPERATOR_TOKEN_KEY);
+  // Every new socket starts logged out and is told so just before its stored
+  // token is answered. Don't flash the page locked over that gap.
+  const answerPending = !result.authenticated && !result.tokenRejected && !!localStorage.getItem(OPERATOR_TOKEN_KEY);
+  currentOperatorAuth = answerPending
+    ? { ...result, authenticated: true, device: currentOperatorAuth?.device }
+    : result;
+  events.dispatchEvent(new CustomEvent('operatorAuthResult', { detail: currentOperatorAuth }));
+}
+
+function handleOperatorDevicesState(state: OperatorDevicesState) {
+  currentOperatorDevices = state;
+  events.dispatchEvent(new CustomEvent('operatorDevicesState', { detail: state }));
+}
+
+function handleOperatorPairing(pairing: OperatorPairing) {
+  currentOperatorPairing = pairing;
+  events.dispatchEvent(new CustomEvent('operatorPairing', { detail: pairing }));
 }
 
 function handleSlackConfigState(state: SlackConfigState) {
@@ -1063,6 +1122,21 @@ function receiveMessage(detail: Message) {
 
   if (isAdminAuthResult(detail)) {
     handleAdminAuthResult(detail);
+    return;
+  }
+
+  if (isOperatorAuthResult(detail)) {
+    handleOperatorAuthResult(detail);
+    return;
+  }
+
+  if (isOperatorDevicesState(detail)) {
+    handleOperatorDevicesState(detail);
+    return;
+  }
+
+  if (isOperatorPairing(detail)) {
+    handleOperatorPairing(detail);
     return;
   }
 
@@ -2616,6 +2690,76 @@ export function useAdminAuth(): AdminAuthResult | null {
  *  that show admin-only controls (the server checks again regardless). */
 export function useIsAdmin(): boolean {
   return useAdminAuth()?.authenticated === true;
+}
+
+// ── Operator Auth ───────────────────────────────────────────────────
+
+export function useOperatorAuth(): OperatorAuthResult | null {
+  const [state, setState] = useState<OperatorAuthResult | null>(currentOperatorAuth);
+
+  useEffect(() => {
+    setState(currentOperatorAuth);
+    const handler = (e: Event) => setState((e as CustomEvent<OperatorAuthResult>).detail);
+    events.addEventListener('operatorAuthResult', handler);
+    return () => events.removeEventListener('operatorAuthResult', handler);
+  }, []);
+
+  return state;
+}
+
+/** Whether this page should hold back operator actions. False until the server
+ *  says otherwise; it checks again regardless. */
+export function useOperatorLocked(): boolean {
+  const auth = useOperatorAuth();
+  const isAdmin = useIsAdmin();
+  return !!auth?.required && !auth.authenticated && !isAdmin;
+}
+
+export function useOperatorDevices(): OperatorDevicesState | null {
+  const [state, setState] = useState<OperatorDevicesState | null>(currentOperatorDevices);
+
+  useEffect(() => {
+    setState(currentOperatorDevices);
+    const handler = (e: Event) => setState((e as CustomEvent<OperatorDevicesState>).detail);
+    events.addEventListener('operatorDevicesState', handler);
+    return () => events.removeEventListener('operatorDevicesState', handler);
+  }, []);
+
+  return state;
+}
+
+export function useOperatorPairing(): OperatorPairing | null {
+  const [state, setState] = useState<OperatorPairing | null>(currentOperatorPairing);
+
+  useEffect(() => {
+    setState(currentOperatorPairing);
+    const handler = (e: Event) => setState((e as CustomEvent<OperatorPairing>).detail);
+    events.addEventListener('operatorPairing', handler);
+    return () => events.removeEventListener('operatorPairing', handler);
+  }, []);
+
+  return state;
+}
+
+export function sendOperatorLogin(code: string) {
+  ws?.send(JSON.stringify({ type: 'operatorLogin', code, name: deviceLabel() }));
+}
+
+export function sendOperatorLogout() {
+  ws?.send(JSON.stringify({ type: 'operatorLogout' }));
+}
+
+export function sendOperatorPairStart(name: string) {
+  ws?.send(JSON.stringify({ type: 'operatorPairStart', name }));
+}
+
+export function sendOperatorSetCode(code: string | null) {
+  ws?.send(JSON.stringify({ type: 'operatorSetCode', code }));
+}
+
+/** Sign out one device, or every device with no id. */
+export function sendOperatorRevokeDevice(id?: string) {
+  ws?.send(JSON.stringify({ type: 'operatorRevokeDevice', id }));
 }
 
 export function sendAdminLogin(passphrase: string) {

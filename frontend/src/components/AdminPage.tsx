@@ -10,6 +10,7 @@ import Tabs from '@mui/material/Tabs';
 import { MatchRecordingSection } from './MatchRecordingSection';
 import { TimelapseSettingsSection } from './TimelapseSection';
 import { SoftwareUpdateSection } from './SoftwareUpdateSection';
+import { OperatorAccessSection } from './OperatorAccess';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
@@ -1358,7 +1359,12 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
         </>
       );
     case 'access':
-      return <ExternalAccessSection />;
+      return (
+        <>
+          <OperatorAccessSection />
+          <ExternalAccessSection />
+        </>
+      );
     case 'software':
       return <SoftwareUpdateSection />;
   }

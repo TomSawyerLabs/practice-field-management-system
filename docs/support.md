@@ -102,12 +102,51 @@ the radio URL decides where station configurations — which contain every
 team's plaintext WPA key — get sent. The wizard additionally refuses any
 address that isn't a private or loopback literal.
 
+**Set an operator code.** Until you do, anyone on the network can run the
+field from `/match`, `/staff`, `/csa` and `/test`. See
+[operator login](#operator-login).
+
 **The scoring API is open until you create a key.** With no API keys
 configured, `POST /api/score` and the config/mode endpoints accept
 anything on the network. That's deliberate, so a sensor works out of the
 box — but it means anyone can inject or reset scores. Create a key from
 `/admin` for anything beyond a friendly practice field. See
 [scoring.md](scoring.md#authentication).
+
+## Operator login
+
+Set a code on `/admin` → **Access** → **Operator Access** (at least 8
+characters), and running the field takes a login. Nothing changes until you
+do, so a new field and the no-hardware demo work as they always have.
+
+- **Volunteers** type the code once per browser and stay logged in. It has no
+  time limit, so a login can't land in the middle of a match. `http://pfms.tsl`
+  and the HTTPS address count as separate browsers.
+- **Add a device** on any logged-in page, or on `/admin`, shows a QR code that
+  logs in one more device. It works once, for 5 minutes, and needs a code to
+  be set first.
+- **Every device is listed on `/admin`**, with who added it. Log one out and it
+  loses its rights at once. Changing the code logs out the devices that typed
+  the old one, not the ones paired by QR. **Remove code and logins** turns the
+  whole thing off.
+
+**Stops never need a login.** Stop match, abort countdown, pause, disable and
+E-Stop work from any page, logged in or not, and stay on screen. Clearing an
+e-stop needs no login either, so a team can clear its own from its Driver
+Station. That also means anyone on the network can clear the field E-Stop.
+
+Too many wrong codes wait a minute: 5 from one address, or 30 overall. That
+only slows a typed code, never a device already logged in.
+
+This keeps teams out of field control. It isn't a wall against someone
+determined:
+
+- The code is shared, so if it gets out, change it.
+- On plain `http://` it crosses the network unencrypted, as the admin
+  passphrase does.
+- Team-page actions stay open to anyone on the network, because a Driver
+  Station has no login to give, and that includes changing any station's
+  Wi-Fi.
 
 ## Admin Authentication
 

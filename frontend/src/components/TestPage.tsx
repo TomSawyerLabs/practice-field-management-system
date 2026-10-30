@@ -27,6 +27,7 @@ import {
   sendRadioConfigureRequest,
 } from '../hooks/useBackend';
 import { DsClientNotice } from './DsClientGuard';
+import { OperatorBar, OperatorOnly } from './OperatorAccess';
 import { FirmwareUpdateDialog } from './FirmwareUpdateDialog';
 import { StatusIcon } from './TeamChecksPanel';
 import {
@@ -186,6 +187,7 @@ export function TestPage() {
   return (
     <Container maxWidth="sm" sx={{ py: 4 }}>
       <DsClientNotice />
+      <OperatorBar />
       <GlobalStyles styles={PULSE_STYLES} />
       <Typography variant="h4" gutterBottom>
         Robot Network Tester
@@ -288,7 +290,11 @@ export function TestPage() {
                   .map((c, i) => (
                     <CheckResultRow key={`radio-${i}`} check={c} />
                   ))}
-                {firmwareOutdated && <FirmwareUpdateSection />}
+                {firmwareOutdated && (
+                  <OperatorOnly>
+                    <FirmwareUpdateSection />
+                  </OperatorOnly>
+                )}
                 {radioTeam && (
                   <Box sx={{ mt: 0.5, pt: 0.5, borderTop: 1, borderColor: 'divider' }}>
                     <Typography
@@ -407,7 +413,11 @@ export function TestPage() {
         />
       )}
 
-      {state.linkUp && <RadioConfigureSection teamNumber={state.teamNumber} />}
+      {state.linkUp && (
+        <OperatorOnly>
+          <RadioConfigureSection teamNumber={state.teamNumber} />
+        </OperatorOnly>
+      )}
 
       <FirmwareStatus />
     </Container>

@@ -9,8 +9,9 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { Alliance, StaffRole, StaffRoleList, StaffRoleLabels, isStaffRole } from '../../../src/types';
-import { useMatchState, sendStaffReady, sendStaffHeartbeat } from '../hooks/useBackend';
+import { useMatchState, useOperatorLocked, sendStaffReady, sendStaffHeartbeat } from '../hooks/useBackend';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
+import { OperatorBar, OperatorOnly } from './OperatorAccess';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 
 /** Which side of the field this phone is on, kept in ?alliance=red|blue so
@@ -85,17 +86,19 @@ function roleFromUrl(): StaffRole | null {
 export function StaffPage() {
   const role = roleFromUrl();
   const dsStation = useDsClientStation();
+  const locked = useOperatorLocked();
 
   // Presence heartbeat so the host sees this role as connected. Runs whenever a
   // valid role is selected; the effect's cleanup stops it if the role changes.
   // A DS device must not register as staff, so the beat waits until the DS
-  // check has an answer (null = confirmed not a DS) rather than assuming.
+  // check has an answer (null = confirmed not a DS) rather than assuming, and a
+  // locked page isn't staff yet.
   useEffect(() => {
-    if (!role || dsStation !== null) return;
+    if (!role || dsStation !== null || locked) return;
     sendStaffHeartbeat(role);
     const iv = setInterval(() => sendStaffHeartbeat(role), 2000);
     return () => clearInterval(iv);
-  }, [role, dsStation]);
+  }, [role, dsStation, locked]);
 
   if (dsStation) return <DsClientBlock station={dsStation} roleNoun="field staff" />;
 
@@ -169,35 +172,39 @@ function StaffConsole({ role }: { role: StaffRole }) {
         </Button>
       </Box>
 
-      <Card>
-        <CardContent sx={{ textAlign: 'center', py: 4 }}>
-          {inSetup && !ignored && (
-            <Button
-              variant={ready ? 'outlined' : 'contained'}
-              color={ready ? 'warning' : 'success'}
-              size="large"
-              disabled={!canToggle}
-              onClick={() => sendStaffReady(role, !ready)}
-              sx={{ px: 6, py: 2, fontSize: '1.3rem', fontWeight: 'bold', mb: 2 }}
-            >
-              {ready ? '✓ Ready — tap to un-ready' : readyRequested ? 'Ready Up' : 'Waiting for host…'}
-            </Button>
-          )}
-          {ignored && <Chip label="Not required this match" color="default" sx={{ mb: 2 }} />}
-          <Typography color="text.secondary">{statusLine}</Typography>
-        </CardContent>
-      </Card>
+      <OperatorBar />
 
-      {/* During a challenge this page is also the line ref's phone: laps,
+      <OperatorOnly>
+        <Card>
+          <CardContent sx={{ textAlign: 'center', py: 4 }}>
+            {inSetup && !ignored && (
+              <Button
+                variant={ready ? 'outlined' : 'contained'}
+                color={ready ? 'warning' : 'success'}
+                size="large"
+                disabled={!canToggle}
+                onClick={() => sendStaffReady(role, !ready)}
+                sx={{ px: 6, py: 2, fontSize: '1.3rem', fontWeight: 'bold', mb: 2 }}
+              >
+                {ready ? '✓ Ready — tap to un-ready' : readyRequested ? 'Ready Up' : 'Waiting for host…'}
+              </Button>
+            )}
+            {ignored && <Chip label="Not required this match" color="default" sx={{ mb: 2 }} />}
+            <Typography color="text.secondary">{statusLine}</Typography>
+          </CardContent>
+        </Card>
+
+        {/* During a challenge this page is also the line ref's phone: laps,
           penalties and — in a relay — the hand-off button for their side. */}
-      {matchState?.challenge && (
-        <>
-          <SidePicker side={alliance} onChange={setAlliance} />
-          <Box sx={{ mt: 1.5 }}>
-            <ChallengeTallyPanel matchState={matchState} alliance={alliance} />
-          </Box>
-        </>
-      )}
+        {matchState?.challenge && (
+          <>
+            <SidePicker side={alliance} onChange={setAlliance} />
+            <Box sx={{ mt: 1.5 }}>
+              <ChallengeTallyPanel matchState={matchState} alliance={alliance} />
+            </Box>
+          </>
+        )}
+      </OperatorOnly>
     </Container>
   );
 }

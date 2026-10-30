@@ -72,6 +72,7 @@ import {
   serverToBrowserTime,
   useSetupConfig,
   sendMatchHoldWifi,
+  useOperatorLocked,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { QueueNextUp } from './QueueNextUp';
@@ -81,6 +82,7 @@ import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
+import { OperatorBar, OperatorOnly } from './OperatorAccess';
 import { FieldEStopControl } from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
@@ -516,19 +518,23 @@ export function MatchControlPage() {
         {/* The field E-Stop latch: in every phase, so once pressed its Clear
             is always on screen. */}
         <FieldEStopControl />
+        <OperatorBar />
 
-        {/* Teams' Wi-Fi requests wait while a match exists; this is where the
-            match manager sees them and applies them between matches. */}
-        <PendingRadioChangesPanel />
-        <WifiHoldSwitch />
+        <OperatorOnly>
+          {/* Teams' Wi-Fi requests wait while a match exists; this is where the
+              match manager sees them and applies them between matches. */}
+          <PendingRadioChangesPanel />
+          <WifiHoldSwitch />
 
-        {/* The queue's next match, with "Set up next match" (Wi-Fi batch +
-            create + join). Nothing when the queue is not in use. */}
-        <QueueNextUp linkToQueue />
+          {/* The queue's next match, with "Set up next match" (Wi-Fi batch +
+              create + join). Nothing when the queue is not in use. */}
+          <QueueNextUp linkToQueue />
 
-        {phase === 'idle' && <IdleView />}
-        {phase === 'created' && <CreatedView matchState={matchState} cooldownLeftMs={cooldownLeftMs} />}
-        {phase === 'postMatch' && <PostMatchView matchState={matchState} />}
+          {phase === 'idle' && <IdleView />}
+          {phase === 'created' && <CreatedView matchState={matchState} cooldownLeftMs={cooldownLeftMs} />}
+          {phase === 'postMatch' && <PostMatchView matchState={matchState} />}
+        </OperatorOnly>
+        {/* Not locked as a whole: its stops have to work with no login. */}
         {phase !== 'idle' && phase !== 'created' && phase !== 'postMatch' && (
           <ActiveMatchView matchState={matchState} activeColor={activeColor} />
         )}
@@ -1019,6 +1025,7 @@ function ActiveMatchView({
   const { phase, remainingTime, totalMatchTime, config, stationStates, awaitingAutoWinner, resumeAt } = matchState;
 
   const isPaused = phase === 'paused';
+  const locked = useOperatorLocked();
   const isResuming = isPaused && resumeAt !== undefined;
 
   const joinedStations = (Object.entries(stationStates) as [StationName, StationControlState | undefined][])
@@ -1107,7 +1114,9 @@ function ActiveMatchView({
         </CardContent>
       </Card>
 
-      <ChallengeTallyPanel matchState={matchState} />
+      <OperatorOnly>
+        <ChallengeTallyPanel matchState={matchState} />
+      </OperatorOnly>
 
       {/* Auto winner prompt — shown during autoPause in 'pause' mode */}
       {awaitingAutoWinner && (
@@ -1242,7 +1251,7 @@ function ActiveMatchView({
 
             {/* Paused: resume */}
             {isPaused && !isResuming && (
-              <Button variant="contained" color="success" onClick={sendStationResumeMatch}>
+              <Button variant="contained" color="success" disabled={locked} onClick={sendStationResumeMatch}>
                 Resume
               </Button>
             )}
@@ -1308,6 +1317,7 @@ function CancelMatchButton() {
 function ActiveParticipantRow({ station, state }: { station: StationName; state: StationControlState | undefined }) {
   const allStates = useMatchState()?.stationStates;
   const phase = useMatchState()?.phase;
+  const locked = useOperatorLocked();
   const isEnabled = state?.enabled ?? false;
   const isEStopped = state?.eStop ?? false;
   // A robot's own e-stop records who latched it; without one, the field
@@ -1378,7 +1388,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
               variant="outlined"
               color="success"
               onClick={() => sendAdminStationEnable(station)}
-              disabled={isEnabled || !canEnable}
+              disabled={isEnabled || !canEnable || locked}
             >
               Enable
             </Button>
