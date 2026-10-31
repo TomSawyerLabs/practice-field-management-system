@@ -83,6 +83,12 @@ export class ExternalAccessStore {
     return false;
   }
 
+  /** validateToken without recording a use, for a check on every message. */
+  isValid(token: string): boolean {
+    const hash = this.hashToken(token);
+    return [...this.tokens.values()].some(stored => stored.tokenHash === hash);
+  }
+
   /** Whether any tokens exist. */
   hasTokens(): boolean {
     return this.tokens.size > 0;

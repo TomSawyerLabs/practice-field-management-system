@@ -1,3 +1,4 @@
+import type { IncomingHttpHeaders } from 'node:http';
 import type { DsClientMatch, StationName } from './types.js';
 
 /**
@@ -183,6 +184,52 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
 export function accessOf(type: unknown): MessageAccess {
   if (typeof type === 'string' && Object.hasOwn(MESSAGE_ACCESS, type)) return MESSAGE_ACCESS[type];
   return 'adminOnly';
+}
+
+/** Every message type in the table. */
+export const messageTypes = (): string[] => Object.keys(MESSAGE_ACCESS);
+
+/**
+ * What a connection from outside the field may send with no credential. It's
+ * checked before the tiers, so `anyone` means anyone on site. Missing from here
+ * means refused from the internet, stops and their clears included.
+ *
+ * The public pages need only this: /scores has its own socket, and /matches and
+ * /practice send nothing, they fetch /api/public. See plans/ws-internet-guard.md.
+ */
+const OPEN_TO_OUTSIDERS: ReadonlySet<string> = new Set([
+  'adminLogin', // the external login: it's how a visitor gets the access cookie
+  'adminCheckAuth',
+  'operatorCheckAuth', // every page presents a stored token on connecting
+  'operatorPairRedeem', // the secret is itself a one-time credential
+  'dsClientDismiss', // sets a flag on this socket and nothing else
+  'castReceiverRegister', // already open to everyone on /ws/scores
+]);
+
+export function isOpenToOutsiders(type: unknown): boolean {
+  return typeof type === 'string' && OPEN_TO_OUTSIDERS.has(type);
+}
+
+/**
+ * Whether a browser opened this socket from another site's page. WebSockets
+ * aren't bound by the same-origin policy, so any page open on a laptop at the
+ * field could otherwise reach the field from that laptop's address. Tools send
+ * no `Origin`, and are judged on their address alone.
+ */
+export function isCrossSite(headers: IncomingHttpHeaders): boolean {
+  if (!headers.origin) return false;
+  const hostname = (url: string) => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null; // `Origin: null` comes from sandboxed pages and files
+    }
+  };
+  const origin = hostname(headers.origin);
+  if (!origin) return true;
+  // A proxy that rewrites `Host` leaves the name the browser used here.
+  const forwarded = [headers['x-forwarded-host']].flat()[0]?.split(',')[0];
+  return ![headers.host, forwarded].some(host => host && hostname(`http://${host.trim()}`) === origin);
 }
 
 /**

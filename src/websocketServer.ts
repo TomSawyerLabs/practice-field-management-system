@@ -165,7 +165,9 @@ import {
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
-import { accessOf, dsClientMatch, type MessageAccess } from './wsAccess.js';
+import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, type MessageAccess } from './wsAccess.js';
+import { accessCookieOf } from './externalAccessAuth.js';
+import { isOnSite, ON_SITE_IPV6_PREFIX, OnLinkChecker } from './onLink.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { installMissingTools } from './hostTools.js';
 import { installSystemdService } from './systemdService.js';
@@ -478,6 +480,14 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   /** The DS verdict each connection last heard, to send only changes. */
   const dsClientStateSent = new Map<WebSocket, string>();
 
+  /** This host's networks, as the reverse proxy reads them. */
+  const siteNetworks = new OnLinkChecker(undefined, undefined, ON_SITE_IPV6_PREFIX);
+
+  /** Sockets from off site, or from another site's page, with the access
+   *  cookie they brought if it counts. The token is kept rather than a yes, so
+   *  revoking it on /admin takes effect at once. */
+  const outsiders = new Map<WebSocket, string | undefined>();
+
   /** Track public (read-only) WebSocket connections (connected via /ws/scores).
    *  These only receive scoreState and matchState — no sensitive data. */
   const publicConnections = new Set<WebSocket>();
@@ -759,6 +769,16 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       default:
         return null;
     }
+  }
+
+  /** Why a connection from outside the field may not send this, or null. Any
+   *  credential lets it through to the usual tiers, as if it were on site. */
+  function outsiderRefusal(ws: WebSocket, type: unknown): string | null {
+    if (!outsiders.has(ws) || isOpenToOutsiders(type)) return null;
+    if (adminConnections.has(ws) || operatorConnections.has(ws)) return null;
+    const cookie = outsiders.get(ws);
+    if (cookie && externalAccessStore?.isValid(cookie)) return null;
+    return 'This only works from the field network';
   }
 
   /** Why this connection may not send a message of this tier, or null. */
@@ -1077,6 +1097,13 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
     wsToIp.set(ws, clientIp);
 
+    const crossSite = isCrossSite(req.headers);
+    if (crossSite || !isOnSite(clientIp, siteNetworks)) {
+      // A cookie doesn't count for another site's page: it would be the
+      // visitor's browser lending that page their access.
+      outsiders.set(ws, crossSite ? undefined : accessCookieOf(req.headers.cookie));
+    }
+
     // Resolve the client's own hostname so pages can label it (e.g. "YOU" rows)
     hostnameResolver?.track(clientIp);
 
@@ -1209,6 +1236,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
     ws.on('close', () => {
       wsToIp.delete(ws);
+      outsiders.delete(ws);
       adminConnections.delete(ws);
       operatorConnections.delete(ws);
       operatorStateSent.delete(ws);
@@ -1242,7 +1270,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
       // Who may send what is decided in one place: see src/wsAccess.ts.
       const type = (data as { type?: unknown } | null)?.type;
-      const refused = refusal(ws, accessOf(type));
+      const refused = outsiderRefusal(ws, type) ?? refusal(ws, accessOf(type));
       if (refused) {
         appWarn(`Refused ${String(type)} from ${whoIs(clientIp)}: ${refused}`);
         ws.send(JSON.stringify({ error: refused }));

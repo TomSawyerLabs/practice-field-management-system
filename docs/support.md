@@ -86,8 +86,9 @@ screenshots already need.
 ## Security model — read this before opening a field
 
 pFMS assumes **everyone who can reach it on the network is trusted**. It is
-designed for a field LAN, not the public internet. Three specific things
-to know:
+designed for a field LAN, not the public internet, and it
+[limits what the internet can do](#from-the-internet) for that reason. Three
+specific things to know:
 
 **Claim the field first.** The admin passphrase is
 trust-on-first-use: the first person to reach `/admin` sets it, minimum 4
@@ -130,10 +131,11 @@ do, so a new field and the no-hardware demo work as they always have.
   the old one, not the ones paired by QR. **Remove code and logins** turns the
   whole thing off.
 
-**Stops never need a login.** Stop match, abort countdown, pause, disable and
-E-Stop work from any page, logged in or not, and stay on screen. Clearing an
-e-stop needs no login either, so a team can clear its own from its Driver
-Station. That also means anyone on the network can clear the field E-Stop.
+**Stops never need a login on site.** Stop match, abort countdown, pause,
+disable and E-Stop work from any page, logged in or not, and stay on screen.
+Clearing an e-stop needs no login either, so a team can clear its own from its
+Driver Station. That also means anyone on the network can clear the field
+E-Stop.
 
 Too many wrong codes wait a minute: 5 from one address, or 30 overall. That
 only slows a typed code, never a device already logged in.
@@ -147,6 +149,38 @@ determined:
 - Team-page actions stay open to anyone on the network, because a Driver
   Station has no login to give, and that includes changing any station's
   Wi-Fi.
+
+## From the internet
+
+The WebSocket has to stay reachable from outside so that the external login
+works, so pFMS decides for itself who is on site. A connection is **on site**
+when its address is private, link-local or on one of the host's own networks.
+That's the same test the reference proxy uses to pick the internal UI, and
+on-site connections are unaffected by anything below.
+
+A connection from anywhere else can't send field commands: no stops, no clears,
+no team-page actions. It can log in, and Cast TVs and the public scoreboard, match
+and practice-day pages work as usual. Any credential lifts this, and the usual
+rules then apply as if it were on site:
+
+- an access cookie from an [external access](setup.md#external-access) link
+- an admin login
+- an operator login, from a phone that already has one, or a pairing QR. A
+  typed code is refused from outside, so a stranger can't use up the limit on
+  wrong codes and lock out volunteers at the field
+
+Revoking an access link takes effect on open pages straight away.
+
+The same goes for a page from another website open in a browser at the field. A
+web page can open a WebSocket to any address, so a socket whose `Origin` doesn't
+match the address it connected to is treated as outside, and a cookie doesn't
+count there.
+
+This depends on [`TRUSTED_PROXIES`](configuration.md#trusted-proxies) being
+right. It only limits what a visitor can do, not what they can see: their socket
+still receives the field's status. A device at the field that goes out through
+the internet (a VPN, Cloudflare WARP, iCloud Private Relay or custom DNS) counts
+as outside.
 
 ## Admin Authentication
 

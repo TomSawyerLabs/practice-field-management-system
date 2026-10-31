@@ -91,8 +91,8 @@ Say this plainly so the login isn't mistaken for more than it is.
 - **Reading stays open.** Every `/ws` socket gets the field state.
 - **The credential can be read off the air.** On `http://pfms.tsl` a login
   crosses Wi-Fi unencrypted, as the admin passphrase does today.
-- **The internet.** See the first finding below. An operator login covers the
-  `staff` messages there, but not the `anyone` ones.
+- **The internet.** See the first finding below. Fixed separately:
+  `plans/ws-internet-guard.md`.
 
 ## Decisions (don't re-ask)
 
@@ -144,12 +144,10 @@ Say this plainly so the login isn't mistaken for more than it is.
   reading the config and code, a stranger could send every `anyone` and `staff`
   message, including `matchCreate` and `adminGlobalEStop`. **This was not tried
   against the live site.** `docs/support.md` says pFMS isn't designed for the
-  public internet. Logged in `ISSUES.md`, since it needs fixing whichever option
-  wins.
-- **The address can be forged until an ops change is applied.** Any fix for the
-  above that trusts the client's address depends on
-  `plans/caddy-xff-perimeter-spoof.md` in the ops repo (fix staged, not
-  applied). Changing that is the user's call, per change.
+  public internet. Fixed by `plans/ws-internet-guard.md`.
+- **The address could be forged.** `plans/caddy-xff-perimeter-spoof.md` in the
+  ops repo fixed Caddy's own view, and `plans/ws-internet-guard.md` fixed pFMS's,
+  which that change didn't reach.
 - **`/match` already hides E-STOP in one case.** `DsClientBlock` returns before
   `FieldEStopControl` renders (`MatchControlPage.tsx:469`), so a false hostname
   match takes E-STOP off screen until dismissed. Logged in `ISSUES.md`.

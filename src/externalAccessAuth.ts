@@ -24,6 +24,11 @@ function getCookieValue(cookieHeader: string | undefined, name: string): string 
   return undefined;
 }
 
+/** The access token in a request's Cookie header, if it has one. */
+export function accessCookieOf(cookieHeader: string | undefined): string | undefined {
+  return getCookieValue(cookieHeader, COOKIE_NAME);
+}
+
 function buildCookie(token: string): string {
   return [`${COOKIE_NAME}=${token}`, 'Path=/', `Max-Age=${COOKIE_MAX_AGE}`, 'HttpOnly', 'Secure', 'SameSite=Lax'].join(
     '; ',

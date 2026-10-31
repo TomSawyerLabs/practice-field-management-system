@@ -15,19 +15,18 @@ If rules don't appear, or the journal shows `Could not remove stale ip rule`, th
 matters: Drive and auto-connect depend on them. Close this entry once both are
 seen. Background: `plans/ip-rule-cleanup.md`.
 
-## The WebSocket takes field commands from the internet
+## The WebSocket shows field state to the internet
 
-in progress — issues/ws-internet-guard
-
-Seen reading the code and the ops repo's `servers/steamboat/sites.d/pfms.caddy`
-on 2026-10-30, not tried against the live site. Caddy exempts `/ws` from the
-access check so external login works, and `src/websocketServer.ts` has no address
-or `Origin` check. So a visitor with no cookie should be able to send every
-`anyone` and `staff` message, such as `matchCreate`, `station` or
-`adminGlobalEStop`. Matters because `docs/support.md` says pFMS assumes everyone
-who can reach it is trusted. An address-based fix can now rely on Caddy's client
-address: the forged `X-Forwarded-For` fix is live (ops `01d9534`, 1:48 PM PDT
-(20:48Z) on 2026-10-30, `plans/caddy-xff-perimeter-spoof.md` there).
+`src/websocketServer.ts` sends every `/ws` socket the field's state on connect,
+from anywhere, with no credential (seen 2026-10-30): radio and station status,
+hostnames, the queue, setup settings and support issues with their client
+addresses. No login credential or plain WPA key is in it, as far as checked: API
+keys and access tokens go as summaries, setup secrets are masked, and pending
+changes say only `secured`. Radio status does carry each station's `wpaKeySalt`
+and the hash it salts. Field commands from outside are refused since
+`plans/ws-internet-guard.md`, but reading isn't. Matters because a stranger can
+watch who's on the field, read support reports and try guessing a team's Wi-Fi
+key offline.
 
 ## NAT rules remain after a station is cleared
 
@@ -41,7 +40,11 @@ describe the teams on it, and stale ones confuse anyone reading them mid-inciden
 
 `adminLogin` is open to any `/ws` client, and `src/adminAuth.ts` allows unlimited
 tries against one round of salted SHA-256 with a 4-character minimum (seen
-2026-10-30). Matters because that socket reaches the internet (see above).
+2026-10-30). Matters because it stays open from the internet on purpose, as the
+external login (`plans/ws-internet-guard.md`), and a success opens everything.
+Needs a decision: a limit shared by all outside attempts lets a stranger lock out
+the external login, and per-address needs the proxy to pass the visitor's real
+address, since pFMS sees Cloudflare's.
 
 ## Firmware API takes uploads with no credential
 

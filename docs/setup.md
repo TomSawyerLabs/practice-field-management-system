@@ -249,7 +249,9 @@ VPN or a private-DNS service such as Cloudflare WARP are external from the
 network's point of view and need the access link like anyone else.
 
 Keep `/ws` exempt from the proxy's access check: the external login flow
-uses it before the visitor has a cookie.
+uses it before the visitor has a cookie. The backend does its own check, and
+a connection from outside can't send field commands until it has a credential.
+See [From the internet](support.md#from-the-internet).
 
 Some traps worth knowing before you change any of this:
 

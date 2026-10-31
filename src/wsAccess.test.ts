@@ -6,12 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import CIDRMatcher from 'cidr-matcher';
 import { WebSocket } from 'ws';
 import { AdminAuth } from './adminAuth.js';
+import { ExternalAccessStore } from './externalAccessStore.js';
 import { OperatorAuth } from './operatorAuth.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
 import { setupWebSocket, type WebSocketContext } from './websocketServer.js';
-import { accessOf, dsClientMatch } from './wsAccess.js';
+import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, messageTypes } from './wsAccess.js';
 
 const SRC = __dirname;
 const FRONTEND = join(SRC, '..', 'frontend', 'src');
@@ -38,6 +39,33 @@ describe('dsClientMatch', () => {
     expect(dsClientMatch('10.55.65.9', connected, { '10.55.65.9': 'phone' })).toBeNull();
     expect(dsClientMatch('10.55.65.9', connected, {})).toBeNull();
     expect(dsClientMatch('unknown', connected, {})).toBeNull();
+  });
+});
+
+describe('isCrossSite', () => {
+  test('a tool with no Origin is judged on its address', () => {
+    expect(isCrossSite({ host: 'pfms.tsl' })).toBe(false);
+  });
+
+  test("the field's own names, by any port or case", () => {
+    expect(isCrossSite({ origin: 'http://pfms.tsl', host: 'pfms.tsl' })).toBe(false);
+    expect(isCrossSite({ origin: 'http://PFMS.tsl:8080', host: 'pfms.tsl:9005' })).toBe(false);
+    expect(isCrossSite({ origin: 'https://pfms.tomsawyerlabs.com', host: 'pfms.tomsawyerlabs.com' })).toBe(false);
+    expect(isCrossSite({ origin: 'http://[::1]:5173', host: '[::1]:9005' })).toBe(false);
+  });
+
+  test('a proxy that rewrites Host', () => {
+    const headers = { origin: 'http://pfms.tsl', host: 'localhost:9005' };
+    expect(isCrossSite(headers)).toBe(true);
+    expect(isCrossSite({ ...headers, 'x-forwarded-host': 'pfms.tsl' })).toBe(false);
+    expect(isCrossSite({ ...headers, 'x-forwarded-host': 'pfms.tsl, other' })).toBe(false);
+  });
+
+  test('anything else', () => {
+    expect(isCrossSite({ origin: 'https://evil.example', host: 'pfms.tsl' })).toBe(true);
+    expect(isCrossSite({ origin: 'https://pfms.tsl.evil.example', host: 'pfms.tsl' })).toBe(true);
+    expect(isCrossSite({ origin: 'null', host: 'pfms.tsl' })).toBe(true);
+    expect(isCrossSite({ origin: 'http://pfms.tsl' })).toBe(true);
   });
 });
 
@@ -147,6 +175,29 @@ describe('pages with no login', () => {
   test('the scoreboard sends nothing gated', () => {
     expect(gated('scores.tsx')).toEqual([]);
   });
+
+  test('what any page sends on connecting is open from the internet', () => {
+    const source = readFileSync(join(FRONTEND, 'hooks', 'useBackend.ts'), 'utf8');
+    const onOpen = source.slice(source.indexOf('nws.onopen'), source.indexOf('nws.onerror'));
+    const types = [...onOpen.matchAll(/\btype: '(\w+)'/g)].map(m => m[1]);
+    expect(types.length).toBeGreaterThan(2);
+    expect(types.filter(t => !isOpenToOutsiders(t))).toEqual([]);
+  });
+
+  test('the public match pages send nothing over the socket', () => {
+    // The walk reaches MatchVideoCard, but formatBytes is all they take from it.
+    for (const page of ['MatchSummaryPage', 'PracticeDayPage']) {
+      const source = readFileSync(join(FRONTEND, 'components', `${page}.tsx`), 'utf8');
+      expect(source).toContain("import { formatBytes } from './MatchVideoCard';");
+      expect(source).not.toContain('useBackend');
+    }
+  });
+
+  test('the login page sends only what a visitor keeps, but for claiming the field', () => {
+    const names = backendImports(join(FRONTEND, 'components', 'AdminAuthGate.tsx'));
+    const types = [...names].flatMap(name => sent.get(name) ?? []);
+    expect(types.filter(t => !isOpenToOutsiders(t))).toEqual(['adminSetPassphrase']);
+  });
 });
 
 // A stand-in server: no radio, no Driver Station packets, nothing leaves this
@@ -159,6 +210,7 @@ describe('the WebSocket gate', () => {
   const authDir = mkdtempSync(join(tmpdir(), 'pfms-ws-access-'));
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'));
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
+  const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
   let context: WebSocketContext;
   let url: string;
   let engineCalls: string[] = [];
@@ -222,6 +274,7 @@ describe('the WebSocket gate', () => {
           return typeof member === 'function' ? member.bind(operatorAuth) : member;
         },
       }),
+      externalAccessStore: externalAccess,
       hostnameResolver,
     });
     if (!context.server.listening) await new Promise(r => context.server.once('listening', r));
@@ -255,8 +308,8 @@ describe('the WebSocket gate', () => {
     devices?: { id: string; name: string }[];
   };
 
-  async function client(ip: string) {
-    const ws = new WebSocket(url, { headers: { 'x-forwarded-for': ip } });
+  async function client(ip: string, headers: Record<string, string> = {}) {
+    const ws = new WebSocket(url, { headers: { 'x-forwarded-for': ip, ...headers } });
     open.push(ws);
     const replies: Reply[] = [];
     ws.on('message', raw => {
@@ -580,5 +633,201 @@ describe('the WebSocket gate', () => {
       const anyone = await client(STAFF_IP);
       expect((await anyone.send({ type: 'clearMatchHistory' }))[0].error).toBe('Admin authentication required');
     });
+  });
+
+  describe('from outside the field', () => {
+    const VISITOR = '203.0.113.7';
+    /** What pFMS gets for a visitor through Cloudflare who forged a LAN address. */
+    const FORGED = `${STAFF_IP}, ${VISITOR}, 172.70.176.14`;
+    const REFUSED = 'This only works from the field network';
+    const KEPT = [
+      'adminLogin',
+      'adminCheckAuth',
+      'operatorCheckAuth',
+      'operatorPairRedeem',
+      'dsClientDismiss',
+      'castReceiverRegister',
+    ];
+
+    test('the list of what stays open is exactly this', () => {
+      expect(messageTypes().filter(isOpenToOutsiders).sort()).toEqual([...KEPT].sort());
+    });
+
+    test.each([
+      ['a visitor', VISITOR],
+      ['a visitor forging a LAN address', FORGED],
+    ])('%s is refused every other message, whatever its tier', async (_, xff) => {
+      const visitor = await client(xff);
+      const refused: string[] = [];
+      for (const type of messageTypes().filter(t => !KEPT.includes(t))) {
+        if ((await visitor.send({ type }))[0]?.error === REFUSED) refused.push(type);
+      }
+      expect(refused).toEqual(messageTypes().filter(t => !KEPT.includes(t)));
+      expect(engineCalls).toEqual([]);
+    });
+
+    test('nobody can claim an unclaimed field from the internet', async () => {
+      unclaimField();
+      const visitor = await client(VISITOR);
+      expect((await visitor.send({ type: 'adminSetPassphrase', passphrase: 'mine now' }))[0].error).toBe(REFUSED);
+      expect(adminAuth.isConfigured()).toBe(false);
+    });
+
+    test('the external login still works, and then everything does', async () => {
+      claimField();
+      const visitor = await client(VISITOR);
+      const replies = await visitor.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      expect(replies.find(r => r.type === 'adminAuthResult')?.authenticated).toBe(true);
+      expect(await visitor.send({ type: 'adminGlobalEStop' })).toEqual([]);
+      expect(engineCalls).toEqual(['fieldEStop']);
+    });
+
+    test('a wrong passphrase gets nothing', async () => {
+      claimField();
+      const visitor = await client(VISITOR);
+      await visitor.send({ type: 'adminLogin', passphrase: 'wrong' });
+      expect((await visitor.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+    });
+
+    test('a page that opens with a stored token gets no error', async () => {
+      const visitor = await client(VISITOR);
+      for (const msg of [
+        { type: 'adminCheckAuth', token: 'stale' },
+        { type: 'operatorCheckAuth', token: 'stale' },
+        { type: 'dsClientDismiss' },
+      ]) {
+        expect((await visitor.send(msg)).filter(r => r.error)).toEqual([]);
+      }
+    });
+
+    test('an operator login carries on from outside, as far as the tiers allow', async () => {
+      claimField();
+      await operatorAuth.setCode('field code');
+      const phone = await client(STAFF_IP);
+      const { token } = await phone.login('field code');
+      const away = await client(VISITOR);
+      await away.send({ type: 'operatorCheckAuth', token });
+      expect(await away.send({ type: 'matchCreate' })).toEqual([]);
+      expect(engineCalls).toEqual(['createMatch']);
+      expect((await away.send({ type: 'updateSetupSettings' }))[0].error).toBe('Admin authentication required');
+    });
+
+    test('a QR code can be redeemed on cellular', async () => {
+      await operatorAuth.setCode('field code');
+      const { secret } = operatorAuth.startPairing('Admin');
+      const phone = await client(VISITOR);
+      const replies = await phone.send({ type: 'operatorPairRedeem', secret, name: 'Phone' });
+      expect(replies.at(-1)?.token).toBeTruthy();
+    });
+
+    test('a typed operator code is refused, so a stranger cannot spend the overall limit', async () => {
+      await operatorAuth.setCode('field code');
+      const visitor = await client(VISITOR);
+      expect((await visitor.send({ type: 'operatorLogin', code: 'guess', name: 'x' }))[0].error).toBe(REFUSED);
+    });
+
+    describe('with the access cookie', () => {
+      const cookie = (token: string) => ({ cookie: `other=1; pfms_access=${token}` });
+
+      test('a holder can do what someone on site can', async () => {
+        const { token } = externalAccess.createToken('Mentor');
+        const mentor = await client(VISITOR, cookie(token));
+        expect(await mentor.send({ type: 'adminGlobalEStop' })).toEqual([]);
+        expect(await mentor.send({ type: 'matchCreate' })).toEqual([]);
+        expect(engineCalls).toEqual(['fieldEStop', 'createMatch']);
+      });
+
+      test('the tiers still apply to a holder', async () => {
+        claimField();
+        const { token } = externalAccess.createToken('Mentor');
+        const mentor = await client(VISITOR, cookie(token));
+        expect((await mentor.send({ type: 'updateSetupSettings' }))[0].error).toBe('Admin authentication required');
+      });
+
+      test('a made-up cookie is nothing', async () => {
+        const visitor = await client(VISITOR, cookie('made-up'));
+        expect((await visitor.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+      });
+
+      test('revoking a token cuts off a socket already open', async () => {
+        const { token, id } = externalAccess.createToken('Mentor');
+        const mentor = await client(VISITOR, cookie(token));
+        expect(await mentor.send({ type: 'adminStopMatch' })).toEqual([]);
+        externalAccess.revokeToken(id);
+        // The revocation is broadcast too, so the refusal needn't come first.
+        expect((await mentor.send({ type: 'adminStopMatch' })).find(r => r.error)?.error).toBe(REFUSED);
+      });
+
+      test("another site's page gets nothing from a visitor's cookie", async () => {
+        const { token } = externalAccess.createToken('Mentor');
+        const page = await client(VISITOR, { ...cookie(token), origin: 'https://evil.example' });
+        expect((await page.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+      });
+    });
+
+    test('the public scoreboard socket is untouched', async () => {
+      const ws = new WebSocket(url.replace(/\/ws$/, '/ws/scores'), { headers: { 'x-forwarded-for': VISITOR } });
+      open.push(ws);
+      const replies: Reply[] = [];
+      ws.on('message', raw => replies.push(JSON.parse(String(raw))));
+      await new Promise(res => ws.once('open', res));
+      ws.send(JSON.stringify({ type: 'castReceiverRegister', name: 'TV', swapped: false }));
+      while (!replies.some(r => r.type === 'castReceiverId')) await Bun.sleep(2);
+      expect(replies.some(r => r.type === 'matchState')).toBe(true);
+    });
+  });
+
+  describe('on site', () => {
+    const STOPS = [
+      { type: 'adminStopMatch' },
+      { type: 'matchAbortCountdown' },
+      { type: 'stationPauseMatch' },
+      { type: 'adminStationDisable', station: 'slot1' },
+      { type: 'adminGlobalEStop' },
+      { type: 'adminStationEStop', station: 'slot1' },
+      { type: 'adminClearFieldEStop' },
+      { type: 'adminClearEStop', station: 'slot1' },
+    ];
+
+    test.each([
+      ['a locked operator page', STAFF_IP],
+      ['a Driver Station laptop', DS_IP],
+      ['a VPN peer', '10.255.0.50'],
+      ['this host', '127.0.0.1'],
+      ['a device with a ULA address', 'fd12:3456:789a::1'],
+      ['a link-local neighbour', 'fe80::1'],
+    ])('stops and clears need no login from %s', async (_, ip) => {
+      claimField();
+      await operatorAuth.setCode('field code');
+      const device = await client(ip);
+      for (const stop of STOPS) expect(await device.send(stop)).toEqual([]);
+      expect(engineCalls).toHaveLength(STOPS.length);
+    });
+
+    test('a team page still works', async () => {
+      const ds = await client(DS_IP);
+      expect(await ds.send({ type: 'stationReady', station: 'slot2', ready: true })).toEqual([]);
+      expect((await ds.send({ type: 'subscribe', topic: 'usage' })).filter(r => r.error)).toEqual([]);
+    });
+
+    test("the field's own page connects, whatever name it was opened by", async () => {
+      const opened: Record<string, string>[] = [
+        { origin: url.replace('ws://', 'http://').replace(/\/ws$/, '') },
+        { origin: 'http://pfms.tsl', 'x-forwarded-host': 'pfms.tsl' },
+      ];
+      for (const headers of opened) {
+        const page = await client(STAFF_IP, headers);
+        expect(await page.send({ type: 'adminGlobalEStop' })).toEqual([]);
+      }
+    });
+
+    test.each([['https://evil.example'], ['http://pfms.tsl.evil.example'], ['null']])(
+      'a page from %s on a laptop at the field is an outsider',
+      async origin => {
+        const page = await client(STAFF_IP, { origin });
+        expect((await page.send({ type: 'adminGlobalEStop' }))[0].error).toBe('This only works from the field network');
+        expect(engineCalls).toEqual([]);
+      },
+    );
   });
 });

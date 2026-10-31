@@ -27,16 +27,21 @@ export interface OnLinkPrefix {
 /** Interfaces as `os.networkInterfaces()` returns them; injectable for tests. */
 export type InterfaceTable = NodeJS.Dict<NetworkInterfaceInfo[]>;
 
-export function onLinkPrefixes(interfaces: InterfaceTable = networkInterfaces()): OnLinkPrefix[] {
+export function onLinkPrefixes(
+  interfaces: InterfaceTable = networkInterfaces(),
+  /** Widen global IPv6 prefixes to this length, to take in sibling subnets. */
+  widenIpv6To = 128,
+): OnLinkPrefix[] {
   const out = new Map<string, OnLinkPrefix>();
   for (const addrs of Object.values(interfaces)) {
     for (const a of addrs ?? []) {
       if (a.internal || !a.cidr) continue;
-      const bits = Number(a.cidr.split('/')[1]);
       const v6 = a.family === 'IPv6';
+      let bits = Number(a.cidr.split('/')[1]);
       // A host route (/32, /128) is one address, not a network — the DHCPv6
       // lease on the office LAN is exactly that and must not count.
       if (bits >= (v6 ? 128 : 32)) continue;
+      if (v6 && !a.address.toLowerCase().startsWith('fe80')) bits = Math.min(bits, widenIpv6To);
       const cidr = `${networkOf(a.address, bits, v6)}/${bits}`;
       out.set(cidr, { cidr, family: v6 ? 'ipv6' : 'ipv4' });
     }
@@ -99,11 +104,12 @@ export class OnLinkChecker {
   constructor(
     private readonly refreshMs = 60_000,
     private readonly read: () => InterfaceTable = networkInterfaces,
+    private readonly widenIpv6To?: number,
   ) {}
 
   current(): OnLinkPrefix[] {
     if (Date.now() - this.readAt >= this.refreshMs) {
-      this.prefixes = onLinkPrefixes(this.read());
+      this.prefixes = onLinkPrefixes(this.read(), this.widenIpv6To);
       this.readAt = Date.now();
     }
     return this.prefixes;
@@ -112,4 +118,28 @@ export class OnLinkChecker {
   isOnLink(ip: string): boolean {
     return isOnLink(ip, this.current());
   }
+}
+
+/** An ISP delegates a site one /60 and each VLAN gets a /64 of it, and this
+ *  host may not sit on the VLAN a device is on. */
+export const ON_SITE_IPV6_PREFIX = 60;
+
+const PRIVATE_RANGES = new BlockList();
+PRIVATE_RANGES.addSubnet('10.0.0.0', 8, 'ipv4');
+PRIVATE_RANGES.addSubnet('172.16.0.0', 12, 'ipv4');
+PRIVATE_RANGES.addSubnet('192.168.0.0', 16, 'ipv4');
+PRIVATE_RANGES.addSubnet('127.0.0.0', 8, 'ipv4');
+PRIVATE_RANGES.addSubnet('fd00::', 8, 'ipv6');
+PRIVATE_RANGES.addSubnet('fe80::', 10, 'ipv6');
+PRIVATE_RANGES.addAddress('::1', 'ipv6');
+
+/**
+ * "Is this client at the field?" The same answer the reverse proxy gives when it
+ * picks the internal UI: private, link-local, or on one of this host's networks
+ * (`client_ip private_ranges fe80::/10`, `onlink { ipv6_prefix 60 }`). If they
+ * disagreed, a volunteer could be shown a stop button that is then refused.
+ * Pass a checker built with ON_SITE_IPV6_PREFIX.
+ */
+export function isOnSite(ip: string, networks: OnLinkChecker): boolean {
+  return matches(PRIVATE_RANGES, ip) || networks.isOnLink(ip);
 }
