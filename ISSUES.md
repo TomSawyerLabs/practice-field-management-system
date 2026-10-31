@@ -17,6 +17,8 @@ seen. Background: `plans/ip-rule-cleanup.md`.
 
 ## The WebSocket takes field commands from the internet
 
+in progress — issues/ws-internet-guard
+
 Seen reading the code and the ops repo's `servers/steamboat/sites.d/pfms.caddy`
 on 2026-10-30, not tried against the live site. Caddy exempts `/ws` from the
 access check so external login works, and `src/websocketServer.ts` has no address
