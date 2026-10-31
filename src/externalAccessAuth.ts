@@ -48,9 +48,8 @@ function buildCookie(token: string): string {
  *   field network that arrive over IPv6 get the internal UI). 401 otherwise.
  *
  *   The client address comes from X-Forwarded-For only when the socket peer
- *   is a trusted proxy; the proxy in turn replaces any X-Forwarded-For a
- *   client sent unless it came from its own trusted upstream. A stranger
- *   cannot claim an on-link address.
+ *   is a trusted proxy, and that header is read from the right (see
+ *   getRealClientIp), so a stranger cannot claim an on-link address.
  */
 export function handleExternalAccessAuth(
   req: IncomingMessage,

@@ -192,14 +192,14 @@ const WebSocketPort = Number(process.env.WEBSOCKET_PORT) || 3000;
 // Physical port bridging configuration
 const FieldPorts = parseFieldPorts(process.env.FIELD_PORTS);
 
-// Trusted proxy configuration
-const trustedProxyMatcher = process.env.TRUSTED_PROXIES
-  ? new CIDRMatcher(
-      process.env.TRUSTED_PROXIES.split(/[,\s]+/g)
-        .filter(s => s)
-        .map(toCidr),
-    )
-  : undefined;
+// Trusted proxy configuration. A proxy on this host is always believed: without
+// that, everyone behind it would look like loopback, and so like they're on site.
+const trustedProxyMatcher = new CIDRMatcher(
+  (process.env.TRUSTED_PROXIES || '127.0.0.1/8,::1/128')
+    .split(/[,\s]+/g)
+    .filter(s => s)
+    .map(toCidr),
+);
 
 // Devices on this host's own networks get the internal UI without a cookie,
 // whichever address family they arrive on — see src/onLink.ts.

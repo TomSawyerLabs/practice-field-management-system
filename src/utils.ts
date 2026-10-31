@@ -164,12 +164,18 @@ export function getRealClientIp(
   const realIp = requestHeaders['x-real-ip'];
   const cfConnectingIp = requestHeaders['cf-connecting-ip']; // Cloudflare
 
-  // Parse X-Forwarded-For (can contain multiple IPs, the first one is the original client)
+  // Read X-Forwarded-For from the right. Each proxy appends who it heard from,
+  // so only the entries added by proxies we trust can be believed: everything
+  // left of the first untrusted address was sent by that address, and could say
+  // anything. Caddy keeps what Cloudflare passes along, forgeries included.
   if (forwardedFor) {
-    const ips = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-    const firstIp = ips.split(',')[0].trim();
-    if (firstIp) {
-      return firstIp;
+    const ips = (Array.isArray(forwardedFor) ? forwardedFor.join(',') : forwardedFor)
+      .split(',')
+      .map(ip => ip.trim())
+      .filter(ip => ip);
+    const client = ips.reverse().find(ip => !trustedProxyMatcher.contains(ip)) ?? ips.at(-1);
+    if (client) {
+      return client;
     }
   }
 

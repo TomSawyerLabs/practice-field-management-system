@@ -111,7 +111,10 @@ r = await ask({ 'X-Forwarded-For': '2606:4700:3037::6815:1ece' });
 check('external client, no cookie → 401', r.status === 401, r);
 
 r = await ask({ 'X-Forwarded-For': '203.0.113.7, 172.70.176.14' });
-check('via Cloudflare: leftmost address is the client → 401', r.status === 401, r);
+check('via Cloudflare, not on-link → 401', r.status === 401, r);
+
+r = await ask({ 'X-Forwarded-For': '2600:1700:459:8a1f::1, 203.0.113.7, 172.70.176.14' });
+check('via Cloudflare, forging an on-link address on the left → 401', r.status === 401, r);
 
 r = await ask({ 'X-Forwarded-For': '203.0.113.7', Cookie: 'pfms_access=good-token' });
 check('external client with a valid cookie → 200 + refreshed cookie', r.status === 200 && !!r.cookie, r);

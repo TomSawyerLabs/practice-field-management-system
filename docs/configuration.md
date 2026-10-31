@@ -38,7 +38,7 @@ service restart — no `systemctl daemon-reload` needed.
 | `WIFI_COUNTRY`            | `US`     | Wi-Fi country pFMS sets as the host's regulatory domain on every card it runs (6 GHz needs one). The admin page setting wins.                                       |
 | `MDNS_EXCLUDE_REQUESTERS` | _(none)_ | Requester IPs excluded from mDNS reflection                                                                                                                         |
 | `MDNS_LISTEN_INTERFACES`  | _(none)_ | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                                              |
-| `TRUSTED_PROXIES`         | _(none)_ | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                    |
+| `TRUSTED_PROXIES`         | loopback | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                    |
 
 ## FMS Protocol
 
@@ -201,10 +201,11 @@ check. Run `bun src/cli.ts --help` for the full list.
 ## Trusted Proxies
 
 When running behind a reverse proxy (like Caddy), set `TRUSTED_PROXIES`
-to enable real client IP detection:
+to enable real client IP detection. A proxy on the same host is trusted
+without it:
 
 ```bash
-# For Caddy running on localhost
+# For Caddy running on localhost (the default)
 TRUSTED_PROXIES=127.0.0.1,::1
 
 # For Caddy on a specific network
@@ -215,4 +216,15 @@ TRUSTED_PROXIES=127.0.0.1,::1,10.0.0.0/8,192.168.1.0/24
 ```
 
 This allows the application to read the `X-Forwarded-For` header from
-trusted proxies to log the real client IP instead of the proxy's IP.
+trusted proxies to log the real client IP instead of the proxy's IP. The
+client address also decides what a connection may do, so **list every proxy
+in front of pFMS, and nothing a stranger can reach**: a proxy on another host
+that isn't listed makes everyone behind it look like that proxy, which is on
+site.
+
+The header is read from the right, and the answer is the first address that
+isn't a trusted proxy. Anything further left was sent by that address and
+can't be believed. Behind a CDN that isn't listed here, such as Cloudflare,
+the address pFMS sees is therefore the CDN's. It is still correctly off site;
+only the logs lose the visitor. To get it back, have the proxy pass its own
+verdict (Caddy: `header_up X-Forwarded-For {client_ip}`).

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import CIDRMatcher from 'cidr-matcher';
 import { isUpdateSetupSettings } from './types.js';
 import type { QueueEntry } from './types.js';
 import {
+  getRealClientIp,
   hostTeamsInEffect,
   isRobotOfTeams,
   queueInUse,
@@ -97,5 +99,52 @@ describe('teamSubnet', () => {
     expect(teamSubnet(254)).toBe('10.2.54');
     expect(teamSubnet(8)).toBe('10.0.8');
     expect(teamSubnet(10000)).toBe('10.100.0');
+  });
+});
+
+describe('getRealClientIp', () => {
+  // The live list: Caddy on loopback, and 10/8 for proxies on other hosts.
+  const trusted = new CIDRMatcher(['127.0.0.1/8', '::1/128', '10.0.0.0/8']);
+  const peer = '::ffff:127.0.0.1';
+  const read = (xff: string | string[] | undefined, from = peer) =>
+    getRealClientIp(from, { 'x-forwarded-for': xff }, trusted);
+
+  test('a client one proxy away', () => {
+    expect(read('203.0.113.7')).toBe('203.0.113.7');
+    expect(read('10.55.65.20')).toBe('10.55.65.20');
+  });
+
+  test('what Caddy forwards from Cloudflare: a forged address on the left is not believed', () => {
+    // Seen on a real Caddy with trusted_proxies_strict: it keeps what its
+    // trusted upstream sent, and appends that upstream.
+    expect(read('10.255.0.50, 203.0.113.7, 172.70.176.14')).toBe('172.70.176.14');
+    expect(read('127.0.0.1, 172.70.176.14')).toBe('172.70.176.14');
+  });
+
+  test('proxies we trust are walked past', () => {
+    expect(read('203.0.113.7, 10.0.100.5')).toBe('203.0.113.7');
+    expect(read('10.255.0.50, 203.0.113.7, 10.0.100.5')).toBe('203.0.113.7');
+  });
+
+  test('all trusted: the client is the leftmost', () => {
+    expect(read('10.55.65.20, 10.0.100.5')).toBe('10.55.65.20');
+  });
+
+  test('repeated headers count as one list', () => {
+    expect(read(['10.255.0.50', '203.0.113.7'])).toBe('203.0.113.7');
+  });
+
+  test('junk is an untrusted address, never a way through', () => {
+    expect(read('10.255.0.50, unknown')).toBe('unknown');
+    expect(read('10.255.0.50, [::1]:443')).toBe('[::1]:443');
+  });
+
+  test('an empty header falls back to the peer', () => {
+    expect(read(' , ')).toBe(peer);
+  });
+
+  test('only a trusted peer is asked', () => {
+    expect(read('10.255.0.50', '203.0.113.7')).toBe('203.0.113.7');
+    expect(getRealClientIp('10.55.65.20', { 'x-forwarded-for': '203.0.113.7' })).toBe('10.55.65.20');
   });
 });
