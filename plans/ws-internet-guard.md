@@ -1,6 +1,6 @@
 # Keep internet visitors from running the field over `/ws`
 
-**Status: the guard is live (pFMS `4c4b24a`) and the Caddy change is live (ops `f9bec1c`), both on 2026-10-30. The admin login limit (`26f552c`), the stranger's view and the scrypt passphrase hash wait for the next pFMS deploy.**
+**Status: the guard (pFMS `4c4b24a`), the Caddy change (ops `f9bec1c`) and the admin login limit (`26f552c`, in `c08e287`, running since 9:02 PM PDT (04:02Z Oct 31)) are all live. The stranger's view and the scrypt passphrase hash wait for the next pFMS deploy.**
 
 ## Goal
 
@@ -133,7 +133,8 @@ Refused from outside with no credential, that a reader might expect to stay:
 - `subscribe`: no public page uses it, and it hands out match history with share
   tokens, plus usage. See "What this doesn't fix".
 - The support widget's messages: the widget shows on `/admin`, but these post to
-  Slack, which shouldn't be open to anyone on the internet.
+  Slack, which shouldn't be open to anyone on the internet. The user confirmed
+  this on 2026-10-31: closed to the public.
 - `requestSetupProbe`, `requestRecordingsInventory`, `requestPracticeDayLink`.
 
 ## Findings
@@ -363,8 +364,9 @@ owns them before sending anything.
 
 ## Open questions for the user
 
-1. The list of what an external connection keeps stands as built unless the user
-   wants the support widget on `/admin` opened to strangers. Recommendation: no.
+None. The support widget on `/admin` stays closed to strangers, decided by the
+user on 2026-10-31, so the list of what an external connection keeps stands as
+built.
 
 ## Things not to do
 
