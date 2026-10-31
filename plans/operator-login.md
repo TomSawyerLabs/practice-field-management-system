@@ -154,9 +154,10 @@ Say this plainly so the login isn't mistaken for more than it is.
 - **`/staff` and `/csa` have no stop controls at all**, including the Safety
   Monitor's page. Logged in `ISSUES.md`. Not caused by this work, but "stops
   stay visible" only means something on pages that have them.
-- `adminLogin` has no rate limit, the passphrase hash is one round of SHA-256,
+- `adminLogin` had no rate limit, the passphrase hash is one round of SHA-256,
   and the minimum is 4 characters. Fine for a trusted LAN, not for `/ws` as
-  exposed. Logged in `ISSUES.md`.
+  exposed. Tries from outside are limited since `plans/ws-internet-guard.md`, and
+  the weak passphrase is logged in `ISSUES.md`.
 - `POST /api/firmware/upload` and `/download` take no credential and send
   `Access-Control-Allow-Origin: *`. Logged in `ISSUES.md`. A login on `/test`
   doesn't cover them.

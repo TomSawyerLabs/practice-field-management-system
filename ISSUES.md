@@ -36,15 +36,13 @@ still had `pfms-nat-slot1` for `10.1.0.0/24` and `pfms-nat-slot3` and
 `pfms-nat-slot4` for `10.17.0.0/24`. Matters because the field's rules should
 describe the teams on it, and stale ones confuse anyone reading them mid-incident.
 
-## Admin login has no rate limit
+## The admin passphrase is weak for a login on the internet
 
-`adminLogin` is open to any `/ws` client, and `src/adminAuth.ts` allows unlimited
-tries against one round of salted SHA-256 with a 4-character minimum (seen
-2026-10-30). Matters because it stays open from the internet on purpose, as the
-external login (`plans/ws-internet-guard.md`), and a success opens everything.
-Needs a decision: a limit shared by all outside attempts lets a stranger lock out
-the external login, and per-address needs the proxy to pass the visitor's real
-address, since pFMS sees Cloudflare's.
+`src/adminAuth.ts` hashes it with one round of salted SHA-256 and allows 4
+characters (seen 2026-10-30). Matters because `adminLogin` stays open from the
+internet on purpose and a success opens everything. Attempts from outside are now
+limited (`plans/ws-internet-guard.md`), which slows guessing but doesn't fix a
+short passphrase or a stolen hash file.
 
 ## Firmware API takes uploads with no credential
 

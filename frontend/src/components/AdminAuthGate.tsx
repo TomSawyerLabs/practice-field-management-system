@@ -88,6 +88,11 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
       }, 1000);
     };
 
+    const retryAfterMs = authResult.retryAfterMs;
+    const shownError = retryAfterMs
+      ? `Too many tries. Wait ${Math.ceil(retryAfterMs / 1000)} seconds and try again.`
+      : error;
+
     return (
       <Container maxWidth="sm" sx={{ py: 8 }}>
         <Card>
@@ -100,9 +105,9 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
               Enter the admin passphrase to access the field admin panel.
             </Typography>
 
-            {error && (
+            {shownError && (
               <Alert severity="error" sx={{ mb: 2 }}>
-                {error}
+                {shownError}
               </Alert>
             )}
 

@@ -147,6 +147,7 @@ import {
   isDeleteRecording,
   isDeleteRecordingsBefore,
   type PracticeDayLink,
+  AdminAuthResult,
   CastReceiverList,
   RoutePreferenceState,
   PendingCommitState,
@@ -167,6 +168,7 @@ import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscript
 import { getRealClientIp, normalizeIp } from './utils.js';
 import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, type MessageAccess } from './wsAccess.js';
 import { accessCookieOf } from './externalAccessAuth.js';
+import { LoginLimiter } from './loginLimiter.js';
 import { isOnSite, ON_SITE_IPV6_PREFIX, OnLinkChecker } from './onLink.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { installMissingTools } from './hostTools.js';
@@ -280,6 +282,10 @@ export interface SetupWebSocketOptions {
   adminAuth?: AdminAuth;
   operatorAuth?: OperatorAuth;
   externalAccessStore?: ExternalAccessStore;
+  /** The admin passphrase is short and quick to check, and the login has to stay
+   *  open to the internet. Only strangers count: a flood can't lock out anyone
+   *  on site or holding an access cookie. */
+  strangerAdminLogins?: LoginLimiter;
   onStationTestMode?: StationTestModeCallback;
   onStationTestModeStop?: StationTestModeStopCallback;
   onStationRadioConfigure?: StationRadioConfigureCallback;
@@ -364,6 +370,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     adminAuth,
     operatorAuth,
     externalAccessStore,
+    strangerAdminLogins = new LoginLimiter(),
     onStationTestMode,
     onStationTestModeStop,
     onStationRadioConfigure,
@@ -771,14 +778,17 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     }
   }
 
-  /** Why a connection from outside the field may not send this, or null. Any
-   *  credential lets it through to the usual tiers, as if it were on site. */
-  function outsiderRefusal(ws: WebSocket, type: unknown): string | null {
-    if (!outsiders.has(ws) || isOpenToOutsiders(type)) return null;
-    if (adminConnections.has(ws) || operatorConnections.has(ws)) return null;
+  /** Outside the field with no credential. Any credential counts as on site. */
+  function isStranger(ws: WebSocket): boolean {
+    if (!outsiders.has(ws)) return false;
+    if (adminConnections.has(ws) || operatorConnections.has(ws)) return false;
     const cookie = outsiders.get(ws);
-    if (cookie && externalAccessStore?.isValid(cookie)) return null;
-    return 'This only works from the field network';
+    return !(cookie && externalAccessStore?.isValid(cookie));
+  }
+
+  /** Why a stranger may not send this, or null. */
+  function outsiderRefusal(ws: WebSocket, type: unknown): string | null {
+    return isStranger(ws) && !isOpenToOutsiders(type) ? 'This only works from the field network' : null;
   }
 
   /** Why this connection may not send a message of this tier, or null. */
@@ -1901,8 +1911,22 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         // ── Admin Auth ──────────────────────────────────────────────
       } else if (isAdminLogin(data)) {
         if (adminAuth) {
+          const limited = isStranger(ws);
+          const retryAfterMs = limited ? strangerAdminLogins.take(clientIp) : null;
+          if (retryAfterMs !== null) {
+            appWarn(`Too many admin login attempts from ${whoIs(clientIp)}`);
+            const reply: AdminAuthResult = {
+              type: 'adminAuthResult',
+              authenticated: false,
+              passphraseConfigured: adminAuth.isConfigured(),
+              retryAfterMs,
+            };
+            ws.send(JSON.stringify(reply));
+            return;
+          }
           const token = adminAuth.login(data.passphrase);
           if (token) {
+            if (limited) strangerAdminLogins.clear(clientIp);
             adminConnections.add(ws);
             sendOperatorDevices(ws);
             // Auto-create an external access token so the admin's browser

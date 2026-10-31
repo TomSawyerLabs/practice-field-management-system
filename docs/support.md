@@ -171,6 +171,12 @@ rules then apply as if it were on site:
 
 Revoking an access link takes effect on open pages straight away.
 
+The admin login has to stay open from the internet, so it is limited there: 5
+tries a minute from one address and 30 overall, then a wait. Only visitors with
+no credential count, so someone flooding it can hold up a stranger's login at
+worst. Logging in at the field or with an access link is never limited, and an
+open admin page keeps working.
+
 The same goes for a page from another website open in a browser at the field. A
 web page can open a WebSocket to any address, so a socket whose `Origin` doesn't
 match the address it connected to is treated as outside, and a cookie doesn't

@@ -7,6 +7,7 @@ import CIDRMatcher from 'cidr-matcher';
 import { WebSocket } from 'ws';
 import { AdminAuth } from './adminAuth.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
+import { LoginLimiter } from './loginLimiter.js';
 import { OperatorAuth } from './operatorAuth.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
@@ -211,6 +212,7 @@ describe('the WebSocket gate', () => {
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'));
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
   const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
+  let adminLogins = new LoginLimiter();
   let context: WebSocketContext;
   let url: string;
   let engineCalls: string[] = [];
@@ -275,6 +277,10 @@ describe('the WebSocket gate', () => {
         },
       }),
       externalAccessStore: externalAccess,
+      strangerAdminLogins: {
+        take: (address: string) => adminLogins.take(address),
+        clear: (address: string) => adminLogins.clear(address),
+      } as LoginLimiter,
       hostnameResolver,
     });
     if (!context.server.listening) await new Promise(r => context.server.once('listening', r));
@@ -293,6 +299,7 @@ describe('the WebSocket gate', () => {
     Object.assign(hostnames, { [DS_IP]: 'TEAM1678-DS', [SAME_NAME_IP]: 'team1678-ds' });
     adminAuth = new AdminAuth(join(authDir, 'unused.json'));
     operatorAuth = new OperatorAuth(join(authDir, `operator-${Math.random()}.json`));
+    adminLogins = new LoginLimiter();
   });
 
   type Reply = {
@@ -304,6 +311,7 @@ describe('the WebSocket gate', () => {
     authenticated?: boolean;
     token?: string;
     tokenRejected?: boolean;
+    retryAfterMs?: number;
     secret?: string;
     devices?: { id: string; name: string }[];
   };
@@ -687,6 +695,74 @@ describe('the WebSocket gate', () => {
       const visitor = await client(VISITOR);
       await visitor.send({ type: 'adminLogin', passphrase: 'wrong' });
       expect((await visitor.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+    });
+
+    describe('guessing the admin passphrase', () => {
+      const guess = async (visitor: Awaited<ReturnType<typeof client>>, passphrase = 'wrong') =>
+        (await visitor.send({ type: 'adminLogin', passphrase })).find(r => r.type === 'adminAuthResult')!;
+      const spendTries = async (visitor: Awaited<ReturnType<typeof client>>) => {
+        for (let i = 0; i < 5; i++) expect((await guess(visitor)).retryAfterMs).toBeUndefined();
+      };
+
+      test('a stranger gets five tries, and even the right passphrase then waits', async () => {
+        claimField();
+        const visitor = await client('203.0.113.20');
+        await spendTries(visitor);
+        const blocked = await guess(visitor, 'correct horse');
+        expect(blocked.authenticated).toBe(false);
+        expect(blocked.retryAfterMs).toBeGreaterThan(0);
+        expect(blocked.token).toBeUndefined();
+      });
+
+      test('a new socket or a new forged address gets no fresh tries', async () => {
+        claimField();
+        const via = (forged: string) => `${forged}, 203.0.113.21, 172.70.176.15`;
+        // Through Cloudflare this is the edge, until Caddy passes its client_ip.
+        await spendTries(await client(via('10.0.0.1')));
+        expect((await guess(await client(via('10.0.0.2')))).retryAfterMs).toBeGreaterThan(0);
+      });
+
+      test('a good login starts the count again', async () => {
+        claimField();
+        const visitor = await client('203.0.113.22');
+        for (let i = 0; i < 4; i++) await guess(visitor);
+        expect((await guess(visitor, 'correct horse')).authenticated).toBe(true);
+        const again = await client('203.0.113.22');
+        await spendTries(again);
+      });
+
+      test('on site is never counted', async () => {
+        claimField();
+        const staff = await client('10.55.65.21');
+        for (let i = 0; i < 8; i++) expect((await guess(staff)).retryAfterMs).toBeUndefined();
+        expect((await guess(staff, 'correct horse')).authenticated).toBe(true);
+      });
+
+      test('an access cookie is never counted, so a flood cannot lock its holder out', async () => {
+        claimField();
+        const { token } = externalAccess.createToken('Mentor');
+        const stranger = await client('203.0.113.23');
+        await spendTries(stranger);
+        const mentor = await client('203.0.113.23', { cookie: `pfms_access=${token}` });
+        expect((await guess(mentor, 'correct horse')).authenticated).toBe(true);
+      });
+
+      test("another site's page on a laptop at the field is counted", async () => {
+        claimField();
+        const page = await client('10.55.65.22', { origin: 'https://evil.example' });
+        await spendTries(page);
+        expect((await guess(page)).retryAfterMs).toBeGreaterThan(0);
+      });
+
+      test('a flood from many addresses stops strangers, and nobody else', async () => {
+        claimField();
+        const { token } = externalAccess.createToken('Mentor');
+        for (let i = 0; i < 6; i++) await spendTries(await client(`198.51.100.${i}`));
+        expect((await guess(await client('203.0.113.24'), 'correct horse')).retryAfterMs).toBeGreaterThan(0);
+        expect((await guess(await client(STAFF_IP), 'correct horse')).authenticated).toBe(true);
+        const mentor = await client('203.0.113.24', { cookie: `pfms_access=${token}` });
+        expect((await guess(mentor, 'correct horse')).authenticated).toBe(true);
+      });
     });
 
     test('a page that opens with a stored token gets no error', async () => {

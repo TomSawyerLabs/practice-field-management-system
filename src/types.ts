@@ -3728,6 +3728,8 @@ export interface AdminAuthResult {
   passphraseConfigured: boolean;
   /** External access token — fetch /admin/auth/<token> to set the cookie. */
   externalAccessToken?: string;
+  /** Too many tries from outside the field: how long to wait. */
+  retryAfterMs?: number;
 }
 
 export function isAdminAuthResult(msg: unknown): msg is AdminAuthResult {

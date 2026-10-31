@@ -1,6 +1,7 @@
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { promisify } from 'node:util';
+import { LoginLimiter } from './loginLimiter.js';
 import type { OperatorDevice } from './types.js';
 
 const DEFAULT_FILE = 'operator-auth.json';
@@ -11,12 +12,6 @@ export const MIN_CODE_LENGTH = 8;
 const MAX_DEVICES = 200;
 const PAIRING_TTL_MS = 5 * 60_000;
 const MAX_LIVE_PAIRINGS = 20;
-
-const ATTEMPT_WINDOW_MS = 60_000;
-const MAX_ATTEMPTS_PER_ADDRESS = 5;
-/** Catches guesses spread over many addresses. Only ever costs a typed code:
- *  remembered devices and stops don't come through here. */
-const MAX_ATTEMPTS_OVERALL = 30;
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: string, keylen: number) => Promise<Buffer>;
 
@@ -49,13 +44,16 @@ export class OperatorAuth {
   private salt: string | null = null;
   private devices = new Map<string, StoredDevice>();
   private pairings = new Map<string, { expiresAt: number; name?: string; pairedBy: string }>();
-  private attempts = new Map<string, number[]>();
+  /** Only ever costs a typed code: remembered devices and stops don't come
+   *  through here. */
+  private attempts: LoginLimiter;
   private filePath: string;
 
   constructor(
     filePath?: string,
     private readonly now: () => number = Date.now,
   ) {
+    this.attempts = new LoginLimiter(now);
     this.filePath = filePath ?? process.env.OPERATOR_AUTH_FILE ?? DEFAULT_FILE;
     this.load();
   }
@@ -104,7 +102,7 @@ export class OperatorAuth {
    * the first is still being checked.
    */
   async login(code: string, name: string, address: string): Promise<OperatorLogin> {
-    const retryAfterMs = this.takeAttempt(address);
+    const retryAfterMs = this.attempts.take(address);
     if (retryAfterMs !== null) return { ok: false, retryAfterMs };
     if (!this.codeHash || !this.salt) return { ok: false };
 
@@ -113,7 +111,7 @@ export class OperatorAuth {
     const actual = await scryptAsync(code, salt, expected.length);
     if (!timingSafeEqual(actual, expected)) return { ok: false };
 
-    this.attempts.delete(address);
+    this.attempts.clear(address);
     return { ok: true, ...this.addDevice({ name, via: 'code' }) };
   }
 
@@ -184,23 +182,6 @@ export class OperatorAuth {
 
     this.persist();
     return { token, device };
-  }
-
-  /** Count an attempt. Returns how long to wait if it's over the limit, else null. */
-  private takeAttempt(address: string): number | null {
-    const now = this.now();
-    const recent = (key: string) => (this.attempts.get(key) ?? []).filter(t => t > now - ATTEMPT_WINDOW_MS);
-    const mine = recent(address);
-    const overall = recent('*');
-
-    const full =
-      mine.length >= MAX_ATTEMPTS_PER_ADDRESS ? mine : overall.length >= MAX_ATTEMPTS_OVERALL ? overall : null;
-    if (full) return full[0]! + ATTEMPT_WINDOW_MS - now;
-
-    if (this.attempts.size > 1000) this.attempts.clear();
-    this.attempts.set(address, [...mine, now]);
-    this.attempts.set('*', [...overall, now]);
-    return null;
   }
 
   private hashToken(token: string): string {

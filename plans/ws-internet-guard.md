@@ -136,10 +136,9 @@ Refused from outside with no credential, that a reader might expect to stay:
 - **Reading.** Every `/ws` socket is still sent field state on connect, from
   anywhere. Logged in `ISSUES.md`. No credential is in it: API keys and access
   tokens go as summaries.
-- **The admin login isn't rate limited.** Not moot: it stays open from the
-  internet, and it's now the main thing a stranger can try. Left alone because a
-  limit needs a decision: a shared limit would let a stranger lock out the
-  external login. See `ISSUES.md`.
+- **The admin passphrase itself:** one round of SHA-256 and a 4-character
+  minimum. The limit below slows guessing; it doesn't make the passphrase
+  stronger. See `ISSUES.md`.
 - **A device on site that routes out through the internet** (custom DNS, WARP,
   iCloud Private Relay, a VPN) looks external. It already gets the public page,
   which has no stop button, so this adds nothing new for a browser.
@@ -147,17 +146,39 @@ Refused from outside with no credential, that a reader might expect to stay:
   host isn't plugged into reads as off site. Same in the reference Caddy config.
 - **DNS rebinding straight to `:9005`.** The `Origin` check compares against
   `Host`, which a rebinding page controls. Caddy refuses unknown hosts.
-- A Cloudflare Tunnel into Caddy would look local. That's ops
-  `plans/caddy-xff-perimeter-spoof.md` step 6, and it would fool Caddy equally.
+- A Cloudflare Tunnel into Caddy would look local, and would fool Caddy equally.
+  Ops `plans/caddy-xff-perimeter-spoof.md` step 6 has since checked: nothing routes
+  to Caddy that way.
 
-## Staged, not applied: optional ops change
+## The limit on outside admin logins
 
-**Not needed for the guard, so nothing is waiting on it.** Its only benefit is
-the visitor's real address in pFMS logs. It needs the user's yes for this exact
-change. In `servers/steamboat/sites.d/pfms.caddy`, for the three proxies that
-reach `/ws`, `/api/*` and the auth check:
+The user said to build it on 2026-10-30. Only strangers count: outside the field
+with no credential. They get 5 tries a minute from one address and 30 overall,
+sharing `src/loginLimiter.ts` with the operator code.
+
+The trade-off, chosen deliberately: a flood from many addresses can make a
+stranger wait, so someone logging in from a new browser off site can be held
+up. It can't touch anyone at the field, anyone with an access cookie (every
+browser that has logged in as admin has one) or an open admin page, because none
+of those count. A blocked try is refused even with the right passphrase.
+
+Until the Caddy change below is live, "one address" means one Cloudflare edge, so
+the overall limit does most of the work.
+
+## Staged, not applied: Caddy change
+
+The user said "if it helps, sure" on 2026-10-30. It does help, so it's staged for
+an explicit yes to apply, as a live Caddy change needs. Local ops branch
+`pfms-real-client-ip`, worktree `~/.t3/worktrees/ops/pfms-real-client-ip`, from
+`origin/master`, not pushed:
 
 ```diff
+         reverse_proxy @external_needs_auth localhost:9005 {
+             method GET
+             rewrite /api/auth/check
+             header_up Cookie {http.request.header.Cookie}
++            header_up X-Forwarded-For {client_ip}
+...
 -        reverse_proxy /ws localhost:9005
 -        reverse_proxy /api/* localhost:9005
 +        reverse_proxy /ws localhost:9005 {
@@ -168,16 +189,26 @@ reach `/ws`, `/api/*` and the auth check:
 +        }
 ```
 
-and the same `header_up` line inside `reverse_proxy @external_needs_auth`.
-Checked on the loopback Caddy: `{"xff":"203.0.113.7"}`. The ops repo wasn't
-changed.
+Why it helps:
+
+- The per-address limit counts real visitors instead of Cloudflare edges.
+- pFMS logs show the visitor.
+- It closes the forged on-link path on the pFMS running now, before this deploy,
+  because the only address left in the header is the real one.
+
+It works with either pFMS version, in either order. It fits the ops perimeter
+hardening design, which keeps `{client_ip}` placeholders. Checked: `caddy adapt`
+passes with the `onlink` blocks removed (the local Caddy doesn't have that
+plugin), and all three proxies set the header. The header's effect was seen on the
+loopback Caddy: `{"xff":"203.0.113.7"}`. Applying means pushing that branch to
+ops and a manual Server Deploys run, which reloads Caddy on `steamboat`.
 
 ## How it was verified
 
 All on this PC, with a stub engine and radio. No `RADIO_URL`, nothing headed, and
 the live site wasn't touched.
 
-- `bun run typecheck`, and `bun test` after rebasing on master: 1045 pass, 0 fail.
+- `bun run typecheck`, and `bun test` after rebasing on master: 1067 pass, 0 fail.
 - Real sockets in `src/wsAccess.test.ts`: every message outside the list refused
   from outside, by table, with and without a forged address.
 - Three deliberate breaks, each failing the tests and then restored: reading the
@@ -196,14 +227,16 @@ the live site wasn't touched.
 - [x] The guard, its list and the `Origin` check
 - [x] Tests with a real socket
 - [x] Docs and `ISSUES.md`
+- [x] Limit on outside admin logins
+- [x] Caddy change staged on a local ops branch
+- [ ] Caddy change applied: waiting on an explicit yes
 - [ ] Deployed: the deploy thread's call
 
 ## Open questions for the user
 
-1. Is the list above right? Support from `/admin` and `operatorLogin` are the two
-   worth a look. Recommendation: leave both refused.
-2. Does the admin login get a limit on outside attempts only? Recommendation: yes,
-   as its own change, once you've chosen what a lockout should do.
+1. Apply the staged Caddy change? Recommendation: yes.
+2. The list of what an external connection keeps stands as built unless the user
+   wants the support widget on `/admin` opened to strangers. Recommendation: no.
 
 ## Things not to do
 
