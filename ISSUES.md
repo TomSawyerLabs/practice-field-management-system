@@ -17,6 +17,8 @@ seen. Background: `plans/ip-rule-cleanup.md`.
 
 ## The WebSocket shows field state to the internet
 
+`in progress — t3/harden-firmware-admin-ws-auth`
+
 `src/websocketServer.ts` sends every `/ws` socket the field's state on connect,
 from anywhere, with no credential (seen 2026-10-30): radio and station status,
 hostnames, the queue, setup settings and support issues with their client
@@ -30,6 +32,8 @@ key offline.
 
 ## The admin passphrase is weak for a login on the internet
 
+`in progress — t3/harden-firmware-admin-ws-auth`
+
 `src/adminAuth.ts` hashes it with one round of salted SHA-256 and allows 4
 characters (seen 2026-10-30). Matters because `adminLogin` stays open from the
 internet on purpose and a success opens everything. Attempts from outside are now
@@ -37,6 +41,8 @@ limited (`plans/ws-internet-guard.md`), which slows guessing but doesn't fix a
 short passphrase or a stolen hash file.
 
 ## Firmware API takes uploads with no credential
+
+`in progress — t3/harden-firmware-admin-ws-auth`
 
 `POST /api/firmware/upload` and `/api/firmware/download` in `src/firmwareApi.ts`
 have no auth and send `Access-Control-Allow-Origin: *` (seen 2026-10-30). Any
