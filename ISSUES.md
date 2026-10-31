@@ -24,14 +24,14 @@ the whole `matchState`, which includes each connected Driver Station's address
 because this is the remaining way to read the field from outside: a trimmed public
 copy of what the scoreboard actually draws would close it.
 
-## A false Driver Station match hides E-STOP on /match
+## A false Driver Station match hides E-STOP on /match (in progress — t3/603a506e)
 
 `MatchControlPage.tsx:469` returns `DsClientBlock` before `FieldEStopControl`
 renders (seen 2026-10-30), so a device that only shares a DS's hostname has no
 E-STOP on screen until someone presses "This isn't a Driver Station". Matters
 because a false match isn't meant to get in the way of a stop.
 
-## /staff and /csa have no stop button
+## /staff and /csa have no stop button (in progress — t3/603a506e)
 
 Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
 2026-10-30), including on the Safety Monitor's page. Matters because that role
@@ -58,7 +58,7 @@ the disabled UDP packets on its own. If it does, remove the cut, and move Team S
 to the same field control. Note the journal's
 `slotN: e-stop: <why>, N ms after the stop` lines, which time every real stop.
 
-## Nothing warns that a robot is still enabled through a stop
+## Nothing warns that a robot is still enabled through a stop (in progress — t3/603a506e)
 
 A DS connected to its robot some other way (tethered, or the robot's own Wi-Fi)
 never crosses the field, so it keeps driving while `/match`, `/csa` and the team's
