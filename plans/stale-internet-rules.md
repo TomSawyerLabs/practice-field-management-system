@@ -82,8 +82,8 @@ test that runs `setupWebSocket`, and the stand-in server has no other timer: the
 - [x] Fix the internet rules, with tests against a fake kernel. 17 tests in
       `src/internetRules.test.ts`, 10 of which fail on the old commit logic.
 - [x] Real `iptables` in a sealed namespace: all six checks pass
-- [ ] Fix the heartbeat test
-- [ ] Docs
+- [x] Fix the heartbeat test
+- [x] Docs
 - [ ] Merge, list unticked plans
 
 ## Lab

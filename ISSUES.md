@@ -127,15 +127,6 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## WebSocket gate test can catch the periodic serverInfo heartbeat (in progress — t3/fix-stale-nat-rules-ws-test)
-
-`src/wsAccess.test.ts` › `with an operator code > every stop still works after a
-wrong code` failed once in 2 full `bun test` runs on a loaded machine
-(2026-10-30, on top of `fc15475`): `expect(await phone.send(stop)).toEqual([])`
-received a `serverInfo` about 10.6 s after the server started. That's the periodic
-heartbeat (`src/websocketServer.ts:574`), not the opening burst `fc15475` waits
-out. Matters because any test that expects no replies can land on a heartbeat.
-
 ## A failed station stops DHCP for all of them
 
 In OFFSEASON, `configureNetwork` in `src/networkManager.ts` starts the DHCP servers

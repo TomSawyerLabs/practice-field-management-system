@@ -76,6 +76,13 @@ harness is BelowNormal, so a normal-priority build on those two cores takes them
 outright. Later measurements use normal priority, still limited to 2 logical
 cores and a 2-slot claim.
 
+**A reply list that takes whatever arrives.** The WebSocket gate test's `send`
+returned everything that came in while it waited, so the 10 s `serverInfo`
+heartbeat failed any test expecting no replies, about once in 2 runs under load.
+Its client now never counts `serverInfo` as a reply, and a test fires the server's
+real heartbeat callback inside a `send`, so this needs no load to show.
+`wsAccess.test.ts` is the only test that runs `setupWebSocket`.
+
 ## How load is applied
 
 `compute-budget`, 2 slots (`--low` up to the old-base "after" run, then normal

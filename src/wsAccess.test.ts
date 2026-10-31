@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -215,6 +215,8 @@ describe('the WebSocket gate', () => {
   let adminLogins = new LoginLimiter();
   let context: WebSocketContext;
   let url: string;
+  /** The server's own heartbeat, to fire instead of waiting 10 s for it. */
+  let heartbeat: () => void;
   let engineCalls: string[] = [];
   const open: WebSocket[] = [];
 
@@ -258,6 +260,7 @@ describe('the WebSocket gate', () => {
   } as unknown as HostnameResolver;
 
   beforeAll(async () => {
+    const timers = spyOn(globalThis, 'setInterval');
     context = setupWebSocket({
       radioManager,
       matchEngine,
@@ -283,6 +286,8 @@ describe('the WebSocket gate', () => {
       } as LoginLimiter,
       hostnameResolver,
     });
+    heartbeat = timers.mock.calls.find(([, ms]) => ms === 10_000)![0] as () => void;
+    timers.mockRestore();
     if (!context.server.listening) await new Promise(r => context.server.once('listening', r));
     url = `ws://127.0.0.1:${(context.server.address() as AddressInfo).port}/ws`;
   });
@@ -322,7 +327,9 @@ describe('the WebSocket gate', () => {
     const replies: Reply[] = [];
     ws.on('message', raw => {
       const parsed = JSON.parse(String(raw));
-      if (!Array.isArray(parsed)) replies.push(parsed);
+      // The heartbeat keeps its own time, so it is never an answer: on a slow
+      // machine it can land inside any `send`.
+      if (!Array.isArray(parsed) && parsed.type !== 'serverInfo') replies.push(parsed);
     });
     await new Promise((res, rej) => {
       ws.once('open', res);
@@ -361,6 +368,12 @@ describe('the WebSocket gate', () => {
   const unclaimField = () => {
     adminAuth = new AdminAuth(join(authDir, `unclaimed-${Math.random()}.json`));
   };
+
+  test('a heartbeat while a message is answered is not part of the answer', async () => {
+    const staff = await client(STAFF_IP);
+    heartbeat();
+    expect(await staff.send({ type: 'adminStopMatch' })).toEqual([]);
+  });
 
   test('a Driver Station is told so, and refused match control', async () => {
     const ds = await client(DS_IP);
