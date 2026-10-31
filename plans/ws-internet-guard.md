@@ -1,6 +1,6 @@
 # Keep internet visitors from running the field over `/ws`
 
-**Status: the guard (pFMS `4c4b24a`), the Caddy change (ops `f9bec1c`) and the admin login limit (`26f552c`, in `c08e287`, running since 9:02 PM PDT (04:02Z Oct 31)) are all live. The stranger's view and the scrypt passphrase hash wait for the next pFMS deploy.**
+**Status: finished and live. The guard (pFMS `4c4b24a`), the Caddy change (ops `f9bec1c`), the admin login limit (`26f552c`), the stranger's view and the scrypt passphrase hash are all running. The last two arrived in `8a2dd38`, running on `steamboat` since 1:09 PM PDT (20:09Z) 2026-10-31.**
 
 ## Goal
 
@@ -360,7 +360,7 @@ owns them before sending anything.
 - [x] Admin login limit deployed: `26f552c` is in `c08e287`
 - [x] List what a stranger is sent, and hold back all but the login's needs
 - [x] Admin passphrase moved to scrypt, upgrading at the next login
-- [ ] Both deployed: the deploy thread's call. See "The admin passphrase hash"
+- [x] Both deployed in `8a2dd38`, running since 1:09 PM PDT (20:09Z) 2026-10-31
 
 ## Open questions for the user
 

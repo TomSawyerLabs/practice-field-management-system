@@ -122,3 +122,12 @@ Stops now go through `stopDelivery`, but the other ~100 `ws?.send(...)` calls in
 CONNECTING throws `InvalidStateError` in the click handler, and one pressed while
 it's closed is lost with no sign (Clear field E-Stop, Ready, Join). Reproduced in
 headless Chrome. None of them stops a robot, so it's lost actions, not a safety gap.
+
+## `caddy.service` shows `failed` on steamboat while Caddy runs
+
+`systemctl is-active caddy` said `failed` on 2026-10-31, while `caddy run --resume`
+(pid 3641856) served pFMS normally. The running process isn't the systemd unit's.
+Seen first during the `/ws` guard work, not diagnosed, and steamboat wasn't touched.
+It matters because all pFMS traffic goes through Caddy: it may not come back after
+a reboot, and anything that watches the unit gets the wrong answer. Fixing it is an
+ops change and needs the user's yes.
