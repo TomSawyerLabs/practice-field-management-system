@@ -77,6 +77,10 @@ continues` lines, and 706 of the 765 e-stop rows above were TestBird's, filed
 
 ## Stop cut and follow-up threads (2026-10-30)
 
+**Superseded the same day:** the user's limit is 1 s, 250 ms at best, so an e-stop out
+of a match cuts again, but only until its DS is seen to stop, and can't be cleared
+before that (`4c4b24a`, `docs/network.md`). The text below is how it got there.
+
 The user doesn't want to cut comms, saying it shouldn't ever be needed. Agreed
 change, in `issues/stop-cut`: remove the `pfms-estop-*` cut from the field and
 station e-stops, keep it for the team page's Stop until a replacement exists,

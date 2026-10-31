@@ -50,35 +50,48 @@ on 17 tests in `src/wsAccess.test.ts`. `fc15475` fixed that, proven on Linux by 
 
 ## On local master only
 
-6 commits ahead of `origin/master` at `9f483f8`. Nothing here is live. Master moves
-as threads land work, so check `git log origin/master..master`.
+Master moves as threads land work, so check `git log origin/master..master`. Nothing
+here is live. What matters in it:
 
-| Commit    | Group    | Change                                                                   |
-| --------- | -------- | ------------------------------------------------------------------------ |
-| `ba4fbf7` | New      | A parked host robot is a note for field staff, and the slot to release   |
-| `656230f` | New      | The field-full message says how many robots are the host's, parked       |
-| `8d0c5ee` | Fix      | Field usage no longer counts a host robot left on with no Driver Station |
-| `9f483f8` | Fix      | Every match sound plays at the same volume (from `28a988b`)              |
-| `3b8eb42` | Internal | This log                                                                 |
-| `e5956b3` | Internal | Plan                                                                     |
+| Commit    | Group | Change                                                                   |
+| --------- | ----- | ------------------------------------------------------------------------ |
+| `4c4b24a` | Fix   | An e-stop stops a robot outside a match within a second; clears wait     |
+| `d530216` | Fix   | Field commands no longer work from the internet without a login or link  |
+| `c4e9323` | Fix   | Someone on the internet can no longer pose as a device on the field      |
+| `9f483f8` | Fix   | Every match sound plays at the same volume (from `28a988b`)              |
+| `ba4fbf7` | New   | A parked host robot is a note for field staff, and the slot to release   |
+| `656230f` | New   | The field-full message says how many robots are the host's, parked       |
+| `8d0c5ee` | Fix   | Field usage no longer counts a host robot left on with no Driver Station |
+| `76b8f6b` | Fix   | A late write failure in yesterday's capture no longer stops today's      |
+
+The rest are tests and plans, including the flaky test work.
 
 ## Pending deploy
 
-Not ready yet. Waits for the threads below, then needs the user's yes for that push
-and deploy.
+**Ready at `4c4b24a`.** Waiting only on the user's yes.
 
-- Host Team's three features, committed with 948 tests passing there. Nobody has seen
-  the alerts or the Host team card in a browser yet; do that first, headless with a
-  fake radio.
-- `issues/test-timing`, including a real fix: a late write failure in yesterday's
-  SystemCore capture no longer stops today's.
-- `/ws` guard, from `issues/ws-internet-guard`.
-- The out-of-match e-stop fix, once the user picks a way.
+Checked on that exact commit, on Windows: `bun run typecheck` clean, `bun test` 1055
+pass, 0 fail, frontend build passes.
 
-The match sounds (`9f483f8`) are on local master. Its 33 tests and typecheck pass.
+Not seen for real:
+
+- The e-stop wait on a real DS, and the `Waiting for DS` Clear buttons in a browser.
+  The cut rule itself is the one Team Stop already runs on steamboat.
+- The `/ws` guard was proven behind a loopback Caddy with the live proxy settings, not
+  on the live site. After deploying, check that `/match` works from on site and that
+  the journal shows no on-site client refused.
+- Host features in a browser. They stay dormant here: this site has no host team.
+
+No addon version change. The `/ws` thread's admin login limit isn't in `4c4b24a`; it
+goes out in the deploy after. Its optional Caddy logging change is that thread's to
+raise with the user.
 
 Before each deploy: `/health` idle, no team on the field, no second-laptop block
-(`iptables -S FORWARD | grep br-slot`), no addon version change, and bookings below.
+(`iptables -S FORWARD | grep br-slot`), and bookings below. Push the exact commit
+(`git push origin 4c4b24a:master`).
+
+What teams would notice: open pFMS pages reload once. Nobody on site loses anything.
+A note posts to pfms-support.
 
 ### Windows for it
 
@@ -93,18 +106,8 @@ Clocks go back Sunday Nov 1, so Tuesday is PST.
 
 ## Open threads
 
-| Thread                                                                       | State           | Still owes                                                                                 |
-| ---------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------ |
-| [/ws guard](t3-thread://v1/mcp:7d79bf25-f956-4a49-b1b0-1fb9c3782fd5)         | Running         | The guard itself, on `issues/ws-internet-guard`                                            |
-| [Host Team](t3-thread://v1/f7d8fef8-81d4-4951-bf87-522a1e36706e)             | Settled here    | Browser check above; entering the host team on `/admin`                                    |
-| [Flaky tests](t3-thread://v1/mcp:d7345ee4-f3eb-40d8-aff9-b60f7c58ba86)       | Running         | Final measurement, then merge `issues/test-timing` and close its three `ISSUES.md` entries |
-| [Second Robot 114](t3-thread://v1/48b5e116-7198-491d-a686-d98f6138fa21)      | Settled here    | Nothing of its own; its decisions moved below                                              |
-| [Two robots](t3-thread://v1/mcp:cbdfa4a7-584a-40b4-b6fa-f3b425c2a741)        | Settled here    | Field checks below                                                                         |
-| [Operator login](t3-thread://v1/mcp:3b1530c4-c729-4b09-9b8c-bc2ed9fca742)    | Settled here    | Nothing; the field E-Stop clear is logged in `ISSUES.md`                                   |
-| [Station test port](t3-thread://v1/mcp:9549f2dc-42b3-4b56-8f1f-20494a572f81) | Settled here    | `roboRIO mDNS` check, below                                                                |
-| [ip rules](t3-thread://v1/mcp:f5cd653d-9a06-4d7d-9f42-1b01bbf5ea8c)          | Settled here    | Field check below                                                                          |
-| [Route preference](t3-thread://v1/09ae0186-a56b-4472-b552-10c07d37e4ef)      | Already settled | Confirmation next time a team reports a DS restart                                         |
-| [Header icons](t3-thread://v1/mcp:24f7f39c-0516-4ee4-b00d-f611540237f7)      | Already settled | Nothing; thread closed DONE                                                                |
+The other threads manage their own work (user, 2026-10-30). This log only tracks
+what's landed, and raises one only if it gates a deploy.
 
 ## Needs a day with teams
 
@@ -119,37 +122,35 @@ Clocks go back Sunday Nov 1, so Tuesday is PST.
   query now leaves from `192.168.69.8`. A failure is a false alarm, never a wrong write.
 - **E-stop warnings and `Robot link`:** seen on a real occurrence.
 - **DS restart:** next time a team reports one, read the new lines.
-- **`plans/field-verification-checklist.md`, checks 1–7.** Check 7 times an
-  out-of-match e-stop against the 1 s limit.
-- **Host team:** open the admin card, then enter the host team on `/admin`.
+- **`plans/field-verification-checklist.md`, checks 1–7.** Check 7 is the important
+  one: it times an out-of-match e-stop, and shows whether a DS obeys UDP alone. If
+  so, the cut can go. Tonight's journal may already hold a sample:
+  `grep 'e-stop:'`.
+- **Operator code:** set one on `/admin` → Access next time there's a match.
 
 ## Decisions made
 
 - **Field E-Stop clear stays open to anyone on site** (2026-10-30). Logged in
   `ISSUES.md` to revisit later.
-- **An e-stop must act within 1 s, 250 ms at best** (2026-10-30). Logged in
-  `ISSUES.md`. The roughly 8 s out of a match is the DS's documented retry interval,
-  not a measurement, and doesn't meet this.
-- **`28a988b` came over** as `9f483f8`, for the next deploy.
-- **`/ws` got its own thread.**
-- **Merged worktrees and branches removed.** `pfms-test-timing/base` stays while the
-  flaky test thread runs.
+- **An e-stop must act within 1 s, 250 ms at best** (2026-10-30).
+- **Out of a match, an e-stop cuts the DS's UDP 1110 traffic until the DS is seen to
+  stop, and can't be cleared before that** (2026-10-30). The user would prefer no cut
+  at all if UDP packets alone stop the DS, so check 7 tests that. pFMS already sends
+  them.
+- **`28a988b` came over** as `9f483f8`.
+- **`/ws` got its own thread,** which has landed its guard.
+- **Merged worktrees and branches removed.** `pfms-test-timing/base` stayed for the
+  flaky test thread.
+- **Setup-page restart idea dropped:** already solved by `edc128c` and `56185eb`.
+- **This site has no host team,** so nobody needs to enter one.
 
 ## Open questions for the user
 
-1. How should an out-of-match e-stop reach the robot within 1 s? The user has also
-   said they don't want to cut comms. Recommended: bring back the narrow UDP 1110
-   drop for e-stops, on DSes out of a match only, as it's the only proven way (about
-   100 ms). Then try two ways with no cut at the field: answering a DS's open TCP
-   socket at once, and whether a local-control DS obeys control packets at all.
-2. Set an operator code on `/admin` → Access. Until then the lock does nothing.
-3. Drop the setup-page restart idea? It's already solved: `edc128c` applies a trunk
-   change at once, `56185eb` a radio URL. Recommended: drop.
+1. Push and deploy `4c4b24a`?
 
 ## Findings / gotchas
 
-- **`/ws` is still open.** Stops and clears stay reachable from the internet even with
-  an operator code set (`ISSUES.md`). Not tried against the live site.
+- **`/ws` is still open until the next deploy,** and so is the 8 s out-of-match e-stop.
 - **The proxy change is not waiting.** Older threads call `trusted_proxies_strict`
   staged. It's live: ops `01d9534`, verified 1:48 PM PDT (20:48Z) 2026-10-30.
 - The Second Robot thread's "wrong-radio fix, owner unconfirmed" is resolved: `1f50d5a`.
@@ -173,5 +174,6 @@ Clocks go back Sunday Nov 1, so Tuesday is PST.
 - [x] `28a988b` brought over
 - [x] `/ws` thread started
 - [x] Merged worktrees and branches removed
-- [ ] Out-of-match e-stop within 1 s, waiting on the user
-- [ ] Next deploy, waiting on the threads and then the user
+- [x] Out-of-match e-stop within 1 s built, landed as `4c4b24a`
+- [ ] Next deploy, waiting on the user
+- [ ] After it: release run, version and health, on-site `/match`, no journal errors
