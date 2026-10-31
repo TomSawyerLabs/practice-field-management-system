@@ -37,38 +37,32 @@ and nothing is lost between threads.
 
 | What                   | State                                                                          |
 | ---------------------- | ------------------------------------------------------------------------------ |
-| Running on steamboat   | `4c4b24a`, graceful reload 8:42 PM PDT (03:42Z Oct 31) 2026-10-30              |
-| `origin/master`        | `4c4b24a`                                                                      |
-| Last published release | `build-20261030-1759-4c4b24a`                                                  |
+| Running on steamboat   | `c08e287`, graceful reload 9:02 PM PDT (04:02Z Oct 31) 2026-10-30              |
+| `origin/master`        | `c08e287`                                                                      |
+| Last published release | `build-20261030-2051-c08e287`                                                  |
 | Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries            |
-| Release workflow       | Passed on `4c4b24a`                                                            |
+| Release workflow       | Passed on `c08e287`                                                            |
 | Checked after deploy   | Health, bundle version and journal clean; on-site `/ws` accepted through Caddy |
 
-That deploy ran inside Team 8048's 7:00–10:00 PM PDT booking, with the user's yes.
-Nobody was there: no team on a station, no DS or robot traffic, no recording that
-night, 1 hour 41 minutes into the booking.
+The last two deploys (`4c4b24a` at 8:42 PM PDT, `c08e287` at 9:02 PM PDT) ran inside
+Team 8048's 7:00–10:00 PM PDT booking, with the user's yes. Nobody was there: no team
+on a station, no DS connected, no recording that night.
 
-The on-site check sent a read-only `subscribe` from this PC (`10.255.0.77`) to
-`ws://pfms.tsl/ws`. An outsider gets `This only works from the field network`; this
-got its data. A laptop on the team network hasn't been tried. Look for that refusal
-next time teams are on.
+The on-site check sends a read-only `subscribe` to `ws://pfms.tsl/ws` from this PC
+(`10.255.0.77`). An outsider gets `This only works from the field network`; this got
+its data, both before and after the Caddy `X-Forwarded-For` change went live. A laptop
+on the team network hasn't been tried. Look for that refusal next time teams are on.
 
 Earlier the same day: `67bb54e` at 5:17 PM PDT, `0586d9a` at 3:33 PM PDT.
 
 ## On local master only
 
-Check `git log origin/master..master`. Master moves as threads land work. At 8:44 PM
-PDT 2026-10-30:
-
-| Commit    | Group    | Change                                                          |
-| --------- | -------- | --------------------------------------------------------------- |
-| `26f552c` | Fix      | Guessing the admin passphrase from the internet now gets a wait |
-| `6b8b47e` | Internal | Plan                                                            |
+Plans only. Check `git log origin/master..master`, as master moves when threads land
+work.
 
 ## Pending deploy
 
-Nothing is waiting on a decision. `26f552c` goes out with the next deploy, which
-needs the user's yes.
+Nothing is waiting. Anything new needs the user's yes.
 
 Before each deploy: `/health` idle, no team on the field, no second-laptop block
 (`iptables -S FORWARD | grep br-slot`), no addon version change, and bookings below,
@@ -139,6 +133,10 @@ None.
 - The Second Robot thread's "wrong-radio fix, owner unconfirmed" is resolved: `1f50d5a`.
 - `/health` on port 3000 returns nothing, which looks like a dead service. Use 9005.
 
+- A worktree installed by pnpm has newer frontend TypeScript, and its frontend build
+  fails on `NudgeSettings.tsx`. Steamboat installs from `bun.lock` and builds fine.
+  Run a pre-deploy build in a `bun install` tree, not one of those.
+
 ## Things not to do
 
 - Don't `git push origin master` while another thread is committing to it.
@@ -159,4 +157,4 @@ None.
 - [x] Merged worktrees and branches removed
 - [x] Out-of-match e-stop within 1 s built, landed as `4c4b24a`
 - [x] `4c4b24a` pushed and deployed 8:42 PM PDT (03:42Z Oct 31), checked, release passed
-- [ ] `26f552c` in the next deploy, when the user says
+- [x] `c08e287` pushed and deployed 9:02 PM PDT (04:02Z Oct 31), checked, release passed
