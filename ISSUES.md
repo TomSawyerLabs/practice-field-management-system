@@ -102,18 +102,6 @@ driving while `/match`, `/csa` and the team's page say E-STOPPED. The robot's
 status bit crosses the field either way (UDP 1150, or `tele.dsStatus`), so pFMS
 can see it. Matters because staff would believe a running robot is stopped.
 
-## Timing-sensitive tests in a full run
-
-_in progress — issues/test-timing_
-
-`src/matchEngine.test.ts` › `a challenge run end to end > finishing a stopwatch
-run stops the robot and ends the run` and `src/fieldTimelapse.test.ts` ›
-`the callback releases the shutter, and both webhooks are called` each failed
-once in a full `bun test` on 2026-10-30 (772 pass / 2 fail); the next full run
-was 774/0 and both pass on their own. The first sleeps 3.4 s and expects
-`finishedAt` between 0 and 2. Matters because a red full run hides real
-regressions.
-
 ## Unverified behaviour we depend on
 
 Each needs a field visit. What to try and what each result means is in
@@ -156,14 +144,11 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## RawPacketLog daily-cap test fails often, even alone
+## WebSocket gate test can catch the periodic serverInfo heartbeat
 
-_in progress — issues/test-timing_
-
-`src/rawPacketLog.test.ts` › `stops at the daily cap, and starts again the next day` failed 2 of 3 runs of that file alone on an idle-ish Windows machine (2026-10-30), and once in a full `bun test` (746 pass / 1 fail): `Expected: 176, Received: 24` at line 59. `writes a pcap file per local day, header first` fails the same way (2026-10-30: 5 of 5 runs of the file alone showed a failure, and once in a full run). The test's `flush()` calls `log.close()` and then waits a fixed 50 ms. Matters because it turns a full run red on its own.
-
-## Three more tests time out when the full suite runs under heavy load
-
-_in progress — issues/test-timing_
-
-A full `bun test` in the main checkout on a busy machine (2026-10-30, 1320 pass / 10 fail, 507 s) also failed `FieldTimelapse light handshake over webhooks > the callback releases the shutter, and both webhooks are called` (3.2 s), `a challenge run end to end > finishing a stopwatch run stops the robot and ends the run` (5.1 s) and two unnamed `recordings API` tests (5.5 s). Each passed in less loaded runs. The other 6 failures were the robotWifiScan flake, since fixed. Matters because a red full run hides real regressions.
+`src/wsAccess.test.ts` › `with an operator code > every stop still works after a
+wrong code` failed once in 2 full `bun test` runs on a loaded machine
+(2026-10-30, on top of `fc15475`): `expect(await phone.send(stop)).toEqual([])`
+received a `serverInfo` about 10.6 s after the server started. That's the periodic
+heartbeat (`src/websocketServer.ts:574`), not the opening burst `fc15475` waits
+out. Matters because any test that expects no replies can land on a heartbeat.
