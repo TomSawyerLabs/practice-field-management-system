@@ -139,10 +139,11 @@ function OutOfEStopNotice({ state }: { state: StationControlState | undefined })
 
 // ── Staff pages ─────────────────────────────────────────────────────
 
-/** The field E-Stop for staff pages (/match, /admin): one big button that
- *  latches a stop on every robot on the field. Once latched it becomes a
- *  banner with the way to clear it, in every phase, so the latch can never
- *  be left with no Clear on screen. */
+/** The field E-Stop for staff pages (/match, /staff, /csa, /admin): one big
+ *  button that latches a stop on every robot on the field, one tap with no
+ *  confirmation and no login. Once latched it becomes a banner with the way to
+ *  clear it, in every phase, so the latch can never be left with no Clear on
+ *  screen. */
 export function FieldEStopControl() {
   const matchState = useMatchState();
   const [confirmClear, setConfirmClear] = useState(false);

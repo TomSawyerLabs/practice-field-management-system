@@ -183,14 +183,15 @@ can never get stuck in a hardware-latched stop from an FMS action.
 
 ### Field E-Stop
 
-The big **E-STOP** at the top of `/match` (and above the tabs on `/admin`)
-is a field-wide **latch** for emergencies:
+The big **E-STOP** at the top of `/match`, `/staff` and `/csa` (and above the
+tabs on `/admin`) is a field-wide **latch** for emergencies. It's one tap with
+no confirmation and no login, even on a page locked by the operator code:
 
 - It stops every robot on the field — in a match or free-driving — and ends
   a running match (reason `estop`; a match being set up stays set up).
 - It is separate from the match: ending, clearing, or creating a match
   leaves it latched, and no match can start until staff clear it. Once
-  pressed it becomes a **FIELD E-STOPPED** banner on `/match` and `/admin`
+  pressed it becomes a **FIELD E-STOPPED** banner on all of those pages
   with **Clear field E-Stop** (which asks whether the field is safe), so the
   way to clear it is on screen in every phase.
 - Every team's page shows a big **E-STOPPED — Field E-Stop** notice (even a

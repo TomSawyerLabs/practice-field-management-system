@@ -24,12 +24,6 @@ the whole `matchState`, which includes each connected Driver Station's address
 because this is the remaining way to read the field from outside: a trimmed public
 copy of what the scoreboard actually draws would close it.
 
-## /staff and /csa have no stop button (in progress — t3/603a506e)
-
-Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
-2026-10-30), including on the Safety Monitor's page. Matters because that role
-is the one most likely to want one.
-
 ## Anyone on site can clear the field E-Stop
 
 `adminClearFieldEStop` is `staff`, and `/match` clears aren't behind the operator

@@ -11,6 +11,7 @@ import Typography from '@mui/material/Typography';
 import { Alliance, StaffRole, StaffRoleList, StaffRoleLabels, isStaffRole } from '../../../src/types';
 import { useMatchState, useOperatorLocked, sendStaffReady, sendStaffHeartbeat } from '../hooks/useBackend';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
+import { FieldEStopControl } from './FieldEStop';
 import { OperatorBar, OperatorOnly } from './OperatorAccess';
 import { ChallengeTallyPanel } from './ChallengeTallyPanel';
 
@@ -113,6 +114,7 @@ function RolePicker() {
       <Typography variant="h4" sx={{ mb: 1, fontWeight: 700 }}>
         Field Staff
       </Typography>
+      <FieldEStopControl />
       <Typography color="text.secondary" sx={{ mb: 3 }}>
         Choose your role to ready up for matches.
       </Typography>
@@ -172,6 +174,8 @@ function StaffConsole({ role }: { role: StaffRole }) {
         </Button>
       </Box>
 
+      {/* Outside OperatorOnly: a stop has to work on a locked page. */}
+      <FieldEStopControl />
       <OperatorBar />
 
       <OperatorOnly>

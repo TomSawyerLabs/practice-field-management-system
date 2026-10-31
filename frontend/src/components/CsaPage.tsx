@@ -78,6 +78,7 @@ import {
 import LinearProgress from '@mui/material/LinearProgress';
 import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks/useReconfigProgress';
 import { DsClientNotice } from './DsClientGuard';
+import { FieldEStopControl } from './FieldEStop';
 import { OperatorBar } from './OperatorAccess';
 import { HostDisplay } from './HostDisplay';
 import { TeamAvatar } from './TeamAvatar';
@@ -1060,6 +1061,7 @@ export function CsaPage() {
   return (
     <Container maxWidth="md" sx={{ py: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       <DsClientNotice />
+      <FieldEStopControl />
       <OperatorBar />
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>

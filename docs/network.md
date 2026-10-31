@@ -138,7 +138,7 @@ every unjoined DS so it takes effect at once. Joining a match lifts the hold.
 in a control packet: it takes the DS under field control and disables it, which
 is why clearing a field stop really clears it. An unjoined DS is held like any other (game data `E-Stop`, or
 `Field E-Stop` for the field E-Stop) until staff clear the e-stop (the field
-E-Stop's Clear on `/match` or `/admin`, or per station on the match page). It
+E-Stop's Clear on any staff page, or per station on the match page). It
 then goes back to local control, disabled, and the driver enables it again.
 
 An e-stop has to act within 1 s, so what happens depends on the DS:
