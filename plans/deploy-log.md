@@ -35,113 +35,73 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                      | State                                                                 |
-| ------------------------- | --------------------------------------------------------------------- |
-| Running on steamboat      | `0586d9a`, graceful reload 3:33 PM PDT (22:33Z) 2026-10-30            |
-| `origin/master`           | `4919f5a` (one plan commit past the deployed code)                    |
-| Last published release    | `build-20261030-0329-6e290fb`                                         |
-| Addon                     | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries   |
-| Release workflow          | Failed on `0586d9a` and `4919f5a`: 17 tests in `src/wsAccess.test.ts` |
-| Checked after that deploy | ip rules 485 to 3; tester dhcpcd cycles as `[ip4]`, no `[manager]`    |
+| What                      | State                                                                         |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| Running on steamboat      | `67bb54e`, graceful reload 5:17 PM PDT (00:17Z Oct 31) 2026-10-30             |
+| `origin/master`           | `67bb54e`                                                                     |
+| Last published release    | `build-20261030-1647-67bb54e`                                                 |
+| Addon                     | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries           |
+| Release workflow          | Passed on `67bb54e`, the first pass since `6e290fb`                           |
+| Checked after that deploy | Health, bundle version, journal clean; 0 blocks adopted; 12 changes announced |
 
-The failed releases didn't affect steamboat, which builds from the repo. They only
-mean no new single-file binary has published since `6e290fb`.
+The deploy before it was `0586d9a` at 3:33 PM PDT (22:33Z), whose `release` run failed
+on 17 tests in `src/wsAccess.test.ts`. `fc15475` fixed that, proven on Linux by the
+`67bb54e` run.
 
 ## On local master only
 
-At `67bb54e`, 11 commits ahead of `origin/master`. Nothing here is live.
+6 commits ahead of `origin/master` at `9f483f8`. Nothing here is live. Master moves
+as threads land work, so check `git log origin/master..master`.
 
-| Commit    | Group    | Change                                                                      |
-| --------- | -------- | --------------------------------------------------------------------------- |
-| `d7761ad` | Fix      | Driver Station laptops can clear an e-stop again                            |
-| `d2be772` | Fix      | A second laptop keeps code deploys and cameras; only its DS is held off     |
-| `881391a` | Fix      | With two robots, a laptop stays on the robot it chose                       |
-| `e934b48` | New      | Operator pages can be locked with a code or QR; stops never need a login    |
-| `1f50d5a` | Fix      | The robot tester always reaches the robot plugged into it                   |
-| `a5e0415` | Internal | Dry runs can't write to a radio through station-network requests            |
-| `fc15475` | Internal | Test: the WebSocket gate tests wait out the opening burst (the release fix) |
-| `005ebfa` | Internal | Plan                                                                        |
-| `99bf5f6` | Internal | Plan                                                                        |
-| `013f647` | Internal | Plan                                                                        |
-| `67bb54e` | Internal | ISSUES.md and plan: the field-day `ip rule` check                           |
+| Commit    | Group    | Change                                                                   |
+| --------- | -------- | ------------------------------------------------------------------------ |
+| `ba4fbf7` | New      | A parked host robot is a note for field staff, and the slot to release   |
+| `656230f` | New      | The field-full message says how many robots are the host's, parked       |
+| `8d0c5ee` | Fix      | Field usage no longer counts a host robot left on with no Driver Station |
+| `9f483f8` | Fix      | Every match sound plays at the same volume (from `28a988b`)              |
+| `3b8eb42` | Internal | This log                                                                 |
+| `e5956b3` | Internal | Plan                                                                     |
 
 ## Pending deploy
 
-**Ready now, at `67bb54e`** (the code of `1f50d5a` plus plan commits). Waiting only on
-the user's yes. Anything later on master isn't part of this.
+Not ready yet. Waits for the threads below, then needs the user's yes for that push
+and deploy.
 
-Checked:
+- Host Team's three features, committed with 948 tests passing there. Nobody has seen
+  the alerts or the Host team card in a browser yet; do that first, headless with a
+  fake radio.
+- `issues/test-timing`, including a real fix: a late write failure in yesterday's
+  SystemCore capture no longer stops today's.
+- `/ws` guard, from `issues/ws-internet-guard`.
+- The out-of-match e-stop fix, once the user picks a way.
 
-- Field idle on 2026-10-30 at 4:46 PM PDT (23:46Z): `phase` idle, `active-config.json`
-  empty since the 6:00 AM clear, all six bridges down, `ip rule` 3.
-- No second-laptop block active, so the graceful reload adopts nothing the new code
-  can't remove. Old rules had no port. Check again just before deploying.
-- No addon version change since 0.2.0, which steamboat already has.
-- Steamboat's checkout has no tracked changes, so `git pull` won't be blocked. curl
-  8.12.1 is installed, which the pinned requests need.
-- `1f50d5a`: `bun run typecheck` clean, `src/wsAccess`, `interfaceFetch`,
-  `networkManager` and `operatorAuth` tests 79 pass, frontend build passes, run here.
-  The station test port thread ran the full suite on that commit: 939 pass, 0 fail.
-  All of that was on Windows.
+The match sounds (`9f483f8`) are on local master. Its 33 tests and typecheck pass.
 
-Unproven until the push: `fc15475` on Linux. WSL can't install the dependencies.
-The push's release run is the proof. If it fails again, steamboat is unaffected.
-
-Why not wait for the two running threads: neither is needed on the field tonight,
-and the deployed version is worse than local master for a team with two laptops
-(all of the second laptop's traffic to the robot is dropped) and for clearing an
-e-stop from a DS.
-
-Push the exact commit (`git push origin 67bb54e:master`), not `master`: the Host Team
-thread is committing to it, and `ba4fbf7` onward hasn't been checked here.
-
-What teams would notice: open pFMS pages reload once. The field is empty, so no robot
-or radio is disturbed; a graceful reload keeps the network. A note posts to
-pfms-support. The operator lock does nothing until someone sets a code.
+Before each deploy: `/health` idle, no team on the field, no second-laptop block
+(`iptables -S FORWARD | grep br-slot`), no addon version change, and bookings below.
 
 ### Windows for it
 
-| When                                                               | State                                  |
-| ------------------------------------------------------------------ | -------------------------------------- |
-| Now to 6:30 PM PDT (Oct 31 01:30Z) tonight                         | Free. Recommended: 8048 gets the fixes |
-| 7:00–10:00 PM PDT (Oct 31 02:00–05:00Z) tonight                    | Team 8048 booked. Don't deploy         |
-| After 10:00 PM PDT tonight to Tue Nov 3 4:00 PM PST (Nov 4 00:00Z) | No bookings on the calendar            |
-| Tue Nov 3 4:00–7:00 PM PST (Nov 4 00:00–03:00Z)                    | 5940 and guest 59402                   |
-| Tue Nov 3 7:00–10:00 PM PST (Nov 4 03:00–06:00Z)                   | Team 100, and 5940 until 10:00 PM      |
+| When                                                               | State                             |
+| ------------------------------------------------------------------ | --------------------------------- |
+| 7:00–10:00 PM PDT (Oct 31 02:00–05:00Z) tonight                    | Team 8048 booked. Don't deploy    |
+| After 10:00 PM PDT tonight to Tue Nov 3 4:00 PM PST (Nov 4 00:00Z) | No bookings on the calendar       |
+| Tue Nov 3 4:00–7:00 PM PST (Nov 4 00:00–03:00Z)                    | 5940 and guest 59402              |
+| Tue Nov 3 7:00–10:00 PM PST (Nov 4 03:00–06:00Z)                   | Team 100, and 5940 until 10:00 PM |
 
 Clocks go back Sunday Nov 1, so Tuesday is PST.
-
-### Next deploy after that
-
-- `issues/test-timing`, three commits at `fb9a40e`, not merged. `76b8f6b` is a real
-  fix: a late write failure in yesterday's SystemCore capture no longer stops today's.
-- Host Team's three features: `ba4fbf7` landed, the rest in progress in the shared tree.
-- This log and the `ISSUES.md` notes that go with it.
-- `28a988b`, if the user wants it (below).
-
-## The match sound commit
-
-`28a988b` (2026-09-28, every match sound at -14 LUFS) never landed under another
-hash. It exists only on the stale clone's `master`, unpushed.
-
-- `src/loudness.ts` and `src/sounds.test.ts` are on no ref here, and no commit
-  message matches.
-- `sounds/` and `scripts/generate-sounds.ts` haven't changed on master since
-  `e838875` (2026-07-27). `end.wav`, `warning.wav` and `start.wav` match that commit's
-  parent byte for byte, so the field still plays the old levels, with the quiet
-  end-of-match buzzer.
-- Its patch applies cleanly to current master (`git apply --check`).
 
 ## Open threads
 
 | Thread                                                                       | State           | Still owes                                                                                 |
 | ---------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------ |
-| [Host Team](t3-thread://v1/f7d8fef8-81d4-4951-bf87-522a1e36706e)             | Running         | Three host features ("go ahead with all 3"); admin card never opened in a browser          |
+| [/ws guard](t3-thread://v1/mcp:7d79bf25-f956-4a49-b1b0-1fb9c3782fd5)         | Running         | The guard itself, on `issues/ws-internet-guard`                                            |
+| [Host Team](t3-thread://v1/f7d8fef8-81d4-4951-bf87-522a1e36706e)             | Settled here    | Browser check above; entering the host team on `/admin`                                    |
 | [Flaky tests](t3-thread://v1/mcp:d7345ee4-f3eb-40d8-aff9-b60f7c58ba86)       | Running         | Final measurement, then merge `issues/test-timing` and close its three `ISSUES.md` entries |
 | [Second Robot 114](t3-thread://v1/48b5e116-7198-491d-a686-d98f6138fa21)      | Settled here    | Nothing of its own; its decisions moved below                                              |
 | [Two robots](t3-thread://v1/mcp:cbdfa4a7-584a-40b4-b6fa-f3b425c2a741)        | Settled here    | Field checks below                                                                         |
-| [Operator login](t3-thread://v1/mcp:3b1530c4-c729-4b09-9b8c-bc2ed9fca742)    | Settled here    | Field E-Stop clear decision; `pnpm-*` strays in its worktree                               |
-| [Station test port](t3-thread://v1/mcp:9549f2dc-42b3-4b56-8f1f-20494a572f81) | Settled here    | `roboRIO mDNS` check; stash `4a0aa37`                                                      |
+| [Operator login](t3-thread://v1/mcp:3b1530c4-c729-4b09-9b8c-bc2ed9fca742)    | Settled here    | Nothing; the field E-Stop clear is logged in `ISSUES.md`                                   |
+| [Station test port](t3-thread://v1/mcp:9549f2dc-42b3-4b56-8f1f-20494a572f81) | Settled here    | `roboRIO mDNS` check, below                                                                |
 | [ip rules](t3-thread://v1/mcp:f5cd653d-9a06-4d7d-9f42-1b01bbf5ea8c)          | Settled here    | Field check below                                                                          |
 | [Route preference](t3-thread://v1/09ae0186-a56b-4472-b552-10c07d37e4ef)      | Already settled | Confirmation next time a team reports a DS restart                                         |
 | [Header icons](t3-thread://v1/mcp:24f7f39c-0516-4ee4-b00d-f611540237f7)      | Already settled | Nothing; thread closed DONE                                                                |
@@ -159,33 +119,37 @@ hash. It exists only on the stale clone's `master`, unpushed.
   query now leaves from `192.168.69.8`. A failure is a false alarm, never a wrong write.
 - **E-stop warnings and `Robot link`:** seen on a real occurrence.
 - **DS restart:** next time a team reports one, read the new lines.
-- **`plans/field-verification-checklist.md`, checks 1–7.** Check 7, how long an
-  out-of-match e-stop takes, bears on the decision below.
+- **`plans/field-verification-checklist.md`, checks 1–7.** Check 7 times an
+  out-of-match e-stop against the 1 s limit.
 - **Host team:** open the admin card, then enter the host team on `/admin`.
+
+## Decisions made
+
+- **Field E-Stop clear stays open to anyone on site** (2026-10-30). Logged in
+  `ISSUES.md` to revisit later.
+- **An e-stop must act within 1 s, 250 ms at best** (2026-10-30). Logged in
+  `ISSUES.md`. The roughly 8 s out of a match is the DS's documented retry interval,
+  not a measurement, and doesn't meet this.
+- **`28a988b` came over** as `9f483f8`, for the next deploy.
+- **`/ws` got its own thread.**
+- **Merged worktrees and branches removed.** `pfms-test-timing/base` stays while the
+  flaky test thread runs.
 
 ## Open questions for the user
 
-1. Push and deploy? See "Pending deploy". Recommended: now, before 6:30 PM PDT.
-2. Should clearing the _field_ E-Stop need an operator login, with a team still able
-   to clear its own? Today anyone on the network can clear it. Recommended: yes.
-3. Is up to about 8 s (3 s on a 2027 DS) acceptable for an out-of-match e-stop?
-   Nothing has been measured. Recommended: decide after check 7.
-4. Bring `28a988b` over as a new commit? Recommended: yes.
-5. Set an operator code after the deploy. Until then the lock does nothing.
-6. Keep or drop the setup-page restart idea, open since 2026-10-12
-   (`plans/resolve-open-issues-2026-10.md`). No `ISSUES.md` entry remains.
-7. Clean-up, all waiting on a yes:
-   - 17 worktrees whose branches are fully merged (all but `issues-test-timing`).
-   - `C:/Users/camer/AppData/Local/Temp/pfms-hotfix` (prunable),
-     `C:/Users/camer/AppData/Local/Temp/pfms-test-timing/base`.
-   - `pnpm-lock.yaml` and `pnpm-workspace.yaml` in `issues-operator-login`.
-   - Stash `4a0aa37`.
+1. How should an out-of-match e-stop reach the robot within 1 s? The user has also
+   said they don't want to cut comms. Recommended: bring back the narrow UDP 1110
+   drop for e-stops, on DSes out of a match only, as it's the only proven way (about
+   100 ms). Then try two ways with no cut at the field: answering a DS's open TCP
+   socket at once, and whether a local-control DS obeys control packets at all.
+2. Set an operator code on `/admin` → Access. Until then the lock does nothing.
+3. Drop the setup-page restart idea? It's already solved: `edc128c` applies a trunk
+   change at once, `56185eb` a radio URL. Recommended: drop.
 
 ## Findings / gotchas
 
-- **`/ws` is the biggest thing not in any deploy.** Stops and clears stay open to the
-  internet even with an operator code set (`ISSUES.md`). Not tried against the live
-  site. Nobody has claimed it.
+- **`/ws` is still open.** Stops and clears stay reachable from the internet even with
+  an operator code set (`ISSUES.md`). Not tried against the live site.
 - **The proxy change is not waiting.** Older threads call `trusted_proxies_strict`
   staged. It's live: ops `01d9534`, verified 1:48 PM PDT (20:48Z) 2026-10-30.
 - The Second Robot thread's "wrong-radio fix, owner unconfirmed" is resolved: `1f50d5a`.
@@ -205,5 +169,9 @@ hash. It exists only on the stale clone's `master`, unpushed.
 - [x] Sound commit traced
 - [x] Next deploy's checks run
 - [x] Finished threads settled
-- [ ] Push and deploy, waiting on the user
-- [ ] After the deploy: release run passes, version and health, no journal errors
+- [x] `67bb54e` pushed and deployed 5:17 PM PDT (00:17Z Oct 31), checked, release passed
+- [x] `28a988b` brought over
+- [x] `/ws` thread started
+- [x] Merged worktrees and branches removed
+- [ ] Out-of-match e-stop within 1 s, waiting on the user
+- [ ] Next deploy, waiting on the threads and then the user

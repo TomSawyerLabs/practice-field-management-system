@@ -137,7 +137,8 @@ combo while held.
 
 | Result                                                           | Meaning                                                                                                |
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Disables within about 8 s, 3 s on a 2027 DS.                     | Works as documented in `docs/network.md`. Note the real time there.                                    |
+| Disables within 1 s.                                             | Meets the user's limit (2026-10-30: within 1 s, 250 ms best). Note the real time in `docs/network.md`. |
+| Disables, but takes over 1 s (about 8 s expected, 3 s on 2027).  | Too slow. `ISSUES.md` has the entry; out-of-match e-stops need a faster way.                           |
 | Doesn't disable until someone touches the DS, or at all.         | E-stops don't stop a free-driving robot. Tell the user at once: out-of-match e-stops need another way. |
 | After the clear, the robot comes back on with no Enable pressed. | The DS doesn't stay disabled when the field lets go. Nothing covers that now the re-arm wait is gone.  |
 | The key combo enables the robot while held.                      | A held DS can be overridden from its keyboard. Note it in `docs/network.md`, then decide what to do.   |

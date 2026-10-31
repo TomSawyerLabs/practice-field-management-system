@@ -61,6 +61,25 @@ Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
 2026-10-30), including on the Safety Monitor's page. Matters because that role
 is the one most likely to want one.
 
+## An e-stop out of a match can take about 8 s
+
+The user's limit (2026-10-30): an e-stop acts within 1 s, 250 ms at best. A robot
+driven from a DS in local control, not in a match, misses that. pFMS can only take
+that DS at its next TCP handshake, and it retries about every 8 s (3 s on a 2027
+DS). That's the documented retry interval, not a measured stop; check 7 in
+`plans/field-verification-checklist.md` times it. Live since `0586d9a` took the cut
+off e-stops. A DS in a match stops at once, and the team page's Stop still cuts in
+about 100 ms. Matters because this is the stop that has to work. Do this before
+"Team Stop still cuts comms": both need the same answer.
+
+## Anyone on site can clear the field E-Stop
+
+`adminClearFieldEStop` is `staff`, and `/match` clears aren't behind the operator
+code (`plans/operator-login.md`), so clearing the field E-Stop lets every robot run
+again with no login. The user chose to leave it open for now (2026-10-30). Revisit
+later: an operator login for the field clear only, with a team still able to clear
+its own from its DS.
+
 ## Team Stop still cuts comms
 
 The team page's **Stop robot** out of a match is the last user of the
