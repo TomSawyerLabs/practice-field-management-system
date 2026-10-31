@@ -96,15 +96,6 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## A failed station stops DHCP for all of them
-
-in progress — t3/f9a44adc
-
-In OFFSEASON, `configureNetwork` in `src/networkManager.ts` starts the DHCP servers
-after `updateNetworkConfig`, which throws if any station failed, even though it
-did the others. Seen by reading, not on a field. Matters because one bad station
-leaves every station's robots with no addresses until the next commit.
-
 ## A clear waiting on a match, lost to a restart, leaves the bridge up
 
 in progress — t3/f9a44adc

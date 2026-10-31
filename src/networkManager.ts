@@ -626,12 +626,17 @@ export async function clearStopCuts(): Promise<void> {
 export async function configureNetwork(stations: Stations, interfaceName: string, practiceMode = false) {
   console.log('configureNetwork');
   await dropHairpinForwarding(interfaceName);
-  await updateNetworkConfig(stations, interfaceName, practiceMode);
-
-  if (practiceMode) return;
-
-  for (const station of StationNameList) {
-    await startDHCPServer(station, stations[station], interfaceName);
+  try {
+    await updateNetworkConfig(stations, interfaceName, practiceMode);
+  } finally {
+    // Also after a failed pass, which still did the stations it could.
+    if (!practiceMode) {
+      for (const station of StationNameList) {
+        // A failed station may have no address to serve from, or have found
+        // its gateway already taken. It gets a server when it's retried.
+        await startDHCPServer(station, failedStations.has(station) ? undefined : stations[station], interfaceName);
+      }
+    }
   }
 }
 

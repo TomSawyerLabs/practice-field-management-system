@@ -161,7 +161,9 @@ radio … after Nm`).
      as failed.
    - **Start DHCP server** _(OFFSEASON only)_ — serves
      `10.TE.AM.100–199`, gateway `10.TE.AM.254`. Skipped in PRACTICE mode
-     since the AP handles DHCP (gateway = `10.TE.AM.4`).
+     since the AP handles DHCP (gateway = `10.TE.AM.4`). A pass that failed
+     still starts the other stations' servers. The failed station gets none
+     until its retry, since it may have no address to serve from.
 
    **Physical port bridging** (if `FIELD_PORTS` is configured): when a
    team requests a physical Ethernet port, the port's VLAN sub-interface

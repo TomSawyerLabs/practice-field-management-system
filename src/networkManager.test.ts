@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { configureNetwork, duplicateDsBlock, restorePreviousStations, useNetworkBackend } from './networkManager.js';
 import { createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import type { StationName } from './types.js';
@@ -84,6 +84,38 @@ describe('a station that fails to set up', () => {
     fake.failures.addAddressOn.clear();
     await configureNetwork({ ...none, slot1: 254, slot2: 1678 }, 'eth0', true);
     expect(fake.added).toEqual(['br-slot2 10.16.78.254', 'br-slot1 10.2.54.254']);
+  });
+});
+
+describe('in OFFSEASON, where pFMS serves DHCP', () => {
+  const dryRun = process.env.DRY_RUN;
+  let log: ReturnType<typeof spyOn>;
+  /** The stations DRY_RUN says it would have started a server for. */
+  const served = () =>
+    log.mock.calls.flatMap(([line]: unknown[]) => /DHCP server not started for (slot\d)/.exec(String(line))?.[1] ?? []);
+
+  beforeEach(() => {
+    process.env.DRY_RUN = '1';
+    log = spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    log.mockRestore();
+    if (dryRun === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = dryRun;
+  });
+
+  test("a failed station doesn't cost the others their addresses", async () => {
+    fake.failures.addAddressOn.add('br-slot1');
+    await expect(configureNetwork({ ...none, slot1: 254, slot2: 1678 }, 'eth0')).rejects.toThrow('slot1');
+    expect(served()).toEqual(['slot2']);
+  });
+
+  test('a failed station gets its server when it is retried', async () => {
+    fake.failures.addAddressOn.add('br-slot1');
+    await expect(configureNetwork({ ...none, slot1: 254 }, 'eth0')).rejects.toThrow('slot1');
+    fake.failures.addAddressOn.clear();
+    await configureNetwork({ ...none, slot1: 254 }, 'eth0');
+    expect(served()).toEqual(['slot1']);
   });
 });
 
