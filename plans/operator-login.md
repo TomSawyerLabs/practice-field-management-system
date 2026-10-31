@@ -154,10 +154,10 @@ Say this plainly so the login isn't mistaken for more than it is.
 - **`/staff` and `/csa` have no stop controls at all**, including the Safety
   Monitor's page. Logged in `ISSUES.md`. Not caused by this work, but "stops
   stay visible" only means something on pages that have them.
-- `adminLogin` had no rate limit, the passphrase hash is one round of SHA-256,
-  and the minimum is 4 characters. Fine for a trusted LAN, not for `/ws` as
-  exposed. Tries from outside are limited since `plans/ws-internet-guard.md`, and
-  the weak passphrase is logged in `ISSUES.md`.
+- `adminLogin` had no rate limit, the passphrase hash was one round of SHA-256,
+  and the minimum was 4 characters. Fine for a trusted LAN, not for `/ws` as
+  exposed. Tries from outside are limited, and the hash is scrypt with a
+  12-character minimum for new passphrases: `plans/ws-internet-guard.md`.
 - `POST /api/firmware/upload` and `/download` took no credential and sent
   `Access-Control-Allow-Origin: *`. They're the `staff` tier now
   (`src/staffHttp.ts`), and `/test` sends its login as a header. The upload had

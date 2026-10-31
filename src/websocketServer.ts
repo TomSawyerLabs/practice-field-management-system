@@ -187,7 +187,7 @@ import type { ScoringEngine } from './scoringEngine.js';
 import type { PortBridgeManager } from './portBridgeManager.js';
 import type { SupportStore } from './supportStore.js';
 import type { SlackBridge } from './slackBridge.js';
-import type { AdminAuth } from './adminAuth.js';
+import { MIN_PASSPHRASE_LENGTH, type AdminAuth } from './adminAuth.js';
 import { MIN_CODE_LENGTH, type OperatorAuth } from './operatorAuth.js';
 import type { ExternalAccessStore } from './externalAccessStore.js';
 import type { MatchAudio } from './matchAudio.js';
@@ -282,9 +282,9 @@ export interface SetupWebSocketOptions {
   adminAuth?: AdminAuth;
   operatorAuth?: OperatorAuth;
   externalAccessStore?: ExternalAccessStore;
-  /** The admin passphrase is short and quick to check, and the login has to stay
-   *  open to the internet. Only strangers count: a flood can't lock out anyone
-   *  on site or holding an access cookie. */
+  /** The login has to stay open to the internet, and an old passphrase can be
+   *  short. Only strangers count: a flood can't lock out anyone on site or
+   *  holding an access cookie. */
   strangerAdminLogins?: LoginLimiter;
   onStationTestMode?: StationTestModeCallback;
   onStationTestModeStop?: StationTestModeStopCallback;
@@ -1924,32 +1924,41 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
             ws.send(JSON.stringify(reply));
             return;
           }
-          const token = adminAuth.login(data.passphrase);
-          if (token) {
-            if (limited) strangerAdminLogins.clear(clientIp);
-            adminConnections.add(ws);
-            sendOperatorDevices(ws);
-            // Auto-create an external access token so the admin's browser
-            // gets a cookie for remote access without a separate step.
-            const extToken = externalAccessStore?.createToken(`Admin login`);
-            ws.send(
-              JSON.stringify({
-                type: 'adminAuthResult',
-                authenticated: true,
-                token,
-                passphraseConfigured: true,
-                externalAccessToken: extToken?.token,
-              }),
-            );
-          } else {
-            ws.send(
-              JSON.stringify({
-                type: 'adminAuthResult',
-                authenticated: false,
-                passphraseConfigured: adminAuth.isConfigured(),
-              }),
-            );
-          }
+          // Slow on purpose, so the answer comes later and the socket may be gone.
+          void adminAuth
+            .login(data.passphrase)
+            .catch((err: unknown) => {
+              appError('Admin login failed: ' + String(err));
+              return null;
+            })
+            .then(token => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              if (token) {
+                if (limited) strangerAdminLogins.clear(clientIp);
+                adminConnections.add(ws);
+                sendOperatorDevices(ws);
+                // Auto-create an external access token so the admin's browser
+                // gets a cookie for remote access without a separate step.
+                const extToken = externalAccessStore?.createToken(`Admin login`);
+                ws.send(
+                  JSON.stringify({
+                    type: 'adminAuthResult',
+                    authenticated: true,
+                    token,
+                    passphraseConfigured: true,
+                    externalAccessToken: extToken?.token,
+                  }),
+                );
+              } else {
+                ws.send(
+                  JSON.stringify({
+                    type: 'adminAuthResult',
+                    authenticated: false,
+                    passphraseConfigured: adminAuth.isConfigured(),
+                  }),
+                );
+              }
+            });
         }
       } else if (isAdminCheckAuth(data)) {
         if (adminAuth) {
@@ -1971,10 +1980,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           // Allow setting passphrase if none is configured, or if this connection is admin-authenticated
           const canSet = !adminAuth.isConfigured() || adminConnections.has(ws);
           if (canSet) {
-            const success = adminAuth.setPassphrase(data.passphrase, adminConnections.has(ws));
-            if (success) {
+            void (async () => {
+              const success = await adminAuth.setPassphrase(data.passphrase, adminConnections.has(ws));
+              if (!success) {
+                if (ws.readyState !== WebSocket.OPEN) return;
+                ws.send(
+                  JSON.stringify({
+                    error: `Failed to set passphrase (must be at least ${MIN_PASSPHRASE_LENGTH} characters)`,
+                  }),
+                );
+                return;
+              }
               // Auto-login the user who set the passphrase
-              const token = adminAuth.login(data.passphrase);
+              const token = await adminAuth.login(data.passphrase);
+              if (ws.readyState !== WebSocket.OPEN) return;
               if (token) {
                 adminConnections.add(ws);
                 sendOperatorDevices(ws);
@@ -1987,9 +2006,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
                   passphraseConfigured: true,
                 }),
               );
-            } else {
-              ws.send(JSON.stringify({ error: 'Failed to set passphrase (must be at least 4 characters)' }));
-            }
+            })().catch((err: unknown) => {
+              appError('Failed to set the admin passphrase: ' + String(err));
+            });
           } else {
             ws.send(JSON.stringify({ error: 'Not authorized to change passphrase' }));
           }

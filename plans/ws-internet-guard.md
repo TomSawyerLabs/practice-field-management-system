@@ -136,9 +136,9 @@ Refused from outside with no credential, that a reader might expect to stay:
 - **Reading.** Every `/ws` socket is still sent field state on connect, from
   anywhere. Logged in `ISSUES.md`. No credential is in it: API keys and access
   tokens go as summaries.
-- **The admin passphrase itself:** one round of SHA-256 and a 4-character
-  minimum. The limit below slows guessing; it doesn't make the passphrase
-  stronger. See `ISSUES.md`.
+- **The admin passphrase itself:** fixed separately. See "The admin passphrase
+  hash" below. An old short passphrase stays as short as it was until someone
+  changes it: the limit below slows guessing it, and only that.
 - **A device on site that routes out through the internet** (custom DNS, WARP,
   iCloud Private Relay, a VPN) looks external. It already gets the public page,
   which has no stop button, so this adds nothing new for a browser.
@@ -161,6 +161,37 @@ stranger wait, so someone logging in from a new browser off site can be held
 up. It can't touch anyone at the field, anyone with an access cookie (every
 browser that has logged in as admin has one) or an open admin page, because none
 of those count. A blocked try is refused even with the right passphrase.
+
+## The admin passphrase hash
+
+`src/adminAuth.ts` was one round of salted SHA-256 with a 4-character minimum.
+It's scrypt now (N=2^17, r=8, p=1: 128 MiB, 270 ms on this PC, measured with the
+event loop never more than about 6 ms late), with a 12-character minimum for new
+passphrases.
+
+- **Migration:** an old file keeps working. `scrypt` in the file says how the hash
+  was made, and its absence means the old SHA-256. The first successful login
+  replaces the hash in place and rewrites the file. Session tokens are untouched,
+  so nobody is logged out, and a wrong passphrase writes nothing.
+- **One way:** once a file is upgraded, a build from before this change can't
+  check that passphrase. It fails closed, refusing logins, and doesn't read as
+  unclaimed. Sessions already open keep working. Rolling back needs a copy of
+  `admin-auth.json` from before the first login.
+- **Saves are now atomic,** temp file then rename, and `0600`. Before, a torn write
+  read as a field nobody had claimed. On `steamboat` the file was `root:root 0644`
+  and the service runs as root in a directory it can write, so the rename works
+  and the file becomes `0600`. Nothing else reads it.
+- **Logins check one at a time, off the event loop,** with 8 waiting at most; a try
+  past that gets the wrong-passphrase answer. On-site tries have no limit (a
+  decision above), so without this a flood would cost 128 MiB per try.
+- **The operator code isn't the same weakness, and wasn't changed.** It has been
+  scrypt since it was built, at Node's default N=2^14, with an 8-character minimum,
+  a limit on every try, and no way to try it from outside. `steamboat` has no
+  `operator-auth.json` yet. Raising its cost would be a stored-format change for
+  little gain.
+- `AdminAuthGate` said "Invalid passphrase" a fixed second after every try, so a
+  slower check would have flashed it before a good login landed. It now waits for
+  the answer.
 
 ## Applied: Caddy change
 

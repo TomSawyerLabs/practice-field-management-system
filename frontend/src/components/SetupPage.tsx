@@ -25,6 +25,7 @@ import {
   sendTestAudioDevice,
   useServerVersion,
   useAdminAuth,
+  MIN_PASSPHRASE_LENGTH,
   sendAdminSetPassphrase,
   sendCreateApiKey,
   useApiKeyCreatedEvent,
@@ -108,7 +109,7 @@ function AdminPassphraseStep({ configured }: { configured: boolean }) {
   }
 
   const submit = () => {
-    if (passphrase.length < 4) return setError('At least 4 characters');
+    if (passphrase.length < MIN_PASSPHRASE_LENGTH) return setError(`At least ${MIN_PASSPHRASE_LENGTH} characters`);
     if (passphrase !== confirm) return setError("The two don't match");
     setError('');
     sendAdminSetPassphrase(passphrase);
@@ -123,7 +124,7 @@ function AdminPassphraseStep({ configured }: { configured: boolean }) {
         value={passphrase}
         onChange={e => setPassphrase(e.target.value)}
         error={!!error}
-        helperText={error || 'At least 4 characters'}
+        helperText={error || `At least ${MIN_PASSPHRASE_LENGTH} characters`}
       />
       <TextField
         size="small"

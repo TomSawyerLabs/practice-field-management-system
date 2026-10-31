@@ -30,16 +30,6 @@ and the hash it salts. Field commands from outside are refused since
 watch who's on the field, read support reports and try guessing a team's Wi-Fi
 key offline.
 
-## The admin passphrase is weak for a login on the internet
-
-`in progress — t3/harden-firmware-admin-ws-auth`
-
-`src/adminAuth.ts` hashes it with one round of salted SHA-256 and allows 4
-characters (seen 2026-10-30). Matters because `adminLogin` stays open from the
-internet on purpose and a success opens everything. Attempts from outside are now
-limited (`plans/ws-internet-guard.md`), which slows guessing but doesn't fix a
-short passphrase or a stolen hash file.
-
 ## A false Driver Station match hides E-STOP on /match
 
 `MatchControlPage.tsx:469` returns `DsClientBlock` before `FieldEStopControl`

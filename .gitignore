@@ -15,6 +15,7 @@ active-config.json
 staged-config.json
 saved-teams.json
 admin-auth.json
+admin-auth.json.tmp
 operator-auth.json
 operator-auth.json.tmp
 api-keys.json

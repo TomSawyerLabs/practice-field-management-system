@@ -103,7 +103,7 @@ State files are JSON, written to the working directory by default:
 | `PUSH_KEYS_FILE`       | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
 | `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
 | `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
-| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash + session tokens                                                                                                                       |
+| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |
 | `OPERATOR_AUTH_FILE`   | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
 | `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                                                       |
 | `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                                                        |

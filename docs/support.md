@@ -192,7 +192,7 @@ as outside.
 
 The `/admin` page is secured with a shared passphrase:
 
-- First visit prompts passphrase creation (min. 4 characters)
+- First visit prompts passphrase creation (min. 12 characters)
 - Subsequent visits require login; a session token is stored in the
   browser (up to 20 active tokens; changing the passphrase invalidates
   them all)

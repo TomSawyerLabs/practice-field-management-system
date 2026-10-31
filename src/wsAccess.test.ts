@@ -201,6 +201,9 @@ describe('pages with no login', () => {
   });
 });
 
+// Tests log in over and over; the real cost has its own test in adminAuth.test.ts.
+const CHEAP_HASH = { N: 2 ** 10, r: 8, p: 1 };
+
 // A stand-in server: no radio, no Driver Station packets, nothing leaves this
 // process. The stubs record what reached them.
 describe('the WebSocket gate', () => {
@@ -209,7 +212,7 @@ describe('the WebSocket gate', () => {
   const STAFF_IP = '10.55.65.20';
 
   const authDir = mkdtempSync(join(tmpdir(), 'pfms-ws-access-'));
-  let adminAuth = new AdminAuth(join(authDir, 'unused.json'));
+  let adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
   const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
   let adminLogins = new LoginLimiter();
@@ -302,7 +305,7 @@ describe('the WebSocket gate', () => {
     engineCalls = [];
     connectedStations = { slot2: { ip: DS_IP, lastSeen: Date.now() } };
     Object.assign(hostnames, { [DS_IP]: 'TEAM1678-DS', [SAME_NAME_IP]: 'team1678-ds' });
-    adminAuth = new AdminAuth(join(authDir, 'unused.json'));
+    adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
     operatorAuth = new OperatorAuth(join(authDir, `operator-${Math.random()}.json`));
     adminLogins = new LoginLimiter();
   });
@@ -358,15 +361,22 @@ describe('the WebSocket gate', () => {
       while (!replies.slice(before).some(r => r.type === 'operatorAuthResult')) await Bun.sleep(2);
       return replies.slice(before).find(r => r.type === 'operatorAuthResult')!;
     };
-    return { ws, send, dsState, operatorState, login, replies };
+    /** So is a passphrase check. */
+    const adminLogin = async (passphrase: string) => {
+      const before = replies.length;
+      ws.send(JSON.stringify({ type: 'adminLogin', passphrase }));
+      while (!replies.slice(before).some(r => r.type === 'adminAuthResult')) await Bun.sleep(2);
+      return replies.slice(before).find(r => r.type === 'adminAuthResult')!;
+    };
+    return { ws, send, dsState, operatorState, login, adminLogin, replies };
   }
 
-  const claimField = () => {
-    adminAuth = new AdminAuth(join(authDir, `claimed-${Math.random()}.json`));
-    adminAuth.setPassphrase('correct horse');
+  const claimField = async () => {
+    adminAuth = new AdminAuth(join(authDir, `claimed-${Math.random()}.json`), CHEAP_HASH);
+    await adminAuth.setPassphrase('correct horse');
   };
   const unclaimField = () => {
-    adminAuth = new AdminAuth(join(authDir, `unclaimed-${Math.random()}.json`));
+    adminAuth = new AdminAuth(join(authDir, `unclaimed-${Math.random()}.json`), CHEAP_HASH);
   };
 
   test('a heartbeat while a message is answered is not part of the answer', async () => {
@@ -507,9 +517,9 @@ describe('the WebSocket gate', () => {
     });
 
     test('an admin login needs no operator login', async () => {
-      claimField();
+      await claimField();
       const admin = await client(STAFF_IP);
-      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.adminLogin('correct horse');
       expect(await admin.send({ type: 'matchCreate' })).toEqual([]);
       expect(engineCalls).toEqual(['createMatch']);
     });
@@ -531,18 +541,18 @@ describe('the WebSocket gate', () => {
     });
 
     test('a device with no login cannot start a pairing', async () => {
-      claimField();
+      await claimField();
       await operatorAuth.setCode(CODE);
       const phone = await client(STAFF_IP);
       expect((await phone.send({ type: 'operatorPairStart' }))[0]?.error).toBe('Admin authentication required');
     });
 
     test('revoking a device takes its rights on the spot', async () => {
-      claimField();
+      await claimField();
       const phone = await client(STAFF_IP);
       await phone.login(CODE);
       const admin = await client('10.55.65.23');
-      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.adminLogin('correct horse');
       const [{ id }] = operatorAuth.listDevices();
       await admin.send({ type: 'operatorRevokeDevice', id });
 
@@ -551,7 +561,7 @@ describe('the WebSocket gate', () => {
     });
 
     test('only an admin can set the code or see the device list', async () => {
-      claimField();
+      await claimField();
       const phone = await client(STAFF_IP);
       await phone.login(CODE);
       expect((await phone.send({ type: 'operatorSetCode', code: null }))[0]?.error).toContain('Admin');
@@ -560,7 +570,7 @@ describe('the WebSocket gate', () => {
     });
 
     test('the queue card on /match takes an operator login', async () => {
-      claimField();
+      await claimField();
       const phone = await client(STAFF_IP);
       expect((await phone.send({ type: 'queueSkip', id: 'x' }))[0]?.error).toBe('Admin authentication required');
       await phone.login(CODE);
@@ -569,17 +579,17 @@ describe('the WebSocket gate', () => {
     });
 
     test('with no code there is nothing to pair with', async () => {
-      claimField();
+      await claimField();
       const admin = await client(STAFF_IP);
-      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.adminLogin('correct horse');
       await admin.send({ type: 'operatorSetCode', code: null });
       expect((await admin.send({ type: 'operatorPairStart' }))[0]?.error).toBe('Set an operator code first');
     });
 
     test('with no code the field is back to how it was', async () => {
-      claimField();
+      await claimField();
       const admin = await client(STAFF_IP);
-      await admin.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      await admin.adminLogin('correct horse');
       await admin.send({ type: 'operatorSetCode', code: null });
 
       const phone = await client('10.55.65.21');
@@ -609,9 +619,9 @@ describe('the WebSocket gate', () => {
   });
 
   test('an admin login overrides the Driver Station check', async () => {
-    claimField();
+    await claimField();
     const ds = await client(DS_IP);
-    const token = adminAuth.login('correct horse')!;
+    const token = (await adminAuth.login('correct horse'))!;
     await ds.send({ type: 'adminCheckAuth', token });
     expect(await ds.send({ type: 'matchCreate' })).toEqual([]);
     expect(engineCalls).toEqual(['createMatch']);
@@ -695,30 +705,30 @@ describe('the WebSocket gate', () => {
     });
 
     test('the external login still works, and then everything does', async () => {
-      claimField();
+      await claimField();
       const visitor = await client(VISITOR);
-      const replies = await visitor.send({ type: 'adminLogin', passphrase: 'correct horse' });
+      const replies = [await visitor.adminLogin('correct horse')];
       expect(replies.find(r => r.type === 'adminAuthResult')?.authenticated).toBe(true);
       expect(await visitor.send({ type: 'adminGlobalEStop' })).toEqual([]);
       expect(engineCalls).toEqual(['fieldEStop']);
     });
 
     test('a wrong passphrase gets nothing', async () => {
-      claimField();
+      await claimField();
       const visitor = await client(VISITOR);
-      await visitor.send({ type: 'adminLogin', passphrase: 'wrong' });
+      await visitor.adminLogin('wrong');
       expect((await visitor.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
     });
 
     describe('guessing the admin passphrase', () => {
-      const guess = async (visitor: Awaited<ReturnType<typeof client>>, passphrase = 'wrong') =>
-        (await visitor.send({ type: 'adminLogin', passphrase })).find(r => r.type === 'adminAuthResult')!;
+      const guess = (visitor: Awaited<ReturnType<typeof client>>, passphrase = 'wrong') =>
+        visitor.adminLogin(passphrase);
       const spendTries = async (visitor: Awaited<ReturnType<typeof client>>) => {
         for (let i = 0; i < 5; i++) expect((await guess(visitor)).retryAfterMs).toBeUndefined();
       };
 
       test('a stranger gets five tries, and even the right passphrase then waits', async () => {
-        claimField();
+        await claimField();
         const visitor = await client('203.0.113.20');
         await spendTries(visitor);
         const blocked = await guess(visitor, 'correct horse');
@@ -728,7 +738,7 @@ describe('the WebSocket gate', () => {
       });
 
       test('a new socket or a new forged address gets no fresh tries', async () => {
-        claimField();
+        await claimField();
         const via = (forged: string) => `${forged}, 203.0.113.21, 172.70.176.15`;
         // Through Cloudflare this is the edge, until Caddy passes its client_ip.
         await spendTries(await client(via('10.0.0.1')));
@@ -736,7 +746,7 @@ describe('the WebSocket gate', () => {
       });
 
       test('a good login starts the count again', async () => {
-        claimField();
+        await claimField();
         const visitor = await client('203.0.113.22');
         for (let i = 0; i < 4; i++) await guess(visitor);
         expect((await guess(visitor, 'correct horse')).authenticated).toBe(true);
@@ -745,14 +755,14 @@ describe('the WebSocket gate', () => {
       });
 
       test('on site is never counted', async () => {
-        claimField();
+        await claimField();
         const staff = await client('10.55.65.21');
         for (let i = 0; i < 8; i++) expect((await guess(staff)).retryAfterMs).toBeUndefined();
         expect((await guess(staff, 'correct horse')).authenticated).toBe(true);
       });
 
       test('an access cookie is never counted, so a flood cannot lock its holder out', async () => {
-        claimField();
+        await claimField();
         const { token } = externalAccess.createToken('Mentor');
         const stranger = await client('203.0.113.23');
         await spendTries(stranger);
@@ -761,14 +771,14 @@ describe('the WebSocket gate', () => {
       });
 
       test("another site's page on a laptop at the field is counted", async () => {
-        claimField();
+        await claimField();
         const page = await client('10.55.65.22', { origin: 'https://evil.example' });
         await spendTries(page);
         expect((await guess(page)).retryAfterMs).toBeGreaterThan(0);
       });
 
       test('a flood from many addresses stops strangers, and nobody else', async () => {
-        claimField();
+        await claimField();
         const { token } = externalAccess.createToken('Mentor');
         for (let i = 0; i < 6; i++) await spendTries(await client(`198.51.100.${i}`));
         expect((await guess(await client('203.0.113.24'), 'correct horse')).retryAfterMs).toBeGreaterThan(0);
@@ -790,7 +800,7 @@ describe('the WebSocket gate', () => {
     });
 
     test('an operator login carries on from outside, as far as the tiers allow', async () => {
-      claimField();
+      await claimField();
       await operatorAuth.setCode('field code');
       const phone = await client(STAFF_IP);
       const { token } = await phone.login('field code');
@@ -827,7 +837,7 @@ describe('the WebSocket gate', () => {
       });
 
       test('the tiers still apply to a holder', async () => {
-        claimField();
+        await claimField();
         const { token } = externalAccess.createToken('Mentor');
         const mentor = await client(VISITOR, cookie(token));
         expect((await mentor.send({ type: 'updateSetupSettings' }))[0].error).toBe('Admin authentication required');
@@ -886,7 +896,7 @@ describe('the WebSocket gate', () => {
       ['a device with a ULA address', 'fd12:3456:789a::1'],
       ['a link-local neighbour', 'fe80::1'],
     ])('stops and clears need no login from %s', async (_, ip) => {
-      claimField();
+      await claimField();
       await operatorAuth.setCode('field code');
       const device = await client(ip);
       for (const stop of STOPS) expect(await device.send(stop)).toEqual([]);

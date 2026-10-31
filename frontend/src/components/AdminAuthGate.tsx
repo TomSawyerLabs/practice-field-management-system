@@ -11,6 +11,7 @@ import LockIcon from '@mui/icons-material/Lock';
 
 import {
   ADMIN_TOKEN_KEY,
+  MIN_PASSPHRASE_LENGTH,
   useAdminAuth,
   useWsConnected,
   sendAdminLogin,
@@ -30,11 +31,14 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(true);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   // On every (re)connect: a stored token is re-presented by the socket layer
   // itself (useBackend's onopen), since admin rights belong to the socket.
   // Without one, ask whether a passphrase is configured at all.
   useEffect(() => {
+    // An answer can't come on a new socket.
+    setLoggingIn(false);
     if (!wsConnected) return;
     if (!localStorage.getItem(ADMIN_TOKEN_KEY)) sendAdminCheckAuth('');
   }, [wsConnected]);
@@ -43,6 +47,9 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!authResult) return;
     setChecking(false);
+    setLoggingIn(false);
+    // A passphrase takes a moment to check, so this waits for the answer.
+    if (loggingIn && !authResult.authenticated && !authResult.retryAfterMs) setError('Invalid passphrase');
 
     if (authResult.authenticated && authResult.token) {
       // Save token for future sessions
@@ -56,6 +63,7 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
         localStorage.removeItem(ADMIN_TOKEN_KEY);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new answer counts
   }, [authResult]);
 
   // Still checking auth on mount
@@ -77,15 +85,10 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
   // Not authenticated but passphrase is configured — show login
   if (authResult?.passphraseConfigured) {
     const handleLogin = () => {
-      if (!passphrase) return;
+      if (!passphrase || loggingIn) return;
       setError('');
+      setLoggingIn(true);
       sendAdminLogin(passphrase);
-      // Clear passphrase field (result comes via authResult)
-      setTimeout(() => {
-        if (!authResult?.authenticated) {
-          setError('Invalid passphrase');
-        }
-      }, 1000);
     };
 
     const retryAfterMs = authResult.retryAfterMs;
@@ -124,7 +127,7 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
                 onKeyDown={e => e.key === 'Enter' && handleLogin()}
                 autoFocus
               />
-              <Button variant="contained" onClick={handleLogin} disabled={!passphrase}>
+              <Button variant="contained" onClick={handleLogin} disabled={!passphrase || loggingIn}>
                 Login
               </Button>
             </Box>
@@ -136,8 +139,8 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
 
   // No passphrase configured — first-time setup
   const handleSetPassphrase = () => {
-    if (!passphrase || passphrase.length < 4) {
-      setError('Passphrase must be at least 4 characters');
+    if (!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+      setError(`Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters`);
       return;
     }
     if (passphrase !== confirmPassphrase) {
@@ -176,7 +179,7 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
                 setPassphrase(e.target.value);
                 setError('');
               }}
-              helperText="At least 4 characters"
+              helperText={`At least ${MIN_PASSPHRASE_LENGTH} characters`}
               autoFocus
             />
             <TextField
@@ -190,7 +193,11 @@ export function AdminAuthGate({ children }: { children: ReactNode }) {
               }}
               onKeyDown={e => e.key === 'Enter' && handleSetPassphrase()}
             />
-            <Button variant="contained" onClick={handleSetPassphrase} disabled={!passphrase || passphrase.length < 4}>
+            <Button
+              variant="contained"
+              onClick={handleSetPassphrase}
+              disabled={!passphrase || passphrase.length < MIN_PASSPHRASE_LENGTH}
+            >
               Set Passphrase & Continue
             </Button>
           </Box>

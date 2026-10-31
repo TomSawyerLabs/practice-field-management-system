@@ -173,6 +173,9 @@ export const ADMIN_TOKEN_KEY = 'pfms-admin-token';
  *  stays logged in until it is signed out, so no login lands mid-match. */
 const OPERATOR_TOKEN_KEY = 'pfms-operator-token';
 
+/** For a new passphrase; an older, shorter one still logs in. As in src/adminAuth.ts. */
+export const MIN_PASSPHRASE_LENGTH = 12;
+
 /** This page's logins, for the staff HTTP API (src/staffHttp.ts). */
 export function staffAuthHeaders(): Record<string, string> {
   const admin = localStorage.getItem(ADMIN_TOKEN_KEY);
