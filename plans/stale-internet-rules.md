@@ -84,7 +84,8 @@ test that runs `setupWebSocket`, and the stand-in server has no other timer: the
 - [x] Real `iptables` in a sealed namespace: all six checks pass
 - [x] Fix the heartbeat test
 - [x] Docs
-- [ ] Merge, list unticked plans
+- [x] Full `bun test`: 1085 pass, 0 fail. Typecheck passes.
+- [x] Merge, list unticked plans
 
 ## Lab
 
@@ -94,6 +95,43 @@ WSL has no `iptables` and no route to the apt mirrors, so the lab used steamboat
 Linux backend. `--argv0 iptables` picks the applet: a further `iptables` argument
 is refused as `Bad argument`. Every commit creates all six bridges, so a lab
 shouldn't add `br-slotN` itself.
+
+## Unticked plan items that can be finished from here
+
+Reviewed 2026-10-30, against git and `c08e287`, the deployed commit. Not started.
+
+**Already done, only the box is stale:**
+
+- `host-team.md:73`: `ba4fbf7`, `656230f`, `8d0c5ee` are in `c08e287`.
+- `ws-internet-guard.md:240`: the login limit `26f552c` is in `c08e287`.
+- `csa-fms-control-status.md:173`: done as `86df58f`, ticked at line 161.
+- `resolve-open-issues-2026-10.md:78`: `6fb8d54`, the last item, is in `c08e287`.
+- `out-of-match-enable-check.md:196`: `c08e287` is well after the 2026-09-28 fix.
+- `drive-session-old-laptop.md:117`: push and deploy. Later plans build on it.
+- `field-timelapse.md:538`: scheduled captures ran on steamboat on 2026-09-22.
+
+**Half stale:** the deploy part of `one-button-wifi.md:177` and
+`operator-login.md:173`. Watching a real team and setting a code remain.
+
+**Headless Chrome on the built pages, with a stub engine and radio**, as
+`operator-login.md` did:
+
+- `field-control-interface.md:68`: the wizard field. Real hardware remains.
+- `host-team.md:75`: the host team card and new alerts.
+- `match-wifi-hold-toggle-and-stale-setup.md:90`: the switch card and admin checkbox.
+- `recording-retention-and-disk.md:63`: admin fields and station-card pause text.
+
+**Read-only checks:**
+
+- `field-timelapse.md:528`, `534`: the first 21:00 frame and the 17:00 trace.
+- `field-timelapse.md:539`: disk growth against the estimate. Settling the
+  retention numbers may want the user.
+
+**Unsure until read further:** `multi-site-adoption.md:332`, Stage 1. It may not
+depend on that plan's open questions. Stages 2 to 3 do.
+
+Everything else needs the field, a real team, robot, TV, phone or Slack, the user,
+or authorization for ops (`field-timelapse.md:537`).
 
 ## Things not to do
 
