@@ -141,6 +141,14 @@ function OutOfEStopNotice({ state }: { state: StationControlState | undefined })
 
 // ── Staff pages ─────────────────────────────────────────────────────
 
+/** Why a Clear is disabled while Driver Stations haven't been seen to stop. */
+export function stopWaitReason(waiting: number): string {
+  return (
+    `Waiting for ${waiting === 1 ? '1 Driver Station' : `${waiting} Driver Stations`} to show Disabled, or a robot ` +
+    'would start again on the clear. If one stays Enabled, ask that team to click Disable.'
+  );
+}
+
 /** Robots the server says are still enabled through an e-stop: staff must not
  *  believe the E-STOPPED chip. Renders nothing otherwise. */
 export function RobotsEnabledThroughStop() {
@@ -238,12 +246,7 @@ export function FieldEStopControl() {
             <Button color="inherit" onClick={() => setConfirmClear(false)}>
               Not yet
             </Button>
-            {waiting > 0 && (
-              <Typography sx={{ width: '100%' }}>
-                Waiting for {waiting === 1 ? '1 Driver Station' : `${waiting} Driver Stations`} to show Disabled, or a
-                robot would start again on the clear. If one stays Enabled, ask that team to click Disable.
-              </Typography>
-            )}
+            {waiting > 0 && <Typography sx={{ width: '100%' }}>{stopWaitReason(waiting)}</Typography>}
           </>
         ) : (
           <Button variant="outlined" color="inherit" sx={{ fontWeight: 700 }} onClick={() => setConfirmClear(true)}>

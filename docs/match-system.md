@@ -229,7 +229,8 @@ only after someone presses **Enable**. Nothing brings it back by itself:
 - The team's page shows **E-STOPPED — your robot only**, with who latched it
   (its Driver Station, the team's page, or field staff) and what to do, so
   the team can tell their own stop from the field's.
-- Requires a human to clear (per robot on `/match`, or on `/admin`);
+- Requires a human to clear (per robot on `/match`, or on `/admin`; a robot
+  that left the match still e-stopped is listed at the top of `/match`);
   clearing the match clears it too.
 - After staff clear it, the team (or staff) can re-enable the robot
   mid-match.

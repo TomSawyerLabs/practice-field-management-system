@@ -1,5 +1,6 @@
 import { teamLabelAmong } from '../../../src/utils';
 import { useEffect, useMemo, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import { QRCodeSVG } from 'qrcode.react';
 import Button from '@mui/material/Button';
@@ -29,6 +30,7 @@ import {
   MatchState,
   MatchHistoryEntry,
   StationName,
+  StationNameList,
   StationControlState,
   EStopSource,
   StaffRole,
@@ -83,7 +85,7 @@ import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { OperatorBar, OperatorOnly } from './OperatorAccess';
-import { FieldEStopControl, RobotsEnabledThroughStop, StopBlindSpotNote } from './FieldEStop';
+import { FieldEStopControl, RobotsEnabledThroughStop, StopBlindSpotNote, stopWaitReason } from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
 import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
@@ -520,6 +522,7 @@ export function MatchControlPage() {
         <FieldEStopControl />
         <RobotsEnabledThroughStop />
         <StopBlindSpotNote />
+        <EStopsOutsideMatch stationStates={matchState.stationStates} />
         <OperatorBar />
 
         <OperatorOnly>
@@ -1279,6 +1282,41 @@ function ActiveMatchView({
   );
 }
 
+/** Clears a robot's own e-stop, once its Driver Station is seen to have stopped. */
+function ClearEStopButton({ station, state }: { station: StationName; state: StationControlState | undefined }) {
+  return (
+    <Button size="small" variant="outlined" disabled={state?.stopWaiting} onClick={() => sendAdminClearEStop(station)}>
+      {state?.stopWaiting ? 'Waiting for DS' : 'Clear'}
+    </Button>
+  );
+}
+
+/** Robots with their own e-stop and no participant row: the team pressed E-Stop,
+ *  then Leave Match. Not behind the operator code, like every clear. */
+function EStopsOutsideMatch({ stationStates }: { stationStates: MatchState['stationStates'] }) {
+  const stopped = StationNameList.filter(s => stationStates[s]?.eStopBy && !stationStates[s]?.joined);
+  if (stopped.length === 0) return null;
+  const waiting = stopped.filter(s => stationStates[s]?.stopWaiting).length;
+  return (
+    <Alert severity="error" sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' } }}>
+      Out of a match, e-stopped on their own:
+      {stopped.map(s => (
+        <Box key={s} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 0.5 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {teamLabel(stationStates[s], stationStates)}
+          </Typography>
+          <ClearEStopButton station={s} state={stationStates[s]} />
+        </Box>
+      ))}
+      {waiting > 0 && (
+        <Typography variant="body2" sx={{ mt: 0.5 }}>
+          {stopWaitReason(waiting)}
+        </Typography>
+      )}
+    </Alert>
+  );
+}
+
 /** Ends the match for the robots in it — disabled, then post-match as
  *  usual. Robots free-driving outside the match are untouched. Asks once:
  *  a stray tap would throw away a match the teams were in the middle of. */
@@ -1375,16 +1413,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
       </Box>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         {isEStopped ? (
-          ownEStop && (
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={state?.stopWaiting}
-              onClick={() => sendAdminClearEStop(station)}
-            >
-              {state?.stopWaiting ? 'Waiting for DS' : 'Clear'}
-            </Button>
-          )
+          ownEStop && <ClearEStopButton station={station} state={state} />
         ) : (
           <>
             {/* Both buttons stay put: one that swapped Enable for Disable as soon

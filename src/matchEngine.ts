@@ -1813,8 +1813,12 @@ export class MatchEngine {
       if (since === undefined) {
         since = now;
         this.outOfMatchStops.set(station, since);
-        this.stopWaits.add(station);
-        changed = true;
+        // An empty slot has no robot to hold. If a DS shows up commanding
+        // Enabled anyway, noteDsControl starts the wait.
+        if (this.teamResolver(station) !== null) {
+          this.stopWaits.add(station);
+          changed = true;
+        }
       }
       if (!this.stopWaits.has(station)) continue;
       const why = this.dsStopped(station, since, now);

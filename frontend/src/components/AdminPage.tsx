@@ -14,7 +14,7 @@ import { OperatorAccessSection } from './OperatorAccess';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
-import { FieldEStopControl } from './FieldEStop';
+import { FieldEStopControl, stopWaitReason } from './FieldEStop';
 
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -119,6 +119,7 @@ function GlobalEStopSection() {
   const matchState = useMatchState();
   // Robots e-stopped on their own; the field latch is FieldEStopControl's.
   const stopped = StationNameList.filter(s => matchState?.stationStates[s]?.eStopBy);
+  const waiting = stopped.filter(s => matchState?.stationStates[s]?.stopWaiting).length;
   const [confirmClear, setConfirmClear] = useState(false);
   const phase = matchState?.phase;
   const matchRunning = phase !== undefined && phase !== 'idle' && phase !== 'created' && phase !== 'postMatch';
@@ -140,7 +141,7 @@ function GlobalEStopSection() {
                 <Button
                   color="inherit"
                   size="small"
-                  disabled={stopped.some(s => matchState?.stationStates[s]?.stopWaiting)}
+                  disabled={waiting > 0}
                   onClick={() => {
                     for (const s of stopped) sendAdminClearEStop(s);
                     setConfirmClear(false);
@@ -161,6 +162,7 @@ function GlobalEStopSection() {
         >
           E-stopped on their own: {stopped.map(s => prettyStationName(s)).join(', ')}. These robots stay stopped until
           the e-stop is cleared; teams then enable again from their Driver Station.
+          {waiting > 0 && ` ${stopWaitReason(waiting)}`}
         </Alert>
       )}
     </Box>

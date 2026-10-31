@@ -1108,6 +1108,16 @@ describe('an e-stop out of a match', () => {
     expect(engine.isEStopped('slot1')).toBe(false);
   });
 
+  test('a field stop only waits on stations with a robot', () => {
+    const engine = new MatchEngine(s => (s === 'slot1' ? 5940 : null));
+    engine.fieldEStop();
+    const { stationStates } = engine.getState();
+    expect(stationStates.slot1?.stopWaiting).toBe(true);
+    expect(stationStates.slot2?.stopWaiting).toBeUndefined();
+    engine.noteDsControl('slot2', true);
+    expect(engine.getState().stationStates.slot2?.stopWaiting).toBe(true);
+  });
+
   test('a cleared e-stop leaves nothing waiting', () => {
     const { engine, station } = setup();
     engine.noteDsControl('slot1', true);
