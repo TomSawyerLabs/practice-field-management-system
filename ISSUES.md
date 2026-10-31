@@ -95,14 +95,3 @@ Each needs a field visit. What to try and what each result means is in
   show, because the DS reports it to the field. Waiting on a first capture
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
-
-## A clear waiting on a match, lost to a restart, leaves the bridge up
-
-in progress — t3/f9a44adc
-
-A clear applied during a match leaves `active-config.json` without the team and
-the commit waiting in memory. After a graceful restart `restorePreviousStations`
-reads the team as gone, so no later commit tears down that bridge: `updateStation`
-returns early when `team` and `prevTeam` are both undefined. Seen by reading, not
-on a field. Matters because the bridge keeps its address and `pfms-fwd-` and
-`pfms-nat-vlan-` rules until another team takes the station.

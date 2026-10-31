@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -270,6 +270,115 @@ describe('after a graceful restart', () => {
   test('a rule the kernel lost is put back', async () => {
     await restored({ slot1: team('1234', true) }).removeStaleInternetRules();
     expect(kernel.internet()).toEqual(['pfms-nat-slot1 10.12.34.0/24']);
+  });
+});
+
+describe('a commit lost to a restart', () => {
+  /** A restart: the old process and what it held in memory are gone, the
+   *  kernel and active-config.json stay. */
+  function restart(before: RadioManager) {
+    before.stopPolling();
+    restorePreviousStations(() => null);
+    const rm = manager();
+    rm.whenConnected = () => Promise.resolve();
+    return rm;
+  }
+
+  /** The team's bridge is up, the config says it left, and the commit that
+   *  would have joined the two went with the process. */
+  async function clearLostToRestart() {
+    const before = manager();
+    await before.configure('slot1', team('1234', true));
+    before.setShouldDefer(() => true);
+    await before.clearAllConfigurations();
+    return restart(before);
+  }
+
+  test('a clear still takes the bridge down', async () => {
+    const rm = await clearLostToRestart();
+    await rm.recoverLostCommit();
+    expect(kernel.addresses.get('br-slot1')).toEqual([]);
+    expect(kernel.rules.map(r => r.comment)).toEqual(['pfms-no-hairpin']);
+  });
+
+  test('waits for the radio, which says what firmware it has', async () => {
+    const rm = await clearLostToRestart();
+    let connect = () => {};
+    rm.whenConnected = () => new Promise(resolve => (connect = resolve));
+    const recovered = rm.recoverLostCommit();
+    await Bun.sleep(0);
+    expect(kernel.addresses.get('br-slot1')).toEqual(['10.12.34.254']);
+    connect();
+    await recovered;
+    expect(kernel.addresses.get('br-slot1')).toEqual([]);
+  });
+
+  test('waits for robots like any commit', async () => {
+    const rm = await clearLostToRestart();
+    let robotsEnabled = true;
+    rm.setShouldDefer(() => robotsEnabled);
+    await rm.recoverLostCommit();
+    expect(kernel.addresses.get('br-slot1')).toEqual(['10.12.34.254']);
+    expect(rm.getPendingState().pending).toBe(true);
+
+    robotsEnabled = false;
+    await rm.commitConfiguration();
+    expect(kernel.addresses.get('br-slot1')).toEqual([]);
+  });
+
+  test('a station handed to a new team loses the old one', async () => {
+    const before = manager();
+    await before.configure('slot1', team('1234', true));
+    before.setShouldDefer(() => true);
+    before.setShouldHold(() => 'match');
+    await before.configure('slot1', team(''));
+    await before.configure('slot1', team('5678'));
+    before.setShouldHold(() => null);
+    await before.applyPendingChanges();
+
+    await restart(before).recoverLostCommit();
+    expect(kernel.addresses.get('br-slot1')).toEqual(['10.56.78.254']);
+    expect(kernel.internet()).toEqual([]);
+  });
+
+  test('a team missing from its bridge is set up', async () => {
+    const before = manager();
+    await before.configure('slot1', team('1234'));
+    kernel.addresses.delete('br-slot1');
+    await restart(before).recoverLostCommit();
+    expect(kernel.addresses.get('br-slot1')).toEqual(['10.12.34.254']);
+  });
+
+  test('nothing is committed when the bridges match, two robots of a team included', async () => {
+    const before = manager();
+    await before.configure('slot3', team('1700-A'));
+    await before.configure('slot4', team('1700-B'));
+    const rm = restart(before);
+    const commit = spyOn(rm, 'commitConfiguration');
+    await rm.recoverLostCommit();
+    expect(commit).not.toHaveBeenCalled();
+    expect(kernel.addresses.get('br-slot3')).toEqual(['10.17.0.254']);
+  });
+
+  test('a later commit tears down a team recovery found', async () => {
+    const before = manager();
+    await before.configure('slot1', team('1234'));
+    const rm = restart(before);
+    await rm.recoverLostCommit();
+    await rm.clearAllConfigurations();
+    expect(kernel.addresses.get('br-slot1')).toEqual([]);
+  });
+
+  test("a bridge that can't be read gets the commit, in case", async () => {
+    const before = manager();
+    await before.configure('slot1', team('1234'));
+    const rm = restart(before);
+    kernel.backend.listInterfaces = async () => {
+      throw new Error('ip: command failed');
+    };
+    const commit = spyOn(rm, 'commitConfiguration').mockResolvedValue();
+    await rm.recoverLostCommit();
+    expect(commit).toHaveBeenCalledTimes(1);
   });
 });
 

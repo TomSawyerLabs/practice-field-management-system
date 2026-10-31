@@ -182,6 +182,51 @@ export function restorePreviousStations(getTeamForStation: (s: StationName) => n
   }
 }
 
+/** The team whose gateway `address` is on a station's bridge, if it is one. */
+function teamOfGateway(address: string): number | undefined {
+  const octets = /^10\.(\d+)\.(\d+)\.(\d+)$/.exec(address)?.slice(1).map(Number);
+  if (!octets || octets[2] !== vlanHostOctet) return undefined;
+  return octets[0] * 100 + octets[1] || undefined;
+}
+
+/**
+ * restorePreviousStations for a graceful restart, going by the bridges where
+ * they know better. active-config.json can't say who is up: a change applied
+ * during a match waits for its commit, and the wait doesn't survive a restart.
+ * A team found on a bridge is what the next commit tears down.
+ *
+ * Returns whether a bridge and the config disagree, so a commit is owed.
+ */
+export async function restoreStationsFromBridges(
+  getTeamForStation: (s: StationName) => number | null,
+): Promise<boolean> {
+  restorePreviousStations(getTeamForStation);
+  let interfaces;
+  try {
+    interfaces = await net().listInterfaces();
+  } catch (err) {
+    appWarn(`Could not read the bridges after a restart, will re-apply the config: ${errorText(err)}`);
+    return true;
+  }
+
+  let differ = false;
+  for (const station of StationNameList) {
+    const name = bridgeName(station);
+    const onBridge = (interfaces.find(i => i.name === name)?.addresses ?? []).flatMap(a =>
+      a.family === 'inet' && a.prefixLength === 24 ? (teamOfGateway(a.address) ?? []) : [],
+    );
+    const configured = getTeamForStation(station);
+    if (configured === null ? onBridge.length === 0 : onBridge.includes(configured)) continue;
+    differ = true;
+    if (onBridge.length > 0) previousStations[station] = onBridge[0];
+    appWarn(
+      `${name} has ${onBridge.length ? `team ${onBridge[0]}` : 'no team'} but the config says ` +
+        `${configured ?? 'none'}, will re-apply the config`,
+    );
+  }
+  return differ;
+}
+
 /** Stations whose last pass failed part-way. They are torn down and set up
  *  again on the next pass even if their team hasn't changed — their kernel
  *  state is unknown. */

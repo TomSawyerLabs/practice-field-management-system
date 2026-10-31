@@ -1,6 +1,11 @@
 import { skippedInDryRunUnlessLocal } from './dryRun.js';
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { configureNetwork, setInternetAccess, syncInternetAccess } from './networkManager.js';
+import {
+  configureNetwork,
+  restoreStationsFromBridges,
+  setInternetAccess,
+  syncInternetAccess,
+} from './networkManager.js';
 import { appError, appInfo } from './appLogger.js';
 import { detectFirmwareMode } from './startupChecks.js';
 import { formatDuration, teamOfSsid } from './utils.js';
@@ -1095,6 +1100,22 @@ class RadioManager {
    *  through the middle of a commit. */
   removeStaleInternetRules(): Promise<void> {
     return this.enqueueRadioPush(() => this.syncInternetRules({ keepTeamsOnBridges: true }));
+  }
+
+  /**
+   * After a graceful restart, which keeps the bridges but loses any commit
+   * that was waiting on a match: read who is on them, and if that isn't the
+   * config, make the commit again. It waits for the radio, because a commit
+   * needs the firmware mode, and like any commit it waits for robots.
+   */
+  async recoverLostCommit(): Promise<void> {
+    let differ = false;
+    await this.enqueueRadioPush(async () => {
+      differ = await restoreStationsFromBridges(s => this.getTeamForStation(s));
+    });
+    if (!differ) return;
+    await this.whenConnected();
+    await this.commitConfiguration();
   }
 
   private async configureRadio(config: any): Promise<void> {

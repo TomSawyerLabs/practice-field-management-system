@@ -18,7 +18,6 @@ import {
   stopAllDHCP,
   vlanMap,
   bridgeName,
-  restorePreviousStations,
   setStopCut,
   duplicateDsBlock,
   migrateAllBridgeNat,
@@ -274,45 +273,14 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Connect to the radio in the background — don't block startup.
   // After a full restart (iptables were flushed), re-apply the restored activeConfig
   // once firmware mode is known, so configureNetwork knows whether to start dnsmasq.
+  // A graceful reload keeps the network: recoverLostCommit, below, checks it.
   (async () => {
     // Whichever radio answers first — the URL may be corrected in the setup
     // wizard while we wait. RadioManager detects the firmware mode itself.
     await radioManager.whenConnected();
 
-    // Re-apply config to rebuild network rules if needed.
-    const teamMappings = radioManager.getTeamMappings();
-    if (vlanInterface && Object.keys(teamMappings).length > 0) {
-      if (KeepNetwork) {
-        // Graceful reload — verify team bridges actually exist and have IPs.
-        // If a commit was staged but never applied before the restart,
-        // the bridges may be missing even though active-config.json has teams.
-        let vlansOk = true;
-        try {
-          const interfaces = await networkBackend().listInterfaces();
-          const ifaceIps = new Set<string>();
-          for (const iface of interfaces) {
-            for (const addr of iface.addresses) {
-              if (addr.family === 'inet') ifaceIps.add(addr.address);
-            }
-          }
-          for (const team of Object.keys(teamMappings).map(Number)) {
-            const expectedIp = `${teamSubnet(team)}.${VlanHostOctet}`;
-            if (!ifaceIps.has(expectedIp)) {
-              console.warn(`VLAN IP ${expectedIp} missing for team ${team} — will re-apply config`);
-              vlansOk = false;
-              break;
-            }
-          }
-        } catch {
-          vlansOk = false;
-        }
-        if (!vlansOk) {
-          await radioManager.commitConfiguration();
-        }
-      } else {
-        // Full restart — always re-apply
-        await radioManager.commitConfiguration();
-      }
+    if (!KeepNetwork && vlanInterface && Object.keys(radioManager.getTeamMappings()).length > 0) {
+      await radioManager.commitConfiguration();
     }
   })().catch(err => {
     console.error('Background radio connection failed:', err);
@@ -2236,8 +2204,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // stays in sync with rules that were left in place.
   if (vlanInterface && KeepNetwork) {
     // Tell networkManager which teams are already configured so future config
-    // changes properly tear down old routes and iptables rules.
-    restorePreviousStations(s => radioManager.getTeamForStation(s));
+    // changes properly tear down old routes and iptables rules, and put right
+    // a bridge that doesn't match the config.
+    radioManager.recoverLostCommit().catch(err => appWarn(`Could not check the bridges: ${(err as Error).message}`));
     // Rules written by an older pFMS: bring the bridges' NAT up to date.
     void migrateAllBridgeNat(s => radioManager.getTeamForStation(s));
     radioManager
