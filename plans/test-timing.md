@@ -106,6 +106,10 @@ All under 6 spinners on 2 logical cores with a 2-slot claim, except the last row
 | Final commits            | full suite  | normal   | 3/3, 982 pass             |
 | Final commits, typecheck | full suite  | normal   | 1/1 with no load          |
 
+After those runs master took the WebSocket guard work, so the commits that landed
+(`d6de4c6`) passed typecheck and 1046 tests with no load, but were not re-run under
+load.
+
 The 0/2 was `OperatorAuth` (31 scrypt hashes in a row), the `PracticeRecorder`
 fixture hook (40 s of video), and the `wsAccess` failure below. The first two now
 have limits that fit their work. The full suite wasn't measured on unchanged code:
