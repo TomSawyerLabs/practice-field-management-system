@@ -1270,7 +1270,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if (!vlanInterface || process.env.DRY_RUN || robotPacketCapture) return;
     robotPacketCapture = new RobotPacketCapture(
       vlanInterface,
-      () => radioManager.getTeamMappings(),
+      () => radioManager.getFieldTeamMappings(),
       update => {
         stationChecks.noteRobotPacket(update.station, update.batteryVoltage);
         broadcastTelemetry(update);

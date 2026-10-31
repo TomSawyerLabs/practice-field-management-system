@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +6,9 @@ import { restorePreviousStations, syncInternetAccess, useNetworkBackend } from '
 import { createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import { parseIptablesRule } from './node-ip/linux.js';
 import type { IptablesOptions, IptablesRuleInfo } from './node-ip/types.js';
+import { DS_CONTROL_QUIET_MS, MatchEngine, stopCut } from './matchEngine.js';
 import RadioManager from './radioManager.js';
+import { RobotPacketCapture } from './robotPacketCapture.js';
 import { ENABLED_STATE_WAIT_MS, TelemetryManager } from './telemetryManager.js';
 import type { StationName } from './types.js';
 
@@ -227,6 +229,78 @@ describe('while a commit waits on the match', () => {
     await rm.clearAllConfigurations(false, ssid => ssid === '5678');
     await rm.toggleInternetAccess('slot2', true);
     expect(kernel.internet()).toEqual(['pfms-nat-slot1 10.12.34.0/24', 'pfms-nat-slot2 10.56.78.0/24']);
+  });
+});
+
+describe('a field E-Stop on a slot whose release is waiting', () => {
+  afterEach(() => setSystemTime());
+
+  /** A DS control packet commanding Enabled, as the capture sees it. */
+  function control(src: string, enabled: boolean, vlan?: number) {
+    const octets = (a: string) => a.split('.').map(Number);
+    const eth = [...Array(12).fill(0), ...(vlan === undefined ? [] : [0x81, 0x00, 0, vlan]), 0x08, 0x00];
+    const ip = [0x45, 0, 0, 0, 0, 0, 0, 0, 64, 17, 0, 0, ...octets(src), ...octets('10.12.34.2')];
+    const udp = [0x04, 0x00, 0x04, 0x56, 0, 0, 0, 0];
+    return Buffer.from([...eth, ...ip, ...udp, 0, 1, 0x01, enabled ? 0x04 : 0, 0, 0]);
+  }
+
+  /** The team's release is applied and its commit deferred, so the robot is
+   *  still on its bridge, and wired as index.ts wires it. */
+  async function releasedWithCommitWaiting() {
+    const rm = manager();
+    await rm.configure('slot1', team('1234'));
+    rm.setShouldDefer(() => true);
+    await rm.clearAllConfigurations();
+    expect(rm.getTeamForStation('slot1')).toBeNull();
+
+    const engine = new MatchEngine(s => rm.getTeamForStation(s));
+    const capture = new RobotPacketCapture(
+      'eno1',
+      () => rm.getFieldTeamMappings(),
+      () => {},
+      true,
+      vlan => (vlan === 10 ? 'slot1' : undefined),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (station, enabled) => engine.noteDsControl(station, enabled),
+    );
+    const see = (data: Buffer) =>
+      (capture as unknown as { parsePacket(d: Buffer, at: number): void }).parsePacket(data, Date.now());
+    return { engine, see, cut: () => stopCut(engine.getState().stationStates.slot1) };
+  }
+
+  const LAPTOP = '10.55.132.86';
+  const GATEWAY = '10.12.34.254';
+
+  test('the cut holds while the DS still commands Enabled, seen only on the laptop side', async () => {
+    const { engine, see, cut } = await releasedWithCommitWaiting();
+    const start = Date.now();
+    setSystemTime(start);
+    engine.fieldEStop();
+    see(control(LAPTOP, true));
+    see(control(GATEWAY, true, 10));
+    expect(cut()).toBe(true);
+
+    // The cut drops the forwarded copy, so only the arriving one can be seen.
+    for (let elapsed = 500; elapsed <= 3 * DS_CONTROL_QUIET_MS; elapsed += 500) {
+      setSystemTime(start + elapsed);
+      see(control(LAPTOP, true));
+      await Bun.sleep(110);
+      expect(cut()).toBe(true);
+    }
+  });
+
+  test('and lifts once that DS shows Disabled', async () => {
+    const { engine, see, cut } = await releasedWithCommitWaiting();
+    engine.fieldEStop();
+    see(control(GATEWAY, true, 10));
+    see(control(LAPTOP, false));
+    expect(cut()).toBe(false);
   });
 });
 

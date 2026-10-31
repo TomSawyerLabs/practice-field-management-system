@@ -103,3 +103,14 @@ stamps it again while the radio still shows the old robot linked (seen 2026-10-3
 on a fake radio). `/csa` then told a new team in that slot "dropped off the field
 Wi-Fi, last linked 24 s ago", 1 s after it arrived. Matters because staff look for
 a lost robot, not one still joining.
+
+## An e-stop cut can still pulse for two robots of one team
+
+The laptop-side copy of a DS control packet can't be matched to a station when a
+team has two robots and pFMS doesn't know which robot that laptop drives
+(`RobotPacketCapture.resolveStation` returns undefined rather than guess). While
+the stop cut drops the forwarded copy, nothing reaches `noteDsControl`, so the wait
+lapses after 2 s (`DS_CONTROL_QUIET_MS`), the cut lifts, and the next packet re-arms
+it: the robot gets a burst of enabled packets about every 2 s. Seen by reading the
+code, not on a field. Matters because it's the one case left of the pulsing fixed
+for a deferred release: the laptop is the only thing that could say which robot.
