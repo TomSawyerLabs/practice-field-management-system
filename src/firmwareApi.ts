@@ -1,11 +1,13 @@
 import { IncomingMessage, ServerResponse } from 'http';
-import type { FirmwareStore } from './firmwareStore.js';
+import { FirmwareUploadRefused, type FirmwareStore } from './firmwareStore.js';
 import type { StaffHttpCheck } from './staffHttp.js';
 
 const MAX_FIRMWARE_SIZE = 100 * 1024 * 1024; // 100 MB
 
 /** Goes into a filename, so nothing here can leave the firmware directory. */
 const VERSION_FORMAT = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/;
+/** The radio's checksum of the decrypted image. It can't be compared to the
+ *  upload, so its shape is all there is to check here (see addManualFirmware). */
 const CHECKSUM_FORMAT = /^[0-9a-fA-F]{64}$/;
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -102,7 +104,7 @@ export function handleFirmwareRequest(
         json(res, 200, { message: 'Firmware uploaded', entry });
       })
       .catch(err => {
-        json(res, 500, { error: err.message });
+        json(res, err instanceof FirmwareUploadRefused ? 400 : 500, { error: err.message });
       });
     return true;
   }

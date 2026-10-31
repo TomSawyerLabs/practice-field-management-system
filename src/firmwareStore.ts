@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { createWriteStream } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
@@ -8,7 +9,9 @@ import { join } from 'node:path';
 export interface FirmwareEntry {
   /** Version string (e.g. "2.0.1") */
   version: string;
-  /** SHA-256 of the unencrypted firmware (used by the radio to verify the upload) */
+  /** SHA-256 of the unencrypted firmware. The radio checks it after decrypting
+   *  the image, so it never matches the `.img.enc` file itself: both images of
+   *  a release share one. */
   checksum: string;
   /** Local file path (set when the file is available on disk) */
   filePath?: string;
@@ -30,10 +33,16 @@ interface FirmwareManifest {
   entries: FirmwareEntry[];
 }
 
-const KNOWN_RELEASES: Omit<FirmwareEntry, 'filePath'>[] = [
+export type KnownRelease = Omit<FirmwareEntry, 'filePath'> & {
+  /** SHA-256 of the `.img.enc` file itself, which an upload can be checked against. */
+  imageSha256: string;
+};
+
+const KNOWN_RELEASES: KnownRelease[] = [
   {
     version: '2.0.1',
     checksum: '77575f490fa0a07503e5235cdd85118b0a81c69bc0b8db7a9fc131ea2d8c6315',
+    imageSha256: '1f595fdbcad9d501dc5047cef751fe551c53dd85ae354093043f28dd0dfa0e57',
     downloadUrl:
       'https://4239402461-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FzaDthb1gXvbj84qIfOUE%2Fuploads%2FDYZGxAFlpIglmx8C31gq%2FVH-109_2.0.1-02062026.FROM_1_2_X.img.enc?alt=media&token=711cee42-568c-4533-a5f7-712895e1c6a3',
     upgradeFrom: 'from12x',
@@ -41,6 +50,7 @@ const KNOWN_RELEASES: Omit<FirmwareEntry, 'filePath'>[] = [
   {
     version: '2.0.1',
     checksum: '77575f490fa0a07503e5235cdd85118b0a81c69bc0b8db7a9fc131ea2d8c6315',
+    imageSha256: 'bfe0e79ee872d2ce02111e24737ccd46af5f9f58f0d95f74b75e9864e08f4c52',
     downloadUrl:
       'https://4239402461-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FzaDthb1gXvbj84qIfOUE%2Fuploads%2FDOB0aVqc7pD50euGhir9%2FVH-109_2.0.1-02062026.img.enc?alt=media&token=e44ae3c3-5c07-48f6-8103-59e26cfe7839',
     upgradeFrom: 'pre12x',
@@ -56,6 +66,9 @@ function firmwareFilename(version: string, upgradeFrom: 'from12x' | 'pre12x'): s
   return `VH-109_${version}.${upgradeFrom === 'pre12x' ? '' : 'FROM_1_2_X.'}img.enc`;
 }
 
+/** An upload that can't be the firmware it says it is. */
+export class FirmwareUploadRefused extends Error {}
+
 export type FirmwareStoreListener = (entries: FirmwareEntry[]) => void;
 
 export class FirmwareStore {
@@ -63,7 +76,10 @@ export class FirmwareStore {
   private entries: FirmwareEntry[] = [];
   private listeners: FirmwareStoreListener[] = [];
 
-  constructor(storeDir?: string) {
+  constructor(
+    storeDir?: string,
+    private readonly knownReleases: KnownRelease[] = KNOWN_RELEASES,
+  ) {
     this.dir = storeDir ?? DEFAULT_STORE_DIR;
     if (!existsSync(this.dir)) {
       mkdirSync(this.dir, { recursive: true });
@@ -124,8 +140,26 @@ export class FirmwareStore {
     }
   }
 
-  /** Manually add a firmware file (uploaded by admin). */
+  /**
+   * Manually add a firmware file (uploaded by admin). A release this store
+   * knows is checked here, before anything is written. Any other version can't
+   * be: `checksum` covers what's inside the encrypted image, so only the radio
+   * can tell, when it's flashed.
+   */
   addManualFirmware(data: Buffer, checksum: string, version: string, upgradeFrom: 'from12x' | 'pre12x'): FirmwareEntry {
+    const known = this.knownReleases.find(r => r.version === version && r.upgradeFrom === upgradeFrom);
+    if (known) {
+      const sha256 = createHash('sha256').update(data).digest('hex');
+      if (sha256 !== known.imageSha256) {
+        throw new FirmwareUploadRefused(
+          `This file isn't the ${version} image for ${upgradeFrom}: its SHA-256 is ${sha256}, not ${known.imageSha256}`,
+        );
+      }
+      if (checksum.toLowerCase() !== known.checksum) {
+        throw new FirmwareUploadRefused(`The published checksum for ${version} is ${known.checksum}`);
+      }
+    }
+
     const filename = firmwareFilename(version, upgradeFrom);
     const filePath = join(this.dir, filename);
     writeFileSync(filePath, data);
@@ -260,7 +294,7 @@ export class FirmwareStore {
   /** Ensure all known releases are in the manifest (adds missing ones). */
   private reconcileKnownReleases(): void {
     let changed = false;
-    for (const known of KNOWN_RELEASES) {
+    for (const { imageSha256: _, ...known } of this.knownReleases) {
       const existing = this.entries.find(e => e.version === known.version && e.upgradeFrom === known.upgradeFrom);
       if (!existing) {
         this.entries.push({ ...known });
