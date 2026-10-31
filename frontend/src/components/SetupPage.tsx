@@ -324,6 +324,7 @@ function StepActions({ step }: { step: SetupStepId }) {
             size="small"
             label="Field-control interface"
             placeholder={current ? `${current} (native VLAN)` : 'Same as the trunk'}
+            slotProps={{ inputLabel: { shrink: true } }}
             value={fieldControl}
             onChange={e => setFieldControl(e.target.value.trim())}
             helperText={
