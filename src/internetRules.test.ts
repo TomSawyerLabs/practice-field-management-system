@@ -229,6 +229,52 @@ describe('while a commit waits on the match', () => {
   });
 });
 
+describe('a toggle during a commit', () => {
+  /** A commit stopped part-way through its rule sync. */
+  async function commitInProgress(rm: RadioManager) {
+    const list = kernel.backend.listRulesByComment;
+    let release = () => {};
+    const gate = new Promise<void>(resolve => (release = resolve));
+    let reached = () => {};
+    const atGate = new Promise<void>(resolve => (reached = resolve));
+    kernel.backend.listRulesByComment = async prefix => {
+      const rules = await list(prefix);
+      reached();
+      await gate;
+      return rules;
+    };
+    const commit = rm.commitConfiguration();
+    await atGate;
+    return { commit, release };
+  }
+
+  test('waits its turn, so it can’t land in the middle of the rule sync', async () => {
+    const rm = manager();
+    await rm.configure('slot1', team('1234'));
+    const { commit, release } = await commitInProgress(rm);
+
+    const toggled = rm.toggleInternetAccess('slot1', true);
+    await Bun.sleep(5);
+    expect(kernel.internet()).toEqual([]);
+
+    release();
+    await Promise.all([commit, toggled]);
+    expect(kernel.internet()).toEqual(['pfms-nat-slot1 10.12.34.0/24']);
+  });
+
+  test('does nothing if the team left while it waited', async () => {
+    const rm = manager();
+    await rm.configure('slot1', team('1234'));
+    const { commit, release } = await commitInProgress(rm);
+
+    const toggled = rm.toggleInternetAccess('slot1', true);
+    const cleared = rm.clearAllConfigurations();
+    release();
+    await Promise.all([commit, toggled, cleared]);
+    expect(kernel.internet()).toEqual([]);
+  });
+});
+
 describe('after a graceful restart', () => {
   const restored = (config: object) => {
     writeFileSync(process.env.ACTIVE_CONFIG_FILE!, JSON.stringify(config));
@@ -377,6 +423,36 @@ describe('a commit lost to a restart', () => {
       managers.push(rm);
       rm.whenConnected = () => Promise.resolve();
       await rm.recoverLostCommit();
+      expect(log.mock.calls.flat()).toContain('[dry-run] DHCP server not started for slot1 (1234)');
+    } finally {
+      log.mockRestore();
+      if (dryRun === undefined) delete process.env.DRY_RUN;
+      else process.env.DRY_RUN = dryRun;
+    }
+  });
+
+  test('in OFFSEASON, the teams on the bridges get their DHCP even while the commit waits', async () => {
+    const dryRun = process.env.DRY_RUN;
+    process.env.DRY_RUN = '1';
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const before = new RadioManager('http://127.0.0.1:1', 'eno1', 'OFFSEASON');
+      before.stopPolling();
+      managers.push(before);
+      await before.configure('slot1', team('1234'));
+      before.setShouldDefer(() => true);
+      await before.clearAllConfigurations();
+      log.mockClear();
+
+      restorePreviousStations(() => null);
+      const rm = new RadioManager('http://127.0.0.1:1', 'eno1', 'OFFSEASON');
+      rm.stopPolling();
+      managers.push(rm);
+      rm.whenConnected = () => Promise.resolve();
+      rm.setShouldDefer(() => true);
+      await rm.recoverLostCommit();
+      expect(rm.getPendingState().deferred).toBe(true);
+      expect(kernel.addresses.get('br-slot1')).toEqual(['10.12.34.254']);
       expect(log.mock.calls.flat()).toContain('[dry-run] DHCP server not started for slot1 (1234)');
     } finally {
       log.mockRestore();

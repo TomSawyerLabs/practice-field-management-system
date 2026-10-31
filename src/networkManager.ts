@@ -182,6 +182,12 @@ export function restorePreviousStations(getTeamForStation: (s: StationName) => n
   }
 }
 
+/** The team really on each station's bridge. A commit that's waiting hasn't
+ *  changed these, whatever the config says by now. */
+export function teamsOnBridges(): Partial<Stations> {
+  return { ...previousStations };
+}
+
 /** The team whose gateway `address` is on a station's bridge, if it is one. */
 function teamOfGateway(address: string): number | undefined {
   const octets = /^10\.(\d+)\.(\d+)\.(\d+)$/.exec(address)?.slice(1).map(Number);

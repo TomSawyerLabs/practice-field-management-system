@@ -5,6 +5,7 @@ import {
   restoreStationsFromBridges,
   setInternetAccess,
   startDHCPServers,
+  teamsOnBridges,
   syncInternetAccess,
 } from './networkManager.js';
 import { appError, appInfo } from './appLogger.js';
@@ -1113,7 +1114,8 @@ class RadioManager {
    * that was waiting on a match: read who is on them, and if that isn't the
    * config, make the commit again. It waits for the radio, because a commit
    * needs the firmware mode, and like any commit it waits for robots. With
-   * no commit owed, the DHCP servers the reload stopped still need starting.
+   * no commit owed, or while one waits, the DHCP servers the reload stopped
+   * still need starting: a new device on a bridge gets no address without them.
    */
   async recoverLostCommit(): Promise<void> {
     let differ = false;
@@ -1121,10 +1123,11 @@ class RadioManager {
       differ = await restoreStationsFromBridges(s => this.getTeamForStation(s));
     });
     await this.whenConnected();
-    if (differ) return this.commitConfiguration();
+    if (differ) await this.commitConfiguration();
+    if (differ && !this._deferredCommit) return; // The commit started them.
     const trunk = this.radioManagementInterface;
     if (!trunk || this.firmwareMode === 'PRACTICE') return;
-    await this.enqueueRadioPush(() => startDHCPServers(this.teamsOnStations(), trunk));
+    await this.enqueueRadioPush(() => startDHCPServers(teamsOnBridges(), trunk));
   }
 
   private async configureRadio(config: any): Promise<void> {
@@ -1236,8 +1239,13 @@ class RadioManager {
       return;
     }
 
-    await setInternetAccess(stationId, team, this.radioManagementInterface, enabled);
-    this.saveActiveConfig();
+    // Queued: a commit's rule sync reads the kernel and acts on what it read.
+    const trunk = this.radioManagementInterface;
+    await this.enqueueRadioPush(async () => {
+      if (this.activeConfig[stationId] !== config) return; // The team left while this waited.
+      await setInternetAccess(stationId, team, trunk, enabled);
+      this.saveActiveConfig();
+    });
   }
 
   getTeamMappings(): Record<number, StationName> {
