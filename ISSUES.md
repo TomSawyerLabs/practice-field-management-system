@@ -122,14 +122,3 @@ Stops now go through `stopDelivery`, but the other ~100 `ws?.send(...)` calls in
 CONNECTING throws `InvalidStateError` in the click handler, and one pressed while
 it's closed is lost with no sign (Clear field E-Stop, Ready, Join). Reproduced in
 headless Chrome. None of them stops a robot, so it's lost actions, not a safety gap.
-
-## Steamboat's Caddy container has never been through a reboot
-
-`caddy.service` showing `failed` is a dead leftover, not a fault. Caddy runs only in
-the ops `caddy` container (`caddy run --resume` is that container's PID 1), and the
-unit has been `failed` and disabled since the 2026-05-18 cutover. pFMS is unaffected,
-and nothing in pFMS watches that unit. What's left matters because all pFMS traffic
-goes through Caddy: the container is expected to return after a reboot, but steamboat
-hasn't rebooted since the cutover, so that's unproven. Cleanup and any reboot test are
-ops changes that need the user's yes: `plans/steamboat-caddy-service.md` on the ops
-branch `steamboat-caddy-service-diagnosis`.

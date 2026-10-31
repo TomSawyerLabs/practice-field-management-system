@@ -48,7 +48,7 @@ Before the deploy, at 1:08 PM PDT (20:08Z): phase idle, no team on any slot, no 
 pending radio commit, all six `eStop` false, no `fieldEStop`, no bookings. The admin
 file is copied to `admin-auth.json.bak-before-scrypt-20261031` beside the original on
 steamboat, `0600`, identical to the original at the time. It's the only way back from
-the scrypt upgrade, so keep it until that login has been seen working.
+the scrypt upgrade.
 
 After it: `/health` reports `8a2dd38` and `eStopped:false`. All three stale NAT rules
 removed, none left. No `has team X but the config says`, no `Could not check the
@@ -56,16 +56,16 @@ bridges`, no radio reconfiguration, nothing matching error or exception in the j
 From this PC, `ws://pfms.tsl/ws` still delivers `robotDropouts`, `firmwareStoreUpdate`
 and `networkStats`, and `https://pfms.tomsawyerlabs.com/` answers 200.
 
+Seen since: the user confirmed the login page from outside (2026-10-31), and
+`admin-auth.json` upgraded at 3:46 PM PDT (22:46Z), now `0600`.
+
 Not seen on the real system yet:
 
-- **The login page from outside.** This PC resolves that hostname to `10.255.0.5`, so
-  it can't play an internet visitor. Check from a phone off the site's Wi-Fi.
 - **Real data in those three messages.** The field was empty, so they prove delivery,
   not contents. The `onFieldClient` move gets its real test with teams on.
 - **`estop-state.json`.** It doesn't exist until the first stop. The service runs as
   root in a directory that holds its other state, so a write should work, but none
   has happened.
-- **`admin-auth.json` upgrade.** It happens at the first admin login, and goes to `0600`.
 
 Earlier deploys: `4c4b24a` at 8:42 PM PDT and `c08e287` at 9:02 PM PDT on 2026-10-30.
 
@@ -147,6 +147,9 @@ what's landed, and raises one only if it gates a deploy.
   flaky test thread.
 - **The batch's merged worktrees removed** (user's yes, 2026-10-31). Their branches
   stayed, because the yes covered worktrees only. All eight are fully on master.
+- **No reboot test for steamboat's Caddy container** (2026-10-31). The user will wait
+  for a power outage to prove it comes back. There's no bare-metal Caddy: the host's
+  was retired by ops `e3e3a09`. After any outage, check pFMS answers through Caddy.
 - **Setup-page restart idea dropped:** already solved by `edc128c` and `56185eb`.
 - **This site has no host team,** so nobody needs to enter one.
 - **Firmware uploads pin known releases** rather than hashing against the `checksum`,
