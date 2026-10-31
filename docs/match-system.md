@@ -116,6 +116,8 @@ DS) cannot act as the match controller or field staff: `/match` and
 page can be reopened on a phone or spare device in one scan. The check is
 live — plugging a DS in (or unplugging it) flips the pages without a
 reload, and a blocked staff page also stops sending presence heartbeats.
+The **E-STOP** stays on that notice, because the match may be false and a
+stop works from any device.
 
 The server decides this, per connection, and refuses the same actions
 itself. A laptop wired to the field for its DS but browsing over guest Wi-Fi

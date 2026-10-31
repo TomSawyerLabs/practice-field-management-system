@@ -24,13 +24,6 @@ the whole `matchState`, which includes each connected Driver Station's address
 because this is the remaining way to read the field from outside: a trimmed public
 copy of what the scoreboard actually draws would close it.
 
-## A false Driver Station match hides E-STOP on /match (in progress — t3/603a506e)
-
-`MatchControlPage.tsx:469` returns `DsClientBlock` before `FieldEStopControl`
-renders (seen 2026-10-30), so a device that only shares a DS's hostname has no
-E-STOP on screen until someone presses "This isn't a Driver Station". Matters
-because a false match isn't meant to get in the way of a stop.
-
 ## /staff and /csa have no stop button (in progress — t3/603a506e)
 
 Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen

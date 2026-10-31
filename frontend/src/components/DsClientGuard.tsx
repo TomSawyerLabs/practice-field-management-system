@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 import { QRCodeSVG } from 'qrcode.react';
 import { StationName } from '../../../src/types';
 import { sendDsClientDismiss, useDsClientState, useMatchState } from '../hooks/useBackend';
+import { FieldEStopControl } from './FieldEStop';
 
 /**
  * The station this device appears to be the Driver Station of. `undefined`
@@ -24,7 +25,8 @@ export function useDsClientStation(): StationName | null | undefined {
 /**
  * Full-page block shown when a Driver Station laptop opens an operator page
  * (match control, field staff). A DS must not double as the match operator —
- * the QR code hands the page off to a phone or spare device in one scan.
+ * the QR code hands the page off to a phone or spare device in one scan. The
+ * E-STOP stays: the match may be false, and a stop works from any device.
  */
 export function DsClientBlock({ station, roleNoun }: { station: StationName; roleNoun: string }) {
   const matchState = useMatchState();
@@ -35,6 +37,7 @@ export function DsClientBlock({ station, roleNoun }: { station: StationName; rol
 
   return (
     <Container maxWidth="sm" sx={{ py: 6 }}>
+      <FieldEStopControl />
       <Card>
         <CardContent sx={{ textAlign: 'center', py: 4 }}>
           <Typography variant="h4" sx={{ mb: 1, fontWeight: 700 }}>
@@ -68,7 +71,7 @@ export function DsClientBlock({ station, roleNoun }: { station: StationName; rol
 /**
  * For the staff pages that are still useful to look at on a Driver Station
  * (`/csa`, `/test`, `/overview`): a warning instead of a block, because the
- * server refuses their actions from this device.
+ * server refuses their actions from this device. Stops aren't refused.
  */
 export function DsClientNotice() {
   const ds = useDsClientState();
@@ -86,7 +89,7 @@ export function DsClientNotice() {
       }
     >
       {ds.by === 'hostname' ? 'This device looks like a Driver Station' : 'This device is a Driver Station'}, so staff
-      actions on this page are turned off. Use a phone or another device for those.
+      actions on this page are turned off, apart from the E-Stop. Use a phone or another device for those.
     </Alert>
   );
 }
