@@ -202,6 +202,23 @@ no confirmation and no login, even on a page locked by the operator code:
   band across the screen, and a Driver Station held out of a match shows
   `Field E-Stop` (`FieldES` on a 2027 DS) as its game data.
 
+### A stop pressed with no connection
+
+A press is not done when the page sends it: it's done when the field's own state
+shows it. This covers every stop on a page: the field E-Stop, a robot's E-Stop
+(team or staff), A-Stop, the team's **Stop robot**, Disable, Cancel Match, Pause
+and cancelling a countdown (`frontend/src/utils/stopDelivery.ts`).
+
+- While the page isn't connected, the stop controls say so before anyone presses.
+- A press with no connection waits, says plainly that it **has NOT reached the
+  field**, and goes out as soon as the page reconnects.
+- A press the field hasn't shown within 2 s says **NOT CONFIRMED**. The page drops
+  that socket for a new one, rather than wait up to 30 s for its watchdog, and sends
+  the stop again.
+- A press is given up on 30 s after it was pressed, so it can't fire long after
+  someone has dealt with whatever prompted it. It stays on screen as **DROPPED** with
+  the time, until it's dismissed or pressed again.
+
 ### E-stops survive a restart
 
 The field E-Stop, each robot's own e-stop and each team Stop are saved on every

@@ -85,7 +85,13 @@ import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { OperatorBar, OperatorOnly } from './OperatorAccess';
-import { FieldEStopControl, RobotsEnabledThroughStop, StopBlindSpotNote, stopWaitReason } from './FieldEStop';
+import {
+  FieldEStopControl,
+  RobotsEnabledThroughStop,
+  StopBlindSpotNote,
+  StopPressNotes,
+  stopWaitReason,
+} from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
 import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
@@ -1368,82 +1374,87 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
     (phase === 'auto' || phase === 'teleop' || phase === 'endgame') && !state?.aStop && (state?.joined ?? false);
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        px: 1.5,
-        py: 0.75,
-        borderRadius: 1,
-        border: 1,
-        borderColor: isEStopped ? 'error.main' : !isEnabled ? 'warning.main' : 'divider',
-        backgroundColor: isEStopped ? 'rgba(211,47,47,0.08)' : !isEnabled ? 'rgba(255,167,38,0.08)' : undefined,
-      }}
-    >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <TeamAvatar teamNumber={state?.teamNumber} size={22} />
-        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {teamLabel(state, allStates)}
-        </Typography>
-        {isEStopped && (
-          <Chip
-            label={ownEStop ? `E-STOPPED (${ESTOP_BY_LABEL[state!.eStopBy!]})` : 'FIELD E-STOP'}
-            color="error"
-            size="small"
-            sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
-          />
-        )}
-        {!isEStopped && !isEnabled && (
-          <Chip label="Disabled" color="warning" size="small" sx={{ height: 20, fontSize: '0.65rem' }} />
-        )}
-        {!isEStopped && isEnabled && (
-          <Chip label="Enabled" color="success" size="small" sx={{ height: 20, fontSize: '0.65rem' }} />
-        )}
-        {/* Why Enable may do nothing: the field has not heard from this DS for 5 s+ */}
-        {state?.joined && state.dsAttached === false && (
-          <Chip
-            label="DS offline"
-            color="error"
-            variant="outlined"
-            size="small"
-            sx={{ height: 20, fontSize: '0.65rem' }}
-          />
-        )}
-      </Box>
-      <Box sx={{ display: 'flex', gap: 0.5 }}>
-        {isEStopped ? (
-          ownEStop && <ClearEStopButton station={station} state={state} />
-        ) : (
-          <>
-            {/* Both buttons stay put: one that swapped Enable for Disable as soon
+    <>
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 0.5,
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          px: 1.5,
+          py: 0.75,
+          borderRadius: 1,
+          border: 1,
+          borderColor: isEStopped ? 'error.main' : !isEnabled ? 'warning.main' : 'divider',
+          backgroundColor: isEStopped ? 'rgba(211,47,47,0.08)' : !isEnabled ? 'rgba(255,167,38,0.08)' : undefined,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <TeamAvatar teamNumber={state?.teamNumber} size={22} />
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {teamLabel(state, allStates)}
+          </Typography>
+          {isEStopped && (
+            <Chip
+              label={ownEStop ? `E-STOPPED (${ESTOP_BY_LABEL[state!.eStopBy!]})` : 'FIELD E-STOP'}
+              color="error"
+              size="small"
+              sx={{ height: 20, fontSize: '0.65rem', fontWeight: 700 }}
+            />
+          )}
+          {!isEStopped && !isEnabled && (
+            <Chip label="Disabled" color="warning" size="small" sx={{ height: 20, fontSize: '0.65rem' }} />
+          )}
+          {!isEStopped && isEnabled && (
+            <Chip label="Enabled" color="success" size="small" sx={{ height: 20, fontSize: '0.65rem' }} />
+          )}
+          {/* Why Enable may do nothing: the field has not heard from this DS for 5 s+ */}
+          {state?.joined && state.dsAttached === false && (
+            <Chip
+              label="DS offline"
+              color="error"
+              variant="outlined"
+              size="small"
+              sx={{ height: 20, fontSize: '0.65rem' }}
+            />
+          )}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 0.5 }}>
+          {isEStopped ? (
+            ownEStop && <ClearEStopButton station={station} state={state} />
+          ) : (
+            <>
+              {/* Both buttons stay put: one that swapped Enable for Disable as soon
                 as the enable landed turned a double click into an admin disable
                 nobody meant (2026-09-27, on a robot whose DS was offline). */}
-            <Button
-              size="small"
-              variant="outlined"
-              color="success"
-              onClick={() => sendAdminStationEnable(station)}
-              disabled={isEnabled || !canEnable || locked}
-            >
-              Enable
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              color="warning"
-              onClick={() => sendAdminStationDisable(station)}
-              disabled={!isEnabled}
-            >
-              Disable
-            </Button>
-            <Button size="small" variant="contained" color="error" onClick={() => sendAdminStationEStop(station)}>
-              E-Stop One
-            </Button>
-          </>
-        )}
+              <Button
+                size="small"
+                variant="outlined"
+                color="success"
+                onClick={() => sendAdminStationEnable(station)}
+                disabled={isEnabled || !canEnable || locked}
+              >
+                Enable
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="warning"
+                onClick={() => sendAdminStationDisable(station)}
+                disabled={!isEnabled}
+              >
+                Disable
+              </Button>
+              <Button size="small" variant="contained" color="error" onClick={() => sendAdminStationEStop(station)}>
+                E-Stop One
+              </Button>
+            </>
+          )}
+        </Box>
       </Box>
-    </Box>
+      <StopPressNotes station={station} quiet />
+    </>
   );
 }
 

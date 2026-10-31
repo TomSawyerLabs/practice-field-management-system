@@ -6,12 +6,16 @@ import Typography from '@mui/material/Typography';
 import { DisabledBy, MatchPhase, MatchState, StationName } from '../../../src/types';
 import {
   useMatchState,
+  useStopPresses,
+  useWsConnected,
   sendStationReady,
   sendStationSelfAStop,
   sendStationClearAStop,
   sendStationSelfEStop,
   sendStationSelfUndisable,
 } from '../hooks/useBackend';
+import { describeStopPress, type StopPress } from '../utils/stopDelivery';
+import { STOPS_OFFLINE } from './FieldEStop';
 import { useMatchAudio } from '../hooks/useMatchAudio';
 
 /**
@@ -112,6 +116,7 @@ let popupOpenedAt = 0;
 let lastState: ConsoleState | null = null;
 
 // Console element refs (valid while the current window's DOM is built)
+let stopNoteEl: HTMLElement | null = null;
 let phaseEl: HTMLElement | null = null;
 let timerEl: HTMLElement | null = null;
 let robotsEl: HTMLElement | null = null;
@@ -164,6 +169,17 @@ const phaseColors: Partial<Record<MatchPhase, string>> = {
   endgame: '#ffb300',
 };
 
+/** This window's own word on a stop that hasn't landed: the page behind it,
+ *  which says the same, may be covered. */
+function paintStopNote(station: StationName, presses: StopPress[], connected: boolean) {
+  if (!stopNoteEl) return;
+  const said = presses.filter(p => p.station === station).flatMap(p => describeStopPress(p) ?? []);
+  const lines = said.map(s => `${s.title}. ${s.detail}`);
+  if (lines.length === 0 && !connected) lines.push(STOPS_OFFLINE);
+  stopNoteEl.textContent = lines.join(' ');
+  stopNoteEl.style.display = lines.length > 0 ? 'block' : 'none';
+}
+
 function mkBtn(doc: Document, onClick: (ev: MouseEvent) => void): HTMLButtonElement {
   const b = doc.createElement('button');
   b.style.cssText =
@@ -198,6 +214,10 @@ function buildConsole(w: Window) {
     'font-size:20px;line-height:1;padding:4px 6px;border-radius:8px;';
   muteBtn.addEventListener('click', () => togglePopupMuted());
   header.append(phaseEl, timerEl, muteBtn);
+
+  stopNoteEl = doc.createElement('div');
+  stopNoteEl.style.cssText =
+    'display:none;background:#d32f2f;color:#fff;font-weight:700;font-size:14px;line-height:1.35;padding:8px 12px;';
 
   robotsEl = doc.createElement('div');
   robotsEl.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;justify-content:center;padding:6px 10px;';
@@ -264,7 +284,7 @@ function buildConsole(w: Window) {
   boxText.textContent = 'Close this window when the match starts';
   footerEl.append(closeBox, boxText);
 
-  doc.body.append(header, robotsEl, main, hintEl, footerEl);
+  doc.body.append(header, stopNoteEl, robotsEl, main, hintEl, footerEl);
 }
 
 function formatTime(phase: MatchPhase, remainingTime: number): string {
@@ -475,6 +495,8 @@ export function openMatchPopup() {
 
 export function AStopPopout({ station }: { station: StationName }) {
   const matchState = useMatchState();
+  const presses = useStopPresses();
+  const connected = useWsConnected();
   const [isOpen, setIsOpen] = useState(popupIsOpen);
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(popupMuted);
@@ -539,6 +561,8 @@ export function AStopPopout({ station }: { station: StationName }) {
     setIsOpen(true);
     setBlocked(false);
   }, [desired, phase, station, matchState]);
+
+  useEffect(() => paintStopNote(station, presses, connected), [station, presses, connected, isOpen]);
 
   // Notice manual closes; also reap a stray setup window when the join it was
   // opened for never landed (e.g. alliance full) — with a grace period so the

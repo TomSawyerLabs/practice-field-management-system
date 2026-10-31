@@ -9,6 +9,7 @@ import Alert from '@mui/material/Alert';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
 import { AStopPopout, openMatchPopup } from './AStopPopout';
+import { StopPressNotes } from './FieldEStop';
 import { MatchPhase, StationName, StationControlState } from '../../../src/types';
 import {
   useMatchState,
@@ -21,6 +22,7 @@ import {
   sendStationSelfAStop,
   sendStationClearAStop,
   sendStationTeamStop,
+  useWsConnected,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { phaseLabel } from '../utils/matchFormat';
@@ -261,6 +263,7 @@ export function FreeplayStopButton({ station }: { station: StationName }) {
  */
 export function FreeplayControl({ station }: { station: StationName }) {
   const myState = useFreeplayState(station);
+  const connected = useWsConnected();
   if (!myState) return null;
 
   // TeamEStopBanner, at the top of the page, says why and what to do.
@@ -271,7 +274,12 @@ export function FreeplayControl({ station }: { station: StationName }) {
         severity="error"
         sx={{ mb: 2, alignItems: 'center' }}
         action={
-          <Button color="inherit" variant="outlined" onClick={tapOnly(() => sendStationTeamStop(station, false))}>
+          <Button
+            color="inherit"
+            variant="outlined"
+            disabled={!connected}
+            onClick={tapOnly(() => sendStationTeamStop(station, false))}
+          >
             Let it drive again
           </Button>
         }
@@ -580,6 +588,9 @@ export function MatchPanelForControl({ station }: { station: StationName; ssid: 
               </Typography>
             </>
           )}
+
+          {/* Beside the stops below, which can be a long way from the top of a phone. */}
+          {joined && <StopPressNotes station={station} quiet />}
 
           {/* Active match: self-service controls */}
           {joined && isActive && <SelfServiceControls station={station} phase={phase} myState={myState} />}

@@ -22,6 +22,9 @@ and provides:
 - **Self-service matches** — teams join, ready up, and run official-timing
   matches with field-staff ready checks, hold-to-start, E-Stop/A-Stop, and
   match audio ([details](docs/match-system.md))
+- **Stops that hold** — a stop pressed on a page that's offline waits, says
+  so, and goes out on reconnect, and e-stops survive a restart
+  ([details](docs/match-system.md#a-stop-pressed-with-no-connection))
 - **Operator login** — an optional code or QR pairing for the pages that run
   the field, which stop buttons never need
   ([details](docs/support.md#operator-login))

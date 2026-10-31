@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { jsonEqual } from '../utils/jsonEqual';
+import { StopDelivery, type StopPress } from '../utils/stopDelivery';
 import {
   Alliance,
   ApiKeyCreated,
@@ -207,12 +208,38 @@ let ws: WebSocket | null = null;
 let wsConnected = false;
 let lastMessageAt = Date.now();
 
+// Every stop goes through this, not straight onto the socket: see stopDelivery.ts.
+const stopDelivery = new StopDelivery({
+  isOpen: () => wsConnected && ws?.readyState === WebSocket.OPEN,
+  send: text => ws?.send(text),
+  reconnect: reconnectNow,
+});
+setInterval(() => stopDelivery.review(), 250);
+
+/** Leave a socket that may be half dead. close() on one can take a long time to
+ *  fire onclose, and a stop waiting on it can't wait that long. */
+function reconnectNow() {
+  const old = ws;
+  if (!old) return;
+  old.onopen = old.onmessage = old.onerror = old.onclose = null;
+  try {
+    old.close();
+  } catch {
+    // already closing
+  }
+  wsConnected = false;
+  stopDelivery.socketLost();
+  events.dispatchEvent(new CustomEvent('wsStatus', { detail: false }));
+  connect();
+}
+
 // Dead-socket watchdog: the server heartbeats serverInfo every 10 s, so a
 // socket silent for 30+ s is dead even if TCP never noticed (Chromecast
 // receivers whose Wi-Fi naps are the classic case — the display freezes on
 // stale scores). Force a close; the onclose handler reconnects and the
 // server replays fresh state.
 const WS_SILENCE_TIMEOUT_MS = 30_000;
+const WS_CONNECT_TIMEOUT_MS = 5_000;
 setInterval(() => {
   if (!ws || !wsConnected) return;
   if (Date.now() - lastMessageAt > WS_SILENCE_TIMEOUT_MS) {
@@ -238,6 +265,12 @@ function connect() {
 
   // TODO: Reconnect
   const nws = new WebSocket(url);
+
+  // A network that's gone swallows the handshake and never says so, and a
+  // stop may be waiting on this socket. Closing it lands in onclose's retry.
+  setTimeout(() => {
+    if (nws.readyState === WebSocket.CONNECTING) nws.close();
+  }, WS_CONNECT_TIMEOUT_MS);
 
   nws.onmessage = msg => {
     lastMessageAt = Date.now();
@@ -273,18 +306,21 @@ function connect() {
     if (wsPath === '/ws') resubscribeAll(nws);
     wsConnected = true;
     events.dispatchEvent(new CustomEvent('wsStatus', { detail: true }));
+    stopDelivery.socketOpened();
   };
   nws.onerror = error => {
     if (!wsConnected) return;
 
     console.error('WebSocket error:', error);
     wsConnected = false;
+    stopDelivery.socketLost();
     events.dispatchEvent(new CustomEvent('wsStatus', { detail: false }));
   };
 
   nws.onclose = () => {
     console.log('Disconnected from backend');
     wsConnected = false;
+    stopDelivery.socketLost();
     events.dispatchEvent(new CustomEvent('wsStatus', { detail: false }));
     setTimeout(connect, 1000);
   };
@@ -611,6 +647,7 @@ function handleRadioMessage(detail: RadioMessage) {
 
 function handleMatchState(state: MatchState) {
   currentMatchState = state;
+  stopDelivery.noteState(state);
   events.dispatchEvent(new CustomEvent('matchState', { detail: state }));
 }
 
@@ -1336,6 +1373,22 @@ export function useWsConnected(): boolean {
   return connected;
 }
 
+/** Stops pressed on this page that the field hasn't shown yet. */
+export function useStopPresses(): StopPress[] {
+  const [presses, setPresses] = useState(() => stopDelivery.list());
+
+  useEffect(() => {
+    setPresses(stopDelivery.list());
+    return stopDelivery.subscribe(() => setPresses(stopDelivery.list()));
+  }, []);
+
+  return presses;
+}
+
+export function dismissStopPress(key: string) {
+  stopDelivery.dismiss(key);
+}
+
 // ── Saved Teams ─────────────────────────────────────────────────────
 
 /** One team's saved robot configs (its SSIDs), subscribed while mounted.
@@ -1656,7 +1709,7 @@ export function sendStationStartMatch() {
 }
 
 export function sendStationPauseMatch() {
-  ws?.send(JSON.stringify({ type: 'stationPauseMatch' }));
+  stopDelivery.press({ type: 'stationPauseMatch' });
 }
 
 export function sendStationResumeMatch() {
@@ -1676,7 +1729,7 @@ export function sendMatchCreate() {
 }
 
 export function sendMatchAbortCountdown() {
-  ws?.send(JSON.stringify({ type: 'matchAbortCountdown' }));
+  stopDelivery.press({ type: 'matchAbortCountdown' });
 }
 
 export function sendMatchCancel() {
@@ -1752,12 +1805,13 @@ export function sendStaffHeartbeat(role: StaffRole) {
 }
 
 export function sendStationSelfDisable(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'stationSelfDisable', station }));
+  stopDelivery.press({ type: 'stationSelfDisable', station });
 }
 
 /** Out of a match: stop the robot from the team's page, or let it drive again. */
 export function sendStationTeamStop(station: StationName, stop: boolean) {
-  ws?.send(JSON.stringify({ type: 'stationTeamStop', station, stop }));
+  if (stop) stopDelivery.press({ type: 'stationTeamStop', station, stop });
+  else ws?.send(JSON.stringify({ type: 'stationTeamStop', station, stop }));
 }
 
 export function sendStationSelfUndisable(station: StationName) {
@@ -1765,11 +1819,11 @@ export function sendStationSelfUndisable(station: StationName) {
 }
 
 export function sendStationSelfEStop(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'stationSelfEStop', station }));
+  stopDelivery.press({ type: 'stationSelfEStop', station });
 }
 
 export function sendStationSelfAStop(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'stationSelfAStop', station }));
+  stopDelivery.press({ type: 'stationSelfAStop', station });
 }
 
 export function sendStationClearAStop(station: StationName) {
@@ -1778,12 +1832,12 @@ export function sendStationClearAStop(station: StationName) {
 
 /** Cancel Match: end the running or paused match. Only its robots stop. */
 export function sendAdminStopMatch() {
-  ws?.send(JSON.stringify({ type: 'adminStopMatch' }));
+  stopDelivery.press({ type: 'adminStopMatch' });
 }
 
 /** Latch the field E-Stop: every robot on the field stops until cleared. */
 export function sendAdminGlobalEStop() {
-  ws?.send(JSON.stringify({ type: 'adminGlobalEStop' }));
+  stopDelivery.press({ type: 'adminGlobalEStop' });
 }
 
 export function sendAdminClearFieldEStop() {
@@ -1791,11 +1845,11 @@ export function sendAdminClearFieldEStop() {
 }
 
 export function sendAdminStationEStop(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'adminStationEStop', station }));
+  stopDelivery.press({ type: 'adminStationEStop', station });
 }
 
 export function sendAdminStationDisable(station: StationName) {
-  ws?.send(JSON.stringify({ type: 'adminStationDisable', station }));
+  stopDelivery.press({ type: 'adminStationDisable', station });
 }
 
 export function sendAdminStationEnable(station: StationName) {

@@ -7,8 +7,17 @@ import Typography from '@mui/material/Typography';
 import { StationNameList } from '../../../src/types';
 import type { EStopSource, MatchState, StationControlState, StationName } from '../../../src/types';
 import { prettyStationName } from '../../../src/utils';
-import { sendAdminClearFieldEStop, sendAdminGlobalEStop, useMatchState, useRobotEStops } from '../hooks/useBackend';
+import {
+  dismissStopPress,
+  sendAdminClearFieldEStop,
+  sendAdminGlobalEStop,
+  useMatchState,
+  useRobotEStops,
+  useStopPresses,
+  useWsConnected,
+} from '../hooks/useBackend';
 import { describeRobotEStop } from '../utils/robotEStop';
+import { describeStopPress } from '../utils/stopDelivery';
 
 // ── Why a robot is e-stopped ────────────────────────────────────────
 
@@ -139,6 +148,55 @@ function OutOfEStopNotice({ state }: { state: StationControlState | undefined })
   return null;
 }
 
+// ── Stops that haven't landed ───────────────────────────────────────
+
+/** What every stop control says before a press, while the page is offline. */
+export const STOPS_OFFLINE =
+  'This page isn’t connected to the field. A stop pressed now waits here for the connection, and has not reached the field.';
+
+/** Says, by the button, that a stop pressed here hasn't reached the field, or
+ *  that one pressed now wouldn't. Renders nothing while all is well. `station`
+ *  narrows it to one robot's stops; with none, it's everything on this page.
+ *  `quiet` leaves the offline line to a control nearby. */
+export function StopPressNotes({ station, quiet }: { station?: StationName; quiet?: boolean }) {
+  const stationStates = useMatchState()?.stationStates;
+  const connected = useWsConnected();
+  const notes = useStopPresses().flatMap(press => {
+    if (station && press.station !== station) return [];
+    const state = press.station ? stationStates?.[press.station] : undefined;
+    const who = station || !press.station ? '' : (state?.robot ?? prettyStationName(press.station));
+    const said = describeStopPress(press, who);
+    return said ? [{ press, said }] : [];
+  });
+  return (
+    <>
+      {!connected && !quiet && notes.length === 0 && (
+        <Alert severity="error" sx={{ mb: 1 }}>
+          {STOPS_OFFLINE}
+        </Alert>
+      )}
+      {notes.map(({ press, said }) => (
+        <Alert
+          key={press.key}
+          severity="error"
+          variant="filled"
+          sx={{ mb: 1 }}
+          action={
+            press.stage === 'dropped' ? (
+              <Button color="inherit" size="small" onClick={() => dismissStopPress(press.key)}>
+                Dismiss
+              </Button>
+            ) : undefined
+          }
+        >
+          <AlertTitle sx={{ fontWeight: 900 }}>{said.title}</AlertTitle>
+          {said.detail}
+        </Alert>
+      ))}
+    </>
+  );
+}
+
 // ── Staff pages ─────────────────────────────────────────────────────
 
 /** Why a Clear is disabled while Driver Stations haven't been seen to stop. */
@@ -192,13 +250,14 @@ export function StopBlindSpotNote() {
  *  screen. */
 export function FieldEStopControl() {
   const matchState = useMatchState();
-  const [confirmClear, setConfirmClear] = useState(false);
+  const connected = useWsConnected();
   const fieldEStop = matchState?.fieldEStop;
   const waiting = Object.values(matchState?.stationStates ?? {}).filter(s => s.stopWaiting && !s.eStopBy).length;
 
   if (!fieldEStop) {
     return (
       <Box sx={{ mb: 2 }}>
+        <StopPressNotes quiet />
         <Button
           variant="contained"
           color="error"
@@ -211,7 +270,9 @@ export function FieldEStopControl() {
             component="span"
             sx={{ fontSize: '0.9rem', fontWeight: 600, letterSpacing: 0, textTransform: 'none' }}
           >
-            Stops every robot on the field, in a match or not, until cleared
+            {connected
+              ? 'Stops every robot on the field, in a match or not, until cleared'
+              : 'NOT CONNECTED: this page can’t reach the field. A press waits here, and has not stopped anything.'}
           </Typography>
         </Button>
       </Box>
@@ -219,14 +280,24 @@ export function FieldEStopControl() {
   }
 
   return (
+    <>
+      <StopPressNotes quiet />
+      <FieldEStoppedBanner since={fieldEStop.since} waiting={waiting} />
+    </>
+  );
+}
+
+function FieldEStoppedBanner({ since, waiting }: { since: number; waiting: number }) {
+  const [confirmClear, setConfirmClear] = useState(false);
+  return (
     <Alert
       severity="error"
       variant="filled"
       sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' }, '& .MuiAlert-icon': { fontSize: '2.5rem' } }}
     >
       <AlertTitle sx={{ fontSize: '1.75rem', fontWeight: 900 }}>FIELD E-STOPPED</AlertTitle>
-      Every robot on the field has been stopped since {clockTime(fieldEStop.since)}. Every team’s page and the
-      scoreboard say so. No match can start until the field E-Stop is cleared.
+      Every robot on the field has been stopped since {clockTime(since)}. Every team’s page and the scoreboard say so.
+      No match can start until the field E-Stop is cleared.
       <Box sx={{ display: 'flex', gap: 1, mt: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
         {confirmClear ? (
           <>

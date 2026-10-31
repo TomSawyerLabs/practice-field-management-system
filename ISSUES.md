@@ -114,3 +114,11 @@ lapses after 2 s (`DS_CONTROL_QUIET_MS`), the cut lifts, and the next packet re-
 it: the robot gets a burst of enabled packets about every 2 s. Seen by reading the
 code, not on a field. Matters because it's the one case left of the pulsing fixed
 for a deferred release: the laptop is the only thing that could say which robot.
+
+## Most page actions throw if pressed while the socket is connecting
+
+Stops now go through `stopDelivery`, but the other ~100 `ws?.send(...)` calls in
+`frontend/src/hooks/useBackend.ts` don't. One pressed in the moment a socket is
+CONNECTING throws `InvalidStateError` in the click handler, and one pressed while
+it's closed is lost with no sign (Clear field E-Stop, Ready, Join). Reproduced in
+headless Chrome. None of them stops a robot, so it's lost actions, not a safety gap.
