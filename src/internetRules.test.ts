@@ -7,6 +7,7 @@ import { createDryRunBackend, type NetworkBackend } from './node-ip/index.js';
 import { parseIptablesRule } from './node-ip/linux.js';
 import type { IptablesOptions, IptablesRuleInfo } from './node-ip/types.js';
 import RadioManager from './radioManager.js';
+import { ENABLED_STATE_WAIT_MS, TelemetryManager } from './telemetryManager.js';
 import type { StationName } from './types.js';
 
 /** What a commit needs of a host, with its iptables rules and addresses kept
@@ -370,6 +371,90 @@ describe('a commit lost to a restart', () => {
     robotsEnabled = false;
     await rm.commitConfiguration();
     expect(kernel.addresses.get('br-slot1')).toEqual([]);
+  });
+
+  describe('with nothing heard from any robot yet', () => {
+    let clock: number;
+    /** Wired as index.ts wires it. Stubbing shouldDefer can't catch this: the
+     *  bug is what it answers before the first report arrives. */
+    function waitingOnTelemetry(rm: RadioManager) {
+      clock = 1_000_000;
+      const telemetry = new TelemetryManager(
+        () => rm.getFieldTeamMappings(),
+        () => {},
+        undefined,
+        () => clock,
+      );
+      rm.setShouldDefer(() => telemetry.robotsMayBeEnabled(rm.stationsOnField()));
+      return telemetry;
+    }
+    const committed = async (rm: RadioManager) => {
+      rm.retryDeferredCommit();
+      await rm.commitConfiguration();
+      return kernel.addresses.get('br-slot1');
+    };
+
+    test('the commit waits instead of dropping a robot it knows nothing about', async () => {
+      const rm = await clearLostToRestart();
+      waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      expect(kernel.addresses.get('br-slot1')).toEqual(['10.12.34.254']);
+      expect(rm.getPendingState().deferred).toBe(true);
+    });
+
+    test('a robot reporting disabled lets it go', async () => {
+      const rm = await clearLostToRestart();
+      const telemetry = waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      telemetry.noteRobotStatus('slot1', false);
+      expect(await committed(rm)).toEqual([]);
+    });
+
+    test('an enabled robot holds it past the wait, though no DS is under field control', async () => {
+      const rm = await clearLostToRestart();
+      const telemetry = waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      telemetry.noteRobotStatus('slot1', true);
+      clock += ENABLED_STATE_WAIT_MS * 3;
+      telemetry.noteRobotStatus('slot1', true);
+      expect(await committed(rm)).toEqual(['10.12.34.254']);
+      telemetry.noteRobotStatus('slot1', false);
+      expect(await committed(rm)).toEqual([]);
+    });
+
+    test('a DS reporting to the field counts, for a team only the bridge still has', async () => {
+      const rm = await clearLostToRestart();
+      const telemetry = waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      const status = (enabled: boolean) => ({
+        address: '10.12.34.5',
+        port: 1160,
+        data: { teamNumber: 1234, BatteryVoltage: 12, tags: [], status: { enabled } },
+      });
+      telemetry.processFmsEvent(status(true) as unknown as Parameters<typeof telemetry.processFmsEvent>[0]);
+      expect(await committed(rm)).toEqual(['10.12.34.254']);
+      telemetry.processFmsEvent(status(false) as unknown as Parameters<typeof telemetry.processFmsEvent>[0]);
+      expect(await committed(rm)).toEqual([]);
+    });
+
+    test('a robot that never reports stops holding it after the wait', async () => {
+      const rm = await clearLostToRestart();
+      waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      clock += ENABLED_STATE_WAIT_MS;
+      expect(await committed(rm)).toEqual([]);
+    });
+
+    test('only the first commit waits for a free-driving robot', async () => {
+      const rm = await clearLostToRestart();
+      const telemetry = waitingOnTelemetry(rm);
+      await rm.recoverLostCommit();
+      telemetry.noteRobotStatus('slot1', false);
+      await committed(rm);
+      await rm.configure('slot2', team('5678'));
+      telemetry.noteRobotStatus('slot2', true);
+      expect(telemetry.robotsMayBeEnabled(rm.stationsOnField())).toBe(false);
+    });
   });
 
   test('a station handed to a new team loses the old one', async () => {

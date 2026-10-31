@@ -1502,6 +1502,28 @@ class RadioManager {
     return teamOfSsid(this.activeConfig[station]?.ssid);
   }
 
+  /** The team whose robot is really out there on a station: the one on its
+   *  bridge, which outlasts the config while a release's commit waits. */
+  private teamOnField(station: StationName): number | null {
+    return teamsOnBridges()[station] ?? this.getTeamForStation(station);
+  }
+
+  /** Stations with a robot on them, including one whose release is waiting. */
+  stationsOnField(): StationName[] {
+    return StationNameList.filter(s => this.teamOnField(s) !== null);
+  }
+
+  /** getTeamMappings for reading the field's own traffic: a team released but
+   *  still on its bridge is still sending, and has to be heard. */
+  getFieldTeamMappings(): Record<number, StationName> {
+    const mappings: Record<number, StationName> = {};
+    for (const station of StationNameList) {
+      const team = this.teamOnField(station);
+      if (team !== null && !(team in mappings)) mappings[team] = station;
+    }
+    return mappings;
+  }
+
   /** The SSID of the robot on a station's active config, or null. */
   getRobotForStation(station: StationName): string | null {
     return this.activeConfig[station]?.ssid ?? null;

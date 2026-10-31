@@ -258,6 +258,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
 
   // Initialize radio manager — firmware mode will be set when the radio connects
   const radioManager = new RadioManager(radioUrl(), vlanInterface);
+  // Nothing can be known about robots yet: no commit until telemetry, below,
+  // takes over this answer and the 5 s retry picks the commit up.
+  radioManager.setShouldDefer(() => true);
   // The wizard's radio URL takes effect the moment it's saved.
   setupConfigStore.addListener(() => radioManager.setApiBaseUrl(radioUrl()));
 
@@ -1193,6 +1196,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     );
   }
 
+  // Set once the telemetry manager exists; nothing is captured before it does.
+  let noteRobotStatus = (_station: StationName, _enabled: boolean): void => {};
   // Telemetry reaches clients through a per-station coalescer: packet capture
   // fires per sniffed packet (250+/s with six robots), which floods slow
   // displays and delays the score updates queued behind it. Status changes
@@ -1212,6 +1217,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // Ahead of the coalescer: a sample saying enabled mustn't be lost to a later
     // one in the same window.
     if (update.dsStatus?.enabled) matchEngine.noteRobotEnabled(update.station);
+    if (update.dsStatus) noteRobotStatus(update.station, update.dsStatus.enabled);
     coalesceTelemetry(update);
   };
 
@@ -1445,7 +1451,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   let stopFms = async (): Promise<void> => {};
   {
     const telemetryManager = new TelemetryManager(
-      () => radioManager.getTeamMappings(),
+      () => radioManager.getFieldTeamMappings(),
       update => {
         broadcastTelemetry(update);
         // When a robot transitions to disabled, check if we can flush a deferred commit
@@ -1460,8 +1466,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     );
 
     // Defer radio configuration while robots are enabled or a match is running
-    radioManager.setShouldDefer(() => matchEngine.isMatchActive() || telemetryManager.anyRobotEnabled());
-    // The timelapse asks the same question before it touches the lights.
+    radioManager.setShouldDefer(
+      () => matchEngine.isMatchActive() || telemetryManager.robotsMayBeEnabled(radioManager.stationsOnField()),
+    );
+    noteRobotStatus = (station, enabled) => telemetryManager.noteRobotStatus(station, enabled);
+    // The timelapse asks much the same before it touches the lights.
     anyRobotEnabled = () => telemetryManager.anyRobotEnabled();
 
     // Also retry deferred commits when match state changes (e.g., match ends)

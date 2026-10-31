@@ -17,6 +17,11 @@ function isDsMessage(data: DSMessage | UdpMessage): data is DSMessage {
  *  every radio commit until some other DS event cleared it. */
 export const ENABLED_REPORT_STALE_MS = 5_000;
 
+/** After a start, how long the first radio commit waits to hear from every
+ *  robot before going ahead. A robot with a Driver Station is heard within
+ *  moments; one that's silent this long has nothing driving it. */
+export const ENABLED_STATE_WAIT_MS = 15_000;
+
 export class TelemetryManager {
   private loggedFirst = false;
   /** Track team number per TCP source address (learned from type 0x18 TeamNumberMessage) */
@@ -26,6 +31,10 @@ export class TelemetryManager {
   private cachedMappingsAt = 0;
   /** Per-station enabled state from DS UDP telemetry, and when it was reported */
   private enabledStations = new Map<StationName, { enabled: boolean; at: number }>();
+  /** The same, from any source: for the first commit after a start. */
+  private robotStatus = new Map<StationName, { enabled: boolean; at: number }>();
+  private firstCommitSettled = false;
+  private readonly startedAt: number;
 
   constructor(
     private readonly getTeamMappings: () => Record<number, StationName>,
@@ -34,7 +43,9 @@ export class TelemetryManager {
      *  Called with (teamNumber, dsSourceAddress) — returns the station if resolvable. */
     private readonly resolveByAddress?: (teamNumber: number, address: string) => StationName | undefined,
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.startedAt = now();
+  }
 
   /** Returns true if any station's DS is reporting enabled, recently. */
   anyRobotEnabled(): boolean {
@@ -42,6 +53,35 @@ export class TelemetryManager {
     for (const { enabled, at } of this.enabledStations.values()) {
       if (enabled && now - at <= ENABLED_REPORT_STALE_MS) return true;
     }
+    return false;
+  }
+
+  /** A robot's own status, from its replies to its Driver Station: the only
+   *  word on a robot whose DS isn't assigned a station, which sends the field
+   *  no status at all. */
+  noteRobotStatus(station: StationName, enabled: boolean): void {
+    this.robotStatus.set(station, { enabled, at: this.now() });
+  }
+
+  /**
+   * Whether a radio commit should wait because a robot is, or may be, enabled.
+   * `stations` are those with a robot on them.
+   *
+   * Before the first report after a start nobody has said anything, which is
+   * not the same as nobody being enabled, and a commit drops every robot's
+   * Wi-Fi for ~30 s. So the first commit waits to hear from each robot, for
+   * ENABLED_STATE_WAIT_MS, and for any it hears is enabled, however it heard.
+   * After that, as before, only a DS reporting to the field holds a commit.
+   */
+  robotsMayBeEnabled(stations: StationName[]): boolean {
+    if (this.anyRobotEnabled()) return true;
+    if (this.firstCommitSettled) return false;
+    const now = this.now();
+    const waiting = now - this.startedAt < ENABLED_STATE_WAIT_MS;
+    const enabled = [...this.robotStatus.values()].some(r => r.enabled && now - r.at <= ENABLED_REPORT_STALE_MS);
+    if (enabled || (waiting && stations.some(s => !this.robotStatus.has(s)))) return true;
+    // Too early to say, with no robot to go on: one may yet turn up on a bridge.
+    if (!waiting || stations.length > 0) this.firstCommitSettled = true;
     return false;
   }
 
@@ -82,6 +122,7 @@ export class TelemetryManager {
 
     this.logFirst(msg.teamNumber, station);
     this.enabledStations.set(station, { enabled: msg.status.enabled, at: this.now() });
+    this.noteRobotStatus(station, msg.status.enabled);
 
     let dsCpuPercent: number | undefined;
     for (const tag of msg.tags) {

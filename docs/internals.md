@@ -103,6 +103,13 @@ radio … after Nm`).
      reported enabled in the last 5 s (`ENABLED_REPORT_STALE_MS`): a DS
      unplugged while enabled never sends the disabled report, so its last
      one ages out, and a 5 s timer retries the deferred commit.
+   - **The first commit after a start** waits to find out. Nothing having
+     been reported yet doesn't mean nothing is enabled, so it holds for up to
+     15 s (`ENABLED_STATE_WAIT_MS`) until every robot on a bridge has been
+     heard from, by its DS or its own replies in the packet capture, and for
+     as long as any of them says it's enabled. A DS that isn't assigned a
+     station reports nothing to the field, so only this first commit goes by
+     the robot's own replies.
    - Otherwise `commitConfiguration()` fires immediately.
 
    Clients are told what is waiting and why (`pendingCommitState`: the
