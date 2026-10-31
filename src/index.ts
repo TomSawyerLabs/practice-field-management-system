@@ -2219,5 +2219,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     restorePreviousStations(s => radioManager.getTeamForStation(s));
     // Rules written by an older pFMS: bring the bridges' NAT up to date.
     void migrateAllBridgeNat(s => radioManager.getTeamForStation(s));
+    radioManager
+      .removeStaleInternetRules()
+      .catch(err => appWarn(`Could not check the internet rules: ${(err as Error).message}`));
   }
 })();

@@ -146,6 +146,14 @@ radio … after Nm`).
    - **Teardown of the old team is best effort** — each step that fails
      (typically `iptables -D` of a rule that is already gone) is logged as
      a warning and the new team is set up anyway.
+   - **Internet rules follow the commit** — once the stations are done, the
+     per-team internet MASQUERADE (`pfms-nat-slotN`) is brought in line with
+     the config: rules for teams with internet on are added, then any other
+     rule of that kind is removed, whichever station failed. The bridge
+     MASQUERADE (`pfms-nat-vlan-slotN`) is not one of these. A graceful
+     restart keeps every rule, so it does the same check at startup, except
+     that a rule whose team still has its address on that station's bridge
+     stays: a change applied during a match waits for its commit.
    - **Each station stands alone** — one that fails to set up is reported
      (`Network setup for slot1 (team …) failed`), doesn't stop the rest,
      and is torn down and set up again on the next pass even if its team

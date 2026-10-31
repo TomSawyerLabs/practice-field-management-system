@@ -1,6 +1,6 @@
 import { skippedInDryRunUnlessLocal } from './dryRun.js';
 import { writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { configureNetwork, setInternetAccess } from './networkManager.js';
+import { configureNetwork, setInternetAccess, syncInternetAccess } from './networkManager.js';
 import { appError, appInfo } from './appLogger.js';
 import { detectFirmwareMode } from './startupChecks.js';
 import { formatDuration, teamOfSsid } from './utils.js';
@@ -1057,18 +1057,11 @@ class RadioManager {
 
     if (this.radioManagementInterface) {
       jobs.push(
-        configureNetwork(teamsConfig, this.radioManagementInterface, this.firmwareMode === 'PRACTICE').then(
-          async () => {
-            // Apply internet access rules after network is configured
-            for (const station in this.activeConfig) {
-              const s = station as StationName;
-              const team = teamsConfig[s];
-              const ia = this.activeConfig[s]?.internetAccess;
-              if (team && ia !== undefined) {
-                await setInternetAccess(s, team, this.radioManagementInterface!, ia);
-              }
-            }
-          },
+        // This is where a station's rule follows its team out: the bridges
+        // now match activeConfig. Also after a failed pass, which still did
+        // the stations it could.
+        configureNetwork(teamsConfig, this.radioManagementInterface, this.firmwareMode === 'PRACTICE').finally(() =>
+          this.syncInternetRules(),
         ),
       );
     }
@@ -1085,6 +1078,23 @@ class RadioManager {
       this.setPendingCommit(false);
     }
     this.notifyCommitComplete();
+  }
+
+  private syncInternetRules(options?: { keepTeamsOnBridges: boolean }): Promise<void> {
+    if (!this.radioManagementInterface) return Promise.resolve();
+    const teams: Partial<Record<StationName, number>> = {};
+    for (const station of StationNameList) {
+      const team = this.getTeamForStation(station);
+      if (team && this.activeConfig[station]?.internetAccess) teams[station] = team;
+    }
+    return syncInternetAccess(teams, this.radioManagementInterface, options);
+  }
+
+  /** After a graceful restart, which keeps every rule in the kernel: remove the
+   *  internet rules of teams that have left. Queued so that it can't run
+   *  through the middle of a commit. */
+  removeStaleInternetRules(): Promise<void> {
+    return this.enqueueRadioPush(() => this.syncInternetRules({ keepTeamsOnBridges: true }));
   }
 
   private async configureRadio(config: any): Promise<void> {

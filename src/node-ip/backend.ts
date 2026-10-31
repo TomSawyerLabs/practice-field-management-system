@@ -9,6 +9,7 @@ import type {
   IpRuleInfo,
   RouteOptions,
   ForwardCounter,
+  IptablesRuleInfo,
 } from './types.js';
 
 /** OS-agnostic network management backend */
@@ -54,6 +55,12 @@ export interface NetworkBackend {
 
   /** Delete all iptables rules whose comment contains the given prefix. */
   flushRulesByComment(commentPrefix: string): Promise<void>;
+
+  /** List the iptables rules whose comment starts with the given prefix. */
+  listRulesByComment(commentPrefix: string): Promise<IptablesRuleInfo[]>;
+
+  /** Delete a rule that listRulesByComment found. */
+  deleteRule(rule: IptablesRuleInfo): Promise<void>;
 
   /** Get packet/byte counters for FORWARD rules matching the comment prefix. */
   getForwardCounters(commentPrefix: string): Promise<ForwardCounter[]>;

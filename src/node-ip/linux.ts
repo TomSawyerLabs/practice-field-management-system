@@ -13,6 +13,7 @@ import type {
   RouteOptions,
   ForwardCounter,
   IpRuleInfo,
+  IptablesRuleInfo,
 } from './types.js';
 
 const execFile = promisify(execFileCb);
@@ -69,6 +70,20 @@ export function parseIpRule(entry: IpRuleEntry): IpRuleInfo {
     dst: cidr(entry.dst, entry.dstlen),
     table: entry.table,
   };
+}
+
+/** A line of `iptables -S`, if it's a rule with a comment. Our comments have no
+ *  spaces, so iptables prints them unquoted. */
+export function parseIptablesRule(table: string, line: string): IptablesRuleInfo | undefined {
+  if (!line.startsWith('-A ')) return undefined;
+  const spec = line.substring(3).split(/\s+/).filter(Boolean);
+  const value = (flag: string) => {
+    const at = spec.indexOf(flag);
+    return at === -1 ? undefined : spec[at + 1];
+  };
+  const comment = value('--comment');
+  if (!comment) return undefined;
+  return { table, comment, source: value('-s'), outInterface: value('-o'), spec };
 }
 
 function ipRuleArgs(opts: IpRuleOptions): string[] {
@@ -350,6 +365,17 @@ export function createLinuxBackend(): NetworkBackend {
     async flushRulesByComment(commentPrefix: string): Promise<void> {
       if (!commentPrefix) throw new Error('Refusing to flush iptables rules with empty comment prefix');
 
+      for (const rule of await backend.listRulesByComment(commentPrefix)) {
+        try {
+          await backend.deleteRule(rule);
+        } catch (err) {
+          console.warn(`Failed to clean up iptables rule: ${rule.spec.join(' ')}`, err);
+        }
+      }
+    },
+
+    async listRulesByComment(commentPrefix: string): Promise<IptablesRuleInfo[]> {
+      const rules: IptablesRuleInfo[] = [];
       for (const table of ['filter', 'nat']) {
         let output: string;
         try {
@@ -359,18 +385,15 @@ export function createLinuxBackend(): NetworkBackend {
         }
 
         for (const line of output.split('\n')) {
-          if (!line.startsWith('-A ')) continue;
-          if (!line.includes(`--comment ${commentPrefix}`)) continue;
-
-          // Convert "-A CHAIN ..." to ["-D", "CHAIN", ...]
-          const args = ['-t', table, '-D', ...line.substring(3).split(/\s+/).filter(Boolean)];
-          try {
-            await run('iptables', args);
-          } catch (err) {
-            console.warn(`Failed to clean up iptables rule: ${line}`, err);
-          }
+          const rule = parseIptablesRule(table, line);
+          if (rule?.comment.startsWith(commentPrefix)) rules.push(rule);
         }
       }
+      return rules;
+    },
+
+    async deleteRule(rule: IptablesRuleInfo): Promise<void> {
+      await run('iptables', ['-t', rule.table, '-D', ...rule.spec]);
     },
   };
 

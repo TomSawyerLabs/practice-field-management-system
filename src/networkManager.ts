@@ -470,6 +470,27 @@ export async function removeStationInterfaces(physicalInterface: string): Promis
   restorePreviousStations(() => null);
 }
 
+/** The start of every internet rule's comment. Not `nat-`, which also takes
+ *  `nat-vlan-`: the bridge MASQUERADE every robot on the field depends on. */
+const internetCommentPrefix = `${commentPrefix}nat-slot`;
+
+/** The MASQUERADE that lets a station's team reach the internet. */
+function internetRule(station: StationName, team: number, physicalInterface: string, action: '-A' | '-D') {
+  // FORWARD rules are handled by updateNetworkConfig (interface-based, always on).
+  // Internet toggle only controls MASQUERADE — without it, return traffic from the internet
+  // can't find its way back (the robot's 10.TE.AM.x source IP isn't routable externally).
+  return {
+    action,
+    table: 'nat',
+    chain: 'POSTROUTING',
+    source: teamIp(team, '0/24'),
+    notDestination: '10.0.0.0/8',
+    outInterface: physicalInterface,
+    jump: 'MASQUERADE',
+    comment: `${commentPrefix}nat-${station}`,
+  } as const;
+}
+
 /** Enable or disable internet access (NAT + forwarding) for a team subnet. */
 export async function setInternetAccess(
   station: StationName,
@@ -477,25 +498,53 @@ export async function setInternetAccess(
   physicalInterface: string,
   enabled: boolean,
 ): Promise<void> {
-  // FORWARD rules are handled by updateNetworkConfig (interface-based, always on).
-  // Internet toggle only controls MASQUERADE — without it, return traffic from the internet
-  // can't find its way back (the robot's 10.TE.AM.x source IP isn't routable externally).
-  const subnet = teamIp(team, '0/24');
-
-  const action = enabled ? '-A' : '-D';
-
-  await net().iptables({
-    action,
-    table: 'nat',
-    chain: 'POSTROUTING',
-    source: subnet,
-    notDestination: '10.0.0.0/8',
-    outInterface: physicalInterface,
-    jump: 'MASQUERADE',
-    comment: `${commentPrefix}nat-${station}`,
-  });
+  await net().iptables(internetRule(station, team, physicalInterface, enabled ? '-A' : '-D'));
 
   console.log(`Internet access ${enabled ? 'enabled' : 'disabled'} for ${station} (team ${team})`);
+}
+
+/**
+ * Make the kernel's internet rules match `teams`, the team with internet on at
+ * each station. New rules go in before old ones come out, so a team moving
+ * between stations always has one. Two robots of a team share a subnet but
+ * not a rule: each station's has its own comment.
+ *
+ * `keepTeamsOnBridges`: also keep a rule whose team still has its address on
+ * that station's bridge. For a restart, which can't take the config's word for
+ * who has left: a change applied during a match waits for its commit, and until
+ * then the team is on the field and in the rule, but not in the config.
+ */
+export async function syncInternetAccess(
+  teams: Partial<Record<StationName, number>>,
+  physicalInterface: string,
+  { keepTeamsOnBridges = false } = {},
+): Promise<void> {
+  for (const [station, team] of Object.entries(teams)) {
+    await net().iptables(internetRule(station as StationName, team, physicalInterface, '-A'));
+  }
+
+  const addresses = new Map<string, string[]>();
+  if (keepTeamsOnBridges) {
+    for (const iface of await net().listInterfaces()) {
+      addresses.set(
+        iface.name,
+        iface.addresses.map(a => a.address),
+      );
+    }
+  }
+
+  for (const rule of await net().listRulesByComment(internetCommentPrefix)) {
+    const station = rule.comment.slice(commentPrefix.length + 'nat-'.length) as StationName;
+    const team = teams[station];
+    if (team && rule.source === teamIp(team, '0/24') && rule.outInterface === physicalInterface) continue;
+    const gateway = rule.source?.replace(/\.0\/24$/, `.${vlanHostOctet}`);
+    if (gateway && addresses.get(bridgeName(station))?.includes(gateway)) {
+      appInfo(`Keeping the internet rule for ${rule.source} on ${station}: its team is still on the bridge`);
+      continue;
+    }
+    await net().deleteRule(rule);
+    appInfo(`Removed the internet rule for ${rule.source} on ${station}: its team has left`);
+  }
 }
 
 type Stations = Record<StationName, number | undefined>;

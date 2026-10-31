@@ -8,6 +8,7 @@ import type {
   IpRuleOptions,
   RouteOptions,
   IpRuleInfo,
+  IptablesRuleInfo,
 } from './types.js';
 
 /**
@@ -93,6 +94,15 @@ export function createDryRunBackend(inner?: NetworkBackend): NetworkBackend {
     async flushRulesByComment(commentPrefix: string) {
       if (!commentPrefix) throw new Error('Refusing to flush iptables rules with empty comment prefix');
       console.log(`[dry-run] Would flush all iptables rules with comment prefix "${commentPrefix}"`);
+    },
+
+    async listRulesByComment(commentPrefix: string) {
+      if (inner) return inner.listRulesByComment(commentPrefix);
+      return [];
+    },
+
+    async deleteRule(rule: IptablesRuleInfo) {
+      console.log(`[dry-run] Would delete iptables rule ${rule.spec.join(' ')} in ${rule.table} table`);
     },
 
     async listIpRules(): Promise<IpRuleInfo[]> {

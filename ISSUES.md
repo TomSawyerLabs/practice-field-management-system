@@ -28,14 +28,6 @@ and the hash it salts. Field commands from outside are refused since
 watch who's on the field, read support reports and try guessing a team's Wi-Fi
 key offline.
 
-## NAT rules remain after a station is cleared (in progress — t3/fix-stale-nat-rules-ws-test)
-
-On steamboat at 4:46 PM PDT (23:46Z) on 2026-10-30, with `active-config.json`
-empty since the 6:00 AM PDT clear and all six bridges down, `iptables -t nat -S`
-still had `pfms-nat-slot1` for `10.1.0.0/24` and `pfms-nat-slot3` and
-`pfms-nat-slot4` for `10.17.0.0/24`. Matters because the field's rules should
-describe the teams on it, and stale ones confuse anyone reading them mid-incident.
-
 ## The admin passphrase is weak for a login on the internet
 
 `src/adminAuth.ts` hashes it with one round of salted SHA-256 and allows 4
@@ -143,3 +135,19 @@ wrong code` failed once in 2 full `bun test` runs on a loaded machine
 received a `serverInfo` about 10.6 s after the server started. That's the periodic
 heartbeat (`src/websocketServer.ts:574`), not the opening burst `fc15475` waits
 out. Matters because any test that expects no replies can land on a heartbeat.
+
+## A failed station stops DHCP for all of them
+
+In OFFSEASON, `configureNetwork` in `src/networkManager.ts` starts the DHCP servers
+after `updateNetworkConfig`, which throws if any station failed, even though it
+did the others. Seen by reading, not on a field. Matters because one bad station
+leaves every station's robots with no addresses until the next commit.
+
+## A clear waiting on a match, lost to a restart, leaves the bridge up
+
+A clear applied during a match leaves `active-config.json` without the team and
+the commit waiting in memory. After a graceful restart `restorePreviousStations`
+reads the team as gone, so no later commit tears down that bridge: `updateStation`
+returns early when `team` and `prevTeam` are both undefined. Seen by reading, not
+on a field. Matters because the bridge keeps its address and `pfms-fwd-` and
+`pfms-nat-vlan-` rules until another team takes the station.

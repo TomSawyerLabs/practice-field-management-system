@@ -61,6 +61,16 @@ export interface ForwardCounter {
   outInterface?: string;
 }
 
+/** An iptables rule as `iptables -S` reports it */
+export interface IptablesRuleInfo {
+  table: string;
+  comment: string;
+  source?: string;
+  outInterface?: string;
+  /** The rule's chain and matches, as `iptables -t <table> -D` takes them. */
+  spec: string[];
+}
+
 /** Options for IP policy routing rule management */
 export interface IpRuleOptions {
   from: string;

@@ -52,7 +52,9 @@ graph TD
 2. **VLAN IP** — assigns itself `10.TE.AM.254` (configurable via
    `VLAN_HOST_OCTET`) on each active team's VLAN as a routing anchor
 3. **Inter-VLAN routing** — IP forwarding + MASQUERADE rules between team
-   subnets and the site network
+   subnets and the site network. A team's internet rule lasts as long as the
+   team does: a commit or a graceful restart removes the rules of teams that
+   have left
 4. **Per-client route preferences** — `ip rule` entries steer individual
    laptop IPs to specific station VLANs (for duplicate team
    disambiguation)
@@ -62,6 +64,8 @@ graph TD
 7. **DS↔RIO DNAT** — dynamic PREROUTING rules to route asymmetric RIO→DS
    UDP replies back to the DS laptop
 8. **Syslog** — optional syslog server for radio log collection
+   A team's internet rule lasts as long as the team does: each commit removes
+   the rules of teams that have left, and so does a graceful restart.
 
 > **OFFSEASON firmware:** the pFMS host also runs `dnsmasq` per VLAN to
 > serve DHCP (gateway = `10.TE.AM.254`), since the AP does not.
