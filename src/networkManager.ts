@@ -668,10 +668,15 @@ export async function setStopCut(station: StationName, on: boolean): Promise<voi
   });
 }
 
-/** Remove every stop cut — at startup, where no station is stopped yet
- *  (a graceful restart keeps rules, but not the stop state behind them). */
-export async function clearStopCuts(): Promise<void> {
-  await net().flushRulesByComment(`${commentPrefix}estop-`);
+/** Leave stop cuts on exactly the stations in `keep` — at startup, where those
+ *  are the stations a saved stop still holds. A graceful restart keeps the
+ *  kernel's rules, so a kept cut never lapses; after a crash's flush it's put
+ *  straight back. */
+export async function clearStopCuts(keep: readonly StationName[] = []): Promise<void> {
+  for (const station of StationNameList) {
+    if (keep.includes(station)) await setStopCut(station, true);
+    else await net().flushRulesByComment(`${commentPrefix}estop-${station}`);
+  }
 }
 
 export async function configureNetwork(stations: Stations, interfaceName: string, practiceMode = false) {

@@ -80,10 +80,11 @@ For how to keep pFMS running across reboots — systemd or Docker — see
 ### Update Script
 
 `./update.sh` pulls, builds, deploys static assets, and reloads the
-service. If a match is running it waits (up to 10 minutes) for the field
-to free up before reloading; `./update.sh force` reloads immediately. It
-uses the backend's `/health` endpoint (which reports the current match
-phase) to decide. On startup after a deploy, commit subjects since the
+service. If a match is running, or anything is e-stopped in any phase, it
+waits (up to 10 minutes) for the field to free up before reloading;
+`./update.sh force` reloads immediately. E-stops stay in force through a
+reload either way. It uses the backend's `/health` endpoint (which reports the
+current match phase and whether anything is e-stopped) to decide. On startup after a deploy, commit subjects since the
 last deployed version are posted to the support Slack channel.
 
 ### Systemd Service

@@ -101,6 +101,7 @@ State files are JSON, written to the working directory by default:
 | `MATCH_QUEUE_FILE`     | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
 | `TEAM_PREFS_FILE`      | `team-prefs.json`       | Per-team nudge preferences (Slack, push) and subscribed push devices                                                                                         |
 | `PUSH_KEYS_FILE`       | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
+| `ESTOP_STATE_FILE`     | `estop-state.json`      | The field E-Stop, each station's e-stop and team Stops in force, restored at startup so a restart lifts none of them                                         |
 | `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
 | `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
 | `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |

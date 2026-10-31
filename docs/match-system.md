@@ -202,6 +202,16 @@ no confirmation and no login, even on a page locked by the operator code:
   band across the screen, and a Driver Station held out of a match shows
   `Field E-Stop` (`FieldES` on a 2027 DS) as its game data.
 
+### E-stops survive a restart
+
+The field E-Stop, each robot's own e-stop and each team Stop are saved on every
+change (`estop-state.json`) and restored at startup, after a graceful reload, a
+crash or a reboot alike. A restart lifts none of them: a Driver Station still
+set to Enabled is cut off its robot again, and is taken under field control as it
+reconnects. The daily configuration clear doesn't
+touch them. `/health` says whether anything is e-stopped, and `update.sh` waits
+for that as it does for a match (`./update.sh force` overrides it).
+
 ### Coming out of an e-stop
 
 Whenever a robot comes out of an e-stop — the field E-Stop cleared, its own

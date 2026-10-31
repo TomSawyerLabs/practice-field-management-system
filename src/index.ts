@@ -9,6 +9,7 @@ import { runFMS, UdpSendPort, type FmsEvents, type FmsServer } from './fmsServer
 import { EventEmitter } from 'node:events';
 import dgram from 'node:dgram';
 import { startConfigurationScheduler } from './scheduler.js';
+import { stationsCutAtStart, StopStore } from './stopStore.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
 import { hostTeamsInEffect, isRobotOfTeams, queueInUse, teamOfSsid, teamSubnet, toCidr } from './utils.js';
@@ -228,8 +229,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   let fieldControlInterface: string | undefined;
   const startupTrunk = trunkSetting();
   const startupFieldControl = fieldControlSetting();
+  // Stops left by the last run, read first: bringing up the trunk needs to know
+  // which cuts to keep, and nothing may run in between with a robot unstopped.
+  const stopStore = new StopStore();
+  const savedStops = stopStore.load();
+  const startupCuts = stationsCutAtStart(savedStops);
   if (startupTrunk) {
-    const result = await bringUpTrunk(startupTrunk, { keepNetwork: KeepNetwork, fieldControl: startupFieldControl });
+    const result = await bringUpTrunk(startupTrunk, {
+      keepNetwork: KeepNetwork,
+      fieldControl: startupFieldControl,
+      stopped: startupCuts,
+    });
     fieldControlInterface = startupFieldControl;
     if (result.ok) vlanInterface = startupTrunk;
     else {
@@ -350,7 +360,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // An e-stop out of a match cuts only until its DS has stopped, which the hold
   // loop's field control takes over from (MatchEngine.reviewStopWaits). Applied
   // in order per station.
-  const stopCuts = new Map<StationName, boolean>();
+  // Starts with the cuts bringUpTrunk kept, so one no longer wanted is lifted.
+  const stopCuts = new Map<StationName, boolean>(startupCuts.map(s => [s, true]));
   let stopCutChain: Promise<void> = Promise.resolve();
   matchEngine.addStateListener(state => {
     for (const station of StationNameList) {
@@ -377,6 +388,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         .catch(err => console.error(`${station}: failed to re-apply the stop cut:`, err));
     }
   });
+
+  // Before the FMS server exists: a Driver Station reconnecting after the
+  // restart has to find its station already held.
+  matchEngine.trackStops(savedStops, stops => stopStore.save(stops));
 
   // How long each team has been on the field, for the admin team list.
   matchEngine.setConnectedAtResolver(s => radioManager.getConnectedAtForStation(s));

@@ -177,7 +177,7 @@ import { isIPv6 } from 'node:net';
 import { handleVideoProxy } from './videoProxy.js';
 import CIDRMatcher from 'cidr-matcher';
 import { appError, appWarn } from './appLogger.js';
-import { MatchEngine } from './matchEngine.js';
+import { healthReport, MatchEngine } from './matchEngine.js';
 import type { SavedTeamStore } from './savedTeamStore.js';
 import type { MatchQueue } from './matchQueue.js';
 import type { SetupMode, SetupResult } from './matchSetup.js';
@@ -434,9 +434,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // and to skip the reload when the running backend is already the commit
     // being deployed (two overlapping deploys used to reload every screen twice).
     if (req.url === '/health') {
-      const state = matchEngine.getState();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ phase: state.phase, version: serverVersion }));
+      res.end(JSON.stringify(healthReport(matchEngine.getState(), serverVersion)));
       return;
     }
 

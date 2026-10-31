@@ -25,6 +25,8 @@ support-issues.json
 support-chats.json
 setup-config.json
 audio-config.json
+estop-state.json
+estop-state.json.tmp
 match-history.json
 usage-data.json
 deploy-announced.json

@@ -9,6 +9,7 @@ import type { IptablesOptions, IptablesRuleInfo } from './node-ip/types.js';
 import { DS_CONTROL_QUIET_MS, MatchEngine, stopCut } from './matchEngine.js';
 import RadioManager from './radioManager.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
+import { bringUpTrunk } from './trunkInterface.js';
 import { ENABLED_STATE_WAIT_MS, TelemetryManager } from './telemetryManager.js';
 import type { StationName } from './types.js';
 
@@ -301,6 +302,75 @@ describe('a field E-Stop on a slot whose release is waiting', () => {
     see(control(GATEWAY, true, 10));
     see(control(LAPTOP, false));
     expect(cut()).toBe(false);
+  });
+});
+
+describe('stop cuts at a start', () => {
+  const cut = (station: StationName): IptablesOptions => ({
+    action: '-I',
+    chain: 'FORWARD',
+    outInterface: `br-${station}`,
+    protocol: 'udp',
+    destinationPort: 1110,
+    jump: 'DROP',
+    comment: `pfms-estop-${station}`,
+  });
+  const cuts = () => kernel.rules.flatMap(r => (r.comment?.startsWith('pfms-estop-') ? [r.comment] : []));
+
+  const dryRun = process.env.DRY_RUN;
+  beforeEach(() => {
+    process.env.DRY_RUN = '1';
+    kernel.addresses.set('eno1', []);
+    kernel.rules.push(cut('slot1'), cut('slot2'));
+  });
+  afterEach(() => {
+    if (dryRun === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = dryRun;
+  });
+
+  test('a graceful restart keeps the cut of a station still stopped, and no other', async () => {
+    const dropped: string[] = [];
+    const iptables = kernel.backend.iptables;
+    kernel.backend.iptables = async o => {
+      if (o.action === '-D' && o.comment === 'pfms-estop-slot2') dropped.push(o.comment);
+      return iptables(o);
+    };
+    await bringUpTrunk('eno1', { keepNetwork: true, stopped: ['slot2'] });
+    expect(cuts()).toEqual(['pfms-estop-slot2']);
+    expect(dropped).toEqual([]);
+  });
+
+  test('a crash, which flushes everything, gets the cut straight back', async () => {
+    await bringUpTrunk('eno1', { keepNetwork: false, stopped: ['slot2'] });
+    expect(cuts()).toEqual(['pfms-estop-slot2']);
+  });
+
+  test('with nothing stopped, none survive', async () => {
+    await bringUpTrunk('eno1', { keepNetwork: true });
+    expect(cuts()).toEqual([]);
+  });
+});
+
+describe('the daily clear', () => {
+  test('leaves every e-stop as it found it, as it always has', async () => {
+    const dryRun = process.env.DRY_RUN;
+    const rm = manager();
+    await rm.configure('slot1', team('1234'));
+    const engine = new MatchEngine(s => rm.getTeamForStation(s));
+    const saved: unknown[] = [];
+    engine.trackStops(null, stops => saved.push(stops));
+    engine.stationEStop('slot1', 'staff');
+    engine.fieldEStop();
+    const before = saved.length;
+
+    await rm.clearAllConfigurations(false);
+
+    expect(rm.getTeamForStation('slot1')).toBeNull();
+    expect(kernel.addresses.get('br-slot1')).toEqual([]);
+    expect(engine.isFieldEStopped()).toBe(true);
+    expect(engine.getState().stationStates.slot1?.eStopBy).toBe('staff');
+    expect(saved.length).toBe(before);
+    expect(process.env.DRY_RUN).toBe(dryRun);
   });
 });
 

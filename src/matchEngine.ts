@@ -30,6 +30,7 @@ import {
 } from './types.js';
 import { appWarn, appError } from './appLogger.js';
 import { getAllianceShiftState, getMatchSubPeriod } from './shiftState.js';
+import type { SavedStops } from './stopStore.js';
 
 const TICK_INTERVAL_MS = 250;
 const HEARTBEAT_INTERVAL_MS = 200;
@@ -39,6 +40,10 @@ export const DS_CONTROL_QUIET_MS = 2000;
 /** A disabled packet this recent before an e-stop already shows the DS stopped. */
 const STOP_SEEN_SLACK_MS = 250;
 const STOP_WAIT_POLL_MS = 100;
+/** After a restart nothing has been heard yet: the packet capture is starting
+ *  and Driver Stations are reconnecting. Until this long after the stops are
+ *  restored, silence says nothing about a DS (see dsStopped). */
+export const RESTORED_STOP_QUIET_MS = 10_000;
 /** How long after an e-stop a robot may still say it's enabled before anyone is
  *  warned. A DS in a match obeys its next disabled packet, and a DS out of one
  *  has its control traffic cut within about a second, then the robot disables
@@ -254,6 +259,11 @@ export class MatchEngine {
   /** E-stopped robots still saying they're enabled, past the grace period. */
   private enabledThroughStops = new Set<StationName>();
   private stopWaitTimer: ReturnType<typeof setInterval> | null = null;
+  /** Where every change to the stops goes, and what it last got. */
+  private saveStops?: (stops: SavedStops) => void;
+  private savedStopsJson = '';
+  /** Silence from a DS counts for nothing before this (RESTORED_STOP_QUIET_MS). */
+  private dsSilenceCountsFrom = 0;
   /** The newest DS→robot control packet the packet capture saw per station. */
   private lastDsControl = new Map<StationName, { at: number; enabled: boolean | null }>();
   /** Why a station's robot is held disabled OUTSIDE a match (policy block or
@@ -1476,6 +1486,64 @@ export class MatchEngine {
     this.broadcast();
   }
 
+  /**
+   * Take up the stops a previous run left, and save every change from here on.
+   * A restart has to lift none of them: a stop lost here hands a DS still set
+   * to Enabled its robot back with no Clear pressed. A restored stop is treated
+   * as a fresh press: index.ts has the cut back in place, the wait on the DS
+   * starts over, and the hold loop takes each DS under field control as it
+   * reconnects, since outOfMatchHoldReason goes by isEStopped.
+   */
+  trackStops(saved: SavedStops | null, save: (stops: SavedStops) => void) {
+    if (saved) {
+      this.fieldEStopSince = saved.fieldEStopSince;
+      for (const station of StationNameList) {
+        const stops = saved.stations[station];
+        if (!stops) continue;
+        const state = this.stationStates.get(station)!;
+        if (stops.eStopBy) {
+          state.eStop = true;
+          state.eStopBy = stops.eStopBy;
+        }
+        if (stops.teamStopped) state.teamStopped = true;
+      }
+      const names = StationNameList.filter(s => saved.stations[s]);
+      if (saved.fieldEStopSince !== null || names.length > 0) {
+        this.dsSilenceCountsFrom = Date.now() + RESTORED_STOP_QUIET_MS - DS_CONTROL_QUIET_MS;
+        appWarn(
+          `Stops restored from before the restart: ${saved.fieldEStopSince !== null ? 'the field E-Stop' : ''}` +
+            `${saved.fieldEStopSince !== null && names.length ? ', ' : ''}${names.join(', ')}`,
+        );
+      }
+    }
+    this.savedStopsJson = JSON.stringify(this.currentStops());
+    this.saveStops = save;
+    this.broadcast();
+  }
+
+  private currentStops(): SavedStops {
+    const stations: SavedStops['stations'] = {};
+    for (const station of StationNameList) {
+      const state = this.stationStates.get(station)!;
+      if (!state.eStop && !state.teamStopped) continue;
+      stations[station] = {
+        ...(state.eStop ? { eStopBy: state.eStopBy ?? 'staff' } : {}),
+        ...(state.teamStopped ? { teamStopped: true } : {}),
+      };
+    }
+    return { fieldEStopSince: this.fieldEStopSince, stations };
+  }
+
+  /** Every stop reaches disk here: everything that changes one broadcasts. */
+  private saveStopsIfChanged() {
+    if (!this.saveStops) return;
+    const stops = this.currentStops();
+    const json = JSON.stringify(stops);
+    if (json === this.savedStopsJson) return;
+    this.savedStopsJson = json;
+    this.saveStops(stops);
+  }
+
   isFieldEStopped(): boolean {
     return this.fieldEStopSince !== null;
   }
@@ -1795,7 +1863,8 @@ export class MatchEngine {
     const last = this.lastDsControl.get(station);
     if (last?.enabled === false && last.at >= since - STOP_SEEN_SLACK_MS) return 'its Driver Station shows Disabled';
     if (last?.enabled !== true && this.isDsAttached(station)) return 'its Driver Station is under field control';
-    if (now - Math.max(since, last?.at ?? 0) >= DS_CONTROL_QUIET_MS) return 'no Driver Station is commanding it';
+    const quietSince = Math.max(since, last?.at ?? 0, this.dsSilenceCountsFrom);
+    if (now - quietSince >= DS_CONTROL_QUIET_MS) return 'no Driver Station is commanding it';
     return null;
   }
 
@@ -2451,6 +2520,7 @@ export class MatchEngine {
   }
 
   private broadcast() {
+    this.saveStopsIfChanged();
     this.syncSetupAutoCancel();
     this.reviewStopWaits();
     this.reviewEnabledThroughStops();
@@ -2476,4 +2546,12 @@ export function stopCut(state: StationControlState | undefined): boolean {
 function releaseEStop(state: StationControlState) {
   state.eStop = false;
   delete state.eStopBy;
+}
+
+/** The backend's /health answer. update.sh waits on `phase` and `eStopped`:
+ *  a team Stop doesn't count, since a reload keeps it and a team can leave it
+ *  on all day. */
+export function healthReport(state: MatchState, version: string) {
+  const eStopped = !!state.fieldEStop || Object.values(state.stationStates).some(s => s.eStop);
+  return { phase: state.phase, version, eStopped };
 }

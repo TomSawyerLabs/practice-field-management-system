@@ -140,6 +140,8 @@ is why clearing a field stop really clears it. An unjoined DS is held like any o
 `Field E-Stop` for the field E-Stop) until staff clear the e-stop (the field
 E-Stop's Clear on any staff page, or per station on the match page). It
 then goes back to local control, disabled, and the driver enables it again.
+A restart doesn't lift it: the stop is restored before the FMS server starts, so a
+DS reconnecting finds its station held and goes straight back under field control.
 
 An e-stop has to act within 1 s, so what happens depends on the DS:
 
@@ -184,7 +186,9 @@ drops nothing but control packets, so cameras, NetworkTables and telemetry are
 untouched, and the field keeps seeing the robot. The DS just loses the robot and
 drops to disabled, and the team enables from it again afterwards. Joining a match
 clears a team Stop; in a match the team's console has Disable and E-Stop instead.
-Startup removes any leftover cut, since no station starts stopped.
+Stops are saved (`estop-state.json`), so a cut lasts through a restart: a graceful
+reload leaves the rule in the kernel, and a crash's flush puts it straight back.
+Startup removes any other cut.
 
 The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy

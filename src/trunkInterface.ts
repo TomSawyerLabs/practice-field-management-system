@@ -9,7 +9,7 @@
  * next commit; index.ts orchestrates the services that use the trunk.
  */
 import { isDryRun } from './dryRun.js';
-import { FIELD_CONTROL_ADDRESS } from './types.js';
+import { FIELD_CONTROL_ADDRESS, type StationName } from './types.js';
 import { checkInterfaceIps } from './startupChecks.js';
 import { REQUIRED_TOOLS, aptInstallCommand, missingTools } from './hostTools.js';
 import {
@@ -33,6 +33,8 @@ export interface TrunkOptions {
   /** Where field control lives, when it isn't the trunk's native VLAN: a
    *  separate NIC, or a tagged sub-interface (`eno1.100`). Unset: the trunk. */
   fieldControl?: string;
+  /** Stations a saved stop still holds: their stop cuts stay. */
+  stopped?: readonly StationName[];
 }
 
 /**
@@ -72,7 +74,10 @@ async function prepareFieldControl(
  * network, so the setup wizard can say why — when a tool is missing, the
  * NIC doesn't exist, or the field-control interface can't be had.
  */
-export async function bringUpTrunk(iface: string, { keepNetwork, fieldControl }: TrunkOptions): Promise<TrunkResult> {
+export async function bringUpTrunk(
+  iface: string,
+  { keepNetwork, fieldControl, stopped }: TrunkOptions,
+): Promise<TrunkResult> {
   const net = networkBackend();
   // A dry run has no real NIC or tools to check.
   if (!isDryRun()) {
@@ -121,9 +126,9 @@ export async function bringUpTrunk(iface: string, { keepNetwork, fieldControl }:
   // first deploy of it installed nothing until the next radio change).
   await dropHairpinForwarding(iface);
 
-  // No station starts stopped, so no team Stop cut may survive a graceful
-  // restart (KEEP_NETWORK keeps rules but not the engine state behind them).
-  await clearStopCuts();
+  // Only a stop still in force keeps its cut: a robot stopped before the
+  // restart stays stopped through it, and no other cut outlives its stop.
+  await clearStopCuts(stopped);
 
   // Size the kernel neighbor (ARP/NDP) table for what this host does: the
   // subnet scanner sweeps every configured team /24 every 10 s, and each

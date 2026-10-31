@@ -22,6 +22,7 @@ const OTHER_CONFIG_FILES: [file: string, holds: string][] = [
   ['active-config.json', 'current station assignments'],
   ['staged-config.json', 'staged station assignments'],
   ['audio-config.json', 'selected audio output device'],
+  ['estop-state.json', 'e-stops and team Stops in force'],
 ];
 
 /**
