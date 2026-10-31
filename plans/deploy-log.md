@@ -35,69 +35,50 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                      | State                                                                         |
-| ------------------------- | ----------------------------------------------------------------------------- |
-| Running on steamboat      | `67bb54e`, graceful reload 5:17 PM PDT (00:17Z Oct 31) 2026-10-30             |
-| `origin/master`           | `67bb54e`                                                                     |
-| Last published release    | `build-20261030-1647-67bb54e`                                                 |
-| Addon                     | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries           |
-| Release workflow          | Passed on `67bb54e`, the first pass since `6e290fb`                           |
-| Checked after that deploy | Health, bundle version, journal clean; 0 blocks adopted; 12 changes announced |
+| What                   | State                                                                          |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| Running on steamboat   | `4c4b24a`, graceful reload 8:42 PM PDT (03:42Z Oct 31) 2026-10-30              |
+| `origin/master`        | `4c4b24a`                                                                      |
+| Last published release | `build-20261030-1759-4c4b24a`                                                  |
+| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries            |
+| Release workflow       | Passed on `4c4b24a`                                                            |
+| Checked after deploy   | Health, bundle version and journal clean; on-site `/ws` accepted through Caddy |
 
-The deploy before it was `0586d9a` at 3:33 PM PDT (22:33Z), whose `release` run failed
-on 17 tests in `src/wsAccess.test.ts`. `fc15475` fixed that, proven on Linux by the
-`67bb54e` run.
+That deploy ran inside Team 8048's 7:00–10:00 PM PDT booking, with the user's yes.
+Nobody was there: no team on a station, no DS or robot traffic, no recording that
+night, 1 hour 41 minutes into the booking.
+
+The on-site check sent a read-only `subscribe` from this PC (`10.255.0.77`) to
+`ws://pfms.tsl/ws`. An outsider gets `This only works from the field network`; this
+got its data. A laptop on the team network hasn't been tried. Look for that refusal
+next time teams are on.
+
+Earlier the same day: `67bb54e` at 5:17 PM PDT, `0586d9a` at 3:33 PM PDT.
 
 ## On local master only
 
-Master moves as threads land work, so check `git log origin/master..master`. Nothing
-here is live. What matters in it:
+Check `git log origin/master..master`. Master moves as threads land work. At 8:44 PM
+PDT 2026-10-30:
 
-| Commit    | Group | Change                                                                   |
-| --------- | ----- | ------------------------------------------------------------------------ |
-| `4c4b24a` | Fix   | An e-stop stops a robot outside a match within a second; clears wait     |
-| `d530216` | Fix   | Field commands no longer work from the internet without a login or link  |
-| `c4e9323` | Fix   | Someone on the internet can no longer pose as a device on the field      |
-| `9f483f8` | Fix   | Every match sound plays at the same volume (from `28a988b`)              |
-| `ba4fbf7` | New   | A parked host robot is a note for field staff, and the slot to release   |
-| `656230f` | New   | The field-full message says how many robots are the host's, parked       |
-| `8d0c5ee` | Fix   | Field usage no longer counts a host robot left on with no Driver Station |
-| `76b8f6b` | Fix   | A late write failure in yesterday's capture no longer stops today's      |
-
-The rest are tests and plans, including the flaky test work.
+| Commit    | Group    | Change                                                          |
+| --------- | -------- | --------------------------------------------------------------- |
+| `26f552c` | Fix      | Guessing the admin passphrase from the internet now gets a wait |
+| `6b8b47e` | Internal | Plan                                                            |
 
 ## Pending deploy
 
-**Ready at `4c4b24a`.** Waiting only on the user's yes.
-
-Checked on that exact commit, on Windows: `bun run typecheck` clean, `bun test` 1055
-pass, 0 fail, frontend build passes.
-
-Not seen for real:
-
-- The e-stop wait on a real DS, and the `Waiting for DS` Clear buttons in a browser.
-  The cut rule itself is the one Team Stop already runs on steamboat.
-- The `/ws` guard was proven behind a loopback Caddy with the live proxy settings, not
-  on the live site. After deploying, check that `/match` works from on site and that
-  the journal shows no on-site client refused.
-- Host features in a browser. They stay dormant here: this site has no host team.
-
-No addon version change. The `/ws` thread's admin login limit isn't in `4c4b24a`; it
-goes out in the deploy after. Its optional Caddy logging change is that thread's to
-raise with the user.
+Nothing is waiting on a decision. `26f552c` goes out with the next deploy, which
+needs the user's yes.
 
 Before each deploy: `/health` idle, no team on the field, no second-laptop block
-(`iptables -S FORWARD | grep br-slot`), and bookings below. Push the exact commit
-(`git push origin 4c4b24a:master`).
-
-What teams would notice: open pFMS pages reload once. Nobody on site loses anything.
-A note posts to pfms-support.
+(`iptables -S FORWARD | grep br-slot`), no addon version change, and bookings below,
+checked against who is really there. Push the exact commit
+(`git push origin <sha>:master`).
 
 ### Windows for it
 
 | When                                                               | State                             |
 | ------------------------------------------------------------------ | --------------------------------- |
-| 7:00–10:00 PM PDT (Oct 31 02:00–05:00Z) tonight                    | Team 8048 booked. Don't deploy    |
 | After 10:00 PM PDT tonight to Tue Nov 3 4:00 PM PST (Nov 4 00:00Z) | No bookings on the calendar       |
 | Tue Nov 3 4:00–7:00 PM PST (Nov 4 00:00–03:00Z)                    | 5940 and guest 59402              |
 | Tue Nov 3 7:00–10:00 PM PST (Nov 4 03:00–06:00Z)                   | Team 100, and 5940 until 10:00 PM |
@@ -127,6 +108,9 @@ what's landed, and raises one only if it gates a deploy.
   so, the cut can go. Tonight's journal may already hold a sample:
   `grep 'e-stop:'`.
 - **Operator code:** set one on `/admin` → Access next time there's a match.
+- **E-stop wait on a real DS:** the cut, the `Waiting for DS` Clear buttons and the
+  `e-stop:` timing lines are live, and none has run on a real stop yet.
+- **`/ws` guard from a team laptop:** on-site is proven from a staff address only.
 
 ## Decisions made
 
@@ -146,11 +130,10 @@ what's landed, and raises one only if it gates a deploy.
 
 ## Open questions for the user
 
-1. Push and deploy `4c4b24a`?
+None.
 
 ## Findings / gotchas
 
-- **`/ws` is still open until the next deploy,** and so is the 8 s out-of-match e-stop.
 - **The proxy change is not waiting.** Older threads call `trusted_proxies_strict`
   staged. It's live: ops `01d9534`, verified 1:48 PM PDT (20:48Z) 2026-10-30.
 - The Second Robot thread's "wrong-radio fix, owner unconfirmed" is resolved: `1f50d5a`.
@@ -175,5 +158,5 @@ what's landed, and raises one only if it gates a deploy.
 - [x] `/ws` thread started
 - [x] Merged worktrees and branches removed
 - [x] Out-of-match e-stop within 1 s built, landed as `4c4b24a`
-- [ ] Next deploy, waiting on the user
-- [ ] After it: release run, version and health, on-site `/match`, no journal errors
+- [x] `4c4b24a` pushed and deployed 8:42 PM PDT (03:42Z Oct 31), checked, release passed
+- [ ] `26f552c` in the next deploy, when the user says
