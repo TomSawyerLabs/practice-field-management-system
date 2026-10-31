@@ -13,13 +13,13 @@ import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
 import { hostTeamsInEffect, isRobotOfTeams, queueInUse, teamOfSsid, teamSubnet, toCidr } from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
-import { MatchEngine, teamStopCut } from './matchEngine.js';
+import { MatchEngine, stopCut } from './matchEngine.js';
 import {
   stopAllDHCP,
   vlanMap,
   bridgeName,
   restorePreviousStations,
-  setTeamStopCut,
+  setStopCut,
   duplicateDsBlock,
   migrateAllBridgeNat,
   networkBackend,
@@ -373,18 +373,19 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // to the robot, so the robot stops within ~100 ms. That DS isn't under field
   // control, so nothing else would stop it (ISSUES.md: replacing this with
   // field control). The cut lasts until the team lets the robot drive again.
-  // E-stops don't cut: they rely on the hold loop taking the DS under field
-  // control and disabling it. Applied in order per station.
-  const teamStopCuts = new Map<StationName, boolean>();
-  let teamStopCutChain: Promise<void> = Promise.resolve();
+  // An e-stop out of a match cuts only until its DS has stopped, which the hold
+  // loop's field control takes over from (MatchEngine.reviewStopWaits). Applied
+  // in order per station.
+  const stopCuts = new Map<StationName, boolean>();
+  let stopCutChain: Promise<void> = Promise.resolve();
   matchEngine.addStateListener(state => {
     for (const station of StationNameList) {
-      const want = teamStopCut(state.stationStates[station]);
-      if (want === (teamStopCuts.get(station) ?? false)) continue;
-      teamStopCuts.set(station, want);
+      const want = stopCut(state.stationStates[station]);
+      if (want === (stopCuts.get(station) ?? false)) continue;
+      stopCuts.set(station, want);
       if (!vlanInterface || process.env.DRY_RUN) continue;
-      teamStopCutChain = teamStopCutChain
-        .then(() => setTeamStopCut(station, want))
+      stopCutChain = stopCutChain
+        .then(() => setStopCut(station, want))
         .then(
           () =>
             appInfo(`${station}: ${want ? 'cut DS→robot control traffic (stop)' : 'stop cleared, traffic restored'}`),
@@ -395,10 +396,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // A trunk rebuild flushed the cuts; a station still stopped needs its back.
   afterTrunkRebuild.push(() => {
     if (!vlanInterface || process.env.DRY_RUN) return;
-    for (const [station, want] of teamStopCuts) {
+    for (const [station, want] of stopCuts) {
       if (!want) continue;
-      teamStopCutChain = teamStopCutChain
-        .then(() => setTeamStopCut(station, true))
+      stopCutChain = stopCutChain
+        .then(() => setStopCut(station, true))
         .catch(err => console.error(`${station}: failed to re-apply the stop cut:`, err));
     }
   });
@@ -1300,6 +1301,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       robotEStops,
       stationOfLaptop,
       isDuplicateTeam,
+      (station, enabled) => matchEngine.noteDsControl(station, enabled),
     );
     robotPacketCapture.start();
   };

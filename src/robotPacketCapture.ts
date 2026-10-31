@@ -62,6 +62,10 @@ export class RobotPacketCapture {
     private readonly stationOfLaptop?: (laptop: string, team: number) => StationName | undefined,
     /** Whether a team has robots on more than one station. */
     private readonly isDuplicateTeam?: (team: number) => boolean,
+    /** A DS→robot control packet was seen, commanding the robot enabled or not
+     *  (null: a layout we can't read, the 2027 DS's). Captured at ingress, so
+     *  it's seen even while the field's stop cut drops the packet. */
+    private readonly onDsControl?: (station: StationName, enabled: boolean | null) => void,
   ) {}
 
   /** True while tcpdump is running, so a silent robot is really silent. */
@@ -307,6 +311,8 @@ export class RobotPacketCapture {
     const laptop = srcIp !== gatewayOf(dstIp) ? srcIp : this.laptopByPort.get(srcPort);
     if (!forwarded) this.laptopByPort.set(srcPort, srcIp);
     if (station) this.onHop?.({ station, kind: 'control', src: srcIp, dst: dstIp, at: capturedAt });
+    if (station)
+      this.onDsControl?.(station, payload.length >= 4 && payload[2] === 0x01 ? Boolean(payload[3] & 0x04) : null);
     // Byte 3 is the control byte: bit2 = enabled (comm version 0x01).
     if (payload.length >= 4 && payload[2] === 0x01) {
       if (station) {

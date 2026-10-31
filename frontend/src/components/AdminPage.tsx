@@ -139,6 +139,7 @@ function GlobalEStopSection() {
                 <Button
                   color="inherit"
                   size="small"
+                  disabled={stopped.some(s => matchState?.stationStates[s]?.stopWaiting)}
                   onClick={() => {
                     for (const s of stopped) sendAdminClearEStop(s);
                     setConfirmClear(false);

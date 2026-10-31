@@ -137,6 +137,34 @@ describe('RobotPacketCapture hops', () => {
   });
 });
 
+describe('RobotPacketCapture DS commands', () => {
+  test('reports whether a DS is commanding its robot enabled, from the copy arriving at the field', () => {
+    const seen: (boolean | null)[] = [];
+    const capture = new RobotPacketCapture(
+      'eno1',
+      () => ({ 840: 'slot2' }),
+      () => {},
+      true,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      (_station, enabled) => seen.push(enabled),
+    );
+    const parse = (data: Buffer) =>
+      (capture as unknown as { parsePacket(d: Buffer, at: number): void }).parsePacket(data, 1);
+
+    parse(frame('10.55.132.86', '10.8.40.2', 1110, [0, 1, 1, 0x04, 0, 0]));
+    parse(frame('10.55.132.86', '10.8.40.2', 1110, [0, 2, 1, 0x00, 0, 0]));
+    parse(frame('10.55.132.86', '10.8.40.2', 1110, [0, 3, 2, 0x04, 0, 0]));
+    expect(seen).toEqual([true, false, null]);
+  });
+});
+
 describe('RobotPacketCapture SystemCore robots', () => {
   /** A capture over one station whose telemetry, hops and raw records the
    *  test can see. Records are tagged by their packet's first byte. */

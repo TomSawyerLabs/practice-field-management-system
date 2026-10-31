@@ -547,7 +547,8 @@ export function duplicateDsBlock(station: StationName, dsIp: string, comment: st
 }
 
 /**
- * A team Stop, network layer: drop every Driver Station → robot control packet
+ * A team Stop, or an e-stop out of a match until its Driver Station has
+ * stopped, network layer: drop every Driver Station → robot control packet
  * going into a station's bridge. A robot disables its outputs about 100 ms
  * after its control packets stop, whatever its Driver Station thinks — so this
  * stops a robot whose DS is not under field control (any robot out of a
@@ -555,7 +556,7 @@ export function duplicateDsBlock(station: StationName, dsIp: string, comment: st
  * status. Idempotent both ways. The rule keeps its `estop-` name so that
  * startup still removes one left by an older version.
  */
-export async function setTeamStopCut(station: StationName, on: boolean): Promise<void> {
+export async function setStopCut(station: StationName, on: boolean): Promise<void> {
   await net().iptables({
     action: on ? '-I' : '-D',
     chain: 'FORWARD',
@@ -567,9 +568,9 @@ export async function setTeamStopCut(station: StationName, on: boolean): Promise
   });
 }
 
-/** Remove every team Stop cut — at startup, where no station is stopped yet
+/** Remove every stop cut — at startup, where no station is stopped yet
  *  (a graceful restart keeps rules, but not the stop state behind them). */
-export async function clearTeamStopCuts(): Promise<void> {
+export async function clearStopCuts(): Promise<void> {
   await net().flushRulesByComment(`${commentPrefix}estop-`);
 }
 

@@ -14,7 +14,7 @@ import { checkInterfaceIps } from './startupChecks.js';
 import { REQUIRED_TOOLS, aptInstallCommand, missingTools } from './hostTools.js';
 import {
   cleanupOldVlanInterfaces,
-  clearTeamStopCuts,
+  clearStopCuts,
   dropHairpinForwarding,
   flushManagedNetworkState,
   networkBackend,
@@ -123,7 +123,7 @@ export async function bringUpTrunk(iface: string, { keepNetwork, fieldControl }:
 
   // No station starts stopped, so no team Stop cut may survive a graceful
   // restart (KEEP_NETWORK keeps rules but not the engine state behind them).
-  await clearTeamStopCuts();
+  await clearStopCuts();
 
   // Size the kernel neighbor (ARP/NDP) table for what this host does: the
   // subnet scanner sweeps every configured team /24 every 10 s, and each

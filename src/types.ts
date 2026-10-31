@@ -1385,6 +1385,10 @@ export type StationControlState = {
    *  ~100 ms; the DS drops to disabled when it loses the robot) until the
    *  team lets it drive again. Joining a match clears it. */
   teamStopped?: boolean;
+  /** E-stopped out of a match, and its Driver Station hasn't been seen to stop
+   *  yet. Its control traffic is cut until it does, and the e-stop can't be
+   *  cleared. */
+  stopWaiting?: boolean;
   /** Epoch ms when this team took this station — when its SSID became the
    *  station's active radio config. Unlike the DS/radio heartbeats this is a
    *  connect *time*, so it survives a robot dropping and coming back, which

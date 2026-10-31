@@ -66,17 +66,6 @@ Neither `StaffPage.tsx` nor `CsaPage.tsx` renders a stop control (seen
 2026-10-30), including on the Safety Monitor's page. Matters because that role
 is the one most likely to want one.
 
-## An e-stop out of a match can take about 8 s
-
-The user's limit (2026-10-30): an e-stop acts within 1 s, 250 ms at best. A robot
-driven from a DS in local control, not in a match, misses that. pFMS can only take
-that DS at its next TCP handshake, and it retries about every 8 s (3 s on a 2027
-DS). That's the documented retry interval, not a measured stop; check 7 in
-`plans/field-verification-checklist.md` times it. Live since `0586d9a` took the cut
-off e-stops. A DS in a match stops at once, and the team page's Stop still cuts in
-about 100 ms. Matters because this is the stop that has to work. Do this before
-"Team Stop still cuts comms": both need the same answer.
-
 ## Anyone on site can clear the field E-Stop
 
 `adminClearFieldEStop` is `staff`, and `/match` clears aren't behind the operator
@@ -85,22 +74,26 @@ again with no login. The user chose to leave it open for now (2026-10-30). Revis
 later: an operator login for the field clear only, with a team still able to clear
 its own from its DS.
 
-## Team Stop still cuts comms
+## Stops still cut comms
 
-The team page's **Stop robot** out of a match is the last user of the
-`pfms-estop-slotN` cut (`teamStopCut` in `src/matchEngine.ts`, `setTeamStopCut`
-in `src/networkManager.ts`). It stays because nothing else stops that robot yet.
-Replace it with field control of that DS, the way e-stops work, then remove the
-cut and `teamStopCuts` in `src/index.ts`. Matters because the user doesn't want
-to cut comms, and it shouldn't ever be needed. Note a held DS takes the stop at
-its next TCP handshake (about 8 s), not the cut's ~100 ms.
+An e-stop out of a match cuts a DS's control traffic (`stopCut` in
+`src/matchEngine.ts`, `setStopCut` in `src/networkManager.ts`) until the DS is seen
+to stop, and the team page's **Stop robot** cuts it for as long as it lasts. Matters
+because the user doesn't want to cut comms, and would rather everything stayed
+connected, but an e-stop has to act within 1 s, 250 ms at best (2026-10-30), and a
+DS's next TCP handshake can be about 8 s away. Check 7 in
+`plans/field-verification-checklist.md` shows whether a DS in local control obeys
+the disabled UDP packets on its own. If it does, remove the cut, and move Team Stop
+to the same field control. Note the journal's
+`slotN: e-stop: <why>, N ms after the stop` lines, which time every real stop.
 
-## Nothing warns that an e-stopped robot is still enabled
+## Nothing warns that a robot is still enabled through a stop
 
-Since the cut came off e-stops (2026-10-30), a DS that ignores the field keeps
-driving while `/match`, `/csa` and the team's page say E-STOPPED. The robot's
-status bit crosses the field either way (UDP 1150, or `tele.dsStatus`), so pFMS
-can see it. Matters because staff would believe a running robot is stopped.
+A DS connected to its robot some other way (tethered, or the robot's own Wi-Fi)
+never crosses the field, so it keeps driving while `/match`, `/csa` and the team's
+page say E-STOPPED. The robot's status bit reaches the field if the robot is on it
+(UDP 1150, or `tele.dsStatus`), so pFMS can sometimes see this. Matters because
+staff would believe a running robot is stopped.
 
 ## Unverified behaviour we depend on
 

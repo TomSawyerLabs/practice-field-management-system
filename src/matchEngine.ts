@@ -33,6 +33,13 @@ import { getAllianceShiftState, getMatchSubPeriod } from './shiftState.js';
 
 const TICK_INTERVAL_MS = 250;
 const HEARTBEAT_INTERVAL_MS = 200;
+/** How long no DS→robot control packets must be seen before the field decides
+ *  nothing is commanding a robot (see reviewStopWaits). */
+export const DS_CONTROL_QUIET_MS = 2000;
+/** A disabled packet this recent before an e-stop already shows the DS stopped. */
+const STOP_SEEN_SLACK_MS = 250;
+const STOP_WAIT_POLL_MS = 100;
+
 /** A DS counts as FMS-attached if a UDP status heartbeat (2 Hz) arrived this
  *  recently. Only an attached DS obeys match control, so Ready is gated on it. */
 const DS_ATTACHED_TIMEOUT_MS = 5_000;
@@ -226,6 +233,14 @@ export class MatchEngine {
   /** Why a station's robot may not be enabled (field control-system policy),
    *  supplied by index.ts. Null/undefined = allowed. */
   private enableBlocked?: (station: StationName) => string | null;
+  /** Stations e-stopped out of a match, and when that began. */
+  private outOfMatchStops = new Map<StationName, number>();
+  /** Those whose Driver Station hasn't been seen to stop yet: index.ts cuts its
+   *  control traffic, and clearing is refused (see reviewStopWaits). */
+  private stopWaits = new Set<StationName>();
+  private stopWaitTimer: ReturnType<typeof setInterval> | null = null;
+  /** The newest DS→robot control packet the packet capture saw per station. */
+  private lastDsControl = new Map<StationName, { at: number; enabled: boolean | null }>();
   /** Why a station's robot is held disabled OUTSIDE a match (policy block or
    *  the admin out-of-match switch), supplied by index.ts. Reported to the
    *  team's station page for unjoined stations only; never gates an enable
@@ -1436,6 +1451,11 @@ export class MatchEngine {
    *  stopped until their own e-stop is cleared. */
   clearFieldEStop() {
     if (this.fieldEStopSince === null) return;
+    const waiting = StationNameList.filter(s => this.stopWaits.has(s) && !this.stationStates.get(s)!.eStop);
+    if (waiting.length > 0) {
+      appWarn(`Field E-Stop not cleared: waiting for the Driver Station of ${waiting.join(', ')} to stop its robot`);
+      return;
+    }
     this.liftingEStops(() => (this.fieldEStopSince = null));
     console.log('Field E-Stop cleared');
     this.broadcast();
@@ -1447,7 +1467,7 @@ export class MatchEngine {
 
   /** Stop (or release) a robot that is NOT in a match, from the team's page.
    *  The field then cuts its Driver Station's control traffic (index.ts,
-   *  teamStopCut). A joined station is left to match control: its console
+   *  stopCut). A joined station is left to match control: its console
    *  has Disable. */
   teamStop(station: StationName, stop: boolean) {
     const state = this.stationStates.get(station)!;
@@ -1714,6 +1734,12 @@ export class MatchEngine {
    *  field, the field E-Stop latch included. Clearing one station leaves the
    *  field latch alone. */
   clearEStop(station?: StationName) {
+    const lifted = station ? (this.fieldEStopSince === null ? [station] : []) : StationNameList;
+    const waiting = lifted.filter(s => this.stopWaits.has(s));
+    if (waiting.length > 0) {
+      appWarn(`E-Stop not cleared: waiting for the Driver Station of ${waiting.join(', ')} to stop its robot`);
+      return;
+    }
     this.liftingEStops(() => {
       if (station) {
         releaseEStop(this.stationStates.get(station)!);
@@ -1725,6 +1751,73 @@ export class MatchEngine {
       }
     });
     this.broadcast();
+  }
+
+  // ── An e-stop out of a match ─────────────────────────────────────
+  // The field only takes a DS in local control at its next TCP handshake,
+  // seconds away, while the disabled packets the hold loop sends it may or may
+  // not be obeyed. So from the press until the DS is seen to stop, index.ts
+  // cuts its control traffic, which stops the robot in about 100 ms, and the
+  // e-stop can't be cleared: a DS still set to Enabled would put the robot
+  // straight back on. Once the DS has stopped, the cut lifts and everything
+  // stays connected.
+
+  /** The packet capture saw this station's DS send its robot a control packet,
+   *  commanding it enabled or not (null when the layout can't be read). */
+  noteDsControl(station: StationName, enabled: boolean | null) {
+    this.lastDsControl.set(station, { at: Date.now(), enabled });
+    if (enabled === true && this.outOfMatchStops.has(station) && !this.stopWaits.has(station)) {
+      console.log(`${station}: its Driver Station is commanding Enabled during an e-stop`);
+      this.stopWaits.add(station);
+      this.broadcast();
+    } else if (enabled === false && this.stopWaits.has(station)) {
+      this.broadcast();
+    }
+  }
+
+  /** Why this station's DS counts as stopped; null while it doesn't. */
+  private dsStopped(station: StationName, since: number, now: number): string | null {
+    const last = this.lastDsControl.get(station);
+    if (last?.enabled === false && last.at >= since - STOP_SEEN_SLACK_MS) return 'its Driver Station shows Disabled';
+    if (last?.enabled !== true && this.isDsAttached(station)) return 'its Driver Station is under field control';
+    if (now - Math.max(since, last?.at ?? 0) >= DS_CONTROL_QUIET_MS) return 'no Driver Station is commanding it';
+    return null;
+  }
+
+  /** Bring the stations waiting on their DS up to date. True if any changed. */
+  private reviewStopWaits(): boolean {
+    const now = Date.now();
+    let changed = false;
+    for (const station of StationNameList) {
+      if (this.stationStates.get(station)!.joined || !this.isEStopped(station)) {
+        this.outOfMatchStops.delete(station);
+        changed = this.stopWaits.delete(station) || changed;
+        continue;
+      }
+      let since = this.outOfMatchStops.get(station);
+      if (since === undefined) {
+        since = now;
+        this.outOfMatchStops.set(station, since);
+        this.stopWaits.add(station);
+        changed = true;
+      }
+      if (!this.stopWaits.has(station)) continue;
+      const why = this.dsStopped(station, since, now);
+      if (why === null) continue;
+      this.stopWaits.delete(station);
+      changed = true;
+      console.log(`${station}: e-stop: ${why}, ${now - since} ms after the stop`);
+    }
+    if (this.stopWaits.size > 0 && !this.stopWaitTimer) {
+      this.stopWaitTimer = setInterval(() => {
+        if (this.reviewStopWaits()) this.broadcast();
+      }, STOP_WAIT_POLL_MS);
+      this.stopWaitTimer.unref?.();
+    } else if (this.stopWaits.size === 0 && this.stopWaitTimer) {
+      clearInterval(this.stopWaitTimer);
+      this.stopWaitTimer = null;
+    }
+    return changed;
   }
 
   // ── Coming out of an e-stop ──────────────────────────────────────
@@ -1799,6 +1892,7 @@ export class MatchEngine {
         ...this.stationStates.get(station)!,
         eStop: this.isEStopped(station),
         dsAttached: this.isDsAttached(station),
+        ...(this.stopWaits.has(station) ? { stopWaiting: true } : {}),
         ...(blockedReason ? { blockedReason } : {}),
         ...(heldReason && heldReason !== blockedReason ? { heldReason } : {}),
         ...(connectedAt !== undefined ? { connectedAt } : {}),
@@ -2290,6 +2384,7 @@ export class MatchEngine {
 
   private broadcast() {
     this.syncSetupAutoCancel();
+    this.reviewStopWaits();
     const state = this.getState();
     for (const listener of this.listeners) {
       try {
@@ -2303,10 +2398,10 @@ export class MatchEngine {
 
 /** Drop a station's own e-stop and who latched it. */
 /** Whether the field should be cutting this station's Driver Station off its
- *  robot: only a team Stop out of a match. E-stops never cut; they take the DS
- *  under field control and disable it. */
-export function teamStopCut(state: StationControlState | undefined): boolean {
-  return !state?.joined && (state?.teamStopped ?? false);
+ *  robot: a team Stop out of a match, or an e-stop out of a match until its DS
+ *  has stopped. After that the field holds the DS and nothing needs cutting. */
+export function stopCut(state: StationControlState | undefined): boolean {
+  return !state?.joined && ((state?.teamStopped ?? false) || (state?.stopWaiting ?? false));
 }
 
 function releaseEStop(state: StationControlState) {

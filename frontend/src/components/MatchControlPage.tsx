@@ -1374,8 +1374,13 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         {isEStopped ? (
           ownEStop && (
-            <Button size="small" variant="outlined" onClick={() => sendAdminClearEStop(station)}>
-              Clear
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={state?.stopWaiting}
+              onClick={() => sendAdminClearEStop(station)}
+            >
+              {state?.stopWaiting ? 'Waiting for DS' : 'Clear'}
             </Button>
           )
         ) : (

@@ -207,8 +207,9 @@ only after someone presses **Enable**. Nothing brings it back by itself:
   **Re-enable** on their page (or staff press Enable on `/match`).
 - **Out of a match**, the field lets go of the Driver Station it was holding
   disabled. The DS returns to local control, still disabled, and the team
-  enables from it. A DS that never took the field's stop was never stopped:
-  see [e-stop](network.md#driver-station-generations) for what depends on the DS.
+  enables from it. An e-stop can't be cleared until pFMS has seen that DS stop,
+  or a DS still set to Enabled would start the robot again:
+  see [e-stop](network.md#driver-station-generations).
 - An e-stop latched while a match is being set up stays latched through
   the start: that robot sits the match out until staff clear it and the
   team enables it.

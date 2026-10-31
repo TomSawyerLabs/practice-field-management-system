@@ -39,6 +39,7 @@ export function eStopReason(
   state: StationControlState | undefined,
   fieldEStop: MatchState['fieldEStop'],
 ): EStopReason | null {
+  const waiting = state?.stopWaiting ? ' If your Driver Station still says Enabled, click Disable on it.' : '';
   if (fieldEStop) {
     const own = state?.eStopBy ? ' Your robot is also e-stopped on its own, which field staff clear separately.' : '';
     return {
@@ -46,14 +47,14 @@ export function eStopReason(
       title: 'FIELD E-STOP',
       detail:
         'Field staff stopped every robot on the field — this is not about your robot alone. Wait for field staff ' +
-        `to clear it, then enable again from your Driver Station.${own}`,
+        `to clear it, then enable again from your Driver Station.${own}${waiting}`,
     };
   }
   if (!state?.eStop) return null;
   return {
     scope: 'robot',
     title: 'E-STOPPED — your robot',
-    detail: ROBOT_ESTOP_DETAIL[state.eStopBy ?? 'staff'],
+    detail: ROBOT_ESTOP_DETAIL[state.eStopBy ?? 'staff'] + waiting,
   };
 }
 
@@ -146,6 +147,7 @@ export function FieldEStopControl() {
   const matchState = useMatchState();
   const [confirmClear, setConfirmClear] = useState(false);
   const fieldEStop = matchState?.fieldEStop;
+  const waiting = Object.values(matchState?.stationStates ?? {}).filter(s => s.stopWaiting && !s.eStopBy).length;
 
   if (!fieldEStop) {
     return (
@@ -186,6 +188,7 @@ export function FieldEStopControl() {
               variant="contained"
               color="inherit"
               sx={{ color: 'error.main', fontWeight: 700 }}
+              disabled={waiting > 0}
               onClick={() => {
                 sendAdminClearFieldEStop();
                 setConfirmClear(false);
@@ -196,6 +199,12 @@ export function FieldEStopControl() {
             <Button color="inherit" onClick={() => setConfirmClear(false)}>
               Not yet
             </Button>
+            {waiting > 0 && (
+              <Typography sx={{ width: '100%' }}>
+                Waiting for {waiting === 1 ? '1 Driver Station' : `${waiting} Driver Stations`} to show Disabled, or a
+                robot would start again on the clear. If one stays Enabled, ask that team to click Disable.
+              </Typography>
+            )}
           </>
         ) : (
           <Button variant="outlined" color="inherit" sx={{ fontWeight: 700 }} onClick={() => setConfirmClear(true)}>

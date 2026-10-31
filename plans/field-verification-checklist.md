@@ -129,19 +129,25 @@ toolbars and real thumbs. Use an iPhone in Safari and an Android in Chrome.
 
 ### 7. How long does an e-stop take to reach a DS out of a match?
 
-E-stops no longer cut traffic (2026-10-30), so an out-of-match e-stop rests on
-the DS taking field control at its next handshake. With a robot on blocks,
-enabled from its own DS and not in a match, press the field E-Stop and time the
-robot's enabled bit from the press. Then clear it. Try the `[ ] \` enable key
-combo while held.
+An e-stop must act within 1 s, 250 ms at best (user, 2026-10-30). Out of a match
+pFMS cuts the DS's control traffic from the press until it sees the DS stop. The
+open question is whether a DS in local control obeys the disabled UDP packets on
+its own, with no TCP connection. If it does, the cut can go and everything stays
+connected. With a robot on blocks, enabled from its own DS and not in a match,
+press the field E-Stop, watch the robot, and read
+`slotN: e-stop: <why>, N ms after the stop` in the journal. Repeat a few times, on
+an NI DS and a 2027 DS. Try to clear it during the wait. Clear it, then try the
+`[ ] \` enable key combo while held.
 
-| Result                                                           | Meaning                                                                                                |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Disables within 1 s.                                             | Meets the user's limit (2026-10-30: within 1 s, 250 ms best). Note the real time in `docs/network.md`. |
-| Disables, but takes over 1 s (about 8 s expected, 3 s on 2027).  | Too slow. `ISSUES.md` has the entry; out-of-match e-stops need a faster way.                           |
-| Doesn't disable until someone touches the DS, or at all.         | E-stops don't stop a free-driving robot. Tell the user at once: out-of-match e-stops need another way. |
-| After the clear, the robot comes back on with no Enable pressed. | The DS doesn't stay disabled when the field lets go. Nothing covers that now the re-arm wait is gone.  |
-| The key combo enables the robot while held.                      | A held DS can be overridden from its keyboard. Note it in `docs/network.md`, then decide what to do.   |
+| Result                                                                | Meaning                                                                                   |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| The robot stops within 1 s every time.                                | The limit is met. Note the real time in `docs/network.md`.                                |
+| `shows Disabled`, well under 1 s, every time, with no re-handshake.   | The DS obeys UDP alone. The cut can go: everything stays connected. Tell the user.        |
+| `under field control` or `shows Disabled` at about 8 s (3 s on 2027). | The DS only obeys after its handshake, and the cut is doing the stopping. It stays.       |
+| The robot keeps moving past 1 s.                                      | The cut isn't working. Tell the user at once.                                             |
+| Clear works during the wait.                                          | The guard failed. Tell the user at once.                                                  |
+| After the clear, the robot comes back on with no Enable pressed.      | The DS doesn't stay disabled when the field lets go, so the wait needs to be longer.      |
+| The key combo enables the robot while held.                           | The log should show the cut return. Note it in `docs/network.md`, then decide what to do. |
 
 ## Settled by the audit (2026-10-30)
 

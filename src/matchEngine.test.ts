@@ -3,10 +3,11 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS, teamStopCut } from './matchEngine.js';
+import { DS_CONTROL_QUIET_MS, MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS, stopCut } from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { setBroadcast } from './appLogger.js';
 import { ScoringEngine } from './scoringEngine.js';
+import { StationNameList } from './types.js';
 import {
   challengeScore,
   CHALLENGE_MAX_DURATION,
@@ -976,21 +977,14 @@ describe('a team Stop out of a match', () => {
     expect(engine.getState().stationStates.slot1?.teamStopped).toBe(false);
   });
 
-  test('is the only stop that cuts a Driver Station off its robot', () => {
+  test('cuts a Driver Station off its robot until the team lets it drive again', () => {
     const engine = new MatchEngine(() => 8);
-    const cut = (station: 'slot1' | 'slot2') => teamStopCut(engine.getState().stationStates[station]);
+    const cut = (station: 'slot1' | 'slot2') => stopCut(engine.getState().stationStates[station]);
     engine.teamStop('slot1', true);
     expect(cut('slot1')).toBe(true);
     expect(cut('slot2')).toBe(false);
     engine.teamStop('slot1', false);
     expect(cut('slot1')).toBe(false);
-
-    engine.stationEStop('slot1', 'staff');
-    expect(cut('slot1')).toBe(false);
-    engine.clearEStop('slot1');
-    engine.fieldEStop();
-    expect(cut('slot1')).toBe(false);
-    expect(cut('slot2')).toBe(false);
   });
 
   test('e-stop is visible cheaply to the hold resolvers', () => {
@@ -998,8 +992,122 @@ describe('a team Stop out of a match', () => {
     expect(engine.isEStopped('slot1')).toBe(false);
     engine.fieldEStop();
     expect(engine.isEStopped('slot1')).toBe(true);
+    dsesDisabled(engine);
     engine.clearEStop();
     expect(engine.isEStopped('slot1')).toBe(false);
+  });
+});
+
+/** Every Driver Station is seen commanding Disabled, so e-stops can be cleared. */
+const dsesDisabled = (engine: MatchEngine) => {
+  for (const s of StationNameList) engine.noteDsControl(s, false);
+};
+
+describe('an e-stop out of a match', () => {
+  const setup = () => {
+    const engine = new MatchEngine(() => 8);
+    const station = () => engine.getState().stationStates.slot1;
+    return { engine, station, cut: () => stopCut(station()) };
+  };
+  afterEach(() => setSystemTime());
+
+  test('cuts the Driver Station off until it shows Disabled, then lifts with the robot still stopped', () => {
+    const { engine, station, cut } = setup();
+    engine.noteDsControl('slot1', true);
+    engine.stationEStop('slot1', 'staff');
+    expect(cut()).toBe(true);
+    engine.noteDsControl('slot1', true);
+    expect(cut()).toBe(true);
+    engine.noteDsControl('slot1', false);
+    expect(cut()).toBe(false);
+    expect(station()?.eStop).toBe(true);
+  });
+
+  test('cuts again if the Driver Station goes back to Enabled while e-stopped', () => {
+    const { engine, cut } = setup();
+    engine.noteDsControl('slot1', false);
+    engine.stationEStop('slot1', 'staff');
+    expect(cut()).toBe(false);
+    engine.noteDsControl('slot1', true);
+    expect(cut()).toBe(true);
+    engine.noteDsControl('slot1', false);
+    expect(cut()).toBe(false);
+  });
+
+  test('cannot be cleared until the Driver Station has stopped', () => {
+    const { engine, station } = setup();
+    engine.noteDsControl('slot1', true);
+    engine.stationEStop('slot1', 'staff');
+    engine.clearEStop('slot1');
+    expect(station()?.eStop).toBe(true);
+    engine.clearEStop();
+    expect(station()?.eStop).toBe(true);
+    engine.noteDsControl('slot1', false);
+    engine.clearEStop('slot1');
+    expect(station()?.eStop).toBe(false);
+  });
+
+  test('the field E-Stop waits for every Driver Station, and cuts each robot', () => {
+    const { engine, cut } = setup();
+    engine.noteDsControl('slot1', true);
+    engine.noteDsControl('slot2', true);
+    engine.fieldEStop();
+    expect(cut()).toBe(true);
+    expect(stopCut(engine.getState().stationStates.slot2)).toBe(true);
+    engine.noteDsControl('slot1', false);
+    engine.clearFieldEStop();
+    expect(engine.isFieldEStopped()).toBe(true);
+    engine.noteDsControl('slot2', false);
+    engine.clearEStop('slot1');
+    expect(engine.isFieldEStopped()).toBe(true);
+    dsesDisabled(engine);
+    engine.clearFieldEStop();
+    expect(engine.isFieldEStopped()).toBe(false);
+  });
+
+  test('stops waiting once nothing is commanding the robot', async () => {
+    const { engine, cut } = setup();
+    const start = Date.now();
+    setSystemTime(start);
+    engine.stationEStop('slot1', 'staff');
+    expect(cut()).toBe(true);
+    setSystemTime(start + DS_CONTROL_QUIET_MS - 100);
+    await Bun.sleep(150);
+    expect(cut()).toBe(true);
+    setSystemTime(start + DS_CONTROL_QUIET_MS + 100);
+    await Bun.sleep(150);
+    expect(cut()).toBe(false);
+  });
+
+  test('keeps waiting on control packets it cannot read', async () => {
+    const { engine, cut } = setup();
+    const start = Date.now();
+    setSystemTime(start);
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(start + DS_CONTROL_QUIET_MS + 100);
+    engine.noteDsControl('slot1', null);
+    await Bun.sleep(150);
+    expect(cut()).toBe(true);
+  });
+
+  test('never cuts a robot in a match: the field already controls its Driver Station', () => {
+    const { engine, cut } = setup();
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'blue');
+    engine.noteDsControl('slot1', true);
+    engine.stationEStop('slot1', 'staff');
+    expect(cut()).toBe(false);
+    engine.clearEStop('slot1');
+    expect(engine.isEStopped('slot1')).toBe(false);
+  });
+
+  test('a cleared e-stop leaves nothing waiting', () => {
+    const { engine, station } = setup();
+    engine.noteDsControl('slot1', true);
+    engine.stationEStop('slot1', 'staff');
+    engine.noteDsControl('slot1', false);
+    engine.clearEStop('slot1');
+    expect(station()?.stopWaiting).toBeUndefined();
   });
 });
 
@@ -1087,6 +1195,7 @@ describe('the field E-Stop', () => {
     engine.startMatch();
     expect(engine.getState().phase).toBe('created');
 
+    dsesDisabled(engine);
     engine.clearFieldEStop();
     expect(engine.getState().fieldEStop).toBeUndefined();
     expect(engine.isEStopped('slot4')).toBe(false);
@@ -1109,6 +1218,7 @@ describe('the field E-Stop', () => {
     const engine = new MatchEngine(() => 1967);
     engine.stationEStop('slot2', 'team');
     engine.fieldEStop();
+    dsesDisabled(engine);
     engine.clearEStop('slot2');
     expect(engine.isEStopped('slot2')).toBe(true);
     expect(engine.getState().stationStates.slot2?.eStopBy).toBeUndefined();
