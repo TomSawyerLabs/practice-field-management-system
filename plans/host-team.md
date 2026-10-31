@@ -70,11 +70,18 @@ set and managed by admins only.
 - [x] Parked host robots on the CSA and admin pages (`ba4fbf7`).
 - [x] Field-full message counts parked host robots (`656230f`).
 - [x] Usage ignores a host robot with no Driver Station (`8d0c5ee`).
-- [ ] `ba4fbf7`, `656230f`, `8d0c5ee` deployed. Pushes and deploys belong to
-      the deploy thread; these need its pickup and the user's yes there.
-- [ ] Host team card and the new alerts seen in a browser. Covered by unit tests
-      and typecheck only: a live run needs a fake radio and an isolated data
-      directory, and this PC can reach the real field radio.
+- [x] `ba4fbf7`, `656230f`, `8d0c5ee` deployed: all three are in `c08e287`,
+      running on steamboat since 9:02 PM PDT (04:02Z Oct 31) 2026-10-30.
+- [x] Host team card and the new alerts seen in headless Chrome, 2026-10-30, on
+      the built pages with the real backend, `DRY_RUN=1` and a loopback fake
+      radio. On `/admin` the team saves as a chip and persists; opening the
+      queue line shows Scrimmage and its wording, closing it clears them. On
+      `/csa` the headline stays All clear with the parked note folded, a
+      visitor off the Wi-Fi is still a problem, and a full field gives "The
+      field is full and 1234 is parked" with a two-tap Release that clears it.
+      A visitor's page says "1 of them the host team's, parked and not
+      running", and Teams & Controls lists 1234 last, labelled Host. Nothing
+      needed fixing.
 
 ## Findings / gotchas
 

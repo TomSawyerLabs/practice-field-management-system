@@ -170,7 +170,7 @@ Two linked things, both raised on 2026-10-04 while team 8 was on the field:
 - [x] All deployed to steamboat 2026-10-04 20:23 (`9d84464`), 797 tests pass.
       CSA and team page checked visually against the live backend before
       deploy (Vite dev server tunnelled to steamboat :9005).
-- [ ] CSA FMS-control display.
+- [x] CSA FMS-control display: `86df58f`, ticked above, is in `c08e287`.
 
 ## Open questions for the user
 

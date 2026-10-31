@@ -356,7 +356,7 @@ owns them before sending anything.
 - [x] Limit on outside admin logins
 - [x] Caddy change approved, applied and verified
 - [x] Guard deployed by the deploy thread (`4c4b24a`)
-- [ ] Admin login limit deployed: the deploy thread's call
+- [x] Admin login limit deployed: `26f552c` is in `c08e287`
 - [x] List what a stranger is sent, and hold back all but the login's needs
 - [x] Admin passphrase moved to scrypt, upgrading at the next login
 - [ ] Both deployed: the deploy thread's call. See "The admin passphrase hash"

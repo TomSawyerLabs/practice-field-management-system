@@ -114,7 +114,7 @@ Current step: **done** — committed; not pushed or deployed.
       shorter; `perKeySerializer` removed.
 - [x] Step 3 — `docs/network.md` rewritten for the robot-keyed model.
 - [x] Step 4 — typecheck, prettier, full suite 654/654, committed.
-- [ ] Push and deploy (needs Cameron's go-ahead).
+- [x] Push and deploy: `2480a55` is in `c08e287`.
 - [ ] Field check: after a slot changes hands with the old laptop still on
       Wi-Fi, no `Blocked duplicate DS` for the new team.
 

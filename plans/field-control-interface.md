@@ -65,8 +65,12 @@ to keep today's behaviour (the bare trunk NIC, i.e. native VLAN).
       docker-compose comment
 - [x] ISSUES.md: `fmsAddress` setting is only read by the probe (side issue)
 - [x] typecheck, prettier, full `bun test` (948 pass), commit
-- [ ] Not done: the wizard field hasn't been looked at in a browser, and no
-      tagged field-control setup has been tried on real hardware
+- [x] Wizard field seen in headless Chrome, 2026-10-30, on the built page with
+      `DRY_RUN=1` and a loopback fake radio. The help names `fake0.<VLAN ID>`,
+      Save stays off until something changes, a typed value is trimmed and
+      saved, it survives a reload, and emptying it clears the setting. Fixed
+      `df5f7db`: the label sat in the empty box and hid the placeholder.
+- [ ] Not done: no tagged field-control setup has been tried on real hardware
 
 ## Findings / gotchas
 

@@ -193,8 +193,8 @@ time. Your wording in the admin made me think the inverse was correct."
 - [x] ~~Switch on = no reply~~ — wrong, reverted 2026-09-28 (see Resolution).
 - [x] 2026-09-28: restore status-2 release; reword admin card, station page
       alert, docs, code comments.
-- [ ] **Current:** deploy the 2026-09-28 fix (master also carries other
-      threads' undeployed commits — user's call when).
+- [x] Deploy the 2026-09-28 fix: `6424dec` is in `c08e287`. Its status-2 reply
+      has since been replaced (`ff74d51`, `plans/csa-fms-control-status.md`).
 - [ ] Verify on the field after deploy: Allowed → DS enables out of a match
       and after leaving one without a restart; Held → DS shows "Admin
       disabled" and cannot.

@@ -174,8 +174,8 @@ stationStatuses`) plus `stagedChanges`. A deferred immediate change lives
       bar, match page panel, docs), `051264b` (admin page: Release / Kick /
       Forget, hold checkbox), plan commit. Typecheck, prettier, full test
       suite and a production frontend build all pass.
-- [ ] Deploy to steamboat and watch a real team press the button (not done
-      in this thread; nothing pushed yet)
+- [x] Deploy to steamboat: `819291b` and `051264b` are in `c08e287`.
+- [ ] Watch a real team press the button
 
 ## Open questions for the user
 

@@ -95,3 +95,11 @@ Each needs a field visit. What to try and what each result means is in
   show, because the DS reports it to the field. Waiting on a first capture
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
+
+## A robot just released can leave its slot a false "last linked"
+
+`RadioManager` clears `lastLinked` when a change is applied, but the status poll
+stamps it again while the radio still shows the old robot linked (seen 2026-10-30
+on a fake radio). `/csa` then told a new team in that slot "dropped off the field
+Wi-Fi, last linked 24 s ago", 1 s after it arrived. Matters because staff look for
+a lost robot, not one still joining.

@@ -60,8 +60,14 @@ every team (`plans/timelapse-viewer.md`, open question 1):
 - [x] Practice pause (match mode, low space) + station card text + test
       (real ffmpeg: a clip in progress is cut at the pause and saved).
 - [x] Admin UI, practice-day page / Slack wording, docs.
-- [ ] Not seen in a browser: the admin fields/warning and the station-card
-      pause text are typechecked only.
+- [x] Seen in headless Chrome, 2026-10-30, on the built pages with `DRY_RUN=1`
+      and a loopback fake radio. All three admin fields save through the page,
+      and the wording follows. A floor above the disk's free space gave the
+      real low warning and Disk low chip, and they cleared when it came back.
+      The team's Video tab shows the match-mode text with the queue line open
+      and the disk-space text when low, which wins if both apply. Only the
+      critical wording was injected, by rewriting a WebSocket frame. Nothing
+      needed fixing.
 - [x] Deployed 2026-10-01 16:04 PDT (`5425f4c`), 387 GB free at the time.
 - [x] Low-space Slack note, unclaimed-team notes dropped, forgotten queue
       line auto-closes — built and tested 2026-10-01; deployed 21:19 PDT

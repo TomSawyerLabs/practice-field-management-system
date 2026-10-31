@@ -75,7 +75,7 @@ commit:
 - [x] 10 Two-robot last-robot re-claim — `6fb8d54`
 - [x] Stale restart entry rewritten — `97b0191`
 - [x] Firmware docs corrected — `5a13573`
-- [ ] Deploy — on hold at the user's request (2026-10-12)
+- [x] Deploy — all twelve commits above are in `c08e287`
 
 ## Findings / gotchas
 

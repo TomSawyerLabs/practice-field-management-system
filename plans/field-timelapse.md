@@ -535,7 +535,9 @@ all eight switches, or set `zha`/`zigpy` to debug around a scheduled frame.
 - [ ] Pin down the fixture that intermittently does not respond — logs do not
       name it; Bay 4/5 North is the suspect (weak link, late both times).
 - [ ] Track the automation and script in ops (`homeassistant/ha-tsl`).
-- [ ] Deploy to steamboat and switch it on.
+- [x] Deploy to steamboat and switch it on: `1581678` is in `c08e287`, and
+      `c7522cd` records unattended captures there on 2026-09-22. On 2026-10-30
+      steamboat had it enabled, with 9 files written in the last day.
 - [ ] After a week, check the actual disk growth against the 19 MB/field-hour
       estimate and settle the retention numbers.
 

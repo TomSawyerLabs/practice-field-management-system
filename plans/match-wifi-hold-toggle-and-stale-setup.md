@@ -87,11 +87,12 @@ Two changes so this does not repeat:
       (contains `934d850`), service active, no errors in the first minutes,
       the switch text is in the served `match-*.js` bundle. The field was
       already idle before the deploy, so the parked match is gone.
-- [ ] The two pages have still not been looked at in a browser: the dev
-      server does not run on the Windows machine (the backend needs Linux
-      netlink) and the T3 preview browser could not load `pfms.tsl`
-      (`chrome-error://chromewebdata/`). Someone on the field network should
-      glance at the switch card on `/match` and the new admin checkbox.
+- [x] Both pages seen in headless Chrome, 2026-10-30, on the built pages with
+      `DRY_RUN=1` and a loopback fake radio. The `/match` switch card and the
+      admin checkbox start on, and each follows the other live and persists,
+      with the right wording either way. With a match set up, off lets a
+      request reach the radio, and on keeps it waiting under Apply now with no
+      POST. Nothing needed fixing.
 
 ## Open questions for the user
 

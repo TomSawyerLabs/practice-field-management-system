@@ -173,7 +173,8 @@ Say this plainly so the login isn't mistaken for more than it is.
 - [x] Backend, frontend, `/admin` card, docs
 - [x] Tests: `src/operatorAuth.test.ts`, and a real socket in `src/wsAccess.test.ts`
 - [x] Headless Chrome against the built pages, with a stub engine and radio
-- [ ] Deployed. Waiting on the user's one big push, then setting a code
+- [x] Deployed: `e934b48` is in `c08e287`
+- [ ] Set a code
 
 ## Things not to do
 
