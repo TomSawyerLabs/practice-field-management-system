@@ -14,6 +14,11 @@ function record(len: number, fill = 0xab): Buffer {
   return r;
 }
 
+/** These wait on real writes finishing, which a stalled disk can hold up for
+ *  seconds. Past Bun's 5 s default the test would be failed while still
+ *  correctly waiting. */
+const DISK_LIMIT_MS = 30_000;
+
 describe('RawPacketLog', () => {
   let dir: string;
   let clock: Date;
@@ -23,63 +28,83 @@ describe('RawPacketLog', () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  test('writes a pcap file per local day, header first', async () => {
-    const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
-    log.write(record(60));
-    log.write(record(60));
-    await log.close();
-    const bytes = readFileSync(join(dir, 'sc-2026-10-29.pcap'));
-    expect(bytes.readUInt32LE(0)).toBe(0xa1b2c3d4);
-    expect(bytes.readUInt32LE(20)).toBe(1); // Ethernet
-    expect(bytes.length).toBe(24 + 2 * 76);
-  });
+  test(
+    'writes a pcap file per local day, header first',
+    async () => {
+      const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
+      log.write(record(60));
+      log.write(record(60));
+      await log.close();
+      const bytes = readFileSync(join(dir, 'sc-2026-10-29.pcap'));
+      expect(bytes.readUInt32LE(0)).toBe(0xa1b2c3d4);
+      expect(bytes.readUInt32LE(20)).toBe(1); // Ethernet
+      expect(bytes.length).toBe(24 + 2 * 76);
+    },
+    DISK_LIMIT_MS,
+  );
 
-  test('appends to the day’s file after a restart, without a second header', async () => {
-    const first = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
-    first.write(record(10));
-    await first.close();
-    const second = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
-    second.write(record(10));
-    await second.close();
-    expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 26);
-  });
+  test(
+    'appends to the day’s file after a restart, without a second header',
+    async () => {
+      const first = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
+      first.write(record(10));
+      await first.close();
+      const second = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
+      second.write(record(10));
+      await second.close();
+      expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 26);
+    },
+    DISK_LIMIT_MS,
+  );
 
-  test('stops at the daily cap, and starts again the next day', async () => {
-    const log = new RawPacketLog({ directory: dir, prefix: 'sc', maxBytesPerDay: 200, now: () => clock });
-    for (let i = 0; i < 10; i++) log.write(record(60));
-    clock = new Date(2026, 9, 30, 9, 0, 0);
-    log.write(record(60));
-    await log.close();
-    expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 76);
-    expect(readFileSync(join(dir, 'sc-2026-10-30.pcap')).length).toBe(24 + 76);
-  });
+  test(
+    'stops at the daily cap, and starts again the next day',
+    async () => {
+      const log = new RawPacketLog({ directory: dir, prefix: 'sc', maxBytesPerDay: 200, now: () => clock });
+      for (let i = 0; i < 10; i++) log.write(record(60));
+      clock = new Date(2026, 9, 30, 9, 0, 0);
+      log.write(record(60));
+      await log.close();
+      expect(readFileSync(join(dir, 'sc-2026-10-29.pcap')).length).toBe(24 + 2 * 76);
+      expect(readFileSync(join(dir, 'sc-2026-10-30.pcap')).length).toBe(24 + 76);
+    },
+    DISK_LIMIT_MS,
+  );
 
-  test('close still finishes when the file can not be written', async () => {
-    mkdirSync(join(dir, 'sc-2026-10-29.pcap'));
-    const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
-    log.write(record(10));
-    await log.close();
-  });
+  test(
+    'close still finishes when the file can not be written',
+    async () => {
+      mkdirSync(join(dir, 'sc-2026-10-29.pcap'));
+      const log = new RawPacketLog({ directory: dir, prefix: 'sc', now: () => clock });
+      log.write(record(10));
+      await log.close();
+    },
+    DISK_LIMIT_MS,
+  );
 
-  test('deletes the oldest days to stay under the total cap', async () => {
-    for (const day of ['2026-10-25', '2026-10-26', '2026-10-27']) {
-      writeFileSync(join(dir, `sc-${day}.pcap`), Buffer.alloc(100));
-    }
-    writeFileSync(join(dir, 'unrelated.txt'), Buffer.alloc(1000));
-    const log = new RawPacketLog({
-      directory: dir,
-      prefix: 'sc',
-      maxBytesPerDay: 100,
-      maxBytesTotal: 300,
-      now: () => clock,
-    });
-    log.write(record(10));
-    await log.close();
-    expect(readdirSync(dir).sort()).toEqual([
-      'sc-2026-10-26.pcap',
-      'sc-2026-10-27.pcap',
-      'sc-2026-10-29.pcap',
-      'unrelated.txt',
-    ]);
-  });
+  test(
+    'deletes the oldest days to stay under the total cap',
+    async () => {
+      for (const day of ['2026-10-25', '2026-10-26', '2026-10-27']) {
+        writeFileSync(join(dir, `sc-${day}.pcap`), Buffer.alloc(100));
+      }
+      writeFileSync(join(dir, 'unrelated.txt'), Buffer.alloc(1000));
+      const log = new RawPacketLog({
+        directory: dir,
+        prefix: 'sc',
+        maxBytesPerDay: 100,
+        maxBytesTotal: 300,
+        now: () => clock,
+      });
+      log.write(record(10));
+      await log.close();
+      expect(readdirSync(dir).sort()).toEqual([
+        'sc-2026-10-26.pcap',
+        'sc-2026-10-27.pcap',
+        'sc-2026-10-29.pcap',
+        'unrelated.txt',
+      ]);
+    },
+    DISK_LIMIT_MS,
+  );
 });

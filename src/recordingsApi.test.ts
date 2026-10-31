@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,6 +162,13 @@ describe('recordings API', () => {
       // The retention sweep ages a directory with no manifest by its mtime, so
       // an admin looking at an orphan must not reset its clock.
       const before = statSync(orphanDir).mtimeMs;
+      // A file landing in the directory is what moves its mtime. No ffmpeg
+      // needed, and this test isn't about the picture.
+      const renderer = recorder as unknown as { renderThumbnail(source: string, out: string): Promise<string> };
+      spyOn(renderer, 'renderThumbnail').mockImplementationOnce(async (_source, out) => {
+        writeFileSync(out, 'jpeg');
+        return out;
+      });
       expect(await recorder.thumbnail('pending-123', 'all-field.part0.mp4')).toBeDefined();
       // Restored, not merely close: the slack is for the millisecond lost
       // putting the timestamp back through utimes, not for the ffmpeg run.

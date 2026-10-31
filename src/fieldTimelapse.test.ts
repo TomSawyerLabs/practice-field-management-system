@@ -334,57 +334,69 @@ describe('FieldTimelapse light handshake over webhooks', () => {
     return { timelapse, posted };
   }
 
-  test('the callback releases the shutter, and both webhooks are called', async () => {
-    // Home Assistant answers a moment later, as it would after the lights
-    // report on.
-    const { timelapse, posted } = instance((nonce, tl) => {
-      setTimeout(() => tl.notifyLightsReady(nonce), 150);
-    });
-    const entry = await timelapse.captureFrame('manual', true);
-    await timelapse.stop();
+  test(
+    'the callback releases the shutter, and both webhooks are called',
+    async () => {
+      // Home Assistant answers a moment later, as it would after the lights
+      // report on.
+      const { timelapse, posted } = instance((nonce, tl) => {
+        setTimeout(() => tl.notifyLightsReady(nonce), 150);
+      });
+      const entry = await timelapse.captureFrame('manual', true);
+      await timelapse.stop();
 
-    // Shot on the callback: a timeout would say 'failed'.
-    expect(entry.lights).toBe('ran');
-    expect(entry.lightsError).toBeUndefined();
-    expect(entry.files).toHaveLength(1);
-    expect(posted.map(p => p.url.split('/').pop())).toEqual([
-      'pfms_lights_start_abcdefgh',
-      'pfms_lights_done_abcdefgh',
-    ]);
-    // Same nonce both ways, so the automation can match them up.
-    expect(posted[0].nonce).toBe(posted[1].nonce);
-    expect(posted[0].nonce).toMatch(/^[0-9a-f]{32}$/);
-  }, 30_000);
+      // Shot on the callback: a timeout would say 'failed'.
+      expect(entry.lights).toBe('ran');
+      expect(entry.lightsError).toBeUndefined();
+      expect(entry.files).toHaveLength(1);
+      expect(posted.map(p => p.url.split('/').pop())).toEqual([
+        'pfms_lights_start_abcdefgh',
+        'pfms_lights_done_abcdefgh',
+      ]);
+      // Same nonce both ways, so the automation can match them up.
+      expect(posted[0].nonce).toBe(posted[1].nonce);
+      expect(posted[0].nonce).toMatch(/^[0-9a-f]{32}$/);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('no callback still takes the frame, and says the lights failed', async () => {
-    const { timelapse, posted } = instance(() => {
-      // Home Assistant never answers.
-    }, 1);
-    const entry = await timelapse.captureFrame('manual', true);
-    await timelapse.stop();
+  test(
+    'no callback still takes the frame, and says the lights failed',
+    async () => {
+      const { timelapse, posted } = instance(() => {
+        // Home Assistant never answers.
+      }, 1);
+      const entry = await timelapse.captureFrame('manual', true);
+      await timelapse.stop();
 
-    expect(entry.lights).toBe('failed');
-    expect(entry.lightsError).toContain('did not confirm');
-    // The frame is what matters — it is still taken.
-    expect(entry.files).toHaveLength(1);
-    // And the automation is still released, so the lights are not left up.
-    expect(posted.map(p => p.url.split('/').pop())).toContain('pfms_lights_done_abcdefgh');
-  }, 30_000);
+      expect(entry.lights).toBe('failed');
+      expect(entry.lightsError).toContain('did not confirm');
+      // The frame is what matters — it is still taken.
+      expect(entry.files).toHaveLength(1);
+      // And the automation is still released, so the lights are not left up.
+      expect(posted.map(p => p.url.split('/').pop())).toContain('pfms_lights_done_abcdefgh');
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('a wrong or stale nonce is refused', async () => {
-    let captured = '';
-    const { timelapse } = instance((nonce, tl) => {
-      captured = nonce;
-      expect(tl.notifyLightsReady('not-the-nonce')).toBe(false);
-      setTimeout(() => tl.notifyLightsReady(nonce), 100);
-    });
-    const entry = await timelapse.captureFrame('manual', true);
+  test(
+    'a wrong or stale nonce is refused',
+    async () => {
+      let captured = '';
+      const { timelapse } = instance((nonce, tl) => {
+        captured = nonce;
+        expect(tl.notifyLightsReady('not-the-nonce')).toBe(false);
+        setTimeout(() => tl.notifyLightsReady(nonce), 100);
+      });
+      const entry = await timelapse.captureFrame('manual', true);
 
-    expect(entry.lights).toBe('ran');
-    // Once used, the same nonce is dead — a replay cannot trip a later frame.
-    expect(timelapse.notifyLightsReady(captured)).toBe(false);
-    await timelapse.stop();
-  }, 30_000);
+      expect(entry.lights).toBe('ran');
+      // Once used, the same nonce is dead — a replay cannot trip a later frame.
+      expect(timelapse.notifyLightsReady(captured)).toBe(false);
+      await timelapse.stop();
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('nobody is listening between captures', async () => {
     const { timelapse } = instance((nonce, tl) => tl.notifyLightsReady(nonce));
@@ -642,57 +654,65 @@ describe('FieldTimelapse', () => {
     FFMPEG_LIMIT_MS,
   );
 
-  test('robots on the field leave the lights alone too — they are already on', async () => {
-    // Its own instance: telemetry here would otherwise start the fast
-    // timelapse and leak presence into the tests that follow.
-    const seen: string[] = [];
-    const occupied = new FieldTimelapse({
-      directory: dir,
-      ffmpegPath: ffmpeg,
-      getStreams: () => [{ name: 'All field', url: source, enabled: true }],
-      getConfig: () => config,
-      isAvailable: () => true,
-      isFieldBusy: () => false,
-      inputPrefixArgs: ['-re', '-stream_loop', '-1'],
-      tickMs: 60_000,
-      fetchImpl: async url => {
-        seen.push(String(url));
-        return { ok: true, status: 200, text: async () => '{}' };
-      },
-    });
-    occupied.onTelemetry();
-    const entry = await occupied.captureFrame('manual', true);
-    await occupied.stop();
+  test(
+    'robots on the field leave the lights alone too — they are already on',
+    async () => {
+      // Its own instance: telemetry here would otherwise start the fast
+      // timelapse and leak presence into the tests that follow.
+      const seen: string[] = [];
+      const occupied = new FieldTimelapse({
+        directory: dir,
+        ffmpegPath: ffmpeg,
+        getStreams: () => [{ name: 'All field', url: source, enabled: true }],
+        getConfig: () => config,
+        isAvailable: () => true,
+        isFieldBusy: () => false,
+        inputPrefixArgs: ['-re', '-stream_loop', '-1'],
+        tickMs: 60_000,
+        fetchImpl: async url => {
+          seen.push(String(url));
+          return { ok: true, status: 200, text: async () => '{}' };
+        },
+      });
+      occupied.onTelemetry();
+      const entry = await occupied.captureFrame('manual', true);
+      await occupied.stop();
 
-    expect(entry.lights).toBe('skipped-field-in-use');
-    expect(entry.files).toHaveLength(1);
-    expect(seen).toHaveLength(0);
-  }, 20_000);
+      expect(entry.lights).toBe('skipped-field-in-use');
+      expect(entry.files).toHaveLength(1);
+      expect(seen).toHaveLength(0);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('the lights are restored even when the capture itself fails', async () => {
-    const good = config.lights;
-    calls.length = 0;
-    const broken = new FieldTimelapse({
-      directory: dir,
-      ffmpegPath: ffmpeg,
-      getStreams: () => [{ name: 'Gone', url: 'http://127.0.0.1:1/nope', enabled: true }],
-      getConfig: () => config,
-      isAvailable: () => true,
-      isFieldBusy: () => false,
-      tickMs: 60_000,
-      fetchImpl: async (url, init) => {
-        calls.push({ url: String(url), method: String(init.method) });
-        return { ok: true, status: 200, text: async () => '{}' };
-      },
-    });
-    const entry = await broken.captureFrame('manual', true);
-    await broken.stop();
-    config.lights = good;
+  test(
+    'the lights are restored even when the capture itself fails',
+    async () => {
+      const good = config.lights;
+      calls.length = 0;
+      const broken = new FieldTimelapse({
+        directory: dir,
+        ffmpegPath: ffmpeg,
+        getStreams: () => [{ name: 'Gone', url: 'http://127.0.0.1:1/nope', enabled: true }],
+        getConfig: () => config,
+        isAvailable: () => true,
+        isFieldBusy: () => false,
+        tickMs: 60_000,
+        fetchImpl: async (url, init) => {
+          calls.push({ url: String(url), method: String(init.method) });
+          return { ok: true, status: 200, text: async () => '{}' };
+        },
+      });
+      const entry = await broken.captureFrame('manual', true);
+      await broken.stop();
+      config.lights = good;
 
-    expect(entry.error).toBeTruthy();
-    expect(entry.files).toHaveLength(0);
-    expect(calls.map(c => c.url)).toContain('http://lights.invalid/restore');
-  }, 20_000);
+      expect(entry.error).toBeTruthy();
+      expect(entry.files).toHaveLength(0);
+      expect(calls.map(c => c.url)).toContain('http://lights.invalid/restore');
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test(
     'a failing light action does not cost the frame',
@@ -718,87 +738,95 @@ describe('FieldTimelapse', () => {
     FFMPEG_LIMIT_MS,
   );
 
-  test('robots showing up start a timelapse that plays back at 30 fps', async () => {
-    config.lights = { mode: 'none' };
-    expect(timelapse.getState().capturing).toBe(false);
+  test(
+    'robots showing up start a timelapse that plays back at 30 fps',
+    async () => {
+      config.lights = { mode: 'none' };
+      expect(timelapse.getState().capturing).toBe(false);
 
-    timelapse.onTelemetry();
-    await until(timelapse, state => state.capturing);
-    expect(timelapse.getState().robotsPresent).toBe(true);
+      timelapse.onTelemetry();
+      await until(timelapse, state => state.capturing);
+      expect(timelapse.getState().robotsPresent).toBe(true);
 
-    // Let the encoder see several seconds of source, then close it out the way
-    // a match start would.
-    await sleep(6000);
-    const closed = until(timelapse, state => !state.capturing && state.recentSessions.length > 0);
-    timelapse.onMatchState({ phase: 'countdown' } as MatchState);
-    await closed;
+      // Let the encoder see several seconds of source, then close it out the way
+      // a match start would.
+      await sleep(6000);
+      const closed = until(timelapse, state => !state.capturing && state.recentSessions.length > 0);
+      timelapse.onMatchState({ phase: 'countdown' } as MatchState);
+      await closed;
 
-    const state = timelapse.getState();
-    expect(state.capturing).toBe(false);
-    const session = state.recentSessions[0];
-    expect(session).toBeTruthy();
-    expect(session.stream).toBe('All field');
-    expect(session.bytes).toBeGreaterThan(2048);
+      const state = timelapse.getState();
+      expect(state.capturing).toBe(false);
+      const session = state.recentSessions[0];
+      expect(session).toBeTruthy();
+      expect(session.stream).toBe('All field');
+      expect(session.bytes).toBeGreaterThan(2048);
 
-    const file = timelapse.filePath('active', session.file);
-    expect(file).toBeTruthy();
-    const probe = execFileSync(
-      ffprobe,
-      ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=r_frame_rate,width', '-of', 'csv=p=0', file!],
-      { encoding: 'utf8' },
-    ).trim();
-    expect(probe).toBe('320,30/1');
+      const file = timelapse.filePath('active', session.file);
+      expect(file).toBeTruthy();
+      const probe = execFileSync(
+        ffprobe,
+        ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=r_frame_rate,width', '-of', 'csv=p=0', file!],
+        { encoding: 'utf8' },
+      ).trim();
+      expect(probe).toBe('320,30/1');
 
-    timelapse.onMatchState({ phase: 'idle' } as MatchState);
-  }, 40_000);
+      timelapse.onMatchState({ phase: 'idle' } as MatchState);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('a closed chunk is finalized for the viewer: faststart, a scrub sheet, and its place on the clock', async () => {
-    await timelapse.whenFinalized();
-    const session = timelapse.getState().recentSessions[0];
-    const file = timelapse.filePath('active', session.file)!;
+  test(
+    'a closed chunk is finalized for the viewer: faststart, a scrub sheet, and its place on the clock',
+    async () => {
+      await timelapse.whenFinalized();
+      const session = timelapse.getState().recentSessions[0];
+      const file = timelapse.filePath('active', session.file)!;
 
-    // Faststart: the index comes before the media, and nothing is fragmented.
-    const head = readFileSync(file).toString('latin1');
-    expect(head.indexOf('moov')).toBeGreaterThan(-1);
-    expect(head.indexOf('moov')).toBeLessThan(head.indexOf('mdat'));
-    expect(head.includes('moof')).toBe(false);
-    expect(timelapse.isChunkFinal(session.file)).toBe(true);
+      // Faststart: the index comes before the media, and nothing is fragmented.
+      const head = readFileSync(file).toString('latin1');
+      expect(head.indexOf('moov')).toBeGreaterThan(-1);
+      expect(head.indexOf('moov')).toBeLessThan(head.indexOf('mdat'));
+      expect(head.includes('moof')).toBe(false);
+      expect(timelapse.isChunkFinal(session.file)).toBe(true);
 
-    const [chunk] = timelapse.chunkInfos(session.startedAt - 1, session.endedAt! + 1);
-    expect(chunk).toMatchObject({ file: session.file, stream: 'All field', source: 'live' });
-    expect(chunk.estimated).toBeUndefined();
-    expect(chunk.start).toBe(session.startedAt);
-    expect(chunk.end).toBe(session.endedAt!);
-    // Frames at 30 fps: whole frames of film.
-    expect(Math.round(chunk.mediaSeconds * 30)).toBeCloseTo(chunk.mediaSeconds * 30, 5);
-    expect(chunk.scrub).toBeTruthy();
-    expect(chunk.scrub!.tileWidth).toBe(160);
-    expect(chunk.scrub!.tileHeight).toBe(120);
-    expect(timelapse.filePath('scrub', chunk.scrub!.file)).toBeTruthy();
-    // Only the sheet is served from there.
-    expect(timelapse.filePath('scrub', session.file)).toBeUndefined();
+      const [chunk] = timelapse.chunkInfos(session.startedAt - 1, session.endedAt! + 1);
+      expect(chunk).toMatchObject({ file: session.file, stream: 'All field', source: 'live' });
+      expect(chunk.estimated).toBeUndefined();
+      expect(chunk.start).toBe(session.startedAt);
+      expect(chunk.end).toBe(session.endedAt!);
+      // Frames at 30 fps: whole frames of film.
+      expect(Math.round(chunk.mediaSeconds * 30)).toBeCloseTo(chunk.mediaSeconds * 30, 5);
+      expect(chunk.scrub).toBeTruthy();
+      expect(chunk.scrub!.tileWidth).toBe(160);
+      expect(chunk.scrub!.tileHeight).toBe(120);
+      expect(timelapse.filePath('scrub', chunk.scrub!.file)).toBeTruthy();
+      // Only the sheet is served from there.
+      expect(timelapse.filePath('scrub', session.file)).toBeUndefined();
 
-    // The scrub copy: the same number of frames, every one a keyframe.
-    expect(chunk.proxy).toMatch(/\.scrub\.m4v$/);
-    const proxy = timelapse.filePath('proxy', chunk.proxy!)!;
-    expect(proxy).toBeTruthy();
-    const frames = execFileSync(
-      ffprobe,
-      ['-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=flags', '-of', 'csv=p=0', proxy],
-      { encoding: 'utf8' },
-    )
-      .trim()
-      .split(/\s+/);
-    expect(frames).toHaveLength(Math.round(chunk.mediaSeconds * 30));
-    expect(frames.every(f => f.startsWith('K'))).toBe(true);
-    // It is not listed as a chunk in its own right.
-    expect(
-      timelapse
-        .listing()
-        .days.flatMap(d => d.practice)
-        .some(f => f.file.includes('scrub')),
-    ).toBe(false);
-  }, 30_000);
+      // The scrub copy: the same number of frames, every one a keyframe.
+      expect(chunk.proxy).toMatch(/\.scrub\.m4v$/);
+      const proxy = timelapse.filePath('proxy', chunk.proxy!)!;
+      expect(proxy).toBeTruthy();
+      const frames = execFileSync(
+        ffprobe,
+        ['-v', 'error', '-select_streams', 'v', '-show_entries', 'packet=flags', '-of', 'csv=p=0', proxy],
+        { encoding: 'utf8' },
+      )
+        .trim()
+        .split(/\s+/);
+      expect(frames).toHaveLength(Math.round(chunk.mediaSeconds * 30));
+      expect(frames.every(f => f.startsWith('K'))).toBe(true);
+      // It is not listed as a chunk in its own right.
+      expect(
+        timelapse
+          .listing()
+          .days.flatMap(d => d.practice)
+          .some(f => f.file.includes('scrub')),
+      ).toBe(false);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('a match recording becomes a chunk at the same settings, so the film runs through the match', async () => {
     // A match an hour ago, recorded as the match recorder would (-c copy).
@@ -866,31 +894,39 @@ describe('FieldTimelapse', () => {
     expect(timelapse.fillInPastMatches([{ matchId: 'match-2', recordings: rec(twoHoursAgo) }])).toBe(0);
   }, 60_000);
 
-  test('a film is rendered from the archival frames', async () => {
-    // captureFrame above left a handful of frames under today's date.
-    const day = localDay(Date.now());
-    expect(readdirSync(join(dir, '.timelapse', 'frames', day)).length).toBeGreaterThan(1);
+  test(
+    'a film is rendered from the archival frames',
+    async () => {
+      // captureFrame above left a handful of frames under today's date.
+      const day = localDay(Date.now());
+      expect(readdirSync(join(dir, '.timelapse', 'frames', day)).length).toBeGreaterThan(1);
 
-    await timelapse.renderFilm({ source: 'frames', fps: 12, height: 240, stream: 'All field' });
-    const render = timelapse.getState().render;
-    expect(render?.status).toBe('done');
-    expect(render?.file).toMatch(/^timelapse-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
-    expect(timelapse.filePath('render', render!.file!)).toBeTruthy();
-    // And it shows up in the list the admin page reads.
-    expect(timelapse.getState().renders.map(r => r.file)).toContain(render!.file!);
-  }, 30_000);
+      await timelapse.renderFilm({ source: 'frames', fps: 12, height: 240, stream: 'All field' });
+      const render = timelapse.getState().render;
+      expect(render?.status).toBe('done');
+      expect(render?.file).toMatch(/^timelapse-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
+      expect(timelapse.filePath('render', render!.file!)).toBeTruthy();
+      // And it shows up in the list the admin page reads.
+      expect(timelapse.getState().renders.map(r => r.file)).toContain(render!.file!);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
-  test('every frame gets a gallery-sized copy beside it', async () => {
-    const entry = await timelapse.captureFrame('manual', false);
-    const file = entry.files[0];
+  test(
+    'every frame gets a gallery-sized copy beside it',
+    async () => {
+      const entry = await timelapse.captureFrame('manual', false);
+      const file = entry.files[0];
 
-    expect(file.thumb).toBeTruthy();
-    const thumb = timelapse.filePath('frame', file.thumb!);
-    expect(thumb).toBeTruthy();
-    // Small enough to put a page of them on screen, and smaller than the
-    // frame it came from.
-    expect(statSync(thumb!).size).toBeLessThan(file.bytes);
-  }, 20_000);
+      expect(file.thumb).toBeTruthy();
+      const thumb = timelapse.filePath('frame', file.thumb!);
+      expect(thumb).toBeTruthy();
+      // Small enough to put a page of them on screen, and smaller than the
+      // frame it came from.
+      expect(statSync(thumb!).size).toBeLessThan(file.bytes);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('the listing reads the disk, with thumbnails and practice chunks', () => {
     const today = localDay(Date.now());
@@ -908,21 +944,25 @@ describe('FieldTimelapse', () => {
     expect(timelapse.listing({ to: '2000-01-01' }).days).toHaveLength(0);
   });
 
-  test('a practice film for a date range is joined from the chunks', async () => {
-    await timelapse.renderFilm({ source: 'practice', fps: 30, height: 240, stream: 'All field' });
-    const render = timelapse.getState().render;
+  test(
+    'a practice film for a date range is joined from the chunks',
+    async () => {
+      await timelapse.renderFilm({ source: 'practice', fps: 30, height: 240, stream: 'All field' });
+      const render = timelapse.getState().render;
 
-    expect(render?.status).toBe('done');
-    expect(render?.source).toBe('practice');
-    expect(render?.file).toMatch(/^practice-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
-    const built = timelapse.filePath('render', render!.file!);
-    expect(built).toBeTruthy();
+      expect(render?.status).toBe('done');
+      expect(render?.source).toBe('practice');
+      expect(render?.file).toMatch(/^practice-\d{4}-\d{2}-\d{2}-\d{6}\.mp4$/);
+      const built = timelapse.filePath('render', render!.file!);
+      expect(built).toBeTruthy();
 
-    // And it can be thrown away again.
-    expect(timelapse.deleteRender(render!.file!)).toBe(true);
-    expect(timelapse.filePath('render', render!.file!)).toBeUndefined();
-    expect(timelapse.deleteRender('../../etc/passwd')).toBe(false);
-  }, 30_000);
+      // And it can be thrown away again.
+      expect(timelapse.deleteRender(render!.file!)).toBe(true);
+      expect(timelapse.filePath('render', render!.file!)).toBeUndefined();
+      expect(timelapse.deleteRender('../../etc/passwd')).toBe(false);
+    },
+    FFMPEG_LIMIT_MS,
+  );
 
   test('the store sits where the match sweep will not touch it', () => {
     expect(timelapse.root.endsWith('.timelapse')).toBe(true);
