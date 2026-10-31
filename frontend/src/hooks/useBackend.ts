@@ -173,6 +173,16 @@ export const ADMIN_TOKEN_KEY = 'pfms-admin-token';
  *  stays logged in until it is signed out, so no login lands mid-match. */
 const OPERATOR_TOKEN_KEY = 'pfms-operator-token';
 
+/** This page's logins, for the staff HTTP API (src/staffHttp.ts). */
+export function staffAuthHeaders(): Record<string, string> {
+  const admin = localStorage.getItem(ADMIN_TOKEN_KEY);
+  const operator = localStorage.getItem(OPERATOR_TOKEN_KEY);
+  return {
+    ...(admin ? { 'X-Pfms-Admin-Token': admin } : {}),
+    ...(operator ? { 'X-Pfms-Operator-Token': operator } : {}),
+  };
+}
+
 /** A QR code from "Add a device" opens the page with `#pair=<secret>`. The
  *  fragment never reaches a server or its logs. Taken off the URL straight
  *  away, so it isn't left in the history or copied along with a link. */

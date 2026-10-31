@@ -40,15 +40,6 @@ internet on purpose and a success opens everything. Attempts from outside are no
 limited (`plans/ws-internet-guard.md`), which slows guessing but doesn't fix a
 short passphrase or a stolen hash file.
 
-## Firmware API takes uploads with no credential
-
-`in progress — t3/harden-firmware-admin-ws-auth`
-
-`POST /api/firmware/upload` and `/api/firmware/download` in `src/firmwareApi.ts`
-have no auth and send `Access-Control-Allow-Origin: *` (seen 2026-10-30). Any
-guest device, or any web page open on one, can add a firmware entry. Matters
-because `/test` flashes radios from that store.
-
 ## A false Driver Station match hides E-STOP on /match
 
 `MatchControlPage.tsx:469` returns `DsClientBlock` before `FieldEStopControl`

@@ -140,6 +140,7 @@ export class FirmwareStore {
     }
 
     this.saveManifest();
+    this.notify();
     console.log(`Firmware manually added: ${filename} (${upgradeFrom})`);
     return existing ?? this.entries[this.entries.length - 1];
   }

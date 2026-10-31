@@ -158,9 +158,11 @@ Say this plainly so the login isn't mistaken for more than it is.
   and the minimum is 4 characters. Fine for a trusted LAN, not for `/ws` as
   exposed. Tries from outside are limited since `plans/ws-internet-guard.md`, and
   the weak passphrase is logged in `ISSUES.md`.
-- `POST /api/firmware/upload` and `/download` take no credential and send
-  `Access-Control-Allow-Origin: *`. Logged in `ISSUES.md`. A login on `/test`
-  doesn't cover them.
+- `POST /api/firmware/upload` and `/download` took no credential and sent
+  `Access-Control-Allow-Origin: *`. They're the `staff` tier now
+  (`src/staffHttp.ts`), and `/test` sends its login as a header. The upload had
+  never worked: its route compared a URL that included the query string, so every
+  real upload got a 404 (seen 2026-10-30).
 
 ## Progress
 

@@ -49,6 +49,8 @@ import { RawPacketLog } from './rawPacketLog.js';
 import { RobotPacketCapture } from './robotPacketCapture.js';
 import { FirmwareStore } from './firmwareStore.js';
 import { handleFirmwareRequest } from './firmwareApi.js';
+import { createStaffHttpCheck } from './staffHttp.js';
+import { dsClientMatch } from './wsAccess.js';
 import { handleTeamAvatarRequest } from './teamAvatarApi.js';
 import { ScoringEngine } from './scoringEngine.js';
 import { handleScoringRequest } from './scoringApi.js';
@@ -67,7 +69,7 @@ import { announceDeploy } from './deployAnnouncer.js';
 import { AdminAuth } from './adminAuth.js';
 import { OperatorAuth } from './operatorAuth.js';
 import { handleExternalAccessAuth } from './externalAccessAuth.js';
-import { OnLinkChecker } from './onLink.js';
+import { ON_SITE_IPV6_PREFIX, OnLinkChecker } from './onLink.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { MatchQueue } from './matchQueue.js';
@@ -770,6 +772,14 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const adminAuth = new AdminAuth();
   const operatorAuth = new OperatorAuth();
   const externalAccessStore = new ExternalAccessStore();
+  const staffHttp = createStaffHttpCheck({
+    adminAuth,
+    operatorAuth,
+    externalAccessStore,
+    siteNetworks: new OnLinkChecker(undefined, undefined, ON_SITE_IPV6_PREFIX),
+    trustedProxyMatcher,
+    isDriverStation: ip => dsClientMatch(ip, matchEngine.getState().connectedStations, {}) !== null,
+  });
 
   // What was happening while each video ran: every score event and every
   // robot's telemetry for the window, written next to the video by both
@@ -917,7 +927,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           practiceRuns: () => practiceStore.getRuns(),
         }),
       handleDiagRequest,
-      (req, res) => handleFirmwareRequest(req, res, firmwareStore),
+      (req, res) => handleFirmwareRequest(req, res, firmwareStore, staffHttp),
       handleTeamAvatarRequest,
       handleManifestRequest,
     ],

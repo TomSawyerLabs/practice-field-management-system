@@ -21,6 +21,7 @@ import type { CheckResult, RobotTestPhase } from '../../../src/types';
 import {
   useRobotTestState,
   useFirmwareUpdateProgress,
+  staffAuthHeaders,
   useFirmwareStore,
   sendFirmwareUpdateRequest,
   useRadioConfigureProgress,
@@ -658,7 +659,11 @@ function FirmwareStatus() {
     try {
       const data = await file.arrayBuffer();
       const params = new URLSearchParams({ checksum: uploadChecksum, version: uploadVersion, upgradeFrom: uploadType });
-      const res = await fetch(`/api/firmware/upload?${params}`, { method: 'POST', body: data });
+      const res = await fetch(`/api/firmware/upload?${params}`, {
+        method: 'POST',
+        body: data,
+        headers: staffAuthHeaders(),
+      });
       const json = await res.json();
       setMessage(res.ok ? `Uploaded v${json.entry?.version ?? uploadVersion}` : `Error: ${json.error}`);
     } catch (err) {

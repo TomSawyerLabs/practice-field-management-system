@@ -73,6 +73,7 @@ import {
   sendCastReceiverMute,
   sendCastReceiverChecks,
   sendCastReceiverView,
+  staffAuthHeaders,
   useFirmwareStore,
   sendCreateApiKey,
   sendRevokeApiKey,
@@ -2439,7 +2440,11 @@ function FirmwareSection() {
     try {
       const data = await file.arrayBuffer();
       const params = new URLSearchParams({ checksum: uploadChecksum, version: uploadVersion, upgradeFrom: uploadType });
-      const res = await fetch(`/api/firmware/upload?${params}`, { method: 'POST', body: data });
+      const res = await fetch(`/api/firmware/upload?${params}`, {
+        method: 'POST',
+        body: data,
+        headers: staffAuthHeaders(),
+      });
       const json = await res.json();
       setMessage(res.ok ? `Uploaded: ${json.entry?.version ?? 'ok'}` : `Error: ${json.error}`);
     } catch (err) {
@@ -2463,7 +2468,7 @@ function FirmwareSection() {
   const anyDownloading = entries.some(e => e.downloading);
 
   const triggerDownload = () => {
-    fetch('/api/firmware/download', { method: 'POST' });
+    fetch('/api/firmware/download', { method: 'POST', headers: staffAuthHeaders() });
   };
 
   const fwStatusCell = (entry?: FwEntry) => {
