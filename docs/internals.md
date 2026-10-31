@@ -277,6 +277,8 @@ now most get 6–8 kB, a team's Video tab ~19 kB, `/match` ~48 kB, `/usage`
      hold a team the config no longer has. If any bridge and the config
      differ, the commit is made again once the radio answers. It's an
      ordinary commit, so it reconfigures the radio and waits for robots.
+   - **DHCP servers** _(OFFSEASON only)_ — started again once the radio
+     answers, since step 2 stopped them. A commit does this itself.
    - **Route preferences** — rebuilt from `ip rule list` so laptop routing
      choices persist. A laptop keeps its first rule in priority order whose
      station still has that rule's team; every other per-laptop rule is stale

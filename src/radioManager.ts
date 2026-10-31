@@ -4,6 +4,7 @@ import {
   configureNetwork,
   restoreStationsFromBridges,
   setInternetAccess,
+  startDHCPServers,
   syncInternetAccess,
 } from './networkManager.js';
 import { appError, appInfo } from './appLogger.js';
@@ -1051,12 +1052,7 @@ class RadioManager {
       if (moves.length) console.log(`This update moves ${moves.length} robot(s) between stations: ${moves.join(', ')}`);
     }
 
-    const teamsConfig = {} as Record<StationName, number | undefined>;
-
-    for (const station in this.activeConfig) {
-      const { ssid } = this.activeConfig[station as StationName] ?? {};
-      if (ssid) teamsConfig[station as StationName] = parseInt(ssid.split('-', 2)[0]) || undefined;
-    }
+    const teamsConfig = this.teamsOnStations();
 
     const jobs: Promise<void>[] = [];
 
@@ -1085,6 +1081,16 @@ class RadioManager {
     this.notifyCommitComplete();
   }
 
+  /** The team at each station in activeConfig, as the network side takes it. */
+  private teamsOnStations(): Record<StationName, number | undefined> {
+    const teams = {} as Record<StationName, number | undefined>;
+    for (const station in this.activeConfig) {
+      const { ssid } = this.activeConfig[station as StationName] ?? {};
+      if (ssid) teams[station as StationName] = parseInt(ssid.split('-', 2)[0]) || undefined;
+    }
+    return teams;
+  }
+
   private syncInternetRules(options?: { keepTeamsOnBridges: boolean }): Promise<void> {
     if (!this.radioManagementInterface) return Promise.resolve();
     const teams: Partial<Record<StationName, number>> = {};
@@ -1106,16 +1112,19 @@ class RadioManager {
    * After a graceful restart, which keeps the bridges but loses any commit
    * that was waiting on a match: read who is on them, and if that isn't the
    * config, make the commit again. It waits for the radio, because a commit
-   * needs the firmware mode, and like any commit it waits for robots.
+   * needs the firmware mode, and like any commit it waits for robots. With
+   * no commit owed, the DHCP servers the reload stopped still need starting.
    */
   async recoverLostCommit(): Promise<void> {
     let differ = false;
     await this.enqueueRadioPush(async () => {
       differ = await restoreStationsFromBridges(s => this.getTeamForStation(s));
     });
-    if (!differ) return;
     await this.whenConnected();
-    await this.commitConfiguration();
+    if (differ) return this.commitConfiguration();
+    const trunk = this.radioManagementInterface;
+    if (!trunk || this.firmwareMode === 'PRACTICE') return;
+    await this.enqueueRadioPush(() => startDHCPServers(this.teamsOnStations(), trunk));
   }
 
   private async configureRadio(config: any): Promise<void> {

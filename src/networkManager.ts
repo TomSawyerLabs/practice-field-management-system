@@ -675,13 +675,16 @@ export async function configureNetwork(stations: Stations, interfaceName: string
     await updateNetworkConfig(stations, interfaceName, practiceMode);
   } finally {
     // Also after a failed pass, which still did the stations it could.
-    if (!practiceMode) {
-      for (const station of StationNameList) {
-        // A failed station may have no address to serve from, or have found
-        // its gateway already taken. It gets a server when it's retried.
-        await startDHCPServer(station, failedStations.has(station) ? undefined : stations[station], interfaceName);
-      }
-    }
+    if (!practiceMode) await startDHCPServers(stations, interfaceName);
+  }
+}
+
+/** Run each station's DHCP server (OFFSEASON). A failed station may have no
+ *  address to serve from, or have found its gateway already taken: it gets one
+ *  when it's retried. Also for a graceful restart, which stops them. */
+export async function startDHCPServers(stations: Partial<Stations>, interfaceName: string) {
+  for (const station of StationNameList) {
+    await startDHCPServer(station, failedStations.has(station) ? undefined : stations[station], interfaceName);
   }
 }
 

@@ -360,6 +360,31 @@ describe('a commit lost to a restart', () => {
     expect(kernel.addresses.get('br-slot3')).toEqual(['10.17.0.254']);
   });
 
+  test('in OFFSEASON, the DHCP servers the reload stopped come back', async () => {
+    const dryRun = process.env.DRY_RUN;
+    process.env.DRY_RUN = '1';
+    const log = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const before = new RadioManager('http://127.0.0.1:1', 'eno1', 'OFFSEASON');
+      before.stopPolling();
+      managers.push(before);
+      await before.configure('slot1', team('1234'));
+      log.mockClear();
+
+      restorePreviousStations(() => null);
+      const rm = new RadioManager('http://127.0.0.1:1', 'eno1', 'OFFSEASON');
+      rm.stopPolling();
+      managers.push(rm);
+      rm.whenConnected = () => Promise.resolve();
+      await rm.recoverLostCommit();
+      expect(log.mock.calls.flat()).toContain('[dry-run] DHCP server not started for slot1 (1234)');
+    } finally {
+      log.mockRestore();
+      if (dryRun === undefined) delete process.env.DRY_RUN;
+      else process.env.DRY_RUN = dryRun;
+    }
+  });
+
   test('a later commit tears down a team recovery found', async () => {
     const before = manager();
     await before.configure('slot1', team('1234'));
