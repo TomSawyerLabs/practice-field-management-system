@@ -28,7 +28,7 @@ and the hash it salts. Field commands from outside are refused since
 watch who's on the field, read support reports and try guessing a team's Wi-Fi
 key offline.
 
-## NAT rules remain after a station is cleared
+## NAT rules remain after a station is cleared (in progress — t3/fix-stale-nat-rules-ws-test)
 
 On steamboat at 4:46 PM PDT (23:46Z) on 2026-10-30, with `active-config.json`
 empty since the 6:00 AM PDT clear and all six bridges down, `iptables -t nat -S`
@@ -135,7 +135,7 @@ Each needs a field visit. What to try and what each result means is in
   (check 5 in `plans/field-verification-checklist.md`), then a parser:
   `plans/systemcore-robot-capture.md`.
 
-## WebSocket gate test can catch the periodic serverInfo heartbeat
+## WebSocket gate test can catch the periodic serverInfo heartbeat (in progress — t3/fix-stale-nat-rules-ws-test)
 
 `src/wsAccess.test.ts` › `with an operator code > every stop still works after a
 wrong code` failed once in 2 full `bun test` runs on a loaded machine
