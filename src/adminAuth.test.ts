@@ -43,6 +43,12 @@ describe('a new passphrase', () => {
     expect(await new AdminAuth(file, CHEAP).login('correct horse')).toBeTruthy();
   });
 
+  test('the minimum is 12, here and on the pages that ask for one', () => {
+    expect(MIN_PASSPHRASE_LENGTH).toBe(12);
+    const pages = readFileSync(join(__dirname, '..', 'frontend', 'src', 'hooks', 'useBackend.ts'), 'utf-8');
+    expect(pages).toContain(`export const MIN_PASSPHRASE_LENGTH = ${MIN_PASSPHRASE_LENGTH};`);
+  });
+
   test(`must be at least ${MIN_PASSPHRASE_LENGTH} characters`, async () => {
     const auth = new AdminAuth(file, CHEAP);
     expect(await auth.setPassphrase('a'.repeat(MIN_PASSPHRASE_LENGTH - 1))).toBe(false);

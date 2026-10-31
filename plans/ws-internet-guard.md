@@ -1,6 +1,6 @@
 # Keep internet visitors from running the field over `/ws`
 
-**Status: the guard is live (pFMS `4c4b24a`) and the Caddy change is live (ops `f9bec1c`), both on 2026-10-30. The admin login limit (`26f552c`) waits for the next pFMS deploy.**
+**Status: the guard is live (pFMS `4c4b24a`) and the Caddy change is live (ops `f9bec1c`), both on 2026-10-30. The admin login limit (`26f552c`), the stranger's view and the scrypt passphrase hash wait for the next pFMS deploy.**
 
 ## Goal
 
@@ -41,6 +41,61 @@ pFMS listens on `*:9005`.
 - **No Caddy or ops change is needed.** The guard works with what is live.
 - **The admin login is still open from the internet, on purpose:** it is the
   external login.
+
+## What a stranger is sent
+
+A stranger is `isStranger` in `src/websocketServer.ts`: off site or from another
+site's page, with no valid cookie, admin login or operator login. The issue "The
+WebSocket shows field state to the internet" is closed by this section. Listed by
+reading every send on 2026-10-30, before changing it.
+
+**Sent to every `/ws` socket on connecting, before this change:**
+
+| Sent from                | Messages                                                                                                                                                                                                                                                                                                                                                                                            | What's in it that a stranger shouldn't read                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `src/websocketServer.ts` | Radio status history, `matchState`, `challengeLeaderboard`, hostnames, `operatorAuthResult`, `routePreferenceState`, `dsClientState`, `pendingCommitState`, `lastLinkedState`, `serverInfo`, queue, `apiKeyState`, port bridges, `supportState`, `slackConfigState`, `externalAccessState`, `setupConfigState`, audio devices, recorder state, robots' Wi-Fi, 6 GHz watch, Wi-Fi cards, self-update | Team numbers, `wpaKeySalt` and its hash, addresses, support reports, key and token summaries, setup settings |
+| `src/index.ts` (first)   | `scoreState`, `stationChecks`, robot dropouts, robot e-stops, subnet scan, team check results, robot test state, station test states, `firmwareStoreUpdate`                                                                                                                                                                                                                                         | Who is on the field and how their robots are doing, network layout                                           |
+| `src/index.ts` (second)  | Network stats, mDNS activity                                                                                                                                                                                                                                                                                                                                                                        | Traffic per team, requesters' addresses                                                                      |
+
+**Sent after that:** every `broadcast`, `broadcastRouteState` (`yourIp`, conflicting
+teams), `sendDsClientState`, `sendOperatorState`, the 10 s `serverInfo` heartbeat,
+and replies to what the socket sent.
+
+**What the external login page needs,** from reading `/admin`:
+
+| Need                                                                                  | Message                                                                                   |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `AdminAuthGate`: is a passphrase set, did the login work, the wait after too many     | `adminAuthResult`, a reply to `adminCheckAuth` or `adminLogin`                            |
+| `useBackend`: a stale stored operator token gets cleared                              | `operatorAuthResult`, a reply to `operatorCheckAuth`                                      |
+| A pairing QR scanned on cellular                                                      | `operatorAuthResult`, a reply to `operatorPairRedeem`                                     |
+| The socket watchdog: 30 s of silence forces a reconnect. `StatusBar`: version, uptime | `serverInfo`                                                                              |
+| `WrapAll`, `StatusBar`, the support widget, outside the gate                          | Nothing else. They render before any state arrives on every page, so they cope with none. |
+
+`/scores` is on `/ws/scores`, and `/matches` and `/practice` read nothing from
+the socket (a test walks their imports). Nothing mounted before the login
+subscribes to a topic or asks for anything, so nothing needs re-sending to the
+socket after it. Everything that's mounted afterwards asks after the login.
+
+**So a stranger now gets:** `serverInfo` on connecting and every 10 s, and replies
+to the six messages below. Nothing else, including whether an operator code is
+set, unless it asks with a stale token. `serverInfo` carries the version, start
+time and public URL, which the login page's reload check needs.
+
+**How it works:**
+
+- `sendFieldState` holds everything sent on connecting. `src/index.ts` adds to it
+  with `onFieldClient`, not `wss.on('connection')`. On site, the same messages go
+  in the same order.
+- `broadcast`, topic messages, route state, DS state and operator state all check
+  `isStranger` live, so a new message is hidden by default.
+- `reviewOutsiders` is the one place that acts on a change. Every login path and
+  every revocation calls it. A stranger that gains a credential gets
+  `sendFieldState` on the same socket. An outsider that loses one is closed with
+  code 4401 (which ends its subscriptions too), and reconnects as a stranger.
+- Revoking means: an access token revoked on `/admin`, an operator device revoked
+  or logged out, or the operator code cleared. Changing the admin passphrase also
+  ends other admin sockets from outside. On-site sockets keep what they had, as
+  they always have.
 
 ## What an external connection keeps
 
@@ -133,9 +188,11 @@ Refused from outside with no credential, that a reader might expect to stay:
 
 ## What this doesn't fix
 
-- **Reading.** Every `/ws` socket is still sent field state on connect, from
-  anywhere. Logged in `ISSUES.md`. No credential is in it: API keys and access
-  tokens go as summaries.
+- **`/ws/scores` is still open, on purpose.** `/scores` needs it. It carries the
+  public types only, but those include the whole `matchState`, with DS addresses,
+  and `stationChecks`. Logged in `ISSUES.md`.
+- **What's already on a page's screen when access is revoked stays there.** The
+  socket closes and it gets nothing more, but nothing wipes the page.
 - **The admin passphrase itself:** fixed separately. See "The admin passphrase
   hash" below. An old short passphrase stays as short as it was until someone
   changes it: the limit below slows guessing it, and only that.
@@ -257,6 +314,37 @@ the live site wasn't touched.
   cookie stopped. Direct path: field page and tool stopped, another site's
   page refused.
 
+### The stranger's view, the passphrase hash and the firmware API
+
+All on this PC, 2026-10-30, stub engine and radio, fake `RADIO_URL`, headless. The
+live site and `steamboat`'s auth files weren't touched; the file's owner, mode and
+key names were read over SSH.
+
+- Real sockets in `src/wsAccess.test.ts`: a stranger hears only `serverInfo`, every
+  login path gets the full state on the same socket exactly once, every revocation
+  closes the socket with 4401, and the on-site burst is pinned in order.
+- The moved burst was diffed against master's text: only the `clientIp` lookup and
+  the `serverInfo` helper differ.
+- Headless Chrome through a loopback proxy adding a public `X-Forwarded-For`, with
+  the built pages, a real `AdminAuth` on an old-format file with a 4-character
+  passphrase, and a real firmware store: 32 of 32. `/admin` rendered with no page
+  errors, one socket survived past the 30 s watchdog, a wrong passphrase said so,
+  the old passphrase logged in and upgraded the file, the admin page filled in with
+  no reload or reconnect, and the file logged in after a restart. `/scores`,
+  `/scores.html`, `/matches` and `/practice` worked from outside. The real `/test`
+  form uploaded on site with no code, was refused with a code and no login, and
+  uploaded with an operator login. A stop on site with no login got through.
+- 17 deliberate breaks of the guards: 16 failed the tests. The one that didn't is
+  the `isStranger` check on topic messages, which can't be reached today: a
+  stranger can't subscribe, and a revoked socket is closed at once. It's a second
+  layer.
+
+**A mistake to learn from:** the first headless run used port 39005, which another
+thread's test pFMS was on. The harness's own server failed to start and everything
+went to that instance, including a field E-Stop, at 9:51:09 PM PDT (04:51:09Z). The
+thread was told. A harness must check its ports are free and that its own server
+owns them before sending anything.
+
 ## Progress
 
 - [x] Claim the issue
@@ -269,6 +357,9 @@ the live site wasn't touched.
 - [x] Caddy change approved, applied and verified
 - [x] Guard deployed by the deploy thread (`4c4b24a`)
 - [ ] Admin login limit deployed: the deploy thread's call
+- [x] List what a stranger is sent, and hold back all but the login's needs
+- [x] Admin passphrase moved to scrypt, upgrading at the next login
+- [ ] Both deployed: the deploy thread's call. See "The admin passphrase hash"
 
 ## Open questions for the user
 

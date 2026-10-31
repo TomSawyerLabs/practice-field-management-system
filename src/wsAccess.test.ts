@@ -291,6 +291,7 @@ describe('the WebSocket gate', () => {
     });
     heartbeat = timers.mock.calls.find(([, ms]) => ms === 10_000)![0] as () => void;
     timers.mockRestore();
+    context.onFieldClient(ws => ws.send(JSON.stringify({ type: 'addedByIndexTs' })));
     if (!context.server.listening) await new Promise(r => context.server.once('listening', r));
     url = `ws://127.0.0.1:${(context.server.address() as AddressInfo).port}/ws`;
   });
@@ -317,6 +318,8 @@ describe('the WebSocket gate', () => {
     by?: string;
     required?: boolean;
     authenticated?: boolean;
+    passphraseConfigured?: boolean;
+    device?: { id: string };
     token?: string;
     tokenRejected?: boolean;
     retryAfterMs?: number;
@@ -328,11 +331,20 @@ describe('the WebSocket gate', () => {
     const ws = new WebSocket(url, { headers: { 'x-forwarded-for': ip, ...headers } });
     open.push(ws);
     const replies: Reply[] = [];
+    /** Every message's type in order. The radio's status history is an array. */
+    const heard: string[] = [];
+    let closedWith: number | undefined;
+    ws.on('close', code => (closedWith = code));
     ws.on('message', raw => {
       const parsed = JSON.parse(String(raw));
+      if (Array.isArray(parsed)) {
+        heard.push('radioStatusHistory');
+        return;
+      }
+      if (parsed.type) heard.push(parsed.type);
       // The heartbeat keeps its own time, so it is never an answer: on a slow
       // machine it can land inside any `send`.
-      if (!Array.isArray(parsed) && parsed.type !== 'serverInfo') replies.push(parsed);
+      if (parsed.type !== 'serverInfo') replies.push(parsed);
     });
     await new Promise((res, rej) => {
       ws.once('open', res);
@@ -368,7 +380,11 @@ describe('the WebSocket gate', () => {
       while (!replies.slice(before).some(r => r.type === 'adminAuthResult')) await Bun.sleep(2);
       return replies.slice(before).find(r => r.type === 'adminAuthResult')!;
     };
-    return { ws, send, dsState, operatorState, login, adminLogin, replies };
+    const closed = async () => {
+      while (closedWith === undefined) await Bun.sleep(2);
+      return closedWith;
+    };
+    return { ws, send, dsState, operatorState, login, adminLogin, replies, heard, closed };
   }
 
   const claimField = async () => {
@@ -816,7 +832,7 @@ describe('the WebSocket gate', () => {
       const { secret } = operatorAuth.startPairing('Admin');
       const phone = await client(VISITOR);
       const replies = await phone.send({ type: 'operatorPairRedeem', secret, name: 'Phone' });
-      expect(replies.at(-1)?.token).toBeTruthy();
+      expect(replies.find(r => r.token)).toBeTruthy();
     });
 
     test('a typed operator code is refused, so a stranger cannot spend the overall limit', async () => {
@@ -853,14 +869,266 @@ describe('the WebSocket gate', () => {
         const mentor = await client(VISITOR, cookie(token));
         expect(await mentor.send({ type: 'adminStopMatch' })).toEqual([]);
         externalAccess.revokeToken(id);
-        // The revocation is broadcast too, so the refusal needn't come first.
-        expect((await mentor.send({ type: 'adminStopMatch' })).find(r => r.error)?.error).toBe(REFUSED);
+        expect(await mentor.closed()).toBe(4401);
+        const back = await client(VISITOR, cookie(token));
+        expect((await back.send({ type: 'adminStopMatch' }))[0].error).toBe(REFUSED);
       });
 
       test("another site's page gets nothing from a visitor's cookie", async () => {
         const { token } = externalAccess.createToken('Mentor');
         const page = await client(VISITOR, { ...cookie(token), origin: 'https://evil.example' });
         expect((await page.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+      });
+    });
+
+    describe('what a stranger is sent', () => {
+      // On site, and to anyone with a credential, in this order. If this list
+      // grows, the new message reaches on-site pages but not strangers.
+      const FIELD_STATE = [
+        'radioStatusHistory',
+        'matchState',
+        'hostnames',
+        'operatorAuthResult',
+        'routePreferenceState',
+        'dsClientState',
+        'pendingCommitState',
+        'lastLinkedState',
+        'serverInfo',
+        'externalAccessState',
+        'addedByIndexTs',
+      ];
+      const SOME_BROADCASTS = [
+        'matchState',
+        'scoreState',
+        'telemetry',
+        'stationChecks',
+        'queueState',
+        'radioStatus',
+        'supportState',
+        'setupConfigState',
+        'externalAccessState',
+        'hostnames',
+        'made-up-new-message',
+      ];
+      const hearBroadcasts = async (who: Awaited<ReturnType<typeof client>>) => {
+        const before = who.heard.length;
+        for (const type of SOME_BROADCASTS) context.broadcast({ type });
+        await who.send({ type: 'unsubscribe' });
+        return who.heard.slice(before);
+      };
+      const ALL_OF_THEM = expect.arrayContaining(SOME_BROADCASTS);
+
+      test.each([
+        ['a visitor', VISITOR],
+        ['a visitor forging a LAN address', FORGED],
+      ])('%s gets only its heartbeat', async (_, xff) => {
+        const visitor = await client(xff);
+        expect(visitor.heard).toEqual(['serverInfo']);
+      });
+
+      test("another site's page on a laptop at the field gets only its heartbeat", async () => {
+        const page = await client(STAFF_IP, { origin: 'https://evil.example' });
+        expect(page.heard).toEqual(['serverInfo']);
+      });
+
+      test('nothing is broadcast to a stranger, new messages included', async () => {
+        const visitor = await client(VISITOR);
+        expect(await hearBroadcasts(visitor)).toEqual([]);
+      });
+
+      test('nor route, Driver Station, operator or topic updates', async () => {
+        const visitor = await client(VISITOR);
+        const before = visitor.heard.length;
+        context.broadcastRouteState();
+        for (const listener of stateListeners) listener(engineState());
+        await operatorAuth.setCode('field code');
+        const phone = await client(STAFF_IP);
+        await phone.login('field code');
+        context.broadcast({ type: 'matchHistoryState', matches: [] });
+        await visitor.send({ type: 'dsClientDismiss' });
+        expect(visitor.heard.slice(before)).toEqual([]);
+      });
+
+      test('a stranger cannot subscribe to a topic', async () => {
+        const visitor = await client(VISITOR);
+        expect((await visitor.send({ type: 'subscribe', topic: 'matchHistory' }))[0].error).toBe(REFUSED);
+        const before = visitor.heard.length;
+        context.broadcast({ type: 'matchHistoryState', matches: [] });
+        await visitor.send({ type: 'dsClientDismiss' });
+        expect(visitor.heard.slice(before)).toEqual([]);
+      });
+
+      test('the heartbeat still reaches a stranger, or its page would reconnect', async () => {
+        const visitor = await client(VISITOR);
+        heartbeat();
+        await visitor.send({ type: 'dsClientDismiss' });
+        expect(visitor.heard).toEqual(['serverInfo', 'serverInfo']);
+      });
+
+      test('the login page gets what it needs', async () => {
+        await claimField();
+        const visitor = await client(VISITOR);
+        const [check] = await visitor.send({ type: 'adminCheckAuth', token: '' });
+        expect(check).toEqual({ type: 'adminAuthResult', authenticated: false, passphraseConfigured: true });
+        expect((await visitor.adminLogin('wrong')).authenticated).toBe(false);
+        const [stale] = await visitor.send({ type: 'operatorCheckAuth', token: 'stale' });
+        expect(stale.tokenRejected).toBe(true);
+        expect(visitor.heard).toEqual(['serverInfo', 'adminAuthResult', 'adminAuthResult', 'operatorAuthResult']);
+      });
+
+      test('a wrong passphrase or token shows nothing', async () => {
+        await claimField();
+        const visitor = await client(VISITOR);
+        await visitor.adminLogin('wrong');
+        await visitor.send({ type: 'adminCheckAuth', token: 'stale' });
+        await visitor.send({ type: 'operatorCheckAuth', token: 'stale' });
+        expect(await hearBroadcasts(visitor)).toEqual([]);
+      });
+
+      describe('logging in on the same socket', () => {
+        const expectFullState = async (who: Awaited<ReturnType<typeof client>>) => {
+          expect(who.heard).toEqual(expect.arrayContaining(FIELD_STATE));
+          expect(await hearBroadcasts(who)).toEqual(ALL_OF_THEM);
+          expect((await who.send({ type: 'subscribe', topic: 'matchHistory' })).filter(r => r.error)).toEqual([]);
+          const before = who.heard.length;
+          context.broadcast({ type: 'matchHistoryState', matches: [] });
+          await who.send({ type: 'unsubscribe', topic: 'usage' });
+          expect(who.heard.slice(before)).toContain('matchHistoryState');
+        };
+
+        test('the admin passphrase', async () => {
+          await claimField();
+          const visitor = await client(VISITOR);
+          expect((await visitor.adminLogin('correct horse')).authenticated).toBe(true);
+          await expectFullState(visitor);
+        });
+
+        test('a stored admin token', async () => {
+          await claimField();
+          const token = (await adminAuth.login('correct horse'))!;
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'adminCheckAuth', token });
+          await expectFullState(visitor);
+        });
+
+        test('a stored operator token', async () => {
+          await operatorAuth.setCode('field code');
+          const { token } = await (await client(STAFF_IP)).login('field code');
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'operatorCheckAuth', token });
+          await expectFullState(visitor);
+        });
+
+        test('a pairing QR', async () => {
+          await operatorAuth.setCode('field code');
+          const { secret } = operatorAuth.startPairing('Admin');
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'operatorPairRedeem', secret, name: 'Phone' });
+          await expectFullState(visitor);
+        });
+
+        test('the state is sent once, however many credentials arrive', async () => {
+          await claimField();
+          await operatorAuth.setCode('field code');
+          const adminToken = (await adminAuth.login('correct horse'))!;
+          const { token } = await (await client(STAFF_IP)).login('field code');
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'adminCheckAuth', token: adminToken });
+          await visitor.send({ type: 'operatorCheckAuth', token });
+          expect(visitor.heard.filter(t => t === 'addedByIndexTs')).toHaveLength(1);
+        });
+      });
+
+      describe('revoking access', () => {
+        test('an operator device revoked on /admin', async () => {
+          await operatorAuth.setCode('field code');
+          const { token, device } = await (await client(STAFF_IP)).login('field code');
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'operatorCheckAuth', token });
+
+          await claimField();
+          const admin = await client(STAFF_IP);
+          await admin.adminLogin('correct horse');
+          await admin.send({ type: 'operatorRevokeDevice', id: device!.id });
+
+          expect(await visitor.closed()).toBe(4401);
+          expect(visitor.replies.at(-1)?.tokenRejected).toBe(true);
+          const back = await client(VISITOR);
+          await back.send({ type: 'operatorCheckAuth', token });
+          expect(await hearBroadcasts(back)).toEqual([]);
+        });
+
+        test('clearing the operator code', async () => {
+          await operatorAuth.setCode('field code');
+          const { token } = await (await client(STAFF_IP)).login('field code');
+          const visitor = await client(VISITOR);
+          await visitor.send({ type: 'operatorCheckAuth', token });
+          await claimField();
+          const admin = await client(STAFF_IP);
+          await admin.adminLogin('correct horse');
+          await admin.send({ type: 'operatorSetCode', code: null });
+          expect(await visitor.closed()).toBe(4401);
+        });
+
+        test('a socket that logged in stays cut off when reviewed again', async () => {
+          const { token, id } = externalAccess.createToken('Mentor');
+          const mentor = await client(VISITOR, { cookie: `pfms_access=${token}` });
+          expect(mentor.heard).toEqual(expect.arrayContaining(FIELD_STATE));
+          expect(await hearBroadcasts(mentor)).toEqual(ALL_OF_THEM);
+          externalAccess.revokeToken(id);
+          await mentor.closed();
+          const before = mentor.heard.length;
+          context.broadcast({ type: 'matchState' });
+          await Bun.sleep(20);
+          expect(mentor.heard.slice(before)).toEqual([]);
+        });
+
+        test('changing the passphrase ends sessions from outside, and leaves on site alone', async () => {
+          await claimField();
+          const away = await client(VISITOR);
+          await away.adminLogin('correct horse');
+          const staff = await client(STAFF_IP);
+          await staff.adminLogin('correct horse');
+          const changer = await client(STAFF_IP);
+          await changer.adminLogin('correct horse');
+
+          changer.ws.send(JSON.stringify({ type: 'adminSetPassphrase', passphrase: 'a new passphrase' }));
+          expect(await away.closed()).toBe(4401);
+          expect((await staff.send({ type: 'scoreReset' })).filter(r => r.error)).toEqual([]);
+        });
+
+        test('an access cookie outlasts the end of an admin session, as a credential of its own', async () => {
+          await claimField();
+          const { token } = externalAccess.createToken('Mentor');
+          const mentor = await client(VISITOR, { cookie: `pfms_access=${token}` });
+          await mentor.adminLogin('correct horse');
+          const changer = await client(STAFF_IP);
+          await changer.adminLogin('correct horse');
+          changer.ws.send(JSON.stringify({ type: 'adminSetPassphrase', passphrase: 'a new passphrase' }));
+          while (!mentor.replies.some(r => r.type === 'adminAuthResult' && !r.authenticated)) await Bun.sleep(2);
+          expect((await mentor.send({ type: 'updateSetupSettings' }))[0].error).toBe('Admin authentication required');
+          expect(await hearBroadcasts(mentor)).toEqual(ALL_OF_THEM);
+        });
+      });
+
+      test('a credential changes nothing about the guard on stops being open on site', async () => {
+        const visitor = await client(VISITOR);
+        expect((await visitor.send({ type: 'adminGlobalEStop' }))[0].error).toBe(REFUSED);
+        const staff = await client(STAFF_IP);
+        expect(await staff.send({ type: 'adminGlobalEStop' })).toEqual([]);
+        expect(engineCalls).toEqual(['fieldEStop']);
+      });
+
+      test('on site, with no login, a connection gets everything, in the same order', async () => {
+        const staff = await client(STAFF_IP);
+        expect(staff.heard).toEqual(FIELD_STATE);
+        expect(await hearBroadcasts(staff)).toEqual(ALL_OF_THEM);
+      });
+
+      test('a cookie holder gets the same as someone on site', async () => {
+        const { token } = externalAccess.createToken('Mentor');
+        const mentor = await client(VISITOR, { cookie: `pfms_access=${token}` });
+        expect(mentor.heard).toEqual(FIELD_STATE);
       });
     });
 

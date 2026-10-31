@@ -15,20 +15,14 @@ If rules don't appear, or the journal shows `Could not remove stale ip rule`, th
 matters: Drive and auto-connect depend on them. Close this entry once both are
 seen. Background: `plans/ip-rule-cleanup.md`.
 
-## The WebSocket shows field state to the internet
+## The scoreboard socket shows match state to the internet
 
-`in progress — t3/harden-firmware-admin-ws-auth`
-
-`src/websocketServer.ts` sends every `/ws` socket the field's state on connect,
-from anywhere, with no credential (seen 2026-10-30): radio and station status,
-hostnames, the queue, setup settings and support issues with their client
-addresses. No login credential or plain WPA key is in it, as far as checked: API
-keys and access tokens go as summaries, setup secrets are masked, and pending
-changes say only `secured`. Radio status does carry each station's `wpaKeySalt`
-and the hash it salts. Field commands from outside are refused since
-`plans/ws-internet-guard.md`, but reading isn't. Matters because a stranger can
-watch who's on the field, read support reports and try guessing a team's Wi-Fi
-key offline.
+`/ws/scores` is open to everyone, on purpose, for `/scores` and Cast TVs. It sends
+the whole `matchState`, which includes each connected Driver Station's address
+(`connectedStations`), plus `stationChecks` and `telemetry` (seen 2026-10-30).
+`/ws` no longer shows these to strangers (`plans/ws-internet-guard.md`). Matters
+because this is the remaining way to read the field from outside: a trimmed public
+copy of what the scoreboard actually draws would close it.
 
 ## A false Driver Station match hides E-STOP on /match
 

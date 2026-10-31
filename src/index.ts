@@ -905,7 +905,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       return undefined;
     },
   });
-  const { wss, broadcast, broadcastRouteState, publicConnections } = setupWebSocket({
+  const { wss, broadcast, broadcastRouteState, publicConnections, onFieldClient } = setupWebSocket({
     radioManager,
     matchEngine,
     port: WebSocketPort,
@@ -1351,14 +1351,18 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     }
   }, 1_000);
 
+  // Public connections (/ws/scores) only receive score state and the
+  // scoreboard's setup checks — all other initial data is private (subnet
+  // scans, robot test state, firmware, etc.)
   wss.on('connection', ws => {
-    // Public connections (/ws/scores) only receive score state and the
-    // scoreboard's setup checks — all other initial data is private (subnet
-    // scans, robot test state, firmware, etc.)
+    if (!publicConnections.has(ws)) return;
     ws.send(JSON.stringify(scoringEngine.getState()));
     ws.send(latestStationChecks);
-    if (publicConnections.has(ws)) return;
+  });
 
+  onFieldClient(ws => {
+    ws.send(JSON.stringify(scoringEngine.getState()));
+    ws.send(latestStationChecks);
     ws.send(JSON.stringify(robotDropouts.snapshot()));
     ws.send(JSON.stringify(robotEStops.snapshot()));
 
@@ -2071,8 +2075,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     }
 
     // Send cached stats immediately when a new client connects (not public)
-    wss.on('connection', ws => {
-      if (publicConnections.has(ws)) return;
+    onFieldClient(ws => {
       if (latestNetworkStats) ws.send(JSON.stringify(latestNetworkStats));
       if (latestMdnsActivity) ws.send(JSON.stringify(latestMdnsActivity));
     });

@@ -88,7 +88,8 @@ Say this plainly so the login isn't mistaken for more than it is.
 - **`anyone` messages stay open.** That is every stop, so a team phone can
   still press the field E-Stop. It also covers `station`, which has no proof of
   team: `/overview`'s station cards can clear another team's Wi-Fi today.
-- **Reading stays open.** Every `/ws` socket gets the field state.
+- **Reading stays open on site.** Every `/ws` socket there gets the field state.
+  From outside it takes a credential: `plans/ws-internet-guard.md`.
 - **The credential can be read off the air.** On `http://pfms.tsl` a login
   crosses Wi-Fi unencrypted, as the admin passphrase does today.
 - **The internet.** See the first finding below. Fixed separately:

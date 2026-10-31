@@ -337,6 +337,15 @@ stored token first thing on every new socket, and a login never expires on a
 timer, so a dropped connection or a deploy can't log anyone out mid-match. See
 [operator login](support.md#operator-login).
 
+A connection from outside with no credential (`isStranger` in
+`src/websocketServer.ts`) is sent `serverInfo` and the answers to its own login
+messages, and nothing else. What every other connection gets on arrival is in
+`sendFieldState`; add to it from elsewhere with `onFieldClient`, not
+`wss.on('connection')`, or a stranger will get it too. `broadcast` skips strangers.
+Anything that changes what an outsider holds must call `reviewOutsiders`, which
+sends the state on the same socket after a login and closes the socket after a
+revocation.
+
 ## Dry-Run Mode
 
 With the `DRY_RUN` environment variable set, pFMS changes **nothing

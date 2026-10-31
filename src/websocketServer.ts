@@ -222,6 +222,9 @@ export interface WebSocketContext {
   broadcastRouteState: () => void;
   /** Public (read-only) WebSocket connections — only receive scoreState and matchState. */
   publicConnections: ReadonlySet<WebSocket>;
+  /** Add to what a field connection is told on arrival. Runs on connecting, or
+   *  for a stranger once it logs in, so what's sent here never reaches one. */
+  onFieldClient: (listener: (ws: WebSocket) => void) => void;
 }
 
 export type RunTeamChecksCallback = (station: StationName) => void;
@@ -349,6 +352,9 @@ export interface SetupWebSocketOptions {
     };
   };
 }
+
+/** Closing code for a socket that has lost the credential it came in on. */
+const ACCESS_REVOKED = 4401;
 
 export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   const {
@@ -495,6 +501,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
    *  revoking it on /admin takes effect at once. */
   const outsiders = new Map<WebSocket, string | undefined>();
 
+  /** Outsiders that have been sent the field's state. */
+  const admitted = new Set<WebSocket>();
+
+  /** What index.ts adds to the state a field connection gets. */
+  const fieldClientListeners: ((ws: WebSocket) => void)[] = [];
+
   /** Track public (read-only) WebSocket connections (connected via /ws/scores).
    *  These only receive scoreState and matchState — no sensitive data. */
   const publicConnections = new Set<WebSocket>();
@@ -560,10 +572,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     return { ...inv, entries: inv.entries.map(e => (tokens.has(e.id) ? { ...e, shareToken: tokens.get(e.id) } : e)) };
   }
 
+  function serverInfoMessage(): string {
+    return JSON.stringify({
+      type: 'serverInfo',
+      startTime: serverStartTime,
+      version: serverVersion,
+      now: Date.now(),
+      publicUrl: setup?.publicUrl?.(),
+    } satisfies ServerInfo);
+  }
+
   function broadcast(msg: unknown) {
     if (topicOfMessage(msg)) {
       for (const [client, data] of topicSubs.route(msg)) {
-        if (client.readyState !== WebSocket.OPEN) continue;
+        if (client.readyState !== WebSocket.OPEN || isStranger(client)) continue;
         try {
           client.send(data);
         } catch {
@@ -580,6 +602,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       if (client.readyState !== WebSocket.OPEN) return;
       // Public connections only receive whitelisted message types
       if (publicConnections.has(client) && !isPublicSafe) return;
+      // Nothing that's broadcast is for a login page
+      if (isStranger(client)) return;
       try {
         client.send(data);
       } catch {
@@ -593,13 +617,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   // than this is dead even if TCP never noticed (e.g. a Chromecast whose Wi-Fi
   // napped without a close), and the client watchdog forces a reconnect.
   setInterval(() => {
-    const msg = JSON.stringify({
-      type: 'serverInfo',
-      startTime: serverStartTime,
-      version: serverVersion,
-      now: Date.now(),
-      publicUrl: setup?.publicUrl?.(),
-    } satisfies ServerInfo);
+    const msg = serverInfoMessage();
     wss.clients.forEach(client => {
       if (client.readyState !== WebSocket.OPEN) return;
       try {
@@ -626,7 +644,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   }
 
   function sendRouteState(ws: WebSocket, clientIp: string) {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN || isStranger(ws)) return;
     try {
       ws.send(JSON.stringify(buildRouteState(clientIp)));
     } catch {
@@ -704,6 +722,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   }
 
   function sendDsClientState(ws: WebSocket, match: DsClientMatch | null) {
+    if (isStranger(ws)) return;
     const state: DsClientState = { type: 'dsClientState', station: match?.station ?? null, by: match?.by };
     const json = JSON.stringify(state);
     if (dsClientStateSent.get(ws) === json || ws.readyState !== WebSocket.OPEN) return;
@@ -731,6 +750,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   }
 
   function sendOperatorState(ws: WebSocket) {
+    if (isStranger(ws)) return;
     const json = JSON.stringify(operatorResult(ws));
     if (operatorStateSent.get(ws) === json || ws.readyState !== WebSocket.OPEN) return;
     operatorStateSent.set(ws, json);
@@ -763,6 +783,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       operatorConnections.delete(ws);
       sendOperatorReply(ws, { tokenRejected: true });
     }
+    reviewOutsiders();
     for (const ws of wsToIp.keys()) sendOperatorState(ws);
     for (const ws of adminConnections) sendOperatorDevices(ws);
   }
@@ -784,6 +805,23 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     if (adminConnections.has(ws) || operatorConnections.has(ws)) return false;
     const cookie = outsiders.get(ws);
     return !(cookie && externalAccessStore?.isValid(cookie));
+  }
+
+  /** Call after anything that changes what an outsider holds. A stranger that
+   *  now has a credential gets the field's state on the socket it's on, so the
+   *  page needs no reload. One that lost it is closed, which also ends its
+   *  subscriptions, and comes back as a stranger. */
+  function reviewOutsiders() {
+    for (const ws of outsiders.keys()) {
+      if (ws.readyState !== WebSocket.OPEN) continue;
+      const stranger = isStranger(ws);
+      if (stranger && admitted.delete(ws)) {
+        ws.close(ACCESS_REVOKED, 'Access revoked');
+      } else if (!stranger && !admitted.has(ws)) {
+        admitted.add(ws);
+        sendFieldState(ws);
+      }
+    }
   }
 
   /** Why a stranger may not send this, or null. */
@@ -972,6 +1010,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
   // Broadcast external access token state changes to all clients
   externalAccessStore?.addListener(broadcast);
+  externalAccessStore?.addListener(() => reviewOutsiders());
 
   matchAudio?.addStateListener(broadcast);
 
@@ -1043,6 +1082,114 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     };
   }
 
+  /** Everything a connection is told about the field on arrival. Nothing here
+   *  reaches a stranger, so it can't be on the internet by accident. */
+  function sendFieldState(ws: WebSocket) {
+    // Send initial history + match state
+    ws.send(JSON.stringify(radioManager.getStatusHistory()));
+    ws.send(JSON.stringify(matchEngine.getState()));
+    if (leaderboardJson) ws.send(leaderboardJson);
+
+    // Send known guest-network hostnames (IP → device name)
+    if (hostnameResolver) {
+      ws.send(JSON.stringify(hostnameResolver.getState()));
+    }
+
+    // Whether this page needs an operator login
+    sendOperatorState(ws);
+
+    // Send initial route preference state
+    sendRouteState(ws, wsToIp.get(ws) ?? 'unknown');
+
+    // Send whether this device is a Driver Station
+    sendDsClientState(ws, dsClientOf(ws));
+
+    // Send initial pending commit state
+    ws.send(
+      JSON.stringify({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState),
+    );
+
+    // Send initial last-linked timestamps
+    ws.send(
+      JSON.stringify({
+        type: 'lastLinkedState',
+        timestamps: radioManager.getLastLinkedTimestamps(),
+      } satisfies LastLinkedState),
+    );
+
+    // Send server info (start time for uptime display)
+    ws.send(serverInfoMessage());
+
+    // Saved team configs are a topic: a team page subscribes to its own.
+
+    // Send the match queue
+    if (setup?.queue) {
+      ws.send(JSON.stringify(setup.queue.store.getState()));
+    }
+
+    // Send API key management state
+    if (apiKeyStore) {
+      ws.send(JSON.stringify(apiKeyStore.getState()));
+    }
+
+    // Send port bridge state (available ports and active bridges)
+    if (portBridgeManager?.enabled) {
+      ws.send(JSON.stringify(portBridgeManager.getState()));
+    }
+
+    // Send support system state
+    if (supportStore) {
+      ws.send(JSON.stringify(supportStore.getState()));
+    }
+
+    // Send Slack config state
+    if (slackBridge) {
+      ws.send(JSON.stringify(slackBridge.getState()));
+    }
+
+    // Send external access token state
+    if (externalAccessStore) {
+      ws.send(JSON.stringify(externalAccessStore.getState()));
+    }
+
+    // Send persisted setup state so the wizard can resume where it left off
+    if (setup) {
+      ws.send(JSON.stringify(setupConfigMessage()));
+    }
+
+    // Send audio device state
+    if (matchAudio) {
+      ws.send(JSON.stringify(matchAudio.getState()));
+    }
+
+    // Match history, practice runs, usage and the timelapse are not sent
+    // here: pages that show them subscribe (see TopicSubscriptions).
+
+    // Send match video recorder state
+    if (setup?.matchRecorder) {
+      ws.send(JSON.stringify(setup.matchRecorder.getState()));
+    }
+
+    // Robots' 2.4 GHz networks heard nearby
+    if (setup?.robotWifi) {
+      ws.send(JSON.stringify(setup.robotWifi.getState()));
+    }
+    // Other access points using teams' network names on 6 GHz
+    if (setup?.sixGhzWatch) {
+      ws.send(JSON.stringify(setup.sixGhzWatch.getState()));
+    }
+    // Wireless cards on the host (admin page)
+    if (setup?.wifiCards) {
+      ws.send(JSON.stringify(setup.wifiCards.getState()));
+    }
+    // Software update (admin page)
+    if (setup?.selfUpdate) {
+      ws.send(JSON.stringify(setup.selfUpdate.getState()));
+    }
+
+    for (const listener of fieldClientListeners) listener(ws);
+  }
+
   wss.on('connection', (ws: WebSocket, req) => {
     // Public connections (/ws/scores) are read-only and only receive score + match data.
     // Handle them separately to avoid leaking sensitive state.
@@ -1051,15 +1198,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       console.log('Public scores client connected');
       ws.send(JSON.stringify(matchEngine.getState()));
       if (leaderboardJson) ws.send(leaderboardJson);
-      ws.send(
-        JSON.stringify({
-          type: 'serverInfo',
-          startTime: serverStartTime,
-          version: serverVersion,
-          now: Date.now(),
-          publicUrl: setup?.publicUrl?.(),
-        } satisfies ServerInfo),
-      );
+      ws.send(serverInfoMessage());
       // Cast receivers (Chromecast TVs) load the public scores page, so their
       // registration arrives on this socket. Accept ONLY that message here —
       // everything else on the read-only socket stays ignored.
@@ -1134,119 +1273,19 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       });
     }
 
-    // Send initial history + match state
-    ws.send(JSON.stringify(radioManager.getStatusHistory()));
-    ws.send(JSON.stringify(matchEngine.getState()));
-    if (leaderboardJson) ws.send(leaderboardJson);
-
-    // Send known guest-network hostnames (IP → device name)
-    if (hostnameResolver) {
-      ws.send(JSON.stringify(hostnameResolver.getState()));
-    }
-
-    // Whether this page needs an operator login
-    sendOperatorState(ws);
-
-    // Send initial route preference state
-    sendRouteState(ws, clientIp);
-
-    // Send whether this device is a Driver Station
-    sendDsClientState(ws, dsClientOf(ws));
-
-    // Send initial pending commit state
-    ws.send(
-      JSON.stringify({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState),
-    );
-
-    // Send initial last-linked timestamps
-    ws.send(
-      JSON.stringify({
-        type: 'lastLinkedState',
-        timestamps: radioManager.getLastLinkedTimestamps(),
-      } satisfies LastLinkedState),
-    );
-
-    // Send server info (start time for uptime display)
-    ws.send(
-      JSON.stringify({
-        type: 'serverInfo',
-        startTime: serverStartTime,
-        version: serverVersion,
-        now: Date.now(),
-        publicUrl: setup?.publicUrl?.(),
-      } satisfies ServerInfo),
-    );
-
-    // Saved team configs are a topic: a team page subscribes to its own.
-
-    // Send the match queue
-    if (setup?.queue) {
-      ws.send(JSON.stringify(setup.queue.store.getState()));
-    }
-
-    // Send API key management state
-    if (apiKeyStore) {
-      ws.send(JSON.stringify(apiKeyStore.getState()));
-    }
-
-    // Send port bridge state (available ports and active bridges)
-    if (portBridgeManager?.enabled) {
-      ws.send(JSON.stringify(portBridgeManager.getState()));
-    }
-
-    // Send support system state
-    if (supportStore) {
-      ws.send(JSON.stringify(supportStore.getState()));
-    }
-
-    // Send Slack config state
-    if (slackBridge) {
-      ws.send(JSON.stringify(slackBridge.getState()));
-    }
-
-    // Send external access token state
-    if (externalAccessStore) {
-      ws.send(JSON.stringify(externalAccessStore.getState()));
-    }
-
-    // Send persisted setup state so the wizard can resume where it left off
-    if (setup) {
-      ws.send(JSON.stringify(setupConfigMessage()));
-    }
-
-    // Send audio device state
-    if (matchAudio) {
-      ws.send(JSON.stringify(matchAudio.getState()));
-    }
-
-    // Match history, practice runs, usage and the timelapse are not sent
-    // here: pages that show them subscribe (see TopicSubscriptions).
-
-    // Send match video recorder state
-    if (setup?.matchRecorder) {
-      ws.send(JSON.stringify(setup.matchRecorder.getState()));
-    }
-
-    // Robots' 2.4 GHz networks heard nearby
-    if (setup?.robotWifi) {
-      ws.send(JSON.stringify(setup.robotWifi.getState()));
-    }
-    // Other access points using teams' network names on 6 GHz
-    if (setup?.sixGhzWatch) {
-      ws.send(JSON.stringify(setup.sixGhzWatch.getState()));
-    }
-    // Wireless cards on the host (admin page)
-    if (setup?.wifiCards) {
-      ws.send(JSON.stringify(setup.wifiCards.getState()));
-    }
-    // Software update (admin page)
-    if (setup?.selfUpdate) {
-      ws.send(JSON.stringify(setup.selfUpdate.getState()));
+    // A stranger gets its heartbeat and the answers to its own login messages.
+    // Everything else waits: see reviewOutsiders.
+    if (isStranger(ws)) {
+      ws.send(serverInfoMessage());
+    } else {
+      if (outsiders.has(ws)) admitted.add(ws);
+      sendFieldState(ws);
     }
 
     ws.on('close', () => {
       wsToIp.delete(ws);
       outsiders.delete(ws);
+      admitted.delete(ws);
       adminConnections.delete(ws);
       operatorConnections.delete(ws);
       operatorStateSent.delete(ws);
@@ -1949,6 +1988,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
                     externalAccessToken: extToken?.token,
                   }),
                 );
+                reviewOutsiders();
               } else {
                 ws.send(
                   JSON.stringify({
@@ -1974,6 +2014,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
               passphraseConfigured: adminAuth.isConfigured(),
             }),
           );
+          if (valid) reviewOutsiders();
         }
       } else if (isAdminSetPassphrase(data)) {
         if (adminAuth) {
@@ -2006,6 +2047,19 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
                   passphraseConfigured: true,
                 }),
               );
+              // A new passphrase ends every session, so one in use from outside
+              // goes too. On site, a page keeps its rights until it reconnects.
+              for (const other of adminConnections) {
+                if (other === ws || !outsiders.has(other)) continue;
+                adminConnections.delete(other);
+                const ended: AdminAuthResult = {
+                  type: 'adminAuthResult',
+                  authenticated: false,
+                  passphraseConfigured: true,
+                };
+                if (other.readyState === WebSocket.OPEN) other.send(JSON.stringify(ended));
+              }
+              reviewOutsiders();
             })().catch((err: unknown) => {
               appError('Failed to set the admin passphrase: ' + String(err));
             });
@@ -2039,6 +2093,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         if (device) {
           operatorConnections.set(ws, { id: device.id, name: device.name });
           sendOperatorState(ws);
+          reviewOutsiders();
           for (const admin of adminConnections) sendOperatorDevices(admin);
         } else {
           sendOperatorReply(ws, { tokenRejected: true });
@@ -2312,5 +2367,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     console.log(`HTTP + WebSocket server running on port ${port}`);
   });
 
-  return { server, wss, broadcast, broadcastRouteState, publicConnections };
+  return {
+    server,
+    wss,
+    broadcast,
+    broadcastRouteState,
+    publicConnections,
+    onFieldClient: listener => fieldClientListeners.push(listener),
+  };
 }

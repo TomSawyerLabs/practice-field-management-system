@@ -158,10 +158,12 @@ when its address is private, link-local or on one of the host's own networks.
 That's the same test the reference proxy uses to pick the internal UI, and
 on-site connections are unaffected by anything below.
 
-A connection from anywhere else can't send field commands: no stops, no clears,
-no team-page actions. It can log in, and Cast TVs and the public scoreboard, match
-and practice-day pages work as usual. Any credential lifts this, and the usual
-rules then apply as if it were on site:
+A connection from anywhere else can't send field commands (no stops, no clears,
+no team-page actions) and isn't sent the field's state: only a heartbeat and the
+answers to its own login. It can log in, and Cast TVs and the public scoreboard,
+match and practice-day pages work as usual. Any credential lifts this, and the
+usual rules then apply as if it were on site. The page gets the field's state on
+the connection it has, with no reload:
 
 - an access cookie from an [external access](setup.md#external-access) link
 - an admin login
@@ -169,7 +171,10 @@ rules then apply as if it were on site:
   typed code is refused from outside, so a stranger can't use up the limit on
   wrong codes and lock out volunteers at the field
 
-Revoking an access link takes effect on open pages straight away.
+Revoking an access link or an operator device takes effect on open pages straight
+away, and changing the admin passphrase ends admin sessions from outside. The
+page's connection is closed, and it reconnects as a visitor. What's already on its
+screen stays there, but it gets no more.
 
 The admin login has to stay open from the internet, so it is limited there: 5
 tries a minute from one address and 30 overall, then a wait. Only visitors with
@@ -183,10 +188,10 @@ match the address it connected to is treated as outside, and a cookie doesn't
 count there.
 
 This depends on [`TRUSTED_PROXIES`](configuration.md#trusted-proxies) being
-right. It only limits what a visitor can do, not what they can see: their socket
-still receives the field's status. A device at the field that goes out through
-the internet (a VPN, Cloudflare WARP, iCloud Private Relay or custom DNS) counts
-as outside.
+right. The public scoreboard's own socket, `/ws/scores`, stays open to everyone,
+so the match state it carries can be read from outside. A device at the field that
+goes out through the internet (a VPN, Cloudflare WARP, iCloud Private Relay or
+custom DNS) counts as outside.
 
 ## Admin Authentication
 
