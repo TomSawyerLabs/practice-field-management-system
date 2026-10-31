@@ -35,16 +35,41 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                   | State                                                                          |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| Running on steamboat   | `c08e287`, graceful reload 9:02 PM PDT (04:02Z Oct 31) 2026-10-30              |
-| `origin/master`        | `c08e287`                                                                      |
-| Last published release | `build-20261030-2051-c08e287`                                                  |
-| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z), both binaries            |
-| Release workflow       | Passed on `c08e287`                                                            |
-| Checked after deploy   | Health, bundle version and journal clean; on-site `/ws` accepted through Caddy |
+| What                   | State                                                                   |
+| ---------------------- | ----------------------------------------------------------------------- |
+| Running on steamboat   | `8a2dd38`, graceful reload 1:09 PM PDT (20:09Z) 2026-10-31              |
+| `origin/master`        | `8a2dd38`                                                               |
+| Last published release | `build-20261031-0000-8a2dd38`                                           |
+| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30         |
+| Release workflow       | Passed on `8a2dd38`                                                     |
+| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below |
 
-The last two deploys (`4c4b24a` at 8:42 PM PDT, `c08e287` at 9:02 PM PDT) ran inside
+Before the deploy, at 1:08 PM PDT (20:08Z): phase idle, no team on any slot, no DS, no
+pending radio commit, all six `eStop` false, no `fieldEStop`, no bookings. The admin
+file is copied to `admin-auth.json.bak-before-scrypt-20261031` beside the original on
+steamboat, `0600`, identical to the original at the time. It's the only way back from
+the scrypt upgrade, so keep it until that login has been seen working.
+
+After it: `/health` reports `8a2dd38` and `eStopped:false`. All three stale NAT rules
+removed, none left. No `has team X but the config says`, no `Could not check the
+bridges`, no radio reconfiguration, nothing matching error or exception in the journal.
+From this PC, `ws://pfms.tsl/ws` still delivers `robotDropouts`, `firmwareStoreUpdate`
+and `networkStats`, and `https://pfms.tomsawyerlabs.com/` answers 200.
+
+Not seen on the real system yet:
+
+- **The login page from outside.** This PC resolves that hostname to `10.255.0.5`, so
+  it can't play an internet visitor. Check from a phone off the site's Wi-Fi.
+- **Real data in those three messages.** The field was empty, so they prove delivery,
+  not contents. The `onFieldClient` move gets its real test with teams on.
+- **`estop-state.json`.** It doesn't exist until the first stop. The service runs as
+  root in a directory that holds its other state, so a write should work, but none
+  has happened.
+- **`admin-auth.json` upgrade.** It happens at the first admin login, and goes to `0600`.
+
+Earlier deploys: `4c4b24a` at 8:42 PM PDT and `c08e287` at 9:02 PM PDT on 2026-10-30.
+
+Those two ran inside
 Team 8048's 7:00–10:00 PM PDT booking, with the user's yes. Nobody was there: no team
 on a station, no DS connected, no recording that night.
 
@@ -53,57 +78,19 @@ The on-site check sends a read-only `subscribe` to `ws://pfms.tsl/ws` from this 
 its data, both before and after the Caddy `X-Forwarded-For` change went live. A laptop
 on the team network hasn't been tried. Look for that refusal next time teams are on.
 
-Earlier the same day: `67bb54e` at 5:17 PM PDT, `0586d9a` at 3:33 PM PDT.
+Earlier on 2026-10-30: `67bb54e` at 5:17 PM PDT, `0586d9a` at 3:33 PM PDT.
 
 ## On local master only
 
-About 18 user-facing changes, none live. Master moves as threads land work, so check
-`git log origin/master..master`. The main ones:
-
-- Stops: E-STOP on `/staff` and `/csa`, and kept on screen for a false DS match; a
-  press on a disconnected page is queued, confirmed and shown; e-stops survive a
-  restart; a warning when a robot says it's enabled through a stop; a Clear on `/match`
-  for a robot that left a match still e-stopped.
-- Security: strangers on `/ws` see no field state; firmware API needs the staff
-  credential; admin passphrase moved to scrypt.
-- Network: a team's internet rule ends when it leaves; a clear lost to a restart is
-  recovered; the first commit after a start waits for robots; OFFSEASON DHCP fixes.
+Only plan notes. Check `git log origin/master..master`.
 
 ## Pending deploy
 
-**Ready at `8a2dd38`.** Waiting only on the user's yes.
+Nothing waiting.
 
-Checked on that exact commit at 12:06 AM PDT (07:06Z) 2026-10-31, on Windows: `bun run
-typecheck` clean, `bun test` 1241 pass, 0 fail, frontend build passes. No addon or
-dependency change. Independent review of `c08e287..ef08f3c` found nothing that should
-hold a deploy, and its six findings were then fixed.
-
-Do at deploy, in this order:
-
-1. Confirm nothing is e-stopped. **This deploy isn't protected:** the running backend
-   has no `eStopped` in `/health`, so `update.sh` won't wait, and the reload lifts any
-   e-stop in force. Read `fieldEStop` and each station's `eStop` from `matchState` with
-   a read-only WebSocket subscribe.
-2. Back up `admin-auth.json` on steamboat: `sudo cp -p` to a dated name beside it. The
-   upgrade to scrypt is one-way on the first admin login, and only a pre-upgrade copy
-   allows a rollback. It also goes from `0644` to `0600` then.
-3. `/health` idle, no team, no block. Push the exact commit, run `update.sh`.
-
-Check after it:
-
-- The three stale NAT rules go (`Removed the internet rule for …`):
-  `iptables -t nat -S POSTROUTING | grep pfms-nat-slot`.
-- No `has team X but the config says`. With no team on the field, nothing should
-  commit. `Could not check the bridges` means recovery failed.
-- An on-site page still shows robot dropouts, firmware and network stats: the
-  `onFieldClient` move has never run on the real `src/index.ts` with real data.
-- `/health` has `eStopped`, `estop-state.json` can be written, `release` passes.
-
-After this, a forgotten e-stop blocks deploys for 10 minutes and `update.sh` gives up;
-`./update.sh force` overrides it. A restored e-stop can't be cleared for about 10 s.
-
-What teams would notice: nothing tonight. Internet visitors see a login page instead
-of field status.
+From this deploy on, `/health` has `eStopped`: a forgotten e-stop blocks `update.sh` for
+10 minutes and it gives up; `./update.sh force` overrides it. A restored e-stop can't be
+cleared for about 10 s.
 
 ### Windows for it
 
@@ -158,6 +145,8 @@ what's landed, and raises one only if it gates a deploy.
 - **`/ws` got its own thread,** which has landed its guard.
 - **Merged worktrees and branches removed.** `pfms-test-timing/base` stayed for the
   flaky test thread.
+- **The batch's merged worktrees removed** (user's yes, 2026-10-31). Their branches
+  stayed, because the yes covered worktrees only. All eight are fully on master.
 - **Setup-page restart idea dropped:** already solved by `edc128c` and `56185eb`.
 - **This site has no host team,** so nobody needs to enter one.
 - **Firmware uploads pin known releases** rather than hashing against the `checksum`,
@@ -166,8 +155,7 @@ what's landed, and raises one only if it gates a deploy.
 
 ## Open questions for the user
 
-1. Push and deploy `8a2dd38`, with the `admin-auth.json` backup?
-2. Remove the delegates' merged worktrees?
+None.
 
 ## Findings / gotchas
 
@@ -179,6 +167,18 @@ what's landed, and raises one only if it gates a deploy.
 - A worktree installed by pnpm has newer frontend TypeScript, and its frontend build
   fails on `NudgeSettings.tsx`. Steamboat installs from `bun.lock` and builds fine.
   Run a pre-deploy build in a `bun install` tree, not one of those.
+- `curl` in Git Bash on this PC fails HTTPS with `(43) A libcurl function was given a
+bad argument`, before any request. It says nothing about the server. Use
+  `Invoke-WebRequest`, or `curl` on steamboat.
+- **A finished thread can start again at any moment.** On 2026-10-31 the "nothing
+  running" check passed 13 s before the user messaged the `/ws` thread, which then
+  committed from `issues-ws-internet-guard` while its removal was being prepared. Nothing
+  was lost, because its work merged and its run ended, but re-check just before each
+  removal, not once before the batch. Its idle session still held the folder, so
+  `git worktree remove` emptied it, unregistered it and failed with `Permission denied`.
+  That folder and `issues-station-test-port` are empty and harmless, and a further
+  message to that thread will find no worktree.
+- `git worktree remove` of a full `node_modules` takes minutes per tree on this PC.
 
 ## Things not to do
 
@@ -202,4 +202,4 @@ what's landed, and raises one only if it gates a deploy.
 - [x] `4c4b24a` pushed and deployed 8:42 PM PDT (03:42Z Oct 31), checked, release passed
 - [x] `c08e287` pushed and deployed 9:02 PM PDT (04:02Z Oct 31), checked, release passed
 - [x] Next batch built and reviewed, on master at `8a2dd38`
-- [ ] `8a2dd38` deployed, waiting on the user
+- [x] `8a2dd38` pushed and deployed 1:09 PM PDT (20:09Z Oct 31), checked, release passed
