@@ -1,6 +1,6 @@
 # Keep internet visitors from running the field over `/ws`
 
-**Status: built and verified, not deployed. Deploys belong to the deploy thread.**
+**Status: the guard is live (pFMS `4c4b24a`) and the Caddy change is live (ops `f9bec1c`), both on 2026-10-30. The admin login limit (`26f552c`) waits for the next pFMS deploy.**
 
 ## Goal
 
@@ -162,13 +162,9 @@ up. It can't touch anyone at the field, anyone with an access cookie (every
 browser that has logged in as admin has one) or an open admin page, because none
 of those count. A blocked try is refused even with the right passphrase.
 
-Until the Caddy change below is live, "one address" means one Cloudflare edge, so
-the overall limit does most of the work.
+## Applied: Caddy change
 
-## Staged, not applied: Caddy change
-
-The user said "if it helps, sure" on 2026-10-30. It does help, so it's staged for
-an explicit yes to apply, as a live Caddy change needs. Local ops branch
+The user approved this exact change on 2026-10-30. Pushed to ops as `f9bec1c`, on top of the perimeter change `e76a8f2`, and live from 8:50 PM PDT (Oct 31 03:50Z). It was staged on local ops branch
 `pfms-real-client-ip`, worktree `~/.t3/worktrees/ops/pfms-real-client-ip`, from
 `origin/master`, not pushed:
 
@@ -200,8 +196,19 @@ It works with either pFMS version, in either order. It fits the ops perimeter
 hardening design, which keeps `{client_ip}` placeholders. Checked: `caddy adapt`
 passes with the `onlink` blocks removed (the local Caddy doesn't have that
 plugin), and all three proxies set the header. The header's effect was seen on the
-loopback Caddy: `{"xff":"203.0.113.7"}`. Applying means pushing that branch to
-ops and a manual Server Deploys run, which reloads Caddy on `steamboat`.
+loopback Caddy: `{"xff":"203.0.113.7"}`. Pushing to ops starts Server Deploys, which
+reloads Caddy on `steamboat`.
+
+Seen live, read-only: all 6 pFMS proxies that matter carry the header (3 for each of
+the two site blocks), strict mode is on, Caddy reloaded in place, `pfms.tsl` and a
+WebSocket upgrade through Caddy answer, and the journal shows a real visitor address
+(`99.47.71.x`) where a Cloudflare edge would have shown. Server Deploys and Perimeter
+Check both passed. No forged request was sent to the live site.
+
+**The trade-off that came with it:** pFMS's verdict on who is on site now rests on
+Caddy's `client_ip`, so on `trusted_proxies_strict`. Without this change, pFMS's
+right-to-left read would have held even if strict mode were lost. Ops' static check
+and 6-hourly Perimeter Check exist to catch that.
 
 ## How it was verified
 
@@ -228,14 +235,13 @@ the live site wasn't touched.
 - [x] Tests with a real socket
 - [x] Docs and `ISSUES.md`
 - [x] Limit on outside admin logins
-- [x] Caddy change staged on a local ops branch
-- [ ] Caddy change applied: waiting on an explicit yes
-- [ ] Deployed: the deploy thread's call
+- [x] Caddy change approved, applied and verified
+- [x] Guard deployed by the deploy thread (`4c4b24a`)
+- [ ] Admin login limit deployed: the deploy thread's call
 
 ## Open questions for the user
 
-1. Apply the staged Caddy change? Recommendation: yes.
-2. The list of what an external connection keeps stands as built unless the user
+1. The list of what an external connection keeps stands as built unless the user
    wants the support widget on `/admin` opened to strangers. Recommendation: no.
 
 ## Things not to do
