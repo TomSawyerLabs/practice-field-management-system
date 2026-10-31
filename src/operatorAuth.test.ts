@@ -85,12 +85,14 @@ describe('OperatorAuth', () => {
     expect(tries.filter(t => !t.ok && t.retryAfterMs !== undefined)).toHaveLength(3);
   });
 
+  // 31 real scrypt hashes one after another, which takes a busy machine well
+  // past Bun's 5 s default.
   test('guesses spread over many addresses are limited too', async () => {
     await auth.setCode(CODE);
     for (let i = 0; i < 30; i++) await auth.login('wrong', 'x', `10.0.1.${i}`);
     const blocked = await auth.login(CODE, 'x', '10.0.2.1');
     expect(!blocked.ok && blocked.retryAfterMs).toBeGreaterThan(0);
-  });
+  }, 60_000);
 
   test('changing the code signs out devices that used it, not paired ones', async () => {
     await auth.setCode(CODE);

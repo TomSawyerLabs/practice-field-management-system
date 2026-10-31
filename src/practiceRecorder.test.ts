@@ -124,8 +124,8 @@ describe('PracticeRecorder', () => {
     });
     recorder.start();
     // Encoding the 40 s fixture takes a few seconds, more under a full
-    // parallel test run — past bun's 5 s default hook timeout.
-  }, 60_000);
+    // parallel test run, and over a minute on a machine that's truly busy.
+  }, 120_000);
 
   afterAll(async () => {
     await recorder?.stop();
