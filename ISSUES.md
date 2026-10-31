@@ -123,11 +123,13 @@ CONNECTING throws `InvalidStateError` in the click handler, and one pressed whil
 it's closed is lost with no sign (Clear field E-Stop, Ready, Join). Reproduced in
 headless Chrome. None of them stops a robot, so it's lost actions, not a safety gap.
 
-## `caddy.service` shows `failed` on steamboat while Caddy runs
+## Steamboat's Caddy container has never been through a reboot
 
-`systemctl is-active caddy` said `failed` on 2026-10-31, while `caddy run --resume`
-(pid 3641856) served pFMS normally. The running process isn't the systemd unit's.
-Seen first during the `/ws` guard work, not diagnosed, and steamboat wasn't touched.
-It matters because all pFMS traffic goes through Caddy: it may not come back after
-a reboot, and anything that watches the unit gets the wrong answer. Fixing it is an
-ops change and needs the user's yes.
+`caddy.service` showing `failed` is a dead leftover, not a fault. Caddy runs only in
+the ops `caddy` container (`caddy run --resume` is that container's PID 1), and the
+unit has been `failed` and disabled since the 2026-05-18 cutover. pFMS is unaffected,
+and nothing in pFMS watches that unit. What's left matters because all pFMS traffic
+goes through Caddy: the container is expected to return after a reboot, but steamboat
+hasn't rebooted since the cutover, so that's unproven. Cleanup and any reboot test are
+ops changes that need the user's yes: `plans/steamboat-caddy-service.md` on the ops
+branch `steamboat-caddy-service-diagnosis`.
