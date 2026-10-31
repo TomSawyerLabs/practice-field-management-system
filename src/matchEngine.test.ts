@@ -3,7 +3,14 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DS_CONTROL_QUIET_MS, MatchEngine, RESTART_COOLDOWN_MS, SETUP_AUTO_CANCEL_MS, stopCut } from './matchEngine.js';
+import {
+  DS_CONTROL_QUIET_MS,
+  MatchEngine,
+  RESTART_COOLDOWN_MS,
+  SETUP_AUTO_CANCEL_MS,
+  STOP_ENABLED_GRACE_MS,
+  stopCut,
+} from './matchEngine.js';
 import { MatchHistoryStore } from './matchHistoryStore.js';
 import { setBroadcast } from './appLogger.js';
 import { ScoringEngine } from './scoringEngine.js';
@@ -1108,6 +1115,99 @@ describe('an e-stop out of a match', () => {
     engine.noteDsControl('slot1', false);
     engine.clearEStop('slot1');
     expect(station()?.stopWaiting).toBeUndefined();
+  });
+});
+
+describe('a robot still enabled through an e-stop', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    setSystemTime();
+  });
+
+  const START = 1_800_000_000_000;
+  function setup() {
+    const engine = new MatchEngine(() => 5940);
+    const flagged = () => engine.getState().stationStates.slot1?.enabledThroughStop;
+    setSystemTime(START);
+    return { engine, flagged };
+  }
+
+  test('a robot that stops within the grace period never warns', () => {
+    const { engine, flagged } = setup();
+    engine.noteRobotEnabled('slot1');
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(START + 100);
+    engine.noteRobotEnabled('slot1');
+    setSystemTime(START + STOP_ENABLED_GRACE_MS - 1);
+    engine.noteRobotEnabled('slot1');
+    expect(flagged()).toBeUndefined();
+    setSystemTime(START + 60_000);
+    engine.reviewRobotsThroughStops();
+    expect(flagged()).toBeUndefined();
+  });
+
+  test('a report after the grace period warns, and the state goes out', () => {
+    const { engine, flagged } = setup();
+    let sent = 0;
+    engine.stationEStop('slot1', 'staff');
+    engine.addStateListener(state => {
+      if (state.stationStates.slot1?.enabledThroughStop) sent++;
+    });
+    setSystemTime(START + STOP_ENABLED_GRACE_MS);
+    engine.noteRobotEnabled('slot1');
+    expect(flagged()).toBe(true);
+    expect(sent).toBe(1);
+  });
+
+  test('the field E-Stop counts, in a match or not, for that robot only', () => {
+    const { engine, flagged } = setup();
+    engine.createMatch();
+    engine.joinStationAlliance('slot1', 'red');
+    engine.fieldEStop();
+    setSystemTime(START + STOP_ENABLED_GRACE_MS + 1);
+    engine.noteRobotEnabled('slot1');
+    expect(flagged()).toBe(true);
+    expect(engine.getState().stationStates.slot2?.enabledThroughStop).toBeUndefined();
+  });
+
+  test('a robot that goes quiet no longer warns, because the field can no longer tell', () => {
+    const { engine, flagged } = setup();
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(START + STOP_ENABLED_GRACE_MS);
+    engine.noteRobotEnabled('slot1');
+    setSystemTime(START + STOP_ENABLED_GRACE_MS + 1_000);
+    engine.reviewRobotsThroughStops();
+    expect(flagged()).toBe(true);
+    setSystemTime(START + STOP_ENABLED_GRACE_MS + 2_001);
+    engine.reviewRobotsThroughStops();
+    expect(flagged()).toBeUndefined();
+  });
+
+  test('a robot heard only before the stop never warns', () => {
+    const { engine, flagged } = setup();
+    engine.noteRobotEnabled('slot1');
+    setSystemTime(START + 500);
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(START + 500 + STOP_ENABLED_GRACE_MS + 1);
+    engine.reviewRobotsThroughStops();
+    expect(flagged()).toBeUndefined();
+  });
+
+  test('clearing the stop clears the warning, and a later stop gets its own grace', () => {
+    const { engine, flagged } = setup();
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(START + STOP_ENABLED_GRACE_MS);
+    engine.noteRobotEnabled('slot1');
+    expect(flagged()).toBe(true);
+    engine.noteDsControl('slot1', false);
+    engine.clearEStop('slot1');
+    expect(engine.isEStopped('slot1')).toBe(false);
+    expect(flagged()).toBeUndefined();
+    engine.stationEStop('slot1', 'staff');
+    setSystemTime(START + STOP_ENABLED_GRACE_MS + 100);
+    engine.noteRobotEnabled('slot1');
+    expect(flagged()).toBeUndefined();
   });
 });
 

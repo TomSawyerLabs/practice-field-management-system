@@ -110,6 +110,7 @@ import {
   SelfUpdateStatus,
   WifiCardsState,
   FIELD_CONTROL_ADDRESS,
+  type TelemetryUpdate,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -1228,7 +1229,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // fires per sniffed packet (250+/s with six robots), which floods slow
   // displays and delays the score updates queued behind it. Status changes
   // still flush immediately.
-  const broadcastTelemetry = createTelemetryCoalescer(update => {
+  const coalesceTelemetry = createTelemetryCoalescer(update => {
     broadcast(update);
     // The same coalesced stream feeds the recording sidecars and the
     // practice recorder's enable/disable detection.
@@ -1239,6 +1240,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // timelapse keys off — it does not care which station or whether enabled.
     fieldTimelapse.onTelemetry();
   });
+  const broadcastTelemetry = (update: TelemetryUpdate) => {
+    // Ahead of the coalescer: a sample saying enabled mustn't be lost to a later
+    // one in the same window.
+    if (update.dsStatus?.enabled) matchEngine.noteRobotEnabled(update.station);
+    coalesceTelemetry(update);
+  };
 
   // Per-robot setup checks for the scoreboard (DS link, radio, comms,
   // joysticks, battery, Ready), fed by the packet capture, DS status and radio
@@ -1339,6 +1346,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   setInterval(() => {
     robotDropouts.tick(Date.now());
     robotEStops.tick(Date.now());
+    matchEngine.reviewRobotsThroughStops();
     const version = robotDropouts.getVersion();
     if (version !== robotDropoutsVersion) {
       robotDropoutsVersion = version;

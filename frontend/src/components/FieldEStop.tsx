@@ -4,7 +4,9 @@ import AlertTitle from '@mui/material/AlertTitle';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
+import { StationNameList } from '../../../src/types';
 import type { EStopSource, MatchState, StationControlState, StationName } from '../../../src/types';
+import { prettyStationName } from '../../../src/utils';
 import { sendAdminClearFieldEStop, sendAdminGlobalEStop, useMatchState, useRobotEStops } from '../hooks/useBackend';
 import { describeRobotEStop } from '../utils/robotEStop';
 
@@ -138,6 +140,42 @@ function OutOfEStopNotice({ state }: { state: StationControlState | undefined })
 }
 
 // ── Staff pages ─────────────────────────────────────────────────────
+
+/** Robots the server says are still enabled through an e-stop: staff must not
+ *  believe the E-STOPPED chip. Renders nothing otherwise. */
+export function RobotsEnabledThroughStop() {
+  const matchState = useMatchState();
+  const stations = StationNameList.filter(s => matchState?.stationStates[s]?.enabledThroughStop);
+  if (stations.length === 0) return null;
+  const robots = stations.map(s => {
+    const state = matchState?.stationStates[s];
+    return state?.robot ?? (state?.teamNumber ? `Team ${state.teamNumber}` : prettyStationName(s));
+  });
+  return (
+    <Alert severity="error" variant="filled" sx={{ mb: 2 }}>
+      <AlertTitle sx={{ fontWeight: 900 }}>
+        {robots.join(', ')} {stations.length === 1 ? 'may' : 'may all'} still be running
+      </AlertTitle>
+      E-stopped, but still saying enabled. A Driver Station may be reaching {stations.length === 1 ? 'it' : 'them'}{' '}
+      another way (tethered, or on the robot’s own Wi-Fi), which the field can’t stop. Treat{' '}
+      {stations.length === 1 ? 'it' : 'them'} as live: have the team click Disable, or power off.
+    </Alert>
+  );
+}
+
+/** The limit of that warning, shown during any e-stop: no warning isn't proof
+ *  that a robot stopped. */
+export function StopBlindSpotNote() {
+  const matchState = useMatchState();
+  const stopped = Object.values(matchState?.stationStates ?? {}).some(s => s.eStop);
+  if (!matchState?.fieldEStop && !stopped) return null;
+  return (
+    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      The field warns when an e-stopped robot still says it’s enabled, but it can only see robots reporting to it. One
+      driven another way (tethered, or on its own Wi-Fi) can keep running with no warning here, so watch the robots.
+    </Typography>
+  );
+}
 
 /** The field E-Stop for staff pages (/match, /staff, /csa, /admin): one big
  *  button that latches a stop on every robot on the field, one tap with no

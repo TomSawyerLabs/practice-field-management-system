@@ -1389,6 +1389,10 @@ export type StationControlState = {
    *  yet. Its control traffic is cut until it does, and the e-stop can't be
    *  cleared. */
   stopWaiting?: boolean;
+  /** E-stopped, and well after the stop this robot, or its Driver Station, still
+   *  says it's enabled: it may still be running. Only a robot reporting to the
+   *  field can set this, so its absence doesn't mean the robot stopped. */
+  enabledThroughStop?: boolean;
   /** Epoch ms when this team took this station — when its SSID became the
    *  station's active radio config. Unlike the DS/radio heartbeats this is a
    *  connect *time*, so it survives a robot dropping and coming back, which

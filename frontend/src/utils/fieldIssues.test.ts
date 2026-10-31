@@ -833,9 +833,43 @@ describe('fieldControlOf', () => {
     expect(fc.mismatch).toBe(false);
   });
 
-  test('e-stopped wins over everything, and an enabled robot under it is an alarm', () => {
+  test('e-stopped wins over everything, but a robot still stopping is no alarm yet', () => {
     const input = withState({ eStop: true, joined: true, enabled: false }, { telemetry: robotSays(true) });
-    expect(fieldControlOf(input, 'slot1').kind).toBe('estop');
+    const fc = fieldControlOf(input, 'slot1');
+    expect(fc.kind).toBe('estop');
+    expect(fc.mismatch).toBe(false);
+    expect(ids(input)).not.toContain('enabled-while-held-slot1');
+    expect(ids(input)).not.toContain('enabled-through-stop-slot1');
+  });
+
+  test('past the grace period, an e-stopped robot still enabled is an alarm', () => {
+    const input = withState({ eStop: true, enabledThroughStop: true });
+    const fc = fieldControlOf(input, 'slot1');
+    expect(fc.mismatch).toBe(true);
+    expect(fc.robot).toBe('enabled');
+    expect(detectFieldIssues(input).find(i => i.id === 'enabled-through-stop-slot1')?.severity).toBe('critical');
+    expect(ids(input)).not.toContain('enabled-while-held-slot1');
+  });
+
+  test('robots still enabled through an e-stop share a card', () => {
+    const input = inputs({
+      latest: radio({ slot1: station({ ssid: '1234' }), slot2: station({ ssid: '5678' }) }),
+      matchState: match({
+        stationStates: {
+          slot1: control({ eStop: true, enabledThroughStop: true }),
+          slot2: control({ eStop: true, enabledThroughStop: true }),
+        },
+      }),
+    });
+    const row = groupIssues(detectFieldIssues(input)).find(r => r.type === 'group');
+    expect(row?.type === 'group' && row.title).toBe('2 robots may still be running through an e-stop');
+  });
+
+  test('a held robot still alarms as soon as it says enabled', () => {
+    const input = withState(
+      { heldReason: 'Field staff have turned off freeplay outside matches.' },
+      { telemetry: robotSays(true) },
+    );
     expect(ids(input)).toContain('enabled-while-held-slot1');
   });
 

@@ -45,13 +45,14 @@ the disabled UDP packets on its own. If it does, remove the cut, and move Team S
 to the same field control. Note the journal's
 `slotN: e-stop: <why>, N ms after the stop` lines, which time every real stop.
 
-## Nothing warns that a robot is still enabled through a stop (in progress — t3/603a506e)
+## Nothing warns about a running robot that isn't reporting to the field
 
 A DS connected to its robot some other way (tethered, or the robot's own Wi-Fi)
 never crosses the field, so it keeps driving while `/match`, `/csa` and the team's
-page say E-STOPPED. The robot's status bit reaches the field if the robot is on it
-(UDP 1150, or `tele.dsStatus`), so pFMS can sometimes see this. Matters because
-staff would believe a running robot is stopped.
+page say E-STOPPED. `/match` and `/csa` warn once the robot's own status says it's
+still enabled, but a robot whose replies don't cross the field sends pFMS nothing,
+so there's no warning for it, only a note on those pages during any e-stop.
+Matters because staff could still believe a running robot is stopped.
 
 ## Unverified behaviour we depend on
 

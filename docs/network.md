@@ -161,8 +161,15 @@ An e-stop has to act within 1 s, so what happens depends on the DS:
   If it reliably does, the cut can go (`plans/field-verification-checklist.md`,
   check 7).
 - A DS connected to the robot some other way (tethered, or the robot's own Wi-Fi)
-  never crosses the field, so nothing on the network stops it. The field's pages
-  have no warning for this yet (`ISSUES.md`).
+  never crosses the field, so nothing on the network stops it. If the robot still
+  says it's enabled 2 s or more after the stop, in its own UDP 1150 replies or its
+  DS's status, `/match` and `/csa` warn that it may still be running, and the
+  journal logs `slotN: robot still says it's enabled N ms after the e-stop`. The
+  warning goes 2 s after the robot stops saying so. A normal stop never shows it:
+  a robot that's cut sends nothing at all. **The field can't see a robot that
+  isn't reporting to it**, including a SystemCore robot, whose status isn't decoded
+  yet, so no warning doesn't mean the robot stopped. Those pages say so during any
+  e-stop.
 
 **Team Stop** also cuts traffic, for as long as it lasts, because that DS isn't
 under field control and nothing else would stop it. The team's pages offer it

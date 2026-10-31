@@ -78,7 +78,7 @@ import {
 import LinearProgress from '@mui/material/LinearProgress';
 import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks/useReconfigProgress';
 import { DsClientNotice } from './DsClientGuard';
-import { FieldEStopControl } from './FieldEStop';
+import { FieldEStopControl, StopBlindSpotNote } from './FieldEStop';
 import { OperatorBar } from './OperatorAccess';
 import { HostDisplay } from './HostDisplay';
 import { TeamAvatar } from './TeamAvatar';
@@ -664,7 +664,9 @@ function StationDialog({
             v={
               fc.robot
                 ? `${ROBOT_SAYS[fc.robot]}${fc.mismatch ? ' — while the field holds it disabled!' : ''}`
-                : 'no recent packets from the robot'
+                : fc.kind === 'estop'
+                  ? 'no recent packets from the robot, so the field can’t tell whether it stopped'
+                  : 'no recent packets from the robot'
             }
           />
           {tele && (tele.robotLinkRttMs !== undefined || tele.robotLinkLossPct !== undefined) && (
@@ -1062,6 +1064,7 @@ export function CsaPage() {
     <Container maxWidth="md" sx={{ py: 1.5, display: 'flex', flexDirection: 'column', gap: 1.25 }}>
       <DsClientNotice />
       <FieldEStopControl />
+      <StopBlindSpotNote />
       <OperatorBar />
       {/* Header */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>

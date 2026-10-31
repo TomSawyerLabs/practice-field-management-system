@@ -194,6 +194,9 @@ no confirmation and no login, even on a page locked by the operator code:
   pressed it becomes a **FIELD E-STOPPED** banner on all of those pages
   with **Clear field E-Stop** (which asks whether the field is safe), so the
   way to clear it is on screen in every phase.
+- `/match` and `/csa` warn if a robot still says it's enabled 2 s after the
+  stop, and say what they can't see: see
+  [e-stop](network.md#driver-station-generations).
 - Every team's page shows a big **E-STOPPED — Field E-Stop** notice (even a
   team with no robot on the field), the scoreboard shows an **E-STOPPED**
   band across the screen, and a Driver Station held out of a match shows

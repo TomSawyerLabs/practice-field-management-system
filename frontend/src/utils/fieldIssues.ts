@@ -104,6 +104,7 @@ const GROUP_TITLES: Record<string, (n: number, sample: FieldIssue) => string> = 
   'ds-absent': n => `${n} robots on the field with nobody driving`,
   'team-checks': n => `${n} robots failed field checks`,
   brownout: n => `${n} robots are browning out`,
+  'enabled-through-stop': n => `${n} robots may still be running through an e-stop`,
 };
 
 const STATION_SUFFIX = /-slot[1-6]$/;
@@ -325,8 +326,9 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
   const control = matchState?.stationStates[station];
   const tele = input.telemetry[station];
   const teleFresh = tele !== undefined && now - tele.timestamp <= TELEMETRY_FRESH_MS;
-  const robot: FieldControl['robot'] =
-    teleFresh && tele.dsStatus
+  const robot: FieldControl['robot'] = control?.enabledThroughStop
+    ? 'enabled'
+    : teleFresh && tele.dsStatus
       ? tele.dsStatus.eStop
         ? 'eStop'
         : tele.dsStatus.enabled
@@ -397,7 +399,9 @@ export function fieldControlOf(input: FieldIssueInputs, station: StationName): F
     label,
     why,
     robot,
-    mismatch: holdsDisabled && robot === 'enabled',
+    // An e-stop has a grace period, which the server decides: a robot takes a
+    // moment to stop, and the last sample here can still say enabled.
+    mismatch: kind === 'estop' ? control?.enabledThroughStop === true : holdsDisabled && robot === 'enabled',
     // Right after a match the released DS keeps reporting for a few seconds
     // until its forced reconnect; don't call that stuck.
     dsUnderField: kind === 'team' && control?.dsAttached === true && phase !== 'postMatch',
@@ -779,7 +783,19 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
 
     // ── Who controls the robot ──
     const fc = fieldControlOf(input, station);
-    if (fc.mismatch) {
+    if (control?.enabledThroughStop) {
+      push({
+        id: `enabled-through-stop-${station}`,
+        severity: 'critical',
+        station,
+        team,
+        title: `${label} may still be running through the e-stop`,
+        detail:
+          'It’s e-stopped, but it or its Driver Station still says it’s enabled. A Driver Station may be reaching it another way (tethered, or on the robot’s own Wi-Fi), which the field can’t stop.',
+        evidence: 'still says it’s enabled',
+        fix: 'Treat the robot as live. Have the team click Disable, or power it off.',
+      });
+    } else if (fc.mismatch) {
       push({
         id: `enabled-while-held-${station}`,
         severity: 'critical',

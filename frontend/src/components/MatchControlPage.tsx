@@ -83,7 +83,7 @@ import { RecordingButtons, RecordingIconButtons } from './MatchVideoCard';
 import { CopyToClipboard } from './CopyToClipboard';
 import { useDsClientStation, DsClientBlock } from './DsClientGuard';
 import { OperatorBar, OperatorOnly } from './OperatorAccess';
-import { FieldEStopControl } from './FieldEStop';
+import { FieldEStopControl, RobotsEnabledThroughStop, StopBlindSpotNote } from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
 import { getAllianceShiftState } from '../utils/shiftState';
 import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
@@ -518,6 +518,8 @@ export function MatchControlPage() {
         {/* The field E-Stop latch: in every phase, so once pressed its Clear
             is always on screen. */}
         <FieldEStopControl />
+        <RobotsEnabledThroughStop />
+        <StopBlindSpotNote />
         <OperatorBar />
 
         <OperatorOnly>

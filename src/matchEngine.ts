@@ -39,6 +39,14 @@ export const DS_CONTROL_QUIET_MS = 2000;
 /** A disabled packet this recent before an e-stop already shows the DS stopped. */
 const STOP_SEEN_SLACK_MS = 250;
 const STOP_WAIT_POLL_MS = 100;
+/** How long after an e-stop a robot may still say it's enabled before anyone is
+ *  warned. A DS in a match obeys its next disabled packet, and a DS out of one
+ *  has its control traffic cut within about a second, then the robot disables
+ *  about 100 ms later, so a normal stop is long over by this. */
+export const STOP_ENABLED_GRACE_MS = 2_000;
+/** A robot not heard saying "enabled" for this long is no longer known to be.
+ *  Replies have gaps of up to about 0.75 s, and a cut robot sends none. */
+const ROBOT_ENABLED_FRESH_MS = 2_000;
 
 /** A DS counts as FMS-attached if a UDP status heartbeat (2 Hz) arrived this
  *  recently. Only an attached DS obeys match control, so Ready is gated on it. */
@@ -238,6 +246,13 @@ export class MatchEngine {
   /** Those whose Driver Station hasn't been seen to stop yet: index.ts cuts its
    *  control traffic, and clearing is refused (see reviewStopWaits). */
   private stopWaits = new Set<StationName>();
+  /** When each e-stop on a station began, field or its own. */
+  private eStopSince = new Map<StationName, number>();
+  /** When each robot last said it was enabled, in its own UDP 1150 replies or
+   *  its DS's status. Those can disagree, and "enabled" has to win. */
+  private robotEnabledAt = new Map<StationName, number>();
+  /** E-stopped robots still saying they're enabled, past the grace period. */
+  private enabledThroughStops = new Set<StationName>();
   private stopWaitTimer: ReturnType<typeof setInterval> | null = null;
   /** The newest DS→robot control packet the packet capture saw per station. */
   private lastDsControl = new Map<StationName, { at: number; enabled: boolean | null }>();
@@ -1820,6 +1835,54 @@ export class MatchEngine {
     return changed;
   }
 
+  // ── A robot still enabled through an e-stop ──────────────────────
+  // A DS reaching its robot some other way (tethered, or the robot's own Wi-Fi)
+  // never crosses the field, so nothing here can stop it. The robot's status
+  // bit can still reach the field, so say so when it does. Only a report from
+  // after the grace period counts: one from before says nothing about the stop.
+  // A robot that isn't reporting to the field can't trip this at all.
+
+  /** A robot, or its DS, reported the robot enabled. */
+  noteRobotEnabled(station: StationName) {
+    this.robotEnabledAt.set(station, Date.now());
+    if (this.isEStopped(station) && !this.enabledThroughStops.has(station)) this.reviewRobotsThroughStops();
+  }
+
+  /** Call every second or so: a robot going quiet sends nothing to react to. */
+  reviewRobotsThroughStops() {
+    if (this.reviewEnabledThroughStops()) this.broadcast();
+  }
+
+  /** Bring the warnings up to date. True if any changed. */
+  private reviewEnabledThroughStops(): boolean {
+    const now = Date.now();
+    let changed = false;
+    for (const station of StationNameList) {
+      if (!this.isEStopped(station)) {
+        this.eStopSince.delete(station);
+        changed = this.enabledThroughStops.delete(station) || changed;
+        continue;
+      }
+      let since = this.eStopSince.get(station);
+      if (since === undefined) {
+        since = now;
+        this.eStopSince.set(station, since);
+      }
+      const heardAt = this.robotEnabledAt.get(station) ?? 0;
+      const enabled = heardAt >= since + STOP_ENABLED_GRACE_MS && now - heardAt <= ROBOT_ENABLED_FRESH_MS;
+      if (enabled === this.enabledThroughStops.has(station)) continue;
+      changed = true;
+      if (enabled) {
+        this.enabledThroughStops.add(station);
+        appWarn(`${station}: robot still says it's enabled ${heardAt - since} ms after the e-stop`);
+      } else {
+        this.enabledThroughStops.delete(station);
+        console.log(`${station}: robot no longer says it's enabled through the e-stop`);
+      }
+    }
+    return changed;
+  }
+
   // ── Coming out of an e-stop ──────────────────────────────────────
   //
   // A robot that comes out of an e-stop starts disabled, and runs again only
@@ -1893,6 +1956,7 @@ export class MatchEngine {
         eStop: this.isEStopped(station),
         dsAttached: this.isDsAttached(station),
         ...(this.stopWaits.has(station) ? { stopWaiting: true } : {}),
+        ...(this.enabledThroughStops.has(station) ? { enabledThroughStop: true } : {}),
         ...(blockedReason ? { blockedReason } : {}),
         ...(heldReason && heldReason !== blockedReason ? { heldReason } : {}),
         ...(connectedAt !== undefined ? { connectedAt } : {}),
@@ -2385,6 +2449,7 @@ export class MatchEngine {
   private broadcast() {
     this.syncSetupAutoCancel();
     this.reviewStopWaits();
+    this.reviewEnabledThroughStops();
     const state = this.getState();
     for (const listener of this.listeners) {
       try {
