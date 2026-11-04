@@ -36,6 +36,8 @@ export class RobotPacketCapture {
   private systemCoreRecent = new Map<string, Buffer[]>();
   /** Per SystemCore robot: record its packets until this capture time. */
   private systemCoreRecordUntil = new Map<string, number>();
+  /** SystemCore robot → when a low battery last started a recording. */
+  private systemCoreLowBatteryAt = new Map<string, number>();
   /** Source port → laptop, from control packets arriving from a laptop.
    *  Forwarding rewrites a packet's address but leaves its port, which is how
    *  the copy that reached the robot is traced back to who sent it. */
@@ -367,11 +369,23 @@ export class RobotPacketCapture {
    * (brownout, e-stop) only shows up rarely, and full recording fills the
    * day's cap in ~20 minutes. So a packet with status bits never seen yet, or
    * a low battery, records the robot's last few seconds and the next
-   * SYSTEMCORE_RECORD_MS, and says so in the journal.
+   * SYSTEMCORE_RECORD_MS, and says so in the journal. A low battery alone
+   * starts one (never extends it) at most every
+   * SYSTEMCORE_LOW_BATTERY_EVERY_MS per robot: a
+   * weak battery dips all evening (40 times on 2026-11-03), and would fill the
+   * day's cap before a new bit shows up.
    */
   private keepSystemCore(robot: string, record: Buffer, capturedAt: number, unusual: string | null): void {
     if (!this.rawLog) return;
     const until = this.systemCoreRecordUntil.get(robot);
+    const recording = until !== undefined && capturedAt <= until;
+    // A low battery starts a recording but never extends one: a robot can sit
+    // under 7 V for minutes.
+    if (unusual?.startsWith('battery')) {
+      const last = this.systemCoreLowBatteryAt.get(robot);
+      if (recording || (last !== undefined && capturedAt - last < SYSTEMCORE_LOW_BATTERY_EVERY_MS)) unusual = null;
+      else this.systemCoreLowBatteryAt.set(robot, capturedAt);
+    }
     if (unusual && (until === undefined || capturedAt > until)) {
       console.log(
         `RobotPacketCapture: SystemCore robot ${robot}: ${unusual} — recording its packets raw for decoding (plans/systemcore-robot-capture.md)`,
@@ -543,6 +557,8 @@ const SYSTEMCORE_RECENT_PACKETS = 600;
 /** Below this a SystemCore robot may be browning out (its threshold is
  *  configurable, 5–8 V), which is worth recording to find the brownout bit. */
 const SYSTEMCORE_LOW_BATTERY_V = 7;
+/** A low battery alone starts a recording at most this often per robot. */
+const SYSTEMCORE_LOW_BATTERY_EVERY_MS = 10 * 60_000;
 
 /** Why a SystemCore robot's reply is worth recording, or null. Seen so far
  *  (2026-11-03): status bits 0–2 and 7 (e-stop), mode never 0, trace bits 0,

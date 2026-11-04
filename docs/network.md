@@ -390,6 +390,8 @@ To decode the rest, a SystemCore packet with status, trace or control bits
 not seen yet, or a battery under 7 V, records that robot's packets from about
 3 s before to 10 s after, raw, in
 `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a day, 300 MB total).
+A low battery alone starts a recording at most every 10 minutes per robot and
+never extends one, so a weak battery can't fill the day's file.
 The journal says so: `RobotPacketCapture: SystemCore robot <ip>: <why> —
 recording its packets raw for decoding`. Normal traffic isn't recorded
 (`plans/systemcore-robot-capture.md`).

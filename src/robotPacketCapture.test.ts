@@ -293,6 +293,21 @@ describe('RobotPacketCapture SystemCore robots', () => {
     expect(f.raw).toHaveLength(52);
   });
 
+  test('a low battery starts a recording at most every 10 minutes, and never extends one', () => {
+    const f = capture();
+    const reply = (status: number, volts: number, at: number) =>
+      f.parse(frame(RIO, DS, 61619, [0x00, 0x04, 0x02, status, 0x61, volts, 0x00], undefined, 1110), at);
+    reply(0x06, 6, 0); // starts one: 0 → 10 s
+    reply(0x06, 6, 5_000); // inside it, recorded, but doesn't extend it
+    reply(0x06, 6, 12_000); // after it, but too soon for another
+    expect(f.raw).toHaveLength(2);
+    // A new bit still records at once.
+    reply(0x16, 12, 13_000);
+    expect(f.raw).toHaveLength(4); // the 12 s packet from the ring, and this one
+    reply(0x06, 6, 10 * 60_000 + 1);
+    expect(f.raw).toHaveLength(5);
+  });
+
   test('the status byte gives enable and the 2027 DS’s modes, numbered unlike NI’s', () => {
     const f = capture();
     const reply = (status: number, trace = 0x61) =>
