@@ -87,7 +87,9 @@ below. Analysis scripts are in `C:/Users/camer/sc-pcap-scripts/`
   which the robot doesn't echo.
 - **Brownout:** status bit 4 never set, even at 6.6 V on 9940 (6:16:47 PM
   PST). Either SystemCore's threshold was lower, or brownout is carried
-  elsewhere. **Unknown.** The e-stop bit (7) was never seen either.
+  elsewhere. **Unknown.**
+- **E-stop is bit 7 (`0x80`), as on NI**, in both the DS control byte and
+  the robot's status byte (see "9940's e-stops" below).
 - **Trace byte 4:** `0x61` / `0x60` normally. It was `0x00` and `0x40` for
   about 10 s at 5:56:05 PM PST, which looks like a robot code restart. So
   `0x20` is robot code, as on NI, and `0x40` is probably "SystemCore" (NI
@@ -133,6 +135,31 @@ pFMS's selective recorder logged both low-battery triggers (7:33:15 and
 7:33:36 PM PST) but saved nothing, because today's file was already full
 from the earlier full recording. From tomorrow, its daily file starts empty.
 
+### 9940's e-stops (2026-11-03)
+
+The team e-stopped 9940 twice from its laptop `10.55.96.248`. pFMS's
+selective recorder logged `DS control byte 0x82` both times. The side
+capture (`sc-ports-20261103-195546.pcap`, `-205546`, `-210046`, copied to
+`C:/Users/camer/sc-pcap/estop/`) shows:
+
+- 7:57:00.24 PM PST (03:57:00Z): the DS's control byte went `0x06` → `0x82`
+  (teleop + e-stop, enable dropped). The robot's very next reply echoed
+  `0x82`. It held until 7:57:40.31, when the trace byte went `0x00` (robot
+  code restarting) and the status cleared to `0x02`, with the DS following
+  11 ms later. **A code restart clears a SystemCore e-stop**, no reboot
+  needed.
+- 8:58:12.77 PM PST (04:58:12Z): the same `0x06` → `0x82`, 0.6 s after an
+  enable. The robot replied `0x82` until 9:00:22, went silent for 2.6 min (a
+  reboot), and came back `0x02` at 9:02:58 PM PST.
+
+No other byte changed with it. Replaying these files through
+`RobotPacketCapture` and the real `RobotEStopWatch`
+(`C:/Users/camer/sc-pcap-scripts/replay5.ts`) gives the right warnings: both
+e-stops traced to `10.55.96.248`, both clears logged.
+
+Also seen in the journal that evening: a third SystemCore robot at
+`10.1.0.2` (team 100's address), with many low-battery triggers (6.56–6.99 V).
+
 ## Plan / steps
 
 1. [x] Capture SystemCore traffic raw. `src/port 1110` added to the filter.
@@ -162,12 +189,13 @@ from the earlier full recording. From tomorrow, its daily file starts empty.
        only around a packet with bits not seen yet, mode 0, or a battery
        under 7 V, from ~3 s before to 10 s after. Replay: one trigger in the
        day (9940 at 6.82 V), 0.5 MB.
-10. [ ] **Next:** when the journal shows a `SystemCore robot <ip>: <why>`
-        line ("recording its packets raw"), pull that day's
-        `systemcore-captures/` file and decode the brownout or e-stop bit.
-        Then report `brownout`, feed `RobotEStopWatch`, and replace
-        `eStop: false`. Don't ask a team to e-stop; clearing it takes a
-        reboot.
+10. [x] E-stop decoded (bit 7, both directions) and wired in: `dsStatus.eStop`,
+        `RobotEStopWatch` fed from replies and forwarded control packets, and
+        bit 7 no longer triggers raw recording.
+11. [ ] Brownout: when the journal shows a `SystemCore robot <ip>: status
+byte …` line that isn't an e-stop, pull that day's
+        `systemcore-captures/` file and decode it. The user's call: wait for
+        one to happen on its own.
 
 ## Things not to do
 
@@ -191,7 +219,8 @@ from the earlier full recording. From tomorrow, its daily file starts empty.
 - [x] Mode values decoded: auto 1, teleop 2, util 3, match = DS bit 0x10
 - [x] Enable/mode in `dsStatus`, link watch for SystemCore, selective raw
       recording: all deployed by 7:18 PM PST (`b00b311`)
-- [ ] Brownout and e-stop decoded (waiting for one to happen)
+- [x] E-stop decoded and reported (9940's two e-stops, 2026-11-03)
+- [ ] Brownout decoded (waiting for one to happen)
 
 ## Open questions for the user
 
