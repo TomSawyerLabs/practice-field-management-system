@@ -73,9 +73,12 @@ below. Analysis scripts are in `C:/Users/camer/sc-pcap-scripts/`
   bytes), tag `0x37` (8 bytes), and sometimes `0x34` (20 bytes) or `0x33`
   (16 bytes). Not decoded.
 - **Status byte 3:** only `0x02` and `0x06` were seen, on both robots. Bit 2
-  (`0x04`) followed the DS's control byte 3 exactly, so it's enabled. The
-  mode bits stayed 2 the whole time (NI would call that auto), and the team
-  was presumably in teleop. **The mode mapping is unknown.**
+  (`0x04`) followed the DS's control byte 3 exactly, so it's enabled.
+  **Mode bits 0–1: 1 = auto, 2 = teleop** (NI: 0 = teleop, 1 = test,
+  2 = auto). At 6:37:54 PM PST 9940 switched to mode 1 (`0x01`/`0x05`) and ran
+  enabled 6:37:56–6:38:19 and 6:38:52–6:38:58. The team was heard yelling
+  "that was auto" at 6:38. Every other enable was mode 2. The robot's status
+  echoes the DS's control byte exactly. Test (probably 3) hasn't been seen.
 - **Brownout:** status bit 4 never set, even at 6.6 V on 9940 (6:16:47 PM
   PST). Either SystemCore's threshold was lower, or brownout is carried
   elsewhere. **Unknown.** The e-stop bit (7) was never seen either.
@@ -115,11 +118,10 @@ Delete them once they're no longer needed.
        (`parseSystemCoreReply`; control packets with version 0x02 feed the
        link timer and dropout tracker). No `dsStatus`, `brownout` or e-stop
        yet, since match logic acts on those.
-5. [ ] **Next:** deploy it (through the deploy-owner thread,
-       `plans/deploy-log.md`), and check that 5940's battery shows on its
-       station.
-6. [ ] Mode bits: have a SystemCore team enable in auto, teleop and test for
-       ~10 s each, with the times noted, then read status byte 3.
+5. [x] Deployed `5fc0c7e` 6:39 PM PST (02:39Z), user's yes. The journal
+       showed `team 9940 (SystemCore) → 12.45V` right after.
+6. [~] Mode bits: auto = 1 and teleop = 2 seen (6:38 PM PST). **Next:** see
+   test mode once, enabled for ~10 s.
 7. [ ] Brownout and e-stop: wait for one to happen naturally (don't ask a
        team to e-stop; clearing it takes a reboot). Then report enable through
        `dsStatus`, feed `RobotEStopWatch`, and drop `RobotLinkWatch`'s
@@ -145,13 +147,14 @@ Delete them once they're no longer needed.
 - [x] Battery, sequence and enable bit decoded
 - [x] Battery/link/dropout parser committed and replayed against the real
       pcap (5940 8.6–13.0 V, 9940 6.6–14.5 V, every reply paired)
-- [ ] Parser deployed
-- [ ] Mode, brownout and e-stop decoded
+- [x] Parser deployed (`5fc0c7e`, 2026-11-03 6:39 PM PST)
+- [x] Auto and teleop mode values seen
+- [ ] Test mode, brownout and e-stop decoded
 
 ## Open questions for the user
 
 1. ~~OK to deploy?~~ Yes, deployed 2026-10-29.
 2. ~~Ask 5940 to drive through pFMS?~~ Done 2026-11-03.
-3. While 5940 is here, can they enable in auto, teleop and test for ~10 s
-   each and note the times? That settles the mode bits.
-4. Deploy the battery parser now, with teams on the field, or later?
+3. While 5940/9940 are here, can they enable in test mode for ~10 s? Auto
+   and teleop are already settled.
+4. ~~Deploy now?~~ Yes, deployed 6:39 PM PST.
