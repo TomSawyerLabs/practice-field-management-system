@@ -116,7 +116,8 @@ Separate captures on steamboat, in `~/sc-capture/`:
   Restarted 7:40 PM PST without TCP 1250, for 9940's e-stop test, so it
   stops by itself around 11:40 PM PST (07:40Z).
 
-Delete them once they're no longer needed.
+Deleted 2026-11-04 (user's OK). The windows used above are copied to
+`C:/Users/camer/sc-pcap/`.
 
 ### 9940's suspected brownout (7:33 PM PST, 2026-11-03)
 
@@ -194,8 +195,12 @@ Also seen in the journal that evening: a third SystemCore robot at
         bit 7 no longer triggers raw recording.
 11. [ ] Brownout: when the journal shows a `SystemCore robot <ip>: status
 byte …` line that isn't an e-stop, pull that day's
-        `systemcore-captures/` file and decode it. The user's call: wait for
-        one to happen on its own.
+        `systemcore-captures/` file and decode it. The user's call (2026-11-04):
+        keep watching cheaply; maybe one never shows, or it has to be induced
+        some day. Low-battery recordings are now at most one per robot every
+        10 minutes and never extend a recording (40 fired on 2026-11-03).
+        The side captures in `~/sc-capture/` were deleted 2026-11-04 (user's
+        OK); the useful windows are copied to `C:/Users/camer/sc-pcap/`.
 
 ## Things not to do
 
