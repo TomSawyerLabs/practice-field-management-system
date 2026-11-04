@@ -98,9 +98,14 @@ Separate captures on steamboat, in `~/sc-capture/`:
 
 - `sc-20261103-181545.pcap` (550 MB): every packet to or from either robot,
   6:15–6:26 PM PST (02:15–02:26Z), camera streams included.
-- `sc-ports-*.pcap` (15-minute files, about 800 MB an hour): UDP 1110/1150
-  and TCP 1740/1250 only, from 6:26 PM PST. It stops by itself around
-  9:27 PM PST (05:27Z).
+- `sc-ports-20261103-182654.pcap`: UDP 1110/1150 and TCP 1740/1250 only,
+  6:26–6:41 PM PST. The capture died at its first rotation: tcpdump drops to
+  its own user after opening a file and couldn't create the next one in
+  `~/sc-capture/`. **Run it with `-Z root`.** Because of this, 5940's util-mode
+  test (about 6:45 PM PST) was not captured, and pFMS's own recorder had hit
+  its daily 50 MB cap.
+- `sc-ports-*.pcap` from 6:48 PM PST: same filter, `-Z root`, 5-minute files.
+  It stops by itself around 9:48 PM PST (05:48Z).
 
 Delete them once they're no longer needed.
 
