@@ -20,8 +20,8 @@ import type { RobotMode, StationName, TelemetryUpdate } from './types.js';
  * A SystemCore robot driven by the 2027 FIRST Driver Station answers from UDP
  * 1110 to the DS's own port instead, in a layout that isn't published. Those
  * robots are recognized by that. Their battery, enable, mode and sequence
- * numbers are read (the parts decoded so far), and their traffic both ways
- * also goes to `rawLog` for decoding the rest
+ * numbers are read (the parts decoded so far). Packets showing something not
+ * decoded yet go to `rawLog`, with a few seconds either side
  * (plans/systemcore-robot-capture.md).
  */
 export class RobotPacketCapture {
@@ -31,6 +31,11 @@ export class RobotPacketCapture {
   private debuggedTeams = new Set<number>();
   /** SystemCore robots seen answering from UDP 1110, by address. */
   private systemCoreRobots = new Set<string>();
+  /** Per SystemCore robot: its last few seconds of packets, both ways, kept
+   *  in memory so a recording starts before whatever triggered it. */
+  private systemCoreRecent = new Map<string, Buffer[]>();
+  /** Per SystemCore robot: record its packets until this capture time. */
+  private systemCoreRecordUntil = new Map<string, number>();
   /** Source port → laptop, from control packets arriving from a laptop.
    *  Forwarding rewrites a packet's address but leaves its port, which is how
    *  the copy that reached the robot is traced back to who sent it. */
@@ -200,16 +205,15 @@ export class RobotPacketCapture {
     if (srcPort === DS_TO_ROBOT_PORT && dstPort !== ROBOT_TO_DS_PORT) {
       if (!this.systemCoreRobots.has(srcIp)) {
         this.systemCoreRobots.add(srcIp);
-        console.log(
-          `RobotPacketCapture: ${srcIp} answers its Driver Station from UDP 1110 (SystemCore, 2027 DS) — keeping its packets raw for decoding`,
-        );
+        console.log(`RobotPacketCapture: ${srcIp} answers its Driver Station from UDP 1110 (SystemCore, 2027 DS)`);
       }
-      this.rawLog?.write(record);
+      this.keepSystemCore(srcIp, record, capturedAt, unusualSystemCoreReply(data.subarray(payloadOffset)));
       this.parseSystemCoreReply(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt);
       return;
     }
     if (dstPort === DS_TO_ROBOT_PORT) {
-      if (this.systemCoreRobots.has(dstIp)) this.rawLog?.write(record);
+      if (this.systemCoreRobots.has(dstIp))
+        this.keepSystemCore(dstIp, record, capturedAt, unusualSystemCoreControl(data.subarray(payloadOffset)));
       this.parseDsToRobot(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt, srcPort);
       return;
     }
@@ -351,6 +355,36 @@ export class RobotPacketCapture {
         },
       }),
     });
+  }
+
+  /**
+   * Keep a SystemCore robot's packet for decoding, if it's worth keeping.
+   * Normal traffic was recorded in full on 2026-11-03; what's left to decode
+   * (brownout, e-stop) only shows up rarely, and full recording fills the
+   * day's cap in ~20 minutes. So a packet with status bits never seen yet, or
+   * a low battery, records the robot's last few seconds and the next
+   * SYSTEMCORE_RECORD_MS, and says so in the journal.
+   */
+  private keepSystemCore(robot: string, record: Buffer, capturedAt: number, unusual: string | null): void {
+    if (!this.rawLog) return;
+    const until = this.systemCoreRecordUntil.get(robot);
+    if (unusual && (until === undefined || capturedAt > until)) {
+      console.log(
+        `RobotPacketCapture: SystemCore robot ${robot}: ${unusual} — recording its packets raw for decoding (plans/systemcore-robot-capture.md)`,
+      );
+      for (const r of this.systemCoreRecent.get(robot) ?? []) this.rawLog.write(r);
+      this.systemCoreRecent.delete(robot);
+    }
+    if (unusual) this.systemCoreRecordUntil.set(robot, capturedAt + SYSTEMCORE_RECORD_MS);
+    if (capturedAt <= (this.systemCoreRecordUntil.get(robot) ?? -Infinity)) {
+      this.rawLog.write(record);
+      return;
+    }
+    let recent = this.systemCoreRecent.get(robot);
+    if (!recent) this.systemCoreRecent.set(robot, (recent = []));
+    // A copy: `record` is a view into the capture buffer, which moves on.
+    recent.push(Buffer.from(record));
+    if (recent.length > SYSTEMCORE_RECENT_PACKETS) recent.shift();
   }
 
   /** DS→robot control packet: time it for the link round trip, and report
@@ -495,6 +529,41 @@ const SYSTEMCORE_COMM_VERSION = 0x02;
  *  2 auto. Seen on 5940 and 9940, 2026-11-03; 0 never was. The DS's "Match"
  *  mode is auto plus control bit 4, which the robot doesn't echo. */
 const SYSTEMCORE_MODES: Record<number, RobotMode | undefined> = { 1: 'auto', 2: 'teleOp', 3: 'util' };
+/** How long a SystemCore robot's packets are recorded after an unusual one. */
+const SYSTEMCORE_RECORD_MS = 10_000;
+/** Packets kept from before it: each is captured on both legs at 50 Hz each
+ *  way, so ~200 a second; this is about 3 s. */
+const SYSTEMCORE_RECENT_PACKETS = 600;
+/** Below this a SystemCore robot may be browning out (its threshold is
+ *  configurable, 5–8 V), which is worth recording to find the brownout bit. */
+const SYSTEMCORE_LOW_BATTERY_V = 7;
+
+/** Why a SystemCore robot's reply is worth recording, or null. Seen so far
+ *  (2026-11-03): status bits 0–2 only, mode never 0, trace bits 0, 5, 6. */
+export function unusualSystemCoreReply(payload: Buffer): string | null {
+  if (payload.length < 7) return null;
+  if (payload[2] !== SYSTEMCORE_COMM_VERSION) return `comm version 0x${hex(payload[2])}`;
+  const status = payload[3];
+  if (status & 0xf8 || (status & 0x03) === 0) return `status byte 0x${hex(status)}`;
+  if (payload[4] & 0x9e) return `trace byte 0x${hex(payload[4])}`;
+  const v = decodeBattery(payload[5], payload[6]);
+  if (v !== undefined && v < SYSTEMCORE_LOW_BATTERY_V) return `battery ${v.toFixed(2)} V`;
+  return null;
+}
+
+/** Why a 2027 DS's control packet is worth recording, or null. Seen so far:
+ *  enable, mode 1–3, and bit 4 (the DS's "Match" mode). */
+export function unusualSystemCoreControl(payload: Buffer): string | null {
+  if (payload.length < 4) return null;
+  if (payload[2] !== SYSTEMCORE_COMM_VERSION) return `DS comm version 0x${hex(payload[2])}`;
+  const control = payload[3];
+  if (control & 0xe8 || (control & 0x03) === 0) return `DS control byte 0x${hex(control)}`;
+  return null;
+}
+
+function hex(byte: number): string {
+  return byte.toString(16).padStart(2, '0');
+}
 
 /**
  * Battery from a robot status reply: whole volts, then 1/256ths. 0xFFFF is the

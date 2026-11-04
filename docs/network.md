@@ -383,9 +383,15 @@ numbered unlike NI's: 1 auto, 2 teleop, 3 util (the 2027 DS has util where NI
 has test). The DS's "Match" mode is auto plus control bit 4, which the robot
 doesn't echo. Brownout and e-stop aren't read yet: they were never seen set,
 not even at 6.6 V. The 2027 DS's own status never sets its enabled bit, so for
-those DSes pFMS takes enable and mode from the robot only. The capture also keeps
-the traffic raw in `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a
-day, 300 MB total) for decoding the rest (`plans/systemcore-robot-capture.md`).
+those DSes pFMS takes enable and mode from the robot only.
+
+To decode the rest, a SystemCore packet with status, trace or control bits
+not seen yet, or a battery under 7 V, records that robot's packets from about
+3 s before to 10 s after, raw, in
+`systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a day, 300 MB total).
+The journal says so: `RobotPacketCapture: SystemCore robot <ip>: <why> —
+recording its packets raw for decoding`. Normal traffic isn't recorded
+(`plans/systemcore-robot-capture.md`).
 
 The match engine still records a Driver Station per station; the drive
 sessions keep it in step, so a station shows the laptop of the robot on it

@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkHop } from './robotLinkWatch.js';
 import type { TelemetryUpdate } from './types.js';
-import { countDsJoysticks, RobotLinkTimer, RobotPacketCapture } from './robotPacketCapture.js';
+import {
+  countDsJoysticks,
+  RobotLinkTimer,
+  RobotPacketCapture,
+  unusualSystemCoreControl,
+  unusualSystemCoreReply,
+} from './robotPacketCapture.js';
 
 /** DS→robot header: sequence, comm version, control, request, station. */
 const HEADER = [0x12, 0x34, 0x01, 0x04, 0x00, 0x00];
@@ -23,6 +29,25 @@ function joystickTag(axes: number, buttons: number, povs: number): number[] {
 const COUNTDOWN_TAG = [5, 0x07, 0x41, 0x20, 0x00, 0x00];
 
 const packet = (...tags: number[][]) => Buffer.from([...HEADER, ...tags.flat()]);
+
+describe('which SystemCore packets are worth recording', () => {
+  const reply = (status: number, trace: number, whole = 12, frac = 0x67) =>
+    unusualSystemCoreReply(Buffer.from([0, 1, 0x02, status, trace, whole, frac]));
+  test('everything seen on 2026-11-03 is not', () => {
+    for (const status of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07])
+      for (const trace of [0x00, 0x40, 0x60, 0x61]) expect(reply(status, trace)).toBeNull();
+    for (const control of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x11, 0x15])
+      expect(unusualSystemCoreControl(Buffer.from([0, 1, 0x02, control]))).toBeNull();
+  });
+  test('new status, trace or control bits, mode 0 and a low battery are', () => {
+    expect(reply(0x12, 0x61)).toBe('status byte 0x12');
+    expect(reply(0x86, 0x61)).toBe('status byte 0x86');
+    expect(reply(0x04, 0x61)).toBe('status byte 0x04');
+    expect(reply(0x06, 0x71)).toBe('trace byte 0x71');
+    expect(reply(0x06, 0x61, 6, 0x80)).toBe('battery 6.50 V');
+    expect(unusualSystemCoreControl(Buffer.from([0, 1, 0x02, 0x86]))).toBe('DS control byte 0x86');
+  });
+});
 
 describe('countDsJoysticks', () => {
   test('a DS with no joysticks sends no joystick tags', () => {
@@ -227,8 +252,21 @@ describe('RobotPacketCapture SystemCore robots', () => {
     // The brownout bit was never seen set, so it isn't reported.
     expect(t.brownout).toBeUndefined();
     expect(f.hops.map(h => h.kind)).toEqual(['control', 'reply']);
-    // The control packet came before the robot was known to be SystemCore.
-    expect(f.raw).toHaveLength(1);
+    // Nothing unusual, so nothing is recorded.
+    expect(f.raw).toEqual([]);
+  });
+
+  test('a packet with bits not decoded yet records the robot’s packets from a few seconds before to 10 s after', () => {
+    const f = capture();
+    const reply = (status: number, at: number) =>
+      f.parse(frame(RIO, DS, 61619, [0x00, 0x04, 0x02, status, 0x61, 0x0c, 0x67], undefined, 1110), at);
+    for (let at = 0; at < 1_000; at += 20) reply(0x06, at);
+    expect(f.raw).toEqual([]);
+    reply(0x16, 1_000); // bit 4, brownout on NI, never seen on SystemCore
+    expect(f.raw).toHaveLength(51);
+    reply(0x06, 10_999);
+    reply(0x06, 11_001);
+    expect(f.raw).toHaveLength(52);
   });
 
   test('the status byte gives enable and the 2027 DS’s modes, numbered unlike NI’s', () => {
