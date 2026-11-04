@@ -111,9 +111,27 @@ Separate captures on steamboat, in `~/sc-capture/`:
   test (about 6:45 PM PST) was not captured, and pFMS's own recorder had hit
   its daily 50 MB cap.
 - `sc-ports-*.pcap` from 6:48 PM PST: same filter, `-Z root`, 5-minute files.
-  It stops by itself around 9:48 PM PST (05:48Z).
+  Restarted 7:40 PM PST without TCP 1250, for 9940's e-stop test, so it
+  stops by itself around 11:40 PM PST (07:40Z).
 
 Delete them once they're no longer needed.
+
+### 9940's suspected brownout (7:33 PM PST, 2026-11-03)
+
+The team said 9940 browned out. Its battery bounced between 6.59 and 9 V
+while enabled, 7:33:11–7:33:42 PM PST (lowest 6.59 V at 7:33:39). Nothing
+flagged it: the status and trace bytes held values already seen, the tags
+didn't change, the robot's console (TCP 1740) printed nothing about power,
+and the run's `telemetry.csv` never had `brownout` true. Either SystemCore's
+brownout threshold is set below 6.6 V, or it reports brownout somewhere not
+yet found. At 7:35:03 PM PST 9940 went silent while disabled at 12.07 V, and
+its radio dropped off with it, which looks like a power-off, not a
+brownout. TCP 1250 is CTRE's Phoenix Tuner diagnostics server, not FRC
+traffic. The user's call: brownout can wait until one turns up on its own.
+
+pFMS's selective recorder logged both low-battery triggers (7:33:15 and
+7:33:36 PM PST) but saved nothing, because today's file was already full
+from the earlier full recording. From tomorrow, its daily file starts empty.
 
 ## Plan / steps
 
