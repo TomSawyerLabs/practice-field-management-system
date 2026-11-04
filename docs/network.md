@@ -170,8 +170,8 @@ An e-stop has to act within 1 s, so what happens depends on the DS:
   warning goes 2 s after the robot stops saying so. A normal stop never shows it:
   a robot that's cut sends nothing at all. **The field can't see a robot that
   isn't reporting to it**, so no warning doesn't mean the robot stopped. Those
-  pages say so during any e-stop. A SystemCore robot's enable bit is read, but
-  its own e-stop bit isn't decoded yet.
+  pages say so during any e-stop. A SystemCore robot's enable and e-stop bits
+  are read the same way.
 
 **Team Stop** also cuts traffic, for as long as it lasts, because that DS isn't
 under field control and nothing else would stop it. The team's pages offer it
@@ -368,8 +368,9 @@ network sent it` means a DS is reaching the robot another way, tethered or on
 
 The team's page and `/csa` say to power cycle the robot, and who sent it.
 Presses of pFMS's own stop and clear buttons log who pressed them
-(`Field E-Stop pressed by <ip> (<hostname>)`). SystemCore robots aren't
-covered until their e-stop bit is decoded.
+(`Field E-Stop pressed by <ip> (<hostname>)`). SystemCore robots are covered
+too: the 2027 DS and its robot use the same bit 7. A SystemCore robot's
+e-stop also clears when its robot code restarts, not only on a reboot.
 
 A SystemCore robot (2027 DS) answers from UDP 1110 to the DS's own port, in
 an unpublished layout. Both directions use comm version `0x02`. The first
@@ -381,8 +382,8 @@ robots too (decoded from 5940's and 9940's traffic, 2026-11-03). The status
 byte echoes the DS's control byte: bit 2 is enabled, and bits 0–1 are the mode,
 numbered unlike NI's: 1 auto, 2 teleop, 3 util (the 2027 DS has util where NI
 has test). The DS's "Match" mode is auto plus control bit 4, which the robot
-doesn't echo. Brownout and e-stop aren't read yet: they were never seen set,
-not even at 6.6 V. The 2027 DS's own status never sets its enabled bit, so for
+doesn't echo. Bit 7 is e-stop in both, as on NI (9940, 2026-11-03). Brownout
+isn't read yet: it was never seen set, not even at 6.6 V. The 2027 DS's own status never sets its enabled bit, so for
 those DSes pFMS takes enable and mode from the robot only.
 
 To decode the rest, a SystemCore packet with status, trace or control bits

@@ -298,10 +298,12 @@ export class RobotPacketCapture {
    * traffic on 2026-11-03 (plans/systemcore-robot-capture.md).
    *
    * The status byte echoes the DS's control byte: bit 2 enabled, bits 0–1
-   * the mode, numbered unlike NI's (SYSTEMCORE_MODES). Trace bit 5 is robot
-   * code, as on NI. The brownout and e-stop bits were never seen set (not
-   * even at 6.6 V), so they aren't read: `eStop` is reported false, there's
-   * no `brownout`, and the e-stop watch isn't fed.
+   * the mode, numbered unlike NI's (SYSTEMCORE_MODES), and bit 7 e-stop, as
+   * on NI: 9940 latched it twice on 2026-11-03, the DS sending the bit just
+   * before, and the robot dropping enable in the same packet. It cleared on a
+   * robot code restart once and a reboot the other time. Trace bit 5 is robot
+   * code, as on NI. The brownout bit was never seen set (not even at 6.6 V),
+   * so there's no `brownout`.
    */
   private parseSystemCoreReply(
     payload: Buffer,
@@ -318,12 +320,14 @@ export class RobotPacketCapture {
 
     const batteryVoltage = decodeBattery(payload[5], payload[6]);
     const statusByte = payload[3];
+    const eStop = Boolean(statusByte & 0x80);
     const enabled = Boolean(statusByte & 0x04);
     const mode = SYSTEMCORE_MODES[statusByte & 0x03];
     const hasRobotCode = Boolean(payload[4] & 0x20);
     const seq = payload.readUInt16BE(0);
     this.onHop?.({ station, kind: 'reply', src: srcIp, dst: dstIp, at: capturedAt });
     this.dropouts?.reply(station, team, seq, capturedAt, { brownout: false, batteryVoltage });
+    this.eStops?.reply(station, team, { eStop, enabled }, capturedAt);
 
     const timer = this.linkTimer(station);
     timer.reply(seq, capturedAt);
@@ -345,7 +349,7 @@ export class RobotPacketCapture {
       // Mode 0 was never seen; without a mode there's no status to report.
       ...(mode && {
         dsStatus: {
-          eStop: false,
+          eStop,
           aStop: false,
           robotComms: hasRobotCode,
           radioPing: true,
@@ -422,12 +426,14 @@ export class RobotPacketCapture {
     }
     // The 2027 DS (comm version 0x02) numbers its control packets the same
     // way, and its robot echoes the number, so the round trip and dropouts are
-    // timed as for NI. Its control byte and joysticks aren't read.
+    // timed as for NI. Its control byte's bit 7 is e-stop, as on NI; its
+    // joysticks aren't read.
     if (station && payload.length >= 4 && payload[2] === SYSTEMCORE_COMM_VERSION) {
       this.dropouts?.control(station, team, payload.readUInt16BE(0), capturedAt, {
         arriving: srcIp !== gatewayOf(dstIp),
         forwarded,
       });
+      if (forwarded) this.eStops?.control(station, team, laptop, Boolean(payload[3] & 0x80), capturedAt);
       this.linkTimer(station).sent(payload.readUInt16BE(0), capturedAt);
       return;
     }
@@ -539,12 +545,13 @@ const SYSTEMCORE_RECENT_PACKETS = 600;
 const SYSTEMCORE_LOW_BATTERY_V = 7;
 
 /** Why a SystemCore robot's reply is worth recording, or null. Seen so far
- *  (2026-11-03): status bits 0–2 only, mode never 0, trace bits 0, 5, 6. */
+ *  (2026-11-03): status bits 0–2 and 7 (e-stop), mode never 0, trace bits 0,
+ *  5, 6. */
 export function unusualSystemCoreReply(payload: Buffer): string | null {
   if (payload.length < 7) return null;
   if (payload[2] !== SYSTEMCORE_COMM_VERSION) return `comm version 0x${hex(payload[2])}`;
   const status = payload[3];
-  if (status & 0xf8 || (status & 0x03) === 0) return `status byte 0x${hex(status)}`;
+  if (status & 0x78 || (status & 0x03) === 0) return `status byte 0x${hex(status)}`;
   if (payload[4] & 0x9e) return `trace byte 0x${hex(payload[4])}`;
   const v = decodeBattery(payload[5], payload[6]);
   if (v !== undefined && v < SYSTEMCORE_LOW_BATTERY_V) return `battery ${v.toFixed(2)} V`;
@@ -552,12 +559,12 @@ export function unusualSystemCoreReply(payload: Buffer): string | null {
 }
 
 /** Why a 2027 DS's control packet is worth recording, or null. Seen so far:
- *  enable, mode 1–3, and bit 4 (the DS's "Match" mode). */
+ *  enable, mode 1–3, bit 4 (the DS's "Match" mode) and bit 7 (e-stop). */
 export function unusualSystemCoreControl(payload: Buffer): string | null {
   if (payload.length < 4) return null;
   if (payload[2] !== SYSTEMCORE_COMM_VERSION) return `DS comm version 0x${hex(payload[2])}`;
   const control = payload[3];
-  if (control & 0xe8 || (control & 0x03) === 0) return `DS control byte 0x${hex(control)}`;
+  if (control & 0x68 || (control & 0x03) === 0) return `DS control byte 0x${hex(control)}`;
   return null;
 }
 

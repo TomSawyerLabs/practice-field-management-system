@@ -34,18 +34,18 @@ describe('which SystemCore packets are worth recording', () => {
   const reply = (status: number, trace: number, whole = 12, frac = 0x67) =>
     unusualSystemCoreReply(Buffer.from([0, 1, 0x02, status, trace, whole, frac]));
   test('everything seen on 2026-11-03 is not', () => {
-    for (const status of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07])
+    for (const status of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x82])
       for (const trace of [0x00, 0x40, 0x60, 0x61]) expect(reply(status, trace)).toBeNull();
-    for (const control of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x11, 0x15])
+    for (const control of [0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x11, 0x15, 0x82])
       expect(unusualSystemCoreControl(Buffer.from([0, 1, 0x02, control]))).toBeNull();
   });
   test('new status, trace or control bits, mode 0 and a low battery are', () => {
     expect(reply(0x12, 0x61)).toBe('status byte 0x12');
-    expect(reply(0x86, 0x61)).toBe('status byte 0x86');
+    expect(reply(0x46, 0x61)).toBe('status byte 0x46');
     expect(reply(0x04, 0x61)).toBe('status byte 0x04');
     expect(reply(0x06, 0x71)).toBe('trace byte 0x71');
     expect(reply(0x06, 0x61, 6, 0x80)).toBe('battery 6.50 V');
-    expect(unusualSystemCoreControl(Buffer.from([0, 1, 0x02, 0x86]))).toBe('DS control byte 0x86');
+    expect(unusualSystemCoreControl(Buffer.from([0, 1, 0x02, 0x46]))).toBe('DS control byte 0x46');
   });
 });
 
@@ -197,9 +197,11 @@ describe('RobotPacketCapture SystemCore robots', () => {
     const telemetry: TelemetryUpdate[] = [];
     const hops: LinkHop[] = [];
     const raw: Buffer[] = [];
+    const controls: unknown[][] = [];
+    const replies: unknown[][] = [];
     const c = new RobotPacketCapture(
       'eno1',
-      () => ({ 5940: 'slot3' }),
+      () => ({ 5940: 'slot3', 9940: 'slot2' }),
       u => telemetry.push(u),
       true,
       undefined,
@@ -207,12 +209,13 @@ describe('RobotPacketCapture SystemCore robots', () => {
       hop => hops.push(hop),
       undefined,
       { write: r => raw.push(r) },
+      { control: (...a) => controls.push(a), reply: (...a) => replies.push(a) },
     );
     const parse = (data: Buffer, at: number) => {
       const record = Buffer.concat([Buffer.alloc(16), data]);
       (c as unknown as { parsePacket(d: Buffer, at: number, r: Buffer): void }).parsePacket(data, at, record);
     };
-    return { parse, telemetry, hops, raw };
+    return { parse, telemetry, hops, raw, controls, replies };
   }
   const DS = '10.55.65.16';
   const RIO = '10.59.40.2';
@@ -253,6 +256,27 @@ describe('RobotPacketCapture SystemCore robots', () => {
     expect(t.brownout).toBeUndefined();
     expect(f.hops.map(h => h.kind)).toEqual(['control', 'reply']);
     // Nothing unusual, so nothing is recorded.
+    expect(f.raw).toEqual([]);
+  });
+
+  test('an e-stop: the DS’s bit 7 is traced to its laptop, and the robot’s latch is reported', () => {
+    const f = capture();
+    // 9940, 2026-11-03 8:58:12 PM PST: the DS sent 0x82 (teleop + e-stop),
+    // and the robot answered 0x82, enable dropped in the same packet.
+    const RIO9940 = '10.99.40.2';
+    const GW = '10.99.40.254';
+    const LAPTOP = '10.55.40.20';
+    const control = [0xd8, 0xe9, 0x02, 0x82, 0x00, 0x03, 0, 0];
+    const reply = [0xd8, 0xe9, 0x02, 0x82, 0x61, 0x0c, 0x07, 0x00];
+    f.parse(frame(LAPTOP, RIO9940, 1110, control, undefined, 62000), 1_000);
+    // Only the copy that reached the robot counts.
+    expect(f.controls).toEqual([]);
+    f.parse(frame(GW, RIO9940, 1110, control, undefined, 62000), 1_001);
+    expect(f.controls).toEqual([['slot2', 9940, LAPTOP, true, 1_001]]);
+    f.parse(frame(RIO9940, GW, 62000, reply, undefined, 1110), 1_003);
+    expect(f.replies).toEqual([['slot2', 9940, { eStop: true, enabled: false }, 1_003]]);
+    expect(f.telemetry.at(-1)?.dsStatus).toMatchObject({ eStop: true, enabled: false, mode: 'teleOp' });
+    // Known now, so it no longer triggers raw recording.
     expect(f.raw).toEqual([]);
   });
 
