@@ -1175,6 +1175,10 @@ export function isInternetToggle(msg: unknown): msg is InternetToggle {
 
 export type Mode = 'teleOp' | 'test' | 'auto';
 
+/** A robot's mode as its status reports it. `util` is the 2027 DS's third
+ *  mode (SystemCore), where NI has `test`. */
+export type RobotMode = Mode | 'util';
+
 export type MatchPhase =
   | 'idle'
   | 'created'
@@ -1995,7 +1999,7 @@ export interface TelemetryUpdate {
     radioPing: boolean;
     rioPing: boolean;
     enabled: boolean;
-    mode: 'teleOp' | 'test' | 'auto';
+    mode: RobotMode;
   };
 }
 
@@ -4556,7 +4560,7 @@ export interface TelemetrySample {
   dsCpuPercent?: number;
   brownout?: boolean;
   enabled?: boolean;
-  mode?: 'teleOp' | 'test' | 'auto';
+  mode?: RobotMode;
   eStop?: boolean;
   aStop?: boolean;
   robotComms?: boolean;

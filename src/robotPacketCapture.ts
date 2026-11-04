@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { RobotDropoutTracker } from './robotDropouts.js';
 import type { RobotEStopWatch } from './robotEStopWatch.js';
 import type { LinkHop } from './robotLinkWatch.js';
-import type { StationName, TelemetryUpdate } from './types.js';
+import type { RobotMode, StationName, TelemetryUpdate } from './types.js';
 
 /**
  * Passively capture robot↔DS UDP packets via tcpdump to extract battery
@@ -19,9 +19,10 @@ import type { StationName, TelemetryUpdate } from './types.js';
  *
  * A SystemCore robot driven by the 2027 FIRST Driver Station answers from UDP
  * 1110 to the DS's own port instead, in a layout that isn't published. Those
- * robots are recognized by that. Their battery and sequence numbers are read
- * (the parts decoded so far), and their traffic both ways also goes to
- * `rawLog` for decoding the rest (plans/systemcore-robot-capture.md).
+ * robots are recognized by that. Their battery, enable, mode and sequence
+ * numbers are read (the parts decoded so far), and their traffic both ways
+ * also goes to `rawLog` for decoding the rest
+ * (plans/systemcore-robot-capture.md).
  */
 export class RobotPacketCapture {
   private proc: ChildProcess | null = null;
@@ -292,11 +293,11 @@ export class RobotPacketCapture {
    * battery as whole volts then 1/256ths. Decoded from 5940's and 9940's
    * traffic on 2026-11-03 (plans/systemcore-robot-capture.md).
    *
-   * Only the battery and the sequence are used. Status bit 2 tracked enable
-   * there too, but the mode bits never changed and the brownout and e-stop
-   * bits were never seen set (not even at 6.6 V), so nothing reads them yet:
-   * no `dsStatus` or `brownout` (match logic acts on those), and no e-stop
-   * watch.
+   * The status byte echoes the DS's control byte: bit 2 enabled, bits 0–1
+   * the mode, numbered unlike NI's (SYSTEMCORE_MODES). Trace bit 5 is robot
+   * code, as on NI. The brownout and e-stop bits were never seen set (not
+   * even at 6.6 V), so they aren't read: `eStop` is reported false, there's
+   * no `brownout`, and the e-stop watch isn't fed.
    */
   private parseSystemCoreReply(
     payload: Buffer,
@@ -312,6 +313,10 @@ export class RobotPacketCapture {
     if (!station) return;
 
     const batteryVoltage = decodeBattery(payload[5], payload[6]);
+    const statusByte = payload[3];
+    const enabled = Boolean(statusByte & 0x04);
+    const mode = SYSTEMCORE_MODES[statusByte & 0x03];
+    const hasRobotCode = Boolean(payload[4] & 0x20);
     const seq = payload.readUInt16BE(0);
     this.onHop?.({ station, kind: 'reply', src: srcIp, dst: dstIp, at: capturedAt });
     this.dropouts?.reply(station, team, seq, capturedAt, { brownout: false, batteryVoltage });
@@ -323,7 +328,7 @@ export class RobotPacketCapture {
     if (!this.debuggedTeams.has(team)) {
       this.debuggedTeams.add(team);
       console.log(
-        `RobotPacketCapture: team ${team} (SystemCore) → ${batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'no reading'}`,
+        `RobotPacketCapture: team ${team} (SystemCore) → ${batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'no reading'} ${enabled ? 'enabled' : 'disabled'} ${mode ?? `mode ${statusByte & 0x03}`}${hasRobotCode ? '' : ' (no code)'}`,
       );
     }
 
@@ -333,6 +338,18 @@ export class RobotPacketCapture {
       timestamp: Date.now(),
       batteryVoltage,
       ...(link && { robotLinkRttMs: link.rttMs, robotLinkLossPct: link.lossPct }),
+      // Mode 0 was never seen; without a mode there's no status to report.
+      ...(mode && {
+        dsStatus: {
+          eStop: false,
+          aStop: false,
+          robotComms: hasRobotCode,
+          radioPing: true,
+          rioPing: true,
+          enabled,
+          mode,
+        },
+      }),
     });
   }
 
@@ -474,6 +491,10 @@ const ROBOT_TO_DS_PORT = 1150;
 const JOYSTICK_TAG = 0x0c;
 /** Comm version byte of the 2027 DS and SystemCore robots (NI uses 0x01). */
 const SYSTEMCORE_COMM_VERSION = 0x02;
+/** SystemCore status/control mode bits (0–1). NI's are 0 teleop, 1 test,
+ *  2 auto. Seen on 5940 and 9940, 2026-11-03; 0 never was. The DS's "Match"
+ *  mode is auto plus control bit 4, which the robot doesn't echo. */
+const SYSTEMCORE_MODES: Record<number, RobotMode | undefined> = { 1: 'auto', 2: 'teleOp', 3: 'util' };
 
 /**
  * Battery from a robot status reply: whole volts, then 1/256ths. 0xFFFF is the

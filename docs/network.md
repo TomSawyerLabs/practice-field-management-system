@@ -169,9 +169,9 @@ An e-stop has to act within 1 s, so what happens depends on the DS:
   journal logs `slotN: robot still says it's enabled N ms after the e-stop`. The
   warning goes 2 s after the robot stops saying so. A normal stop never shows it:
   a robot that's cut sends nothing at all. **The field can't see a robot that
-  isn't reporting to it**, including a SystemCore robot, whose enable and e-stop
-  bits aren't decoded yet, so no warning doesn't mean the robot stopped. Those pages say so during any
-  e-stop.
+  isn't reporting to it**, so no warning doesn't mean the robot stopped. Those
+  pages say so during any e-stop. A SystemCore robot's enable bit is read, but
+  its own e-stop bit isn't decoded yet.
 
 **Team Stop** also cuts traffic, for as long as it lasts, because that DS isn't
 under field control and nothing else would stop it. The team's pages offer it
@@ -375,10 +375,15 @@ A SystemCore robot (2027 DS) answers from UDP 1110 to the DS's own port, in
 an unpublished layout. Both directions use comm version `0x02`. The first
 seven bytes are laid out like NI's: the sequence number, which the robot
 echoes, then version, status and trace, then the battery in bytes 5–6. pFMS
-reads the battery and the sequence numbers, so battery readings, the link
-round trip and dropouts cover SystemCore robots too (decoded from 5940's and
-9940's traffic, 2026-11-03). Status bit 2 tracked enable in that capture,
-but enable, mode, brownout and e-stop aren't read yet. The capture also keeps
+reads the battery, the sequence numbers and the status byte, so battery
+readings, enable, mode, the link round trip and dropouts cover SystemCore
+robots too (decoded from 5940's and 9940's traffic, 2026-11-03). The status
+byte echoes the DS's control byte: bit 2 is enabled, and bits 0–1 are the mode,
+numbered unlike NI's: 1 auto, 2 teleop, 3 util (the 2027 DS has util where NI
+has test). The DS's "Match" mode is auto plus control bit 4, which the robot
+doesn't echo. Brownout and e-stop aren't read yet: they were never seen set,
+not even at 6.6 V. The 2027 DS's own status never sets its enabled bit, so for
+those DSes pFMS takes enable and mode from the robot only. The capture also keeps
 the traffic raw in `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a
 day, 300 MB total) for decoding the rest (`plans/systemcore-robot-capture.md`).
 

@@ -223,13 +223,39 @@ describe('RobotPacketCapture SystemCore robots', () => {
     const [t] = f.telemetry;
     expect(t.station).toBe('slot3');
     expect(t.batteryVoltage).toBeCloseTo(12.402, 3);
-    // Enable, mode, brownout and e-stop aren't decoded yet, and match logic
-    // acts on them, so none is reported.
-    expect(t.dsStatus).toBeUndefined();
+    expect(t.dsStatus).toMatchObject({ enabled: false, mode: 'teleOp', robotComms: true, eStop: false });
+    // The brownout bit was never seen set, so it isn't reported.
     expect(t.brownout).toBeUndefined();
     expect(f.hops.map(h => h.kind)).toEqual(['control', 'reply']);
     // The control packet came before the robot was known to be SystemCore.
     expect(f.raw).toHaveLength(1);
+  });
+
+  test('the status byte gives enable and the 2027 DS’s modes, numbered unlike NI’s', () => {
+    const f = capture();
+    const reply = (status: number, trace = 0x61) =>
+      f.parse(frame(RIO, DS, 61619, [0x00, 0x04, 0x02, status, trace, 0x0c, 0x67], undefined, 1110), 1);
+    // Status bytes seen on 5940 and 9940, 2026-11-03.
+    reply(0x01);
+    reply(0x05);
+    reply(0x06);
+    reply(0x03);
+    reply(0x03, 0x40);
+    expect(f.telemetry.map(t => [t.dsStatus?.mode, t.dsStatus?.enabled, t.dsStatus?.robotComms])).toEqual([
+      ['auto', false, true],
+      ['auto', true, true],
+      ['teleOp', true, true],
+      ['util', false, true],
+      ['util', false, false],
+    ]);
+  });
+
+  test('mode 0, never seen, reports no status', () => {
+    const f = capture();
+    f.parse(frame(RIO, DS, 61619, [0x00, 0x04, 0x02, 0x04, 0x61, 0x0c, 0x67], undefined, 1110), 1);
+    expect(f.telemetry).toHaveLength(1);
+    expect(f.telemetry[0].dsStatus).toBeUndefined();
+    expect(f.telemetry[0].batteryVoltage).toBeCloseTo(12.402, 3);
   });
 
   test('a SystemCore reply with an unknown comm version is only kept raw', () => {

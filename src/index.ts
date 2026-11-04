@@ -1478,6 +1478,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // Two robots of one team: the station of the robot this laptop drives.
       (teamNumber, address) =>
         radioManager.isTeamDuplicated(teamNumber) ? driveSessions.stationDrivenBy(address, teamNumber) : undefined,
+      undefined,
+      address => matchEngine.dsProtocolOf(address) === 'ds2027',
     );
 
     // Defer radio configuration while robots are enabled or a match is running

@@ -1949,7 +1949,9 @@ function RadioStatusCard({
                           ? 'TeleOp'
                           : telemetry.dsStatus.mode === 'auto'
                             ? 'Auto'
-                            : 'Test'
+                            : telemetry.dsStatus.mode === 'util'
+                              ? 'Util'
+                              : 'Test'
                       }
                       size="small"
                       sx={{

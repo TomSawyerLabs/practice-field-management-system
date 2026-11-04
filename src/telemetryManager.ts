@@ -43,6 +43,10 @@ export class TelemetryManager {
      *  Called with (teamNumber, dsSourceAddress) — returns the station if resolvable. */
     private readonly resolveByAddress?: (teamNumber: number, address: string) => StationName | undefined,
     private readonly now: () => number = Date.now,
+    /** Whether the DS at this address is a 2027 (SystemCore) DS. Its status
+     *  never sets the enabled bit, and its mode bits don't follow its robot,
+     *  so its robot's own replies (src/robotPacketCapture.ts) report those. */
+    private readonly isDs2027: (address: string) => boolean = () => false,
   ) {
     this.startedAt = now();
   }
@@ -121,8 +125,11 @@ export class TelemetryManager {
     if (!station) return;
 
     this.logFirst(msg.teamNumber, station);
-    this.enabledStations.set(station, { enabled: msg.status.enabled, at: this.now() });
-    this.noteRobotStatus(station, msg.status.enabled);
+    const ds2027 = this.isDs2027(sourceAddress);
+    if (!ds2027) {
+      this.enabledStations.set(station, { enabled: msg.status.enabled, at: this.now() });
+      this.noteRobotStatus(station, msg.status.enabled);
+    }
 
     let dsCpuPercent: number | undefined;
     for (const tag of msg.tags) {
@@ -138,15 +145,17 @@ export class TelemetryManager {
       timestamp: Date.now(),
       batteryVoltage: msg.BatteryVoltage,
       dsCpuPercent,
-      dsStatus: {
-        eStop: msg.status.EStop,
-        aStop: msg.status.AStop,
-        robotComms: msg.status.robotComms,
-        radioPing: msg.status.radioPing,
-        rioPing: msg.status.rioPing,
-        enabled: msg.status.enabled,
-        mode: msg.status.mode,
-      },
+      ...(!ds2027 && {
+        dsStatus: {
+          eStop: msg.status.EStop,
+          aStop: msg.status.AStop,
+          robotComms: msg.status.robotComms,
+          radioPing: msg.status.radioPing,
+          rioPing: msg.status.rioPing,
+          enabled: msg.status.enabled,
+          mode: msg.status.mode,
+        },
+      }),
     };
 
     this.onUpdate(update);
