@@ -52,6 +52,55 @@ battery chart and recordings' telemetry work for SystemCore teams too.
   `Systemcore.h`: the brownout threshold is configurable from 5.0 to 8.0 V,
   and recovery up to 8.5 V. So a SystemCore brownout isn't fixed at 6.8 V.
 
+### Decoded from the first capture (2026-11-03)
+
+5940 (`10.59.40.2`, slot2) and its backup 9940 (`10.99.40.2`, slot3) drove
+5:54–6:17 PM PST (01:54–02:17Z, Nov 4). The raw pcap is copied to this PC at
+`C:/Users/camer/sc-pcap/systemcore-2026-11-03.pcap`. The day's 50 MB cap was
+hit at about 6:17 PM PST, so later traffic is only in the separate capture
+below. Analysis scripts are in `C:/Users/camer/sc-pcap-scripts/`
+(`replay.ts` runs a pcap through `RobotPacketCapture`).
+
+- **Both directions use comm version `0x02`** at byte 2 (NI is `0x01`), at
+  50 Hz like NI. The robot echoes the control packet's sequence number
+  (bytes 0–1): every reply matched one, so the NI link timer works unchanged.
+- **Robot reply bytes 0–7 are NI-shaped:** seq (2), version 0x02, status,
+  trace, battery as whole volts + 1/256ths (bytes 5–6), then a byte that's
+  almost always 0. The battery sagged with enables (12.4 → 9.1 V for 5940,
+  12.8 → 6.6 V for 9940), so the reading is right.
+- Then come NI-style tags (the size counts the id): byte 15 repeats the
+  status byte (or is 0), bytes 16–23 look random, then tag `0x35` (10 data
+  bytes), tag `0x37` (8 bytes), and sometimes `0x34` (20 bytes) or `0x33`
+  (16 bytes). Not decoded.
+- **Status byte 3:** only `0x02` and `0x06` were seen, on both robots. Bit 2
+  (`0x04`) followed the DS's control byte 3 exactly, so it's enabled. The
+  mode bits stayed 2 the whole time (NI would call that auto), and the team
+  was presumably in teleop. **The mode mapping is unknown.**
+- **Brownout:** status bit 4 never set, even at 6.6 V on 9940 (6:16:47 PM
+  PST). Either SystemCore's threshold was lower, or brownout is carried
+  elsewhere. **Unknown.** The e-stop bit (7) was never seen either.
+- **Trace byte 4:** `0x61` / `0x60` normally. It was `0x00` and `0x40` for
+  about 10 s at 5:56:05 PM PST, which looks like a robot code restart. So
+  `0x20` is robot code, as on NI, and `0x40` is probably "SystemCore" (NI
+  uses `0x10` for roboRIO). Bit 0 is not "disabled": `0x60` appeared while
+  disabled too, and in those packets byte 15 is 0.
+- **DS control:** seq (2), 0x02, the control byte (same `0x04` enable bit),
+  then `0x40`, then a byte that went 0 → 3 around 6:03 PM PST on both DSes,
+  then more tags. Not decoded.
+- 9940's link round trip was a steady ~115 ms median vs 5940's 1.8 ms, on the
+  same field at a similar signal (-52 vs -47 dBm). Either 9940's code answers
+  late, or its link is slow. Not investigated.
+
+Separate captures on steamboat, in `~/sc-capture/`:
+
+- `sc-20261103-181545.pcap` (550 MB): every packet to or from either robot,
+  6:15–6:26 PM PST (02:15–02:26Z), camera streams included.
+- `sc-ports-*.pcap` (15-minute files, about 800 MB an hour): UDP 1110/1150
+  and TCP 1740/1250 only, from 6:26 PM PST. It stops by itself around
+  9:27 PM PST (05:27Z).
+
+Delete them once they're no longer needed.
+
 ## Plan / steps
 
 1. [x] Capture SystemCore traffic raw. `src/port 1110` added to the filter.
@@ -60,20 +109,29 @@ battery chart and recordings' telemetry work for SystemCore teams too.
        (`src/rawPacketLog.ts`; 50 MB/day, 300 MB total, oldest days pruned).
        They are no longer misread as NI packets. NI traffic is unchanged.
 2. [x] Deployed (user OK, 2026-10-29).
-3. [ ] **Next:** when 5940 drives, note when they enable, disable and
-       e-stop (or read their pFMS log lines), then decode the day's pcap in
-       Wireshark: sequence number, the control-flags word (table above),
-       battery voltage, and how replies pair with control packets.
-4. [ ] Write a SystemCore parser next to the NI one. Feed the same
-       consumers: telemetry, `RobotLinkTimer`, `RobotLinkWatch` (drop its
-       `isLegacyDs` gate), `RobotDropoutTracker`, joysticks.
-5. [ ] Remove the raw recording, or keep it opt-in for future firmware
+3. [x] Decoded the battery, sequence and enable bit from 5940/9940's traffic
+       (findings above).
+4. [x] Parser for what's proven: battery, link round trip and dropouts
+       (`parseSystemCoreReply`; control packets with version 0x02 feed the
+       link timer and dropout tracker). No `dsStatus`, `brownout` or e-stop
+       yet, since match logic acts on those.
+5. [ ] **Next:** deploy it (through the deploy-owner thread,
+       `plans/deploy-log.md`), and check that 5940's battery shows on its
+       station.
+6. [ ] Mode bits: have a SystemCore team enable in auto, teleop and test for
+       ~10 s each, with the times noted, then read status byte 3.
+7. [ ] Brownout and e-stop: wait for one to happen naturally (don't ask a
+       team to e-stop; clearing it takes a reboot). Then report enable through
+       `dsStatus`, feed `RobotEStopWatch`, and drop `RobotLinkWatch`'s
+       `isLegacyDs` gate.
+8. [ ] Remove the raw recording, or keep it opt-in for future firmware
        changes.
 
 ## Things not to do
 
-- Don't guess the layout and ship a parser from the header alone. A wrong
-  brownout or enabled bit would show teams false warnings.
+- Don't ship a parser for bits that haven't been seen working. A wrong
+  brownout or enabled bit would show teams false warnings, and match logic
+  acts on `dsStatus`.
 - Don't change how the 2027 DS's control packets feed `onDsControl` or the
   joystick count until the layout is known. They still go through the NI
   parser exactly as before, because match logic may depend on it.
@@ -83,13 +141,17 @@ battery chart and recordings' telemetry work for SystemCore teams too.
 - [x] Research and raw capture built (2026-10-29)
 - [x] Deployed 2026-10-29 7:19 PM PDT (02:19Z) as `9891816`. tcpdump
       filter confirmed live: `udp and (dst port 1150 or dst port 1110 or src port 1110)`
-- [ ] First SystemCore capture recorded
-- [ ] Decoded
-- [ ] Parser shipped
+- [x] First SystemCore capture recorded (2026-11-03, 5940 and 9940)
+- [x] Battery, sequence and enable bit decoded
+- [x] Battery/link/dropout parser committed and replayed against the real
+      pcap (5940 8.6–13.0 V, 9940 6.6–14.5 V, every reply paired)
+- [ ] Parser deployed
+- [ ] Mode, brownout and e-stop decoded
 
 ## Open questions for the user
 
 1. ~~OK to deploy?~~ Yes, deployed 2026-10-29.
-2. Can you ask 5940 (or whoever runs SystemCore) to drive through pFMS for a
-   few minutes next visit, including an enable, a disable and a brownout if
-   one happens naturally?
+2. ~~Ask 5940 to drive through pFMS?~~ Done 2026-11-03.
+3. While 5940 is here, can they enable in auto, teleop and test for ~10 s
+   each and note the times? That settles the mode bits.
+4. Deploy the battery parser now, with teams on the field, or later?
