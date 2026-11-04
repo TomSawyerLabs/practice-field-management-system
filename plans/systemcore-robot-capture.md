@@ -78,7 +78,13 @@ below. Analysis scripts are in `C:/Users/camer/sc-pcap-scripts/`
   2 = auto). At 6:37:54 PM PST 9940 switched to mode 1 (`0x01`/`0x05`) and ran
   enabled 6:37:56–6:38:19 and 6:38:52–6:38:58. The team was heard yelling
   "that was auto" at 6:38. Every other enable was mode 2. The robot's status
-  echoes the DS's control byte exactly. Test (probably 3) hasn't been seen.
+  echoes the DS's control byte exactly. The 2027 DS has no "test" mode; it
+  has **Util = 3**. Confirmed on 5940 at 6:51 PM PST while disabled, with the
+  user cycling util → tele → auto → match → util: DS control byte `0x03` →
+  `0x02` (6:51:32) → `0x01` (6:51:40) → `0x11` (6:51:48) → `0x03`
+  (6:51:55), and the robot's status byte echoed each one, except that it
+  showed `0x01` for match. So **"Match" is auto plus DS control bit `0x10`**,
+  which the robot doesn't echo.
 - **Brownout:** status bit 4 never set, even at 6.6 V on 9940 (6:16:47 PM
   PST). Either SystemCore's threshold was lower, or brownout is carried
   elsewhere. **Unknown.** The e-stop bit (7) was never seen either.
@@ -125,8 +131,8 @@ Delete them once they're no longer needed.
        yet, since match logic acts on those.
 5. [x] Deployed `5fc0c7e` 6:39 PM PST (02:39Z), user's yes. The journal
        showed `team 9940 (SystemCore) → 12.45V` right after.
-6. [~] Mode bits: auto = 1 and teleop = 2 seen (6:38 PM PST). **Next:** see
-   test mode once, enabled for ~10 s.
+6. [x] Mode bits: 1 = auto, 2 = teleop, 3 = util, and DS bit `0x10` =
+       match (6:51 PM PST, 5940).
 7. [ ] Brownout and e-stop: wait for one to happen naturally (don't ask a
        team to e-stop; clearing it takes a reboot). Then report enable through
        `dsStatus`, feed `RobotEStopWatch`, and drop `RobotLinkWatch`'s
@@ -153,13 +159,18 @@ Delete them once they're no longer needed.
 - [x] Battery/link/dropout parser committed and replayed against the real
       pcap (5940 8.6–13.0 V, 9940 6.6–14.5 V, every reply paired)
 - [x] Parser deployed (`5fc0c7e`, 2026-11-03 6:39 PM PST)
-- [x] Auto and teleop mode values seen
-- [ ] Test mode, brownout and e-stop decoded
+- [x] Mode values decoded: auto 1, teleop 2, util 3, match = DS bit 0x10
+- [ ] Brownout and e-stop decoded
 
 ## Open questions for the user
 
 1. ~~OK to deploy?~~ Yes, deployed 2026-10-29.
 2. ~~Ask 5940 to drive through pFMS?~~ Done 2026-11-03.
-3. While 5940/9940 are here, can they enable in test mode for ~10 s? Auto
-   and teleop are already settled.
+3. ~~Test/util mode?~~ Done 6:51 PM PST.
 4. ~~Deploy now?~~ Yes, deployed 6:39 PM PST.
+5. Report SystemCore enable and mode through `dsStatus` now, before
+   brownout and e-stop are known? That would make SystemCore robots show
+   "enabled" and their mode, and feed the match engine's enabled checks.
+   My recommendation: yes, as its own change with tests, with `eStop` false
+   until that bit is seen, and util shown as its own mode rather than
+   relabeled "test".
