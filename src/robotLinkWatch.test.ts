@@ -10,11 +10,9 @@ const RIO = '10.8.40.2';
 function field() {
   let clock = 1_000_000;
   const laptops = new Map<StationName, string>([['slot2', DS]]);
-  const legacy = new Set([DS]);
   const log: string[] = [];
   const watch = new RobotLinkWatch({
     laptopOn: s => laptops.get(s),
-    isLegacyDs: ip => legacy.has(ip),
     capturing: () => true,
     info: m => log.push(`info: ${m}`),
     warn: m => log.push(`warn: ${m}`),
@@ -34,7 +32,7 @@ function field() {
     }
   };
   const wait = (ms: number) => (clock += ms);
-  return { watch, log, laptops, legacy, traffic, wait };
+  return { watch, log, laptops, traffic, wait };
 }
 
 describe('RobotLinkWatch', () => {
@@ -115,22 +113,12 @@ describe('RobotLinkWatch', () => {
     f.watch.check();
     const other = '10.55.65.16';
     f.laptops.set('slot2', other);
-    f.legacy.add(other);
     f.watch.check();
     f.wait(LINK_GRACE_MS + 1_000);
     f.watch.check();
     expect(f.log.at(-1)).toBe(
       `warn: Robot link down for ${other} on slot2: the DS sends the robot nothing (no control packets from the laptop)`,
     );
-  });
-
-  test('a 2027 DS is not judged: its replies are not on the captured port', () => {
-    const f = field();
-    f.legacy.delete(DS);
-    f.watch.check();
-    f.wait(LINK_GRACE_MS + 1_000);
-    f.watch.check();
-    expect(f.log).toEqual([]);
   });
 
   test('a laptop sending without a drive session is reported, and its session start noted', () => {

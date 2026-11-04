@@ -1942,7 +1942,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       stationDrivenBy = (laptop, team) => driveSessions.stationDrivenBy(laptop, team);
       robotLinkWatch = new RobotLinkWatch({
         laptopOn: station => driveSessions.laptopOn(station),
-        isLegacyDs: dsIp => matchEngine.dsProtocolOf(dsIp) === 'legacy',
         capturing: () => robotPacketCapture?.isRunning() ?? false,
         info: appInfo,
         warn: appWarn,

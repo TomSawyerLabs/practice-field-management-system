@@ -4,10 +4,12 @@ import { StationNameList, type StationName } from './types.js';
  * Says, per drive session, whether the laptop's Driver Station actually
  * reaches its robot, and if not, which leg is broken.
  *
- * A legacy NI Driver Station on guest Wi-Fi talks to its robot through pFMS:
- * its control packets (UDP 1110) arrive from the laptop's own address and are
- * masqueraded onto the robot's VLAN; the roboRIO answers (UDP 1150) to the
- * gateway, and the drive session's DNAT forwards that to the laptop. The
+ * A Driver Station on guest Wi-Fi talks to its robot through pFMS: its
+ * control packets (UDP 1110) arrive from the laptop's own address and are
+ * masqueraded onto the robot's VLAN; the robot answers to the gateway, and
+ * the drive session's DNAT forwards that to the laptop. A roboRIO answers to
+ * UDP 1150; a SystemCore robot (2027 DS) from 1110 to the DS's own port, and
+ * the capture sees both. The
  * passive capture sees every one of those hops, so a DS showing "No Robot
  * Communication" can be told apart as:
  *
@@ -26,7 +28,8 @@ import { StationNameList, type StationName } from './types.js';
 /** A control or reply packet the capture saw, with its addresses as captured. */
 export type LinkHop = {
   station: StationName;
-  /** 'control': DS→robot UDP 1110. 'reply': robot→DS UDP 1150. */
+  /** 'control': DS→robot UDP 1110. 'reply': robot→DS (UDP 1150, or from 1110
+   *  for SystemCore). */
   kind: 'control' | 'reply';
   src: string;
   dst: string;
@@ -43,9 +46,6 @@ export type LinkState =
 export interface RobotLinkWatchEffects {
   /** The laptop driving the robot on this station, if any. */
   laptopOn(station: StationName): string | undefined;
-  /** Whether that laptop runs the legacy NI DS. The 2027 DS's robot replies
-   *  to its source port, not 1150, so the capture can't see its replies. */
-  isLegacyDs(dsIp: string): boolean;
   /** Whether the capture is running; without it silence means nothing. */
   capturing(): boolean;
   info(message: string): void;
@@ -110,7 +110,6 @@ export class RobotLinkWatch {
     if (!this.fx.capturing()) return;
     this.checkOrphans(now);
     for (const [station, w] of this.watched) {
-      if (!this.fx.isLegacyDs(w.dsIp)) continue;
       const state = this.stateOf(w, now);
       const key = JSON.stringify(state);
       if (key === w.logged) continue;
