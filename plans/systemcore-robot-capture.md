@@ -133,12 +133,23 @@ Delete them once they're no longer needed.
        showed `team 9940 (SystemCore) → 12.45V` right after.
 6. [x] Mode bits: 1 = auto, 2 = teleop, 3 = util, and DS bit `0x10` =
        match (6:51 PM PST, 5940).
-7. [ ] Brownout and e-stop: wait for one to happen naturally (don't ask a
-       team to e-stop; clearing it takes a reboot). Then report enable through
-       `dsStatus`, feed `RobotEStopWatch`, and drop `RobotLinkWatch`'s
-       `isLegacyDs` gate.
-8. [ ] Remove the raw recording, or keep it opt-in for future firmware
-       changes.
+7. [x] Enable and mode reported through `dsStatus` (`c2c68bf`, deployed
+       7:09 PM PST). Util is its own mode. `eStop` is reported false. The 2027
+       DS's own UDP status no longer carries `dsStatus` or counts toward the
+       enabled checks, because its enabled bit is never set.
+8. [x] `RobotLinkWatch`'s `isLegacyDs` gate dropped (`0c92375`, deployed
+       7:13 PM PST). Replayed first; live it caught 9940 leaving the radio
+       24 s before the radio poll did (7:18:12 vs 7:18:36 PM PST).
+9. [x] Raw recording is now selective (`b00b311`, deployed 7:18 PM PST):
+       only around a packet with bits not seen yet, mode 0, or a battery
+       under 7 V, from ~3 s before to 10 s after. Replay: one trigger in the
+       day (9940 at 6.82 V), 0.5 MB.
+10. [ ] **Next:** when the journal shows a `SystemCore robot <ip>: <why>`
+        line ("recording its packets raw"), pull that day's
+        `systemcore-captures/` file and decode the brownout or e-stop bit.
+        Then report `brownout`, feed `RobotEStopWatch`, and replace
+        `eStop: false`. Don't ask a team to e-stop; clearing it takes a
+        reboot.
 
 ## Things not to do
 
@@ -160,7 +171,9 @@ Delete them once they're no longer needed.
       pcap (5940 8.6–13.0 V, 9940 6.6–14.5 V, every reply paired)
 - [x] Parser deployed (`5fc0c7e`, 2026-11-03 6:39 PM PST)
 - [x] Mode values decoded: auto 1, teleop 2, util 3, match = DS bit 0x10
-- [ ] Brownout and e-stop decoded
+- [x] Enable/mode in `dsStatus`, link watch for SystemCore, selective raw
+      recording: all deployed by 7:18 PM PST (`b00b311`)
+- [ ] Brownout and e-stop decoded (waiting for one to happen)
 
 ## Open questions for the user
 
@@ -168,9 +181,4 @@ Delete them once they're no longer needed.
 2. ~~Ask 5940 to drive through pFMS?~~ Done 2026-11-03.
 3. ~~Test/util mode?~~ Done 6:51 PM PST.
 4. ~~Deploy now?~~ Yes, deployed 6:39 PM PST.
-5. Report SystemCore enable and mode through `dsStatus` now, before
-   brownout and e-stop are known? That would make SystemCore robots show
-   "enabled" and their mode, and feed the match engine's enabled checks.
-   My recommendation: yes, as its own change with tests, with `eStop` false
-   until that bit is seen, and util shown as its own mode rather than
-   relabeled "test".
+5. ~~Report enable and mode now?~~ Yes ("do it all"), done 7:09 PM PST.
