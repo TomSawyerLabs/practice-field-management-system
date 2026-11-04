@@ -79,8 +79,17 @@ A frontend client sends a WebSocket message with
      of enable/release changes named by robot) while a match is running,
      while one is set up or just over (unless `holdRadioChangesForMatch`
      is off — the match page's switch, `matchHoldWifi`), the admin "Hold
-     Wi-Fi changes" box is ticked, or other changes are already waiting.
-     Adding a change
+     Wi-Fi changes" box is ticked, or other changes are already waiting
+     for staff. An enable with no free station (in line for a full field)
+     does not count as waiting for staff: it rides along with the next
+     change that frees a station, and `request()` answers it
+     `{ result: 'waiting', reason: 'full' }`. While one is in line and
+     nothing else holds the list, the status poll releases the robot off
+     the Wi-Fi longest past `idleReleaseMinutes` (reason `idle`, see
+     `stageIdleReleases()`), and the release and the enable go out in one
+     commit. Recent idle releases go to clients as
+     `pendingCommitState.idleReleases`. An apply that changes no station
+     does not touch the radio. Adding a change
      simplifies the list: a later change about the same robot overrides an
      earlier one, and release-then-enable cancels out. The list reaches
      the radio only when staff press **Apply now** on the match or admin

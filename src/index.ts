@@ -12,7 +12,15 @@ import { startConfigurationScheduler } from './scheduler.js';
 import { stationsCutAtStart, StopStore } from './stopStore.js';
 import { bringUpTrunk, tearDownTrunk } from './trunkInterface.js';
 import CIDRMatcher from 'cidr-matcher';
-import { hostTeamsInEffect, isRobotOfTeams, queueInUse, teamOfSsid, teamSubnet, toCidr } from './utils.js';
+import {
+  hostTeamsInEffect,
+  idleReleaseMinutes,
+  isRobotOfTeams,
+  queueInUse,
+  teamOfSsid,
+  teamSubnet,
+  toCidr,
+} from './utils.js';
 import { DriveSessions, type BlockRule, type DnatRule } from './driveSessions.js';
 import { MatchEngine, stopCut } from './matchEngine.js';
 import {
@@ -436,6 +444,14 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     if (state.phase !== 'postMatch' || previous === 'postMatch') return;
     if (setupConfigStore.get().settings.releaseAfterMatch === false) return;
     radioManager.stageReleaseAll('postMatch', isHostRobot);
+  });
+  // A team in line at a full field gets the slot of a robot that has been off
+  // the Wi-Fi past the admin's limit. Never during a match (set up, running
+  // or just over: staff are at the match page), and never a host robot.
+  radioManager.setIdleReleasePolicy(() => {
+    if (matchEngine.getState().phase !== 'idle') return null;
+    const minutes = idleReleaseMinutes(setupConfigStore.get().settings);
+    return minutes > 0 ? { minutes, exempt: isHostRobot } : null;
   });
   matchEngine.setStationJoinHook(station => {
     const ssid = radioManager.getStationConfig(station)?.ssid;

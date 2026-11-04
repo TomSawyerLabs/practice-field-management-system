@@ -24,6 +24,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   // ── Sent by team pages ──────────────────────────────────────────────
   station: 'anyone',
   cancelStationChange: 'anyone',
+  leaveWifiLine: 'anyone',
   internetToggle: 'anyone',
   drive: 'anyone',
   routePreference: 'anyone',

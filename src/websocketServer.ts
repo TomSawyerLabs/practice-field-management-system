@@ -14,6 +14,7 @@ import {
   isSelfUpdateCheck,
   type SelfUpdateStatus,
   isCancelPendingChange,
+  isLeaveWifiLine,
   ConfigureResult,
   isQueueJoinLine,
   isQueueLeaveLine,
@@ -1361,6 +1362,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         radioManager.cancelStagedChange(data.station);
       } else if (isCancelPendingChange(data)) {
         radioManager.cancelPendingChange(data.id);
+      } else if (isLeaveWifiLine(data)) {
+        radioManager.leaveLine(data.ssid);
 
         // ── Match queue ──────────────────────────────────────────────
       } else if (isQueueJoinLine(data)) {

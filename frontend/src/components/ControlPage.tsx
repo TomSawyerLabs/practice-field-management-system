@@ -33,6 +33,7 @@ import {
   useMdnsActivity,
   usePendingCommitState,
   sendCancelStationChange,
+  sendLeaveWifiLine,
   sendDrive,
   sendRoutePreference,
   useMyDriveStation,
@@ -52,7 +53,7 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import { holdReasonText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
+import { holdReasonText, fullFieldText, DEFERRED_TEXT_TEAM, teamOfSsid } from './PendingRadioChanges';
 import {
   broadcastsForTeam,
   describeNameForTeam,
@@ -90,7 +91,7 @@ import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import TableHead from '@mui/material/TableHead';
 import Alert from '@mui/material/Alert';
-import { formatBytes, describeIp, formatAge, hostTeamsInEffect } from '../../../src/utils';
+import { formatBytes, describeIp, formatAge, hostTeamsInEffect, idleReleaseMinutes } from '../../../src/utils';
 import { parkedHostStations } from '../utils/fieldIssues';
 
 // Helper function to format numbers with thin space as thousands separator
@@ -187,36 +188,77 @@ function useFindAvailableStation(): StationName | null {
   }, [projected]);
 }
 
-/** What a team sees when the field is full. Making room is field staff's
- *  call (Release on the admin page), never another team's — teams are not
- *  asked to pick whose robot to bump. Parked host robots are named, since a
+/** What a team sees when the field is full. Teams never pick whose robot to
+ *  bump: Enable Robot puts theirs in line, and it joins when a robot leaves —
+ *  its team releases it, staff do, or pFMS releases one that has been off the
+ *  Wi-Fi too long (idleReleaseMinutes). Parked host robots are named, since a
  *  full field otherwise looks like that many teams practicing. */
 function FieldFullAlert() {
   const latest = useLatest();
   const setupConfig = useSetupConfig();
   const queue = useQueueState();
-  const parked = parkedHostStations(latest, hostTeamsInEffect(setupConfig?.config.settings ?? {}, queue)).length;
+  const settings = setupConfig?.config.settings ?? {};
+  const parked = parkedHostStations(latest, hostTeamsInEffect(settings, queue)).length;
+  const minutes = idleReleaseMinutes(settings);
   return (
     <Alert severity="warning" sx={{ mb: 2 }}>
       The field is full ({StationNameList.length} robots
-      {parked > 0 && `, ${parked} of them the host team's, parked and not running`}). Ask field staff to make room for
-      your robot, or wait for a team to leave.
+      {parked > 0 && `, ${parked} of them the host team's, parked and not running`}). Press Enable Robot to get in line:
+      your robot joins as soon as one leaves
+      {minutes > 0 && `, and pFMS makes room by releasing a robot that has been off the field Wi-Fi for ${minutes} min`}
+      . Field staff can also make room.
     </Alert>
   );
 }
 
-type RobotPending = {
-  kind: 'held-enable' | 'held-release' | 'deferred-enable' | 'deferred-release';
-  station: StationName;
-} | null;
+/** This team's robots that pFMS took off the field in the last hour to make
+ *  room for a waiting team: said once, so the team isn't left wondering
+ *  where its Wi-Fi went. */
+function IdleReleaseNotice({ teamNumber, activeSsids }: { teamNumber: number; activeSsids: Set<string> }) {
+  const pending = usePendingCommitState();
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const mine = (pending.idleReleases ?? []).filter(
+    r => teamOfSsid(r.ssid) === teamNumber && !activeSsids.has(r.ssid) && !dismissed.has(`${r.ssid}@${r.at}`),
+  );
+  if (mine.length === 0) return null;
+  return (
+    <>
+      {mine.map(r => (
+        <Alert
+          key={`${r.ssid}@${r.at}`}
+          severity="info"
+          sx={{ mb: 2 }}
+          onClose={() => setDismissed(prev => new Set(prev).add(`${r.ssid}@${r.at}`))}
+        >
+          {r.ssid} was taken off the field at{' '}
+          {new Date(serverToBrowserTime(r.at)).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}: it had
+          been off the field Wi-Fi for {Math.round(r.offlineMs / 60_000)} min and another team was waiting for a slot.
+          Press Enable Robot to bring it back.
+        </Alert>
+      ))}
+    </>
+  );
+}
+
+type RobotPending =
+  | {
+      kind: 'held-enable' | 'held-release' | 'deferred-enable' | 'deferred-release';
+      station: StationName;
+    }
+  | { kind: 'in-line'; station: null }
+  | null;
 
 /** Whether this robot has a request in flight, and which way it is going:
- *  held (a match exists / staff hold) or deferred (robots are enabled). */
+ *  held (a match exists / staff hold), deferred (robots are enabled), or in
+ *  line for a full field. */
 function useRobotPending(ssid: string): RobotPending {
   const latest = useLatest();
   const pending = usePendingCommitState();
 
   return useMemo(() => {
+    if (pending.changes?.some(c => c.kind === 'enable' && c.ssid === ssid && c.station === null)) {
+      return { kind: 'in-line', station: null };
+    }
     const radio = latest?.radioUpdate?.stationStatuses;
     for (const station of StationNameList) {
       const onRadio = radio?.[station]?.ssid === ssid;
@@ -589,6 +631,10 @@ function RobotList({
   isMultiRobot: boolean;
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
+  const pendingState = usePendingCommitState();
+  const teamInLine = !!pendingState.changes?.some(
+    c => c.kind === 'enable' && c.station === null && teamOfSsid(c.ssid) === teamNumber,
+  );
   const [addSuffix, setAddSuffix] = useState('');
   /** The add form is open to re-enter a saved robot's passphrase */
   const [fixing, setFixing] = useState(false);
@@ -685,7 +731,9 @@ function RobotList({
           </Box>
         </Box>
 
-        {!availableStation && <FieldFullAlert />}
+        <IdleReleaseNotice teamNumber={teamNumber} activeSsids={new Set(activeStations.keys())} />
+        {/* Once a robot of theirs is in line, its row says the same thing. */}
+        {!availableStation && !teamInLine && <FieldFullAlert />}
 
         <RobotWifiHeard
           teamNumber={teamNumber}
@@ -888,9 +936,11 @@ function RobotRow({
 
   const handleEnable = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!availableStation || configCooldown) return;
+    if (configCooldown) return;
     startCooldown();
-    sendEnableSavedRobot(availableStation, config.ssid);
+    // With the field full the station is only a preference: the robot goes
+    // in line and takes whichever station frees first.
+    sendEnableSavedRobot(availableStation ?? StationNameList[0], config.ssid);
     onSelect(); // Auto-select the robot being enabled
   };
 
@@ -908,7 +958,9 @@ function RobotRow({
     e.stopPropagation();
     if (!robotPending || configCooldown) return;
     startCooldown();
-    if (robotPending.kind === 'deferred-release') {
+    if (robotPending.kind === 'in-line') {
+      sendLeaveWifiLine(config.ssid);
+    } else if (robotPending.kind === 'deferred-release') {
       // Already off pFMS's books — put it back (the radio never changed).
       sendEnableSavedRobot(robotPending.station, config.ssid);
     } else {
@@ -916,19 +968,25 @@ function RobotRow({
     }
   };
 
+  const setupConfig = useSetupConfig();
+  const idleMinutes = idleReleaseMinutes(setupConfig?.config.settings ?? {});
   const pendingChip =
-    robotPending?.kind === 'held-enable'
-      ? { label: 'Waiting', color: 'warning' as const }
-      : robotPending?.kind === 'deferred-enable'
-        ? { label: 'Connecting…', color: 'info' as const }
-        : robotPending
-          ? { label: 'Leaving', color: 'warning' as const }
-          : null;
+    robotPending?.kind === 'in-line'
+      ? { label: 'In line', color: 'warning' as const }
+      : robotPending?.kind === 'held-enable'
+        ? { label: 'Waiting', color: 'warning' as const }
+        : robotPending?.kind === 'deferred-enable'
+          ? { label: 'Connecting…', color: 'info' as const }
+          : robotPending
+            ? { label: 'Leaving', color: 'warning' as const }
+            : null;
   const pendingReason = !robotPending
     ? null
-    : robotPending.kind.startsWith('held')
-      ? holdReasonText(pendingState.hold, 'team')
-      : DEFERRED_TEXT_TEAM;
+    : robotPending.kind === 'in-line'
+      ? fullFieldText('team', idleMinutes)
+      : robotPending.kind.startsWith('held')
+        ? holdReasonText(pendingState.hold, 'team')
+        : DEFERRED_TEXT_TEAM;
   // A held enable behind a match gets the match-aware notice instead of the
   // generic line (and, for an empty set-up match, a button to clear it).
   const matchHold = useMatchHold();
@@ -941,8 +999,12 @@ function RobotRow({
   // a "Waiting" chip — and stays dismissed until the entry changes.
   const myChange = pendingState.changes?.find(c => c.ssid === config.ssid);
   const [dismissedChangeId, setDismissedChangeId] = useState<string | null>(null);
+  const inLine = robotPending?.kind === 'in-line';
   const waitingDialogOpen =
-    !!myChange && !!robotPending && robotPending.kind.startsWith('held') && myChange.id !== dismissedChangeId;
+    !!myChange &&
+    !!robotPending &&
+    (robotPending.kind.startsWith('held') || inLine) &&
+    myChange.id !== dismissedChangeId;
   const dismissWaiting = () => setDismissedChangeId(myChange?.id ?? null);
   const leavingAfterMatch = myChange?.kind === 'release' && myChange.reason === 'postMatch';
 
@@ -950,16 +1012,20 @@ function RobotRow({
     <>
       <Dialog open={waitingDialogOpen} onClose={dismissWaiting} maxWidth="xs" fullWidth>
         <DialogTitle>
-          {leavingAfterMatch
-            ? 'The match is over — your robot is queued to leave'
-            : myChange?.kind === 'release'
-              ? 'Your robot is queued to leave the field'
-              : heldByMatch
-                ? 'A match on the field is holding your robot'
-                : 'Waiting for the match admin'}
+          {inLine
+            ? 'The field is full — your robot is in line'
+            : leavingAfterMatch
+              ? 'The match is over — your robot is queued to leave'
+              : myChange?.kind === 'release'
+                ? 'Your robot is queued to leave the field'
+                : heldByMatch
+                  ? 'A match on the field is holding your robot'
+                  : 'Waiting for the match admin'}
         </DialogTitle>
         <DialogContent>
-          {heldByMatch ? (
+          {inLine ? (
+            <Typography variant="body2">{pendingReason}</Typography>
+          ) : heldByMatch ? (
             <MatchHoldNotice hold={heldByMatch} team={team} variant="body2" />
           ) : (
             <>
@@ -987,7 +1053,7 @@ function RobotRow({
             variant={myChange?.kind === 'release' ? 'contained' : 'text'}
             disabled={configCooldown}
           >
-            {myChange?.kind === 'release' ? 'Keep my robot on the field' : 'Cancel request'}
+            {myChange?.kind === 'release' ? 'Keep my robot on the field' : inLine ? 'Leave the line' : 'Cancel request'}
           </Button>
           <Button onClick={dismissWaiting} variant={myChange?.kind === 'release' ? 'text' : 'contained'}>
             OK
@@ -1107,7 +1173,7 @@ function RobotRow({
               </Button>
             ) : (
               <Button size="small" variant="outlined" disabled={configCooldown} onClick={e => handleWithdraw(e)}>
-                {robotPending.kind === 'held-enable' ? 'Cancel' : 'Keep'}
+                {robotPending.kind === 'held-enable' || robotPending.kind === 'in-line' ? 'Cancel' : 'Keep'}
               </Button>
             )
           ) : isActive ? (
@@ -1152,21 +1218,16 @@ function RobotRow({
               >
                 Fix passphrase
               </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={configCooldown || !availableStation}
-                onClick={e => handleEnable(e)}
-              >
+              <Button size="small" variant="outlined" disabled={configCooldown} onClick={e => handleEnable(e)}>
                 Enable anyway
               </Button>
             </>
           ) : (
-            // Disabled when the field is full — the alert above says what to do.
+            // With the field full this puts the robot in line (see FieldFullAlert).
             <Button
               size="small"
               variant={quietEnable ? 'outlined' : 'contained'}
-              disabled={configCooldown || !availableStation}
+              disabled={configCooldown}
               onClick={e => handleEnable(e)}
             >
               Enable Robot
@@ -1413,8 +1474,7 @@ function AddRobotForm({
             Enable Robot
           </Button>
         ) : (
-          // Field full — the alert above says to ask field staff. Keep the
-          // robot so Enable Robot is one tap once there is room.
+          // Field full: save it, and Enable Robot on its row puts it in line.
           <Button variant="contained" size="small" disabled={!isValid} onClick={handleAdd}>
             Add robot
           </Button>

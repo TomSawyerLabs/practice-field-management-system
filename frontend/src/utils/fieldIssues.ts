@@ -173,6 +173,9 @@ export interface FieldIssueInputs {
   robotEStops?: RobotEStopsState | null;
   /** Teams hosting the field; empty during a scrimmage (hostTeamsInEffect). */
   hostTeams?: number[];
+  /** Minutes off the Wi-Fi before pFMS gives a robot's slot to a team in
+   *  line (idleReleaseMinutes); 0 = never. Absent = not known. */
+  idleReleaseMinutes?: number;
 }
 
 // ── Thresholds ───────────────────────────────────────────────────────
@@ -520,6 +523,42 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
     }
   }
 
+  // Teams in line at a full field. pFMS frees a slot by itself once a robot
+  // has been off the Wi-Fi long enough; until then staff can make room.
+  const inLine = pending?.changes?.filter(c => c.kind === 'enable' && c.station === null) ?? [];
+  if (inLine.length > 0) {
+    const update = latest?.radioUpdate;
+    const off =
+      update?.status === 'ACTIVE'
+        ? StationNameList.filter(s => update.stationStatuses[s]?.ssid && !update.stationStatuses[s]?.isLinked).sort(
+            (a, b) => (input.lastLinked[a] ?? 0) - (input.lastLinked[b] ?? 0),
+          )
+        : [];
+    const minutes = input.idleReleaseMinutes;
+    const auto =
+      minutes === undefined
+        ? ''
+        : minutes > 0
+          ? ` pFMS releases a visiting robot that has been off the Wi-Fi for ${minutes} min by itself (not during a match, never the host's).`
+          : ' Releasing idle robots for a waiting team is off (admin page).';
+    push({
+      id: 'wifi-line',
+      severity: 'warning',
+      title: `${inLine.map(c => c.ssid).join(', ')} ${inLine.length === 1 ? 'is' : 'are'} waiting for a slot — the field is full`,
+      detail:
+        (off.length > 0
+          ? `Off the field Wi-Fi: ${off.map(s => stationLabel(input, s)).join(', ')}.`
+          : update?.status === 'ACTIVE'
+            ? 'Every robot on the field is on the Wi-Fi.'
+            : 'No radio status yet.') + auto,
+      fix:
+        off.length > 0
+          ? 'Release a robot that is off the Wi-Fi to let the waiting team on now.'
+          : 'Ask a team that is done to release its robot.',
+      actions: off.length > 0 ? [{ kind: 'release', station: off[0] }] : undefined,
+    });
+  }
+
   if (routeState) {
     for (const [team, stations] of Object.entries(routeState.conflictingTeams)) {
       if (stations.length < 2) continue;
@@ -608,6 +647,9 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
           actions: full ? [{ kind: 'release', station }] : undefined,
         });
       } else {
+        // On a full field an absent visitor's slot may be wanted: offer to
+        // free it, as for a parked host robot.
+        const release = !inMatch && fieldIsFull(latest);
         push({
           id: `robot-not-linked-${station}`,
           severity: inMatch ? 'critical' : 'warning',
@@ -618,10 +660,13 @@ export function detectFieldIssues(input: FieldIssueInputs): FieldIssue[] {
             ? `Last linked ${shortAge(now - last)} ago.`
             : 'Its Wi-Fi is on the field, but its radio has never associated.',
           evidence: everLinked ? `last linked ${shortAge(now - last)} ago` : 'never linked',
-          fix: everLinked
-            ? 'Robot power? A brownout reboots the radio (about a minute). If it stays off, check the radio’s power lead and Ethernet to the roboRIO.'
-            : 'Radio still booting (up to 2 min after power-on)? Otherwise the robot radio is programmed for a different SSID or key — re-program it, or verify it on the robot tester (/test).',
-          actions: inSetup && joined ? [{ kind: 'kick', station }] : undefined,
+          fix:
+            (everLinked
+              ? 'Robot power? A brownout reboots the radio (about a minute). If it stays off, check the radio’s power lead and Ethernet to the roboRIO.'
+              : 'Radio still booting (up to 2 min after power-on)? Otherwise the robot radio is programmed for a different SSID or key — re-program it, or verify it on the robot tester (/test).') +
+            (release ? ' The field is full: if the team has left, release it.' : ''),
+          actions:
+            inSetup && joined ? [{ kind: 'kick', station }] : release ? [{ kind: 'release', station }] : undefined,
         });
       }
     } else {

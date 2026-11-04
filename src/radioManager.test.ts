@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { useNetworkBackend } from './networkManager.js';
 import { createDryRunBackend } from './node-ip/index.js';
 import type RadioManager from './radioManager.js';
-import type { RadioHoldReason } from './types.js';
+import { defaultSlotToRadio, StationNameList, type RadioHoldReason, type StationName } from './types.js';
 
 // None of this touches a NIC — these tests are about what a request does to
 // the active and held configs, and when — so the network manager runs on its
@@ -753,5 +753,213 @@ describe('in a dry run (2026-10-12: local dry runs wiped the field radio)', () =
     await rm.scan();
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.filter(s => !s.startsWith('GET ') || s.includes('/scan/'))).toEqual([]);
+  });
+});
+
+/** Six robots, one per station. */
+async function fillField(rm: RadioManager): Promise<void> {
+  for (const [i, slot] of StationNameList.entries()) {
+    await rm.configure(slot, { ssid: `${1000 + i}-x`, wpaKey: 'passphrase' });
+  }
+}
+
+describe('a team in line at a full field (2026-11-03: 114 held a slot for 2 h, off the Wi-Fi)', () => {
+  test('waits without touching the radio, and says the field is full', async () => {
+    const rm = manager();
+    await fillField(rm);
+    const commits = spyOn(rm as unknown as { doCommitConfiguration(): Promise<void> }, 'doCommitConfiguration');
+
+    expect(await rm.configure('slot1', robot)).toEqual({ result: 'waiting', reason: 'full' });
+    expect(commits).not.toHaveBeenCalled();
+    const state = rm.getPendingState();
+    expect(state.pending).toBe(true);
+    expect(state.hold).toBe('full');
+    expect(state.changes?.map(c => [c.ssid, c.station])).toEqual([['1234-Comp', null]]);
+  });
+
+  test('does not hold up other requests: a release goes straight through and the waiting robot takes the slot', async () => {
+    const rm = manager();
+    await fillField(rm);
+    await rm.configure('slot1', robot);
+
+    expect(await rm.configure('slot3', { ssid: '', wpaKey: '' })).toEqual({ result: 'applied' });
+    expect(rm.getStationConfig('slot3')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState()).toEqual({ pending: false });
+  });
+
+  test('the team can leave the line without touching anything else waiting', async () => {
+    const rm = manager();
+    await fillField(rm);
+    rm.setShouldHold(() => 'admin');
+    await rm.configure('slot2', { ssid: '', wpaKey: '' }); // 1001-x's release waits for staff
+    await rm.configure('slot1', robot);
+    await rm.configure('slot1', other); // 5678: no room even after 1001-x leaves
+
+    expect(rm.leaveLine('5678')).toBe(true);
+    expect(rm.leaveLine('1001-x')).toBe(false); // a release is not a place in line
+    expect(rm.getPendingState().changes?.map(c => c.ssid)).toEqual(['1001-x', '1234-Comp']);
+  });
+
+  test('staff applying a release later in the list still make room for it', async () => {
+    const rm = manager();
+    await fillField(rm);
+    rm.setShouldHold(() => 'match');
+    await rm.configure('slot1', robot);
+    await rm.configure('slot2', { ssid: '', wpaKey: '' });
+
+    expect(rm.getPendingState().changes?.find(c => c.ssid === '1234-Comp')?.station).toBe('slot2');
+    await rm.applyPendingChanges();
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
+  });
+});
+
+describe('releasing a robot off the Wi-Fi for a team in line', () => {
+  const realFetch = globalThis.fetch;
+  const savedDryRun = process.env.DRY_RUN;
+  const t0 = new Date('2026-11-03T20:00:00-08:00').getTime();
+  const minute = 60_000;
+  let linked: Set<StationName>;
+  let rm: RadioManager;
+
+  /** Poll the fake radio at a moment in time. */
+  async function poll(at: number): Promise<void> {
+    setSystemTime(new Date(at));
+    await (rm as unknown as { updateStatus(): Promise<void> }).updateStatus();
+    await new Promise(r => setTimeout(r, 0));
+  }
+
+  beforeEach(async () => {
+    process.env.DRY_RUN = '1'; // the radio at 192.0.2.2 is only ever read
+    linked = new Set(StationNameList);
+    // A radio carrying whatever pFMS configured, with the robots in `linked` on it.
+    globalThis.fetch = Object.assign(async () => {
+      const stations: Record<string, unknown> = {};
+      for (const slot of StationNameList) {
+        const ssid = rm.getStationConfig(slot)?.ssid;
+        stations[defaultSlotToRadio[slot]] = ssid
+          ? {
+              ssid,
+              hashedWpaKey: 'hash',
+              wpaKeySalt: 'salt',
+              isLinked: linked.has(slot),
+              macAddress: '',
+              dataAgeMs: 0,
+              signalDbm: -50,
+              noiseDbm: -95,
+              signalNoiseRatio: 45,
+              rxRateMbps: 0,
+              rxPackets: 0,
+              rxBytes: 0,
+              txRateMbps: 0,
+              txPackets: 0,
+              txBytes: 0,
+              bandwidthUsedMbps: 0,
+              connectionQuality: '',
+            }
+          : null;
+      }
+      return new Response(
+        JSON.stringify({
+          channel: 13,
+          channelBandwidth: '40MHz',
+          redVlans: '10_20_30',
+          blueVlans: '40_50_60',
+          status: 'ACTIVE',
+          stationStatuses: stations,
+          syslogIpAddress: '10.0.100.40',
+          version: 'VH-113_AP_PRACTICE_TEST',
+        }),
+      );
+    }, realFetch);
+    rm = new RadioManagerClass('http://192.0.2.2');
+    rm.stopPolling();
+    setSystemTime(new Date(t0));
+    await fillField(rm);
+    rm.setIdleReleasePolicy(() => ({ minutes: 5, exempt: ssid => ssid.startsWith('1005') }));
+    await poll(t0);
+  });
+  afterEach(() => {
+    setSystemTime();
+    globalThis.fetch = realFetch;
+    if (savedDryRun === undefined) delete process.env.DRY_RUN;
+    else process.env.DRY_RUN = savedDryRun;
+  });
+
+  test('a robot off long enough gives its slot to the waiting robot at once', async () => {
+    linked.delete('slot2');
+    await poll(t0 + minute);
+    await poll(t0 + 7 * minute);
+
+    expect(await rm.configure('slot1', robot)).toEqual({ result: 'applied' });
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState().idleReleases).toEqual([
+      { ssid: '1001-x', at: t0 + 7 * minute, offlineMs: 7 * minute, forSsid: '1234-Comp' }, // last seen linked at t0
+    ]);
+  });
+
+  test('a waiting robot gets the slot once a robot has been off for the limit', async () => {
+    linked.delete('slot2');
+    await poll(t0 + minute);
+    expect(await rm.configure('slot1', robot)).toEqual({ result: 'waiting', reason: 'full' });
+
+    await poll(t0 + 4 * minute);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1001-x'); // last seen linked at t0: 4 min, not yet
+
+    await poll(t0 + 5 * minute);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
+    expect(rm.getPendingState().changes).toBeUndefined();
+  });
+
+  test('the robot off the longest goes first, one per waiting robot', async () => {
+    linked.delete('slot4');
+    await poll(t0 + minute);
+    linked.delete('slot3');
+    await poll(t0 + 2 * minute);
+    await rm.configure('slot1', robot);
+
+    await poll(t0 + 10 * minute);
+    expect(rm.getStationConfig('slot4')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot3')?.ssid).toBe('1002-x');
+  });
+
+  test('never a robot on the Wi-Fi, nor a host robot', async () => {
+    linked.delete('slot6'); // 1005-x: exempt
+    await poll(t0 + minute);
+    await rm.configure('slot1', robot);
+
+    await poll(t0 + 60 * minute);
+    expect(rm.getStationConfig('slot6')?.ssid).toBe('1005-x');
+    expect(rm.getPendingState().changes?.map(c => c.ssid)).toEqual(['1234-Comp']);
+  });
+
+  test('nobody waiting: an idle robot keeps its slot', async () => {
+    linked.delete('slot2');
+    await poll(t0 + minute);
+    await poll(t0 + 60 * minute);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1001-x');
+  });
+
+  test('not while the policy says no (a match on the field, the setting off)', async () => {
+    rm.setIdleReleasePolicy(() => null);
+    linked.delete('slot2');
+    await poll(t0 + minute);
+    await rm.configure('slot1', robot);
+
+    await poll(t0 + 60 * minute);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1001-x');
+  });
+
+  test('time before the radio answered does not count as off the Wi-Fi', async () => {
+    // A restart (or a radio outage) forgets when robots were last linked.
+    rm = new RadioManagerClass('http://192.0.2.2');
+    rm.stopPolling();
+    rm.setIdleReleasePolicy(() => ({ minutes: 5, exempt: () => false }));
+    linked.delete('slot2');
+    await poll(t0 + 60 * minute); // first poll: the radio comes up now
+    await rm.configure('slot1', robot);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1001-x');
+
+    await poll(t0 + 66 * minute);
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
   });
 });

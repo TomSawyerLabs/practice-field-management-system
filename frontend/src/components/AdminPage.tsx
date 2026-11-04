@@ -25,7 +25,13 @@ import TableSortLabel from '@mui/material/TableSortLabel';
 
 import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
 import { StationNameList } from '../../../src/types';
-import { hostTeamsInEffect, prettyStationName, queueInUse, teamLabelAmong } from '../../../src/utils';
+import {
+  hostTeamsInEffect,
+  idleReleaseMinutes,
+  prettyStationName,
+  queueInUse,
+  teamLabelAmong,
+} from '../../../src/utils';
 import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -1172,10 +1178,42 @@ function WifiChangesSection() {
               ? 'When a match ends, every robot on the field is queued to leave so the next match starts clean. A robot that joins the next match, or whose team presses Keep, stays. Nothing leaves until you press Apply now.'
               : 'Robots stay on the field after a match until their team releases them or you clear the radio.'}
           </Typography>
+          <IdleReleaseSetting />
         </CardContent>
       </Card>
       <PendingRadioChangesPanel />
     </>
+  );
+}
+
+/** How long a robot may be off the field Wi-Fi before pFMS gives its slot to
+ *  a team in line at a full field (`idleReleaseMinutes`). Saved on blur. */
+function IdleReleaseSetting() {
+  const setupConfig = useSetupConfig();
+  const saved = idleReleaseMinutes(setupConfig?.config.settings ?? {});
+  const [draft, setDraft] = useState(String(saved));
+  useEffect(() => setDraft(String(saved)), [saved]);
+  const minutes = Number(draft);
+  const valid = draft.trim() !== '' && Number.isInteger(minutes) && minutes >= 0 && minutes <= 240;
+  return (
+    <Box sx={{ mt: 2 }}>
+      <TextField
+        size="small"
+        type="number"
+        label="Give an idle robot's slot to a waiting team after (minutes)"
+        value={draft}
+        error={!valid}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => valid && minutes !== saved && sendUpdateSetupSettings({ idleReleaseMinutes: minutes })}
+        inputProps={{ min: 0, max: 240 }}
+        sx={{ width: 420, maxWidth: '100%' }}
+      />
+      <Typography variant="body2" sx={{ color: 'text.secondary', mt: 0.5 }}>
+        {minutes > 0 && valid
+          ? `When the field is full, a team can still press Enable Robot to get in line. pFMS then releases the robot that has been off the field Wi-Fi longest, once it has been off ${minutes} min, and the waiting robot takes its slot. Never during a match, and never a host robot. With nobody waiting, idle robots keep their slots.`
+          : 'Off (0): teams in line at a full field wait until a team or field staff release a robot.'}
+      </Typography>
+    </Box>
   );
 }
 

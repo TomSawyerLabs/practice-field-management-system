@@ -707,6 +707,55 @@ describe('order by time on the field', () => {
     });
   });
 
+  describe('a full field (2026-11-03: 114 off the Wi-Fi for hours, holding a slot)', () => {
+    const full = radio({
+      slot1: station({ ssid: '114', isLinked: false }),
+      slot2: station({ ssid: '222' }),
+      slot3: station({ ssid: '333', isLinked: false }),
+      slot4: station({ ssid: '444' }),
+      slot5: station({ ssid: '555' }),
+      slot6: station({ ssid: '666' }),
+    });
+    const lastLinked = { slot1: NOW - 2 * 3600_000, slot3: NOW - 60_000 };
+    const inLine = {
+      type: 'pendingCommitState' as const,
+      pending: true,
+      hold: 'full' as const,
+      changes: [{ id: 'a', kind: 'enable' as const, ssid: '8048', station: null, secured: true }],
+    };
+
+    test('a visitor off the Wi-Fi can be released', () => {
+      const issue = detectFieldIssues(inputs({ driveSession: null, latest: full, lastLinked })).find(
+        i => i.id === 'robot-not-linked-slot1',
+      );
+      expect(issue?.actions).toEqual([{ kind: 'release', station: 'slot1' }]);
+      expect(issue?.fix).toContain('release it');
+    });
+
+    test('with room on the field it is not offered', () => {
+      const latest = radio({ slot1: station({ ssid: '114', isLinked: false }) });
+      const issue = detectFieldIssues(inputs({ driveSession: null, latest, lastLinked })).find(
+        i => i.id === 'robot-not-linked-slot1',
+      );
+      expect(issue?.actions).toBeUndefined();
+    });
+
+    test('a team in line is a warning offering the robot off the longest', () => {
+      const issue = detectFieldIssues(
+        inputs({ driveSession: null, latest: full, lastLinked, pending: inLine, idleReleaseMinutes: 5 }),
+      ).find(i => i.id === 'wifi-line');
+      expect(issue).toMatchObject({ severity: 'warning', title: '8048 is waiting for a slot — the field is full' });
+      expect(issue?.detail).toContain('Off the field Wi-Fi: 114, 333.');
+      expect(issue?.detail).toContain('5 min');
+      expect(issue?.actions).toEqual([{ kind: 'release', station: 'slot1' }]);
+    });
+
+    test('nobody in line, no line warning', () => {
+      const ids = detectFieldIssues(inputs({ driveSession: null, latest: full, lastLinked })).map(i => i.id);
+      expect(ids).not.toContain('wifi-line');
+    });
+  });
+
   test('stationLabel names a station by its robot', () => {
     const input = inputs({
       latest: radio({ slot1: station({ ssid: '4159-Comp' }) }),

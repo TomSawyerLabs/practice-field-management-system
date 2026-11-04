@@ -15,11 +15,12 @@ import {
   type StagedStationChange,
   type StationName,
 } from '../../../src/types';
-import { prettyStationName, teamOfSsid } from '../../../src/utils';
+import { idleReleaseMinutes, prettyStationName, teamOfSsid } from '../../../src/utils';
 import {
   useLatest,
   useMatchState,
   usePendingCommitState,
+  useSetupConfig,
   sendApplyConfig,
   sendCancelPendingChange,
 } from '../hooks/useBackend';
@@ -35,6 +36,7 @@ export function describePendingChange(change: PendingChangeView): string {
   }
   if (change.reason === 'postMatch')
     return `${change.ssid} leaves the field — the match is over and it hasn't asked to stay`;
+  if (change.reason === 'idle') return `${change.ssid} leaves the field — off the Wi-Fi while a team waits`;
   return `${change.ssid} leaves the field`;
 }
 
@@ -47,8 +49,21 @@ export function describeStationChange(change: StagedStationChange | null, curren
   return `${current} is replaced by ${change.ssid}`;
 }
 
+/** What happens to a robot in line for a full field, in the audience's
+ *  words. `idleMinutes` is the idleReleaseMinutes setting (0 = off). */
+export function fullFieldText(audience: 'team' | 'staff', idleMinutes: number): string {
+  const idle =
+    idleMinutes > 0
+      ? ` pFMS also releases a robot that has been off the field Wi-Fi for ${idleMinutes} min to make room.`
+      : '';
+  return audience === 'team'
+    ? `The field is full, so your robot is in line. It joins as soon as a robot leaves the field.${idle}`
+    : `In line: the field is full. It joins as soon as a robot leaves; Apply now has nothing to do for it.${idle}`;
+}
+
 /** Why held requests are waiting, in the audience's words. */
-export function holdReasonText(hold: RadioHoldReason | undefined, audience: 'team' | 'staff'): string {
+export function holdReasonText(hold: RadioHoldReason | undefined, audience: 'team' | 'staff', idleMinutes = 0): string {
+  if (hold === 'full') return fullFieldText(audience, idleMinutes);
   if (hold === 'admin') {
     return audience === 'team'
       ? 'Field staff are holding Wi-Fi changes right now. Yours goes through when they apply it.'
@@ -171,6 +186,8 @@ function RobotsOnField() {
 export function PendingRadioChangesPanel() {
   const pending = usePendingCommitState();
   const matchState = useMatchState();
+  const setupConfig = useSetupConfig();
+  const idleMinutes = idleReleaseMinutes(setupConfig?.config.settings ?? {});
   const held = pending.changes ?? [];
   const deferred = entries(pending.deferredChanges);
   if (!pending.pending || (held.length === 0 && deferred.length === 0)) return null;
@@ -184,7 +201,7 @@ export function PendingRadioChangesPanel() {
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
           <Typography variant="h6">Wi-Fi changes waiting</Typography>
-          {held.length > 0 && (
+          {held.length > 0 && pending.hold !== 'full' && (
             <Button variant="contained" color="warning" disabled={matchRunning} onClick={sendApplyConfig}>
               Apply now
             </Button>
@@ -194,7 +211,7 @@ export function PendingRadioChangesPanel() {
         {held.length > 0 && (
           <>
             <Typography variant="body2" sx={{ color: 'text.secondary', mt: 1 }}>
-              {holdReasonText(pending.hold, 'staff')}
+              {holdReasonText(pending.hold, 'staff', idleMinutes)}
             </Typography>
             <PendingChangeLines changes={held} />
           </>

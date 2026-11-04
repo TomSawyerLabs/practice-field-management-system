@@ -279,6 +279,11 @@ export interface SetupSettings {
    *  plays on (joins the next match, or its team presses Keep). Nothing
    *  leaves until staff apply. Absent / true = on. */
   releaseAfterMatch?: boolean;
+  /** While a team is waiting for a slot on a full field, release the robot
+   *  that has been off the field Wi-Fi longest once it has been off this many
+   *  minutes; the waiting robot takes its slot. Host robots are never
+   *  released this way. Absent = 5; 0 = never. */
+  idleReleaseMinutes?: number;
   /** Teams hosting the field. Their robots stay configured through the daily
    *  reset, aren't queued to leave when a match ends, and sit last on staff's
    *  lists of who to release. All of that is off while the match queue is in
@@ -896,6 +901,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   sixGhzWatchInterface: v => typeof v === 'string' && /^[a-zA-Z0-9._-]{0,15}$/.test(v),
   wifiCountry: v => typeof v === 'string' && /^[A-Z]{2}$/.test(v),
   releaseAfterMatch: v => typeof v === 'boolean',
+  idleReleaseMinutes: v => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 240,
   hostTeams: v =>
     Array.isArray(v) && v.length <= 16 && v.every(t => typeof t === 'number' && Number.isInteger(t) && t > 0),
   controllerPolicy: v => v === 'none' || v === 'preferSystemCore' || v === 'blockRoboRIO' || v === 'blockSystemCore',
@@ -1150,6 +1156,19 @@ export function isCancelStationChange(msg: unknown): msg is CancelStationChange 
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as CancelStationChange;
   return m.type === 'cancelStationChange' && typeof m.station === 'string' && StationNameRegex.test(m.station);
+}
+
+/** A team takes its robot out of the line for a full field (its enable that
+ *  is waiting for a free station). Touches nothing else on the list. */
+export type LeaveWifiLine = {
+  type: 'leaveWifiLine';
+  ssid: string;
+};
+
+export function isLeaveWifiLine(msg: unknown): msg is LeaveWifiLine {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as LeaveWifiLine;
+  return m.type === 'leaveWifiLine' && typeof m.ssid === 'string' && m.ssid.length > 0 && m.ssid.length <= 64;
 }
 
 export type InternetToggle = {
@@ -2334,12 +2353,15 @@ export function isRoutePreferenceState(msg: unknown): msg is RoutePreferenceStat
  *  or one is set up or just over and the match hold is on, an admin
  *  switched the hold on, or
  *  other changes are already waiting for staff to apply and a new one
- *  joins that batch instead of reconfiguring the radio on its own. */
-export type RadioHoldReason = 'match' | 'admin' | 'pending';
+ *  joins that batch instead of reconfiguring the radio on its own. 'full'
+ *  is the one wait that clears by itself: an enable with no free station,
+ *  in line until a robot leaves (see idleReleaseMinutes). */
+export type RadioHoldReason = 'match' | 'admin' | 'pending' | 'full';
 
-/** Who asked for a robot to leave: its team, or the end of a match (every
- *  robot on the field is queued to leave unless it plays on). */
-export type PendingReleaseReason = 'team' | 'postMatch';
+/** Who asked for a robot to leave: its team, the end of a match (every
+ *  robot on the field is queued to leave unless it plays on), or pFMS making
+ *  room for a waiting team after the robot was off the Wi-Fi too long. */
+export type PendingReleaseReason = 'team' | 'postMatch' | 'idle';
 
 /** A change waiting to reach the radio, server side (carries the key). Not
  *  keyed by station: a robot is named by its SSID, and an enable's station
@@ -2355,7 +2377,7 @@ export function isPendingChange(v: unknown): v is PendingChange {
   if (c.kind === 'enable') {
     return typeof c.wpaKey === 'string' && (StationNameList as readonly string[]).includes(c.station);
   }
-  if (c.kind === 'release') return c.reason === 'team' || c.reason === 'postMatch';
+  if (c.kind === 'release') return c.reason === 'team' || c.reason === 'postMatch' || c.reason === 'idle';
   return false;
 }
 
@@ -2398,6 +2420,21 @@ export type PendingCommitState = {
   /** What that deferred reconfigure will change: stations whose applied
    *  config the radio does not have yet. null = the station will be cleared. */
   deferredChanges?: Record<string, StagedStationChange | null>;
+  /** Robots pFMS took off the field in the last hour to make room for a
+   *  waiting team, newest first, so the released team's page can say why.
+   *  Absent when there are none. */
+  idleReleases?: IdleRelease[];
+};
+
+/** A robot pFMS released because it was off the Wi-Fi while a team waited. */
+export type IdleRelease = {
+  ssid: string;
+  /** Epoch ms of the release. */
+  at: number;
+  /** How long it had been off the field Wi-Fi, ms. */
+  offlineMs: number;
+  /** The robot that was waiting for the slot. */
+  forSsid: string;
 };
 
 export type StagedStationChange = {

@@ -454,6 +454,11 @@ export function sendCancelStationChange(station: StationName) {
   ws?.send(JSON.stringify({ type: 'cancelStationChange', station }));
 }
 
+/** A team takes its robot out of the line for a full field. */
+export function sendLeaveWifiLine(ssid: string) {
+  ws?.send(JSON.stringify({ type: 'leaveWifiLine', ssid }));
+}
+
 /** Staff withdraw one waiting Wi-Fi change by id (the ✕ on the pending panel). */
 export function sendCancelPendingChange(id: string) {
   ws?.send(JSON.stringify({ type: 'cancelPendingChange', id }));

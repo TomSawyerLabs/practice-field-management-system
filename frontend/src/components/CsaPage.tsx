@@ -29,7 +29,7 @@ import {
   type TeamCheckResults,
   type TelemetryUpdate,
 } from '../../../src/types';
-import { hostTeamsInEffect, teamOfSsid } from '../../../src/utils';
+import { hostTeamsInEffect, idleReleaseMinutes, teamOfSsid } from '../../../src/utils';
 import {
   getServerTime,
   sendAdminStationEnable,
@@ -1019,6 +1019,7 @@ export function CsaPage() {
       robotDropouts,
       robotEStops,
       hostTeams,
+      idleReleaseMinutes: setupConfig ? idleReleaseMinutes(setupConfig.config.settings) : undefined,
     }),
     [
       now,
@@ -1039,6 +1040,7 @@ export function CsaPage() {
       robotDropouts,
       robotEStops,
       hostTeams,
+      setupConfig,
     ],
   );
   const issues = useMemo(() => detectFieldIssues(input), [input]);

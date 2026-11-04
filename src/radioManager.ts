@@ -37,6 +37,7 @@ import {
   PendingChangeView,
   PendingReleaseReason,
   ConfigureResult,
+  IdleRelease,
   isPendingChange,
 } from './types.js';
 import { randomUUID } from 'node:crypto';
@@ -51,7 +52,9 @@ function newChangeId(): string {
 
 function describeChange(c: PendingChange): string {
   if (c.kind === 'enable') return `enable ${c.ssid} (${c.station})`;
-  return `release ${c.ssid}${c.reason === 'postMatch' ? ' (match over)' : ''}`;
+  const why =
+    c.reason === 'postMatch' ? ' (match over)' : c.reason === 'idle' ? ' (off the Wi-Fi, a team is waiting)' : '';
+  return `release ${c.ssid}${why}`;
 }
 
 /** Same robot, key and internet flag — what the radio would see as no change. */
@@ -59,6 +62,20 @@ function sameConfig(a: StationConfig | undefined, b: StationConfig | undefined):
   if (!a || !b) return !a && !b;
   return a.ssid === b.ssid && a.wpaKey === b.wpaKey && !!a.internetAccess === !!b.internetAccess;
 }
+
+type EnableChange = Extract<PendingChange, { kind: 'enable' }>;
+
+/** How pFMS makes room for a team in line at a full field. */
+export type IdleReleasePolicy = {
+  /** Minutes off the field Wi-Fi before a robot's slot goes to a waiting team. */
+  minutes: number;
+  /** Robots never released this way (the host team's). */
+  exempt: (ssid: string) => boolean;
+};
+
+/** How long a release for a waiting team is remembered, for the released
+ *  team's page. */
+const IDLE_RELEASE_MEMORY_MS = 60 * 60_000;
 
 // How long to wait for the radio to leave CONFIGURING after a POST. The
 // practice firmware (VH-109_AP_PRACTICE_1.2.9) has been seen to take more
@@ -114,6 +131,16 @@ class RadioManager {
    *  for the "dropped off" log line, after the radio may have forgotten it. */
   private linkedSince = new Map<StationName, { at: number; ssid: string }>();
   private lastLinkedListeners: ((timestamps: Partial<Record<StationName, number>>) => void)[] = [];
+  /** When the radio last started answering after not answering (or pFMS
+   *  started). Link state before this is unknown, so nobody counts as off the
+   *  Wi-Fi for longer than since then. */
+  private radioUpSince?: number;
+  /** Whether, and how, to release robots off the Wi-Fi for a waiting team;
+   *  null = not now. See setIdleReleasePolicy. */
+  private idleReleasePolicy?: () => IdleReleasePolicy | null;
+  /** Robots released for a waiting team, newest first, kept an hour. */
+  private idleReleases: IdleRelease[] = [];
+  private lastIdleCheck = 0;
 
   /** The radio's firmware version from its last status, so a change of
    *  radio (or of the URL pointing at one) re-detects the firmware mode. */
@@ -484,7 +511,10 @@ class RadioManager {
         throw new Error('Invalid radio status');
       }
 
-      if (!this.connected) console.log(`Radio connected at ${this.apiBaseUrl} (version: ${rawUpdate.version})`);
+      if (!this.connected) {
+        console.log(`Radio connected at ${this.apiBaseUrl} (version: ${rawUpdate.version})`);
+        this.radioUpSince = timestamp;
+      }
       this.connected = true;
       this.reportedUnreachable = undefined;
       // The firmware mode decides whether a commit runs dnsmasq (OFFSEASON),
@@ -528,6 +558,12 @@ class RadioManager {
         }
       }
       if (linkTransition) this.notifyLastLinkedListeners();
+      if (timestamp - this.lastIdleCheck >= 1000) {
+        this.lastIdleCheck = timestamp;
+        this.releaseIdleForWaiting(timestamp).catch(err => {
+          appError('Error releasing an idle robot: ' + (err instanceof Error ? err.message : String(err)));
+        });
+      }
 
       this.checkRadioConfigSync(radioUpdate);
 
@@ -623,7 +659,12 @@ class RadioManager {
     const hold = this.shouldHold?.() ?? null;
     if (hold) return hold;
     if (this.batching > 0) return 'pending';
-    return this.changes.some(c => c.id !== exceptId) ? 'pending' : null;
+    // An enable in line for a full field isn't waiting for staff: it goes
+    // with whatever frees a station. Counting it would park every later
+    // request behind it.
+    const others = this.changes.filter(c => c.id !== exceptId);
+    const { unresolved } = this.computeTarget(others);
+    return others.some(c => !unresolved.has(c.id)) ? 'pending' : null;
   }
 
   /** > 0 while batch() is collecting requests. */
@@ -641,7 +682,14 @@ class RadioManager {
       this.afterListChange();
       return { result: 'waiting', reason: wait };
     }
+    // A robot that only fits by taking an idle robot's slot gets it in the
+    // same radio change.
+    this.stageIdleReleases(Date.now());
     await this.applyPendingChanges();
+    if (this.changes.some(c => c.id === change.id)) {
+      console.log(`${change.ssid} is in line for a free station: the field is full`);
+      return { result: 'waiting', reason: 'full' };
+    }
     return { result: 'applied' };
   }
 
@@ -726,6 +774,14 @@ class RadioManager {
     return dropped.length;
   }
 
+  /** A team takes its robot out of the line for a full field: its enable
+   *  that has no station to land on is withdrawn. Nothing else is. */
+  leaveLine(ssid: string): boolean {
+    const { unresolved } = this.computeTarget();
+    const ids = this.changes.filter(c => c.kind === 'enable' && c.ssid === ssid && unresolved.has(c.id)).map(c => c.id);
+    return this.cancelPendingChanges(ids) > 0;
+  }
+
   /** A robot that is playing on — it joined the next match, or its team
    *  pressed Keep — stays: any release waiting for it is withdrawn. */
   keepRobot(ssid: string): boolean {
@@ -756,9 +812,11 @@ class RadioManager {
    * The active config with the pending list applied in order — what the
    * field looks like once staff apply. A release removes its robot wherever
    * it is. An enable of a robot not on the field takes its preferred station
-   * if that is free in the target, else the first free one; with none free
-   * it is unresolved and keeps waiting. `resolved` maps each applied change
-   * to the station it touches.
+   * if that is free in the target, else the first free one. One that finds
+   * none free gets a second chance after the whole list, so a release later
+   * in the list still makes room for it; with none free then either, it is
+   * unresolved and keeps waiting. `resolved` maps each applied change to the
+   * station it touches.
    */
   private computeTarget(changes: PendingChange[] = this.changes): {
     target: Partial<Record<StationName, StationConfig>>;
@@ -769,6 +827,17 @@ class RadioManager {
     const resolved = new Map<string, StationName>();
     const unresolved = new Set<string>();
     const where = (ssid: string) => StationNameList.find(s => target[s]?.ssid === ssid);
+    const inLine: EnableChange[] = [];
+    const place = (change: EnableChange, station: StationName) => {
+      const previous = target[station];
+      target[station] = {
+        ssid: change.ssid,
+        wpaKey: change.wpaKey,
+        internetAccess: change.internetAccess,
+        connectedAt: previous?.ssid === change.ssid ? previous.connectedAt : undefined,
+      };
+      resolved.set(change.id, station);
+    };
     for (const change of changes) {
       if (change.kind === 'release') {
         const station = where(change.ssid);
@@ -780,18 +849,13 @@ class RadioManager {
       }
       const station =
         where(change.ssid) ?? (!target[change.station] ? change.station : StationNameList.find(s => !target[s]));
-      if (!station) {
-        unresolved.add(change.id);
-        continue;
-      }
-      const previous = target[station];
-      target[station] = {
-        ssid: change.ssid,
-        wpaKey: change.wpaKey,
-        internetAccess: change.internetAccess,
-        connectedAt: previous?.ssid === change.ssid ? previous.connectedAt : undefined,
-      };
-      resolved.set(change.id, station);
+      if (station) place(change, station);
+      else inLine.push(change);
+    }
+    for (const change of inLine) {
+      const station = where(change.ssid) ?? StationNameList.find(s => !target[s]);
+      if (station) place(change, station);
+      else unresolved.add(change.id);
     }
     return { target, resolved, unresolved };
   }
@@ -879,7 +943,7 @@ class RadioManager {
    */
   retryHeldChanges() {
     if (this.changes.length === 0) return;
-    if (this.waitReason() === this.lastHoldBroadcast) return;
+    if ((this.waitReason() ?? 'full') === this.lastHoldBroadcast) return;
     this.broadcastPendingState();
   }
 
@@ -946,11 +1010,16 @@ class RadioManager {
     }
     if (unresolved.size > 0) console.log(`${unresolved.size} enable(s) still waiting: the field is full`);
     this.saveStagedConfig();
-    if (mutations.length > 0) {
-      this.saveActiveConfig();
-      this.notifyConfigChange();
-      this.notifyLastLinkedListeners();
+    if (mutations.length === 0) {
+      // Nothing for the radio: pushing the same config anyway would drop
+      // every robot for the ~30 s reconfigure (a team joining the line at a
+      // full field must not do that).
+      this.afterListChange();
+      return Promise.resolve();
     }
+    this.saveActiveConfig();
+    this.notifyConfigChange();
+    this.notifyLastLinkedListeners();
     return this.commitConfiguration();
   }
 
@@ -1469,8 +1538,11 @@ class RadioManager {
   getPendingState(): Omit<PendingCommitState, 'type'> {
     const changes = this.getPendingChanges();
     const stagedChanges = this.getStagedChanges();
-    const hold = changes.length > 0 ? (this.waitReason() ?? undefined) : undefined;
+    // With nothing else in the way, whatever still waits is in line for a
+    // full field.
+    const hold = changes.length > 0 ? (this.waitReason() ?? 'full') : undefined;
     this.lastHoldBroadcast = hold ?? null;
+    const idleReleases = this.recentIdleReleases();
     return {
       pending: this._pendingCommit,
       changes: changes.length > 0 ? changes : undefined,
@@ -1478,7 +1550,78 @@ class RadioManager {
       hold,
       deferred: this._deferredCommit || undefined,
       deferredChanges: this._deferredCommit ? this.getDeferredChanges() : undefined,
+      idleReleases: idleReleases.length > 0 ? idleReleases : undefined,
     };
+  }
+
+  /**
+   * Set how pFMS makes room for a team in line at a full field: after how
+   * many minutes off the field Wi-Fi a robot's slot goes to the waiting
+   * team, and which robots are never released this way. The callback
+   * returns null when no robot should be released (a match is on, the
+   * setting is off). Read live.
+   */
+  setIdleReleasePolicy(fn: () => IdleReleasePolicy | null): void {
+    this.idleReleasePolicy = fn;
+  }
+
+  /** The idle releases of the last hour, newest first. */
+  private recentIdleReleases(now = Date.now()): IdleRelease[] {
+    this.idleReleases = this.idleReleases.filter(r => now - r.at < IDLE_RELEASE_MEMORY_MS);
+    return this.idleReleases;
+  }
+
+  /**
+   * For each enable in line at a full field, put the release of one robot
+   * that has been off the field Wi-Fi past the policy's limit on the list,
+   * longest-off first. Only while nothing else holds the list (a match, the
+   * admin hold, changes waiting for staff) and the radio is answering.
+   * Returns what it released; the caller applies the list.
+   */
+  private stageIdleReleases(now: number): IdleRelease[] {
+    if (!this.changes.some(c => c.kind === 'enable')) return [];
+    const policy = this.idleReleasePolicy?.();
+    if (!policy || policy.minutes <= 0) return [];
+    if (!this.connected || this.radioUpSince === undefined) return [];
+    if (this.waitReason() !== null) return [];
+    const { unresolved } = this.computeTarget();
+    const waiting = this.changes.filter(c => unresolved.has(c.id));
+    if (waiting.length === 0) return [];
+
+    const upSince = this.radioUpSince;
+    const candidates = StationNameList.flatMap(station => {
+      const config = this.activeConfig[station];
+      if (!config || this.wasLinked.get(station)) return [];
+      if (policy.exempt(config.ssid) || this.changes.some(c => c.ssid === config.ssid)) return [];
+      const offSince = Math.max(this.lastLinked.get(station) ?? 0, config.connectedAt ?? 0, upSince);
+      const offlineMs = now - offSince;
+      return offlineMs >= policy.minutes * 60_000 ? [{ station, ssid: config.ssid, offlineMs }] : [];
+    }).sort((a, b) => b.offlineMs - a.offlineMs);
+
+    const released: IdleRelease[] = [];
+    for (const [i, candidate] of candidates.slice(0, waiting.length).entries()) {
+      const forSsid = waiting[i].ssid;
+      this.changes.push({ id: newChangeId(), kind: 'release', ssid: candidate.ssid, reason: 'idle' });
+      console.log(
+        `Releasing ${candidate.ssid} from ${candidate.station}: off the field Wi-Fi for ` +
+          `${Math.round(candidate.offlineMs / 60_000)} min, and ${forSsid} is waiting for a slot`,
+      );
+      released.push({ ssid: candidate.ssid, at: now, offlineMs: candidate.offlineMs, forSsid });
+    }
+    if (released.length > 0) {
+      this.idleReleases = [...[...released].reverse(), ...this.recentIdleReleases(now)];
+      this.saveStagedConfig();
+    }
+    return released;
+  }
+
+  /** Make room for teams in line if a robot has been off the Wi-Fi long
+   *  enough (see stageIdleReleases), in one radio change. Called from the
+   *  status poll. */
+  async releaseIdleForWaiting(now = Date.now()): Promise<IdleRelease[]> {
+    const released = this.stageIdleReleases(now);
+    if (released.length > 0) await this.applyPendingChanges();
+    return released;
   }
 
   /** Stations whose active config the radio does not have yet — what the

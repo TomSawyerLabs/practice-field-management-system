@@ -377,8 +377,10 @@ station — asking for it again on another station is a no-op, and a new
 key is a change in place. When staff apply, the list is reconciled with
 the field: releases free their stations, enables take their preferred
 station if it is free or the first free one otherwise, and the radio gets
-one update with the result. An enable that finds no free station stays on
-the list ("the field is full").
+one update with the result. An enable that finds no free station first
+gets a second look after the rest of the list (a release further down still
+makes room for it); failing that it stays on the list, in line for a full
+field.
 
 **After a match**, every robot on the field is queued to leave (a release
 per robot, marked "the match is over"), so the next match starts clean
@@ -409,9 +411,30 @@ same graceful way a deploy does, keeping network rules so robots stay
 connected. Both ask first and refuse while a match is running.
 
 Teams are never shown slot numbers — a robot is named by its SSID, and
-"the field is full" is what they see when all six slots are taken, with a
-pointer to ask field staff to make room. Teams cannot bump another team's
-robot themselves; that is a Release on the admin page.
+"the field is full" is what they see when all six slots are taken. Teams
+cannot bump another team's robot themselves, but they are not turned away
+either:
+
+- **Enable Robot puts the robot in line.** Its row says **In line** with a
+  Cancel button. A robot in line holds nothing else up: other teams'
+  requests still apply as they come. It joins in the same radio update as
+  whatever frees a station — its team's release, a staff Release, or the
+  idle release below. Apply now has nothing to do for it.
+- **pFMS releases an idle robot for it.** While a robot is in line, the
+  visiting robot that has been off the field Wi-Fi longest is released once it
+  has been off **5 minutes** (admin page, Wi-Fi changes card; 0 turns it off;
+  setting `idleReleaseMinutes`), and the waiting robot takes its slot. One
+  robot is released per robot in line. Never during a match (set up, running
+  or just over), never a host robot, and never while anything else waits for
+  staff. "Off since" is the last time pFMS saw it linked, and never earlier
+  than when it took the slot or the radio last started answering, so a pFMS
+  restart or radio outage doesn't make a robot look long gone. With nobody in
+  line an idle robot keeps its slot indefinitely. The released team's page
+  says what happened for the next hour.
+- **Staff see it on the CSA page**: "N is waiting for a slot — the field is
+  full", with a Release for the robot off the Wi-Fi longest. On a full field,
+  any robot off the Wi-Fi offers Release, not only a parked host robot. Admin
+  Teams & Controls still has Release on every row.
 
 ### Host team
 

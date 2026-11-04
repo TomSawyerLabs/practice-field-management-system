@@ -103,6 +103,12 @@ export function hostTeamsInEffect(
   return queue && queueInUse(queue) ? [] : (settings.hostTeams ?? []);
 }
 
+/** Minutes a robot may be off the Wi-Fi before pFMS gives its slot to a
+ *  waiting team (setting `idleReleaseMinutes`). 0 = never. */
+export function idleReleaseMinutes(settings: Pick<SetupSettings, 'idleReleaseMinutes'>): number {
+  return settings.idleReleaseMinutes ?? 5;
+}
+
 /** Whether a robot belongs to one of these teams, whatever its suffix. */
 export function isRobotOfTeams(ssid: string, teams: number[]): boolean {
   const team = teamOfSsid(ssid);
