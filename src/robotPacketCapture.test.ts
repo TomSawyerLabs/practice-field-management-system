@@ -210,6 +210,35 @@ describe('RobotPacketCapture SystemCore robots', () => {
     expect(f.hops.map(h => h.kind)).toEqual(['control', 'control']);
   });
 
+  // Real packets from team 5940, 2026-11-03: a control packet, and the
+  // robot's reply to it at 12.40 V (0x0c + 0x67/256), trimmed after its tags.
+  const SC_CONTROL = [0x00, 0x04, 0x02, 0x02, 0x40, 0x00, 0x8c, 0, 0, 0, 0, 0, 0, 0, 0, 0x02];
+  const SC_REPLY = [0x00, 0x04, 0x02, 0x02, 0x61, 0x0c, 0x67, 0x00, 0, 0, 0, 0, 0, 0, 0, 0x02];
+
+  test('a reply gives the battery, and the link is timed from its sequence number', () => {
+    const f = capture();
+    f.parse(frame('10.59.40.254', RIO, 1110, SC_CONTROL, undefined, 61619), 1_000);
+    f.parse(frame(RIO, '10.59.40.254', 61619, SC_REPLY, undefined, 1110), 1_002);
+    expect(f.telemetry).toHaveLength(1);
+    const [t] = f.telemetry;
+    expect(t.station).toBe('slot3');
+    expect(t.batteryVoltage).toBeCloseTo(12.402, 3);
+    // Enable, mode, brownout and e-stop aren't decoded yet, and match logic
+    // acts on them, so none is reported.
+    expect(t.dsStatus).toBeUndefined();
+    expect(t.brownout).toBeUndefined();
+    expect(f.hops.map(h => h.kind)).toEqual(['control', 'reply']);
+    // The control packet came before the robot was known to be SystemCore.
+    expect(f.raw).toHaveLength(1);
+  });
+
+  test('a SystemCore reply with an unknown comm version is only kept raw', () => {
+    const f = capture();
+    f.parse(frame(RIO, DS, 61619, [0x00, 0x04, 0x03, ...SC_REPLY.slice(3)], undefined, 1110), 1);
+    expect(f.telemetry).toEqual([]);
+    expect(f.raw).toHaveLength(1);
+  });
+
   test('an NI robot is never recorded', () => {
     const f = capture();
     f.parse(frame(DS, RIO, 1110, HEADER), 1);

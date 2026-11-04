@@ -19,9 +19,9 @@ import type { StationName, TelemetryUpdate } from './types.js';
  *
  * A SystemCore robot driven by the 2027 FIRST Driver Station answers from UDP
  * 1110 to the DS's own port instead, in a layout that isn't published. Those
- * robots are recognized by that, and their traffic both ways goes to
- * `rawLog` undecoded, rather than being misread as the NI layout
- * (plans/systemcore-robot-capture.md).
+ * robots are recognized by that. Their battery and sequence numbers are read
+ * (the parts decoded so far), and their traffic both ways also goes to
+ * `rawLog` for decoding the rest (plans/systemcore-robot-capture.md).
  */
 export class RobotPacketCapture {
   private proc: ChildProcess | null = null;
@@ -204,6 +204,7 @@ export class RobotPacketCapture {
         );
       }
       this.rawLog?.write(record);
+      this.parseSystemCoreReply(data.subarray(payloadOffset), srcIp, dstIp, vlanId, capturedAt);
       return;
     }
     if (dstPort === DS_TO_ROBOT_PORT) {
@@ -224,17 +225,7 @@ export class RobotPacketCapture {
     if (data.length < payloadOffset + 7) return; // Need at least through battery bytes
     const statusByte = data[payloadOffset + 3];
     const traceByte = data[payloadOffset + 4];
-    // 0xFFFF is the DS "no reading" sentinel (robot not connected); it would
-    // decode to 255.996V and display as "256.0V". An exact 0 is a frame that
-    // carried no voltage (a brief telemetry hiccup) — a connected robot battery
-    // is never 0.00V. Report undefined for both so the chart holds instead of
-    // flapping to 0.
-    const battByte = data[payloadOffset + 5];
-    const battFrac = data[payloadOffset + 6];
-    const batteryVoltage =
-      (battByte === 0xff && battFrac === 0xff) || (battByte === 0 && battFrac === 0)
-        ? undefined
-        : battByte + battFrac / 256;
+    const batteryVoltage = decodeBattery(data[payloadOffset + 5], data[payloadOffset + 6]);
 
     // Extract team number from source IP (10.TE.AM.x)
     const team = teamFromIp(srcIp);
@@ -294,6 +285,57 @@ export class RobotPacketCapture {
     this.onTelemetry(update);
   }
 
+  /**
+   * A SystemCore robot's status reply to the 2027 DS (from UDP 1110). Its
+   * first seven bytes match the NI reply, apart from comm version 0x02:
+   * sequence (2, echoing the control packet's), version, status, trace, and
+   * battery as whole volts then 1/256ths. Decoded from 5940's and 9940's
+   * traffic on 2026-11-03 (plans/systemcore-robot-capture.md).
+   *
+   * Only the battery and the sequence are used. Status bit 2 tracked enable
+   * there too, but the mode bits never changed and the brownout and e-stop
+   * bits were never seen set (not even at 6.6 V), so nothing reads them yet:
+   * no `dsStatus` or `brownout` (match logic acts on those), and no e-stop
+   * watch.
+   */
+  private parseSystemCoreReply(
+    payload: Buffer,
+    srcIp: string,
+    dstIp: string,
+    vlanId: number | undefined,
+    capturedAt: number,
+  ): void {
+    if (payload.length < 7 || payload[2] !== SYSTEMCORE_COMM_VERSION) return;
+    const team = teamFromIp(srcIp);
+    if (!team) return;
+    const station = this.resolveStation(team, vlanId, dstIp);
+    if (!station) return;
+
+    const batteryVoltage = decodeBattery(payload[5], payload[6]);
+    const seq = payload.readUInt16BE(0);
+    this.onHop?.({ station, kind: 'reply', src: srcIp, dst: dstIp, at: capturedAt });
+    this.dropouts?.reply(station, team, seq, capturedAt, { brownout: false, batteryVoltage });
+
+    const timer = this.linkTimer(station);
+    timer.reply(seq, capturedAt);
+    const link = timer.stats(capturedAt);
+
+    if (!this.debuggedTeams.has(team)) {
+      this.debuggedTeams.add(team);
+      console.log(
+        `RobotPacketCapture: team ${team} (SystemCore) → ${batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'no reading'}`,
+      );
+    }
+
+    this.onTelemetry({
+      type: 'telemetry',
+      station,
+      timestamp: Date.now(),
+      batteryVoltage,
+      ...(link && { robotLinkRttMs: link.rttMs, robotLinkLossPct: link.lossPct }),
+    });
+  }
+
   /** DS→robot control packet: time it for the link round trip, and report
    *  how many joysticks it carries. */
   private parseDsToRobot(
@@ -326,6 +368,17 @@ export class RobotPacketCapture {
         // and its VLAN says which robot that was.
         if (forwarded) this.eStops?.control(station, team, laptop, Boolean(payload[3] & 0x80), capturedAt);
       }
+    }
+    // The 2027 DS (comm version 0x02) numbers its control packets the same
+    // way, and its robot echoes the number, so the round trip and dropouts are
+    // timed as for NI. Its control byte and joysticks aren't read.
+    if (station && payload.length >= 4 && payload[2] === SYSTEMCORE_COMM_VERSION) {
+      this.dropouts?.control(station, team, payload.readUInt16BE(0), capturedAt, {
+        arriving: srcIp !== gatewayOf(dstIp),
+        forwarded,
+      });
+      this.linkTimer(station).sent(payload.readUInt16BE(0), capturedAt);
+      return;
     }
     const count = countDsJoysticks(payload);
     if (count === null) return;
@@ -419,6 +472,20 @@ export class RobotLinkTimer {
 const DS_TO_ROBOT_PORT = 1110;
 const ROBOT_TO_DS_PORT = 1150;
 const JOYSTICK_TAG = 0x0c;
+/** Comm version byte of the 2027 DS and SystemCore robots (NI uses 0x01). */
+const SYSTEMCORE_COMM_VERSION = 0x02;
+
+/**
+ * Battery from a robot status reply: whole volts, then 1/256ths. 0xFFFF is the
+ * DS "no reading" sentinel (robot not connected); it would decode to 255.996V
+ * and display as "256.0V". An exact 0 is a frame that carried no voltage (a
+ * brief telemetry hiccup) — a connected robot battery is never 0.00V. Both
+ * are undefined so the chart holds instead of flapping to 0.
+ */
+function decodeBattery(whole: number, fraction: number): number | undefined {
+  if ((whole === 0xff && fraction === 0xff) || (whole === 0 && fraction === 0)) return undefined;
+  return whole + fraction / 256;
+}
 
 /**
  * Count the joysticks in a legacy DS→robot control packet (UDP 1110), or

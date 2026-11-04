@@ -169,8 +169,8 @@ An e-stop has to act within 1 s, so what happens depends on the DS:
   journal logs `slotN: robot still says it's enabled N ms after the e-stop`. The
   warning goes 2 s after the robot stops saying so. A normal stop never shows it:
   a robot that's cut sends nothing at all. **The field can't see a robot that
-  isn't reporting to it**, including a SystemCore robot, whose status isn't decoded
-  yet, so no warning doesn't mean the robot stopped. Those pages say so during any
+  isn't reporting to it**, including a SystemCore robot, whose enable and e-stop
+  bits aren't decoded yet, so no warning doesn't mean the robot stopped. Those pages say so during any
   e-stop.
 
 **Team Stop** also cuts traffic, for as long as it lasts, because that DS isn't
@@ -369,14 +369,18 @@ network sent it` means a DS is reaching the robot another way, tethered or on
 The team's page and `/csa` say to power cycle the robot, and who sent it.
 Presses of pFMS's own stop and clear buttons log who pressed them
 (`Field E-Stop pressed by <ip> (<hostname>)`). SystemCore robots aren't
-covered until their packets are decoded.
+covered until their e-stop bit is decoded.
 
 A SystemCore robot (2027 DS) answers from UDP 1110 to the DS's own port, in
-an unpublished layout. The capture recognizes it by that and keeps its
-traffic raw in `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a
-day, 300 MB total) until it can be decoded, instead of misreading it as NI
-packets (`plans/systemcore-robot-capture.md`). Until then, dropouts, link
-checks and battery readings cover NI robots only.
+an unpublished layout. Both directions use comm version `0x02`. The first
+seven bytes are laid out like NI's: the sequence number, which the robot
+echoes, then version, status and trace, then the battery in bytes 5–6. pFMS
+reads the battery and the sequence numbers, so battery readings, the link
+round trip and dropouts cover SystemCore robots too (decoded from 5940's and
+9940's traffic, 2026-11-03). Status bit 2 tracked enable in that capture,
+but enable, mode, brownout and e-stop aren't read yet. The capture also keeps
+the traffic raw in `systemcore-captures/systemcore-YYYY-MM-DD.pcap` (50 MB a
+day, 300 MB total) for decoding the rest (`plans/systemcore-robot-capture.md`).
 
 The match engine still records a Driver Station per station; the drive
 sessions keep it in step, so a station shows the laptop of the robot on it
