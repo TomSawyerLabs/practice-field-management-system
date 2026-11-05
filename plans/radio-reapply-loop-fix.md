@@ -94,7 +94,10 @@ six-station reshuffle, without kicking a team that plays again soon.
    drives between matches would be cut off at the timer.
 3. **Both**: 2 for stations that played, 1 for the rest.
 
-Open question for the user: which option, and what N.
+Open question for the user: which option, and what N. **Answered 2026-11-04**
+in a different shape: release only when a team is waiting at a full field, the
+robot off the Wi-Fi longest, after `idleReleaseMinutes` (default 5). See
+`plans/idle-release-for-waiting-team.md`.
 
 ## Steps
 
