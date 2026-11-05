@@ -87,7 +87,8 @@ Fix it so:
        this.
 6. [x] Typecheck, tests, commit `796bf5a`.
 7. [x] End-to-end in headless Chrome (see Progress log).
-8. [ ] Deploy: left to the deploy-owner thread (`plans/deploy-log.md`).
+8. [x] Deployed `563e474` to steamboat 5:03 PM PST (01:03Z Nov 5) 2026-11-04,
+       at the user's request; logged in `plans/deploy-log.md`.
 
 ## Findings / gotchas
 

@@ -206,3 +206,7 @@ bad argument`, before any request. It says nothing about the server. Use
 - [x] `c08e287` pushed and deployed 9:02 PM PDT (04:02Z Oct 31), checked, release passed
 - [x] Next batch built and reviewed, on master at `8a2dd38`
 - [x] `8a2dd38` pushed and deployed 1:09 PM PDT (20:09Z Oct 31), checked, release passed
+- [x] `563e474` (teams get in line at a full field; idle robots released after
+      5 min) pushed and deployed 5:03 PM PST (01:03Z Nov 5) 2026-11-04 from the
+      idle-release thread at the user's request; service active, 114's two robots
+      relinked within a second
