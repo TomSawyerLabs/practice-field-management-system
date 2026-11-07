@@ -34,7 +34,9 @@ practice field is different. On a typical [Saturday] we'll have several teams
 coming and going all day. Most of the time each one just wants to drive its
 own robot, with its own Driver Station, without fighting over Wi-Fi. Every so
 often a few of them want to run a real match against each other, with nobody
-volunteering to sit in a scorekeeper's chair.
+volunteering to sit in a scorekeeper's chair. And sometimes we want a full
+scrimmage: a mini schedule for the teams who showed up, matches set up one
+after another, and the field going straight back to free drive afterwards.
 
 pFMS is built for that:
 
@@ -53,7 +55,12 @@ pFMS is built for that:
   ready up. Field staff (ref / scorekeeper / safety) ready up from their
   phones. Hold-to-start, official timing (2026 REBUILT), field audio, and
   E-Stop/A-Stop. 1v1, 2v2 and 3v3 all work, with a queue for busy days.
-  When the field is full, a team can get in line. A robot that's been off
+  For a scrimmage, pFMS generates a schedule from the teams there that day
+  (everyone plays the same number of matches, never back to back when the
+  numbers allow), or you can paste one in. One button then sets up the next
+  match: the robots' Wi-Fi, the match, and every team joined to its
+  alliance. Teams can still queue for pickup matches in between. When the
+  field is full, a team can get in line. A robot that's been off
   the Wi-Fi for 5 minutes gives up its slot to the team waiting.
 - **E-stop works outside matches too.** Robots in free drive can still be
   stopped from any staff page, and the robot stops within a second. The
@@ -126,8 +133,9 @@ poke at it.
 
 ### Limitations
 
-- **It's for practice fields, not events.** There's no event schedule,
-  alliance selection or playoffs. For a full offseason event,
+- **It's for practice fields, not events.** The schedule is for a casual
+  scrimmage. There are no qualification rankings, alliance selection or
+  playoffs. For a full offseason event,
   [Cheesy Arena](https://github.com/Team254/cheesy-arena) and
   [Freezy Arena](https://github.com/Freezy-Arena/freezy-arena) are still the
   right tools. pFMS is for the rest of the year.
