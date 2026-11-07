@@ -100,12 +100,19 @@ poke at it.
 ### Things that grew out of running it every week
 
 - **Practice video for every team.** Every enable outside a match becomes a
-  clip, with a little time either side, the balls scored and the robot's
+  clip, with a little time either side, the points scored and the robot's
   telemetry. Teams get a per-day link (and a zip) to take home. Matches are
   recorded too, and the drive team can download the video right after the
   match.
-- **TV scoreboard** to cast to the field TV, with optional live video and an
-  **HTTP scoring API** for goal sensors and ref tablets.
+- **Game-agnostic scoring.** Goal sensors, cameras, ESP32s and ref tablets
+  post events to an HTTP API. You configure what each one is worth: point
+  values, auto-only bonuses, fouls that go to the other alliance, and
+  de-duplication when two sensors watch the same goal. Devices report how
+  long ago a score happened, so a slow vision pipeline still lands in the
+  right period. A new game is a new list of scoring elements, not new code
+  (this year's hub shifts are the one game-specific rule on top). Scores
+  show on a **TV scoreboard** you cast to the field TV, with optional live
+  video.
 - **`/csa`: field network triage.** One screen that lists only the problems it
   has detected (radio, DS links, robot links) and what to try. There's also a
   plug-in **robot network tester** for CSAs, and a watch for competing 6 GHz
