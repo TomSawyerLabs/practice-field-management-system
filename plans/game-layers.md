@@ -1,0 +1,211 @@
+# Game layers: swappable season rules
+
+## Goal
+
+Turn pFMS's season-specific match and scoring logic into a swappable
+**game layer**. Each FRC season (2026 REBUILT now, 2027 next) is one
+self-contained layer that can be switched without touching the core, and
+teams/fields can define their **own custom games** without forking.
+
+Asked for by the user in a review comment on the Chief Delphi intro post
+draft (`plans/chiefdelphi-intro-post-draft.md`, "Game-agnostic scoring"
+bullet): _"Can we make each year a game "layer" that can easily be swapped
+out? Can teams use this system as a base for their own custom games?"_
+
+## Environment / context
+
+- Worktree `C:\Users\camer\.t3\worktrees\practice-field-configurator\feat-game-layers`,
+  branch `feat/game-layers` from local master (`3ba8a96`). Don't push or merge
+  into master without asking.
+- Checks: `bun run typecheck`, `bun test` (backend, `src/**/*.test.ts`) and the
+  frontend tests (`frontend/src/**/*.test.ts`).
+- Never test against field hardware: `DRY_RUN=1` plus a fake `RADIO_URL`.
+- The CD draft is owned by the CD-post thread. Don't edit it; propose wording.
+
+## Inventory (season-specific code, as of `3ba8a96`)
+
+### Backend
+
+| Where                                              | What                                                                                                                                                                                                                                | Kind      |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `src/shiftState.ts` (whole file)                   | REBUILT shift rules: `TRANSITION_DURATION=10`, `SHIFT_DURATION=25`, `MatchSubPeriod` union (`auto`/`transition`/`shift1-4`/`endgame`), `getMatchSubPeriod`, `getAllianceShiftState` (which goal is off), `getAllianceScoringShifts` | rule      |
+| `src/matchEngine.ts:102-111`                       | `OFFICIAL_CONFIG`: 20 s auto, 3 s pause, 140 s teleop, 30 s endgame, `autoWinner: 'scores'`                                                                                                                                         | timing    |
+| `src/matchEngine.ts:1064-1088` `updateMatchConfig` | official durations forced from `OFFICIAL_CONFIG`; only `skipAuto`/`autoWinner` settable                                                                                                                                             | timing    |
+| `src/matchEngine.ts:1244-1278` `startMatch`        | skip-auto requires a pre-set auto winner (REBUILT needs one for shifts)                                                                                                                                                             | rule      |
+| `src/matchEngine.ts:2060-2087` `getState`          | computes `subPeriod` and `inactiveGoalAlliance` via shiftState (skipped for challenge)                                                                                                                                              | rule      |
+| `src/matchEngine.ts:2256-2294` `computeAutoWinner` | auto winner from auto scores, random tiebreak ("REBUILT picks randomly")                                                                                                                                                            | rule      |
+| `src/matchEngine.ts:2487-2495`                     | DS game data: `R`/`B` = auto winner, sent in autoPause/teleop/endgame                                                                                                                                                               | game data |
+| `src/matchTimeline.ts:60,135-145`                  | `MatchMoment.subPeriod`/`inactiveGoal` from shiftState; `GOAL_GRACE_SECONDS=3` (in-flight grace)                                                                                                                                    | rule      |
+| `src/scoringEngine.ts:17,100,712`                  | imports `getMatchSubPeriod` (unused?); period breakdown hard-codes the 7 REBUILT period ids                                                                                                                                         | scoring   |
+| `src/scoringApi.ts:495-505`                        | OpenAPI text: "auto, transition, shift1–4, endgame", "goal had been off (shift or pause)"                                                                                                                                           | docs      |
+| `src/types.ts:1215,1509-1514,3097,3195`            | comments + `MatchState.subPeriod: MatchSubPeriod` type (imports from shiftState)                                                                                                                                                    | types     |
+| `src/matchAudio.ts:300-350`                        | field audio is **phase**-driven only (start/end/resume/warning/pause/abort). No per-shift cue. Generic FRC already.                                                                                                                 | audio     |
+| `src/fmsServer.ts:747-806`                         | game-data tag encoding per DS generation (2027 DS ≤ 8 bytes). Protocol, not season.                                                                                                                                                 | protocol  |
+| `src/index.ts:1687,1834-1848`                      | game-data field reused for status text ("Multiple DSes Detected"). Not season.                                                                                                                                                      | protocol  |
+| Scoring elements                                   | **No defaults exist.** Elements are in-memory, set by `PUT /api/score/config` or auto-registered (limit 1). Not persisted.                                                                                                          | scoring   |
+
+### Frontend
+
+| Where                                                                           | What                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `frontend/src/utils/shiftState.ts`                                              | re-exports `src/shiftState.ts`                                                                                                                                                                                                          |
+| `frontend/src/components/MatchTimeline.tsx:38-170, 525-827`                     | `OfficialTimeline`: hard-coded bar AUTO / pause / TS / S1-S4 / END GAME, own copy of 10/25/30 s constants and a fixed `PERIODS` table (20 s auto, 3 s pause), shift colouring by auto winner, "Auto Winner (REBUILT game data)" control |
+| `frontend/src/components/ScoreboardPage.tsx:33,85-98,383-405,456-460,2552-2640` | background tint from shift state, goal-off/grace display, current sub-period, `PeriodBreakdown` table with fixed rows (Auto, Transition, two "your" shifts, Endgame)                                                                    |
+| `frontend/src/components/MatchControlPage.tsx:96,114-130,1060-1082`             | page tint by shift; timer pulse at hard-coded `teleopDur - 10/35/60/85/110` boundaries                                                                                                                                                  |
+| `frontend/src/components/MatchTimer.tsx:3,28-37`                                | timer colour by shift                                                                                                                                                                                                                   |
+| `frontend/src/components/MatchSummaryPage.tsx:178`                              | `PeriodTable` renders whatever keys `periodBreakdown` has (generic already)                                                                                                                                                             |
+| `frontend/src/hooks/useMatchAudio.ts`                                           | browser audio, phase-driven, mirrors `matchAudio.ts` (generic FRC)                                                                                                                                                                      |
+| `frontend/src/utils/matchFormat.ts`                                             | phase labels (Auto/Teleop/Endgame), generic                                                                                                                                                                                             |
+
+### External contract (must not break)
+
+The ball counter (balls-counter) reads `/ws/scores` `MatchState.phase`,
+`matchId`, `subPeriod`, `inactiveGoalAlliance`, mirrors the 3 s grace
+(`docs/scoring.md`, guarded by `src/matchEngine.test.ts`). REBUILT's
+sub-period ids (`transition`, `shift1`..`shift4`) and both field names stay
+exactly as they are. Match history `periodBreakdown` keys stay the same.
+
+### Not season-specific (left alone)
+
+The FRC phase machine (countdown → auto → autoPause → teleop → endgame →
+postMatch), e-stop/A-stop, DS protocol, radio/network, challenge format
+(a field event, orthogonal to which game is loaded).
+
+## Design
+
+### Key observation
+
+Every REBUILT rule fits a small **declarative** vocabulary: teleop is a list
+of timed periods, and each period says whose goal is off — `autoWinner`,
+`autoLoser`, or nobody. Game data is "the auto winner's initial while the
+winner is known". So a game can be pure JSON data, and **the frontend can
+evaluate the same rules** (the scoreboard interpolates the clock locally and
+needs shift state every frame). Code hooks can't run in the browser, so a
+declarative definition is not just simpler for custom games — it's the only
+form both halves can share.
+
+### `GameDefinition` (JSON-serialisable, `src/game/types.ts`)
+
+```ts
+interface GameDefinition {
+  id: string; // 'rebuilt-2026', 'generic', 'my-game'
+  name: string; // 'REBUILT' — shown on /match, scoreboard, history
+  season?: number; // 2026
+  description?: string;
+  timing: {
+    autoDuration: number; // 0 = no auto
+    pauseDuration: number; // auto→teleop scoring delay
+    teleopDuration: number; // includes endgame
+    endgameDuration: number; // last N s of teleop
+  };
+  /** Does the game have an auto winner, and how is it decided by default. */
+  autoWinner?: { default: 'scores' | 'pause' | 'red' | 'blue'; tiebreak: 'random' };
+  /** Teleop before the endgame, split into named periods (sum ≤ teleop − endgame;
+   *  any remainder is one trailing 'teleop' period). Absent = one 'teleop' period. */
+  teleopPeriods?: {
+    id: string; // sub-period id on the wire ('transition', 'shift1')
+    label: string; // 'Shift 1'
+    short: string; // 'S1' (timeline bar)
+    duration: number;
+    goalOff?: 'autoWinner' | 'autoLoser'; // whose goal is inactive
+    cue?: SoundName; // field audio at period start (none for REBUILT)
+  }[];
+  /** What the DS game-data field carries. */
+  gameData?: { kind: 'autoWinner'; red: string; blue: string } | { kind: 'fixed'; text: string };
+  /** Scoring elements seeded when none are configured. */
+  elements?: ScoringElementConfig[];
+}
+```
+
+Pure functions over it (`src/game/rules.ts`, shared front/back, replacing
+`shiftState.ts`): `subPeriodAt(game, phase, remaining)`,
+`inactiveGoalAt(game, phase, remaining, autoWinner)`,
+`periodIds(game)`, `periodBoundaries(game)` (for the host timer pulse and the
+timeline bar), `scoringPeriodsFor(game, alliance, autoWinner)`,
+`gameDataFor(game, phase, autoWinner)`.
+
+### Built-in layers (`src/game/builtin/`)
+
+- `rebuilt-2026` — today's behaviour exactly: 20/3/140/30, transition 10 s +
+  shift1-4 at 25 s alternating `autoWinner`/`autoLoser`, game data R/B,
+  auto winner by scores with random tiebreak, no elements, no cues.
+- `generic` — 15 s auto, 0 s pause (configurable by a custom variant), 135 s
+  teleop, 20 s endgame, no auto winner, no shifts, no game data. Sub-periods
+  `auto`, `teleop`, `endgame`.
+- Example custom game JSON in `samples/games/` and in docs.
+
+Code hooks: if a future season needs a rule the vocabulary can't express,
+extend the vocabulary (new `goalOff` value, new `gameData.kind`) in core —
+one place, typed, evaluated on both sides. No runtime JS plugins (see open
+question 1).
+
+### Where the active game lives
+
+- `SetupSettings.game?: string` — id of the selected layer. Absent =
+  `rebuilt-2026` (no behaviour change on upgrade). Switch on `/admin` (live
+  settings), validated against the known ids.
+- The **definition is snapshotted into `MatchConfig.game`** when a match is
+  created/started, so a match runs on the rules it started with even if staff
+  switch games mid-match, and every client reads the rules from the
+  `matchState` it already receives. History entries record `game: {id, name}`.
+- Switching takes effect on the pending config only while no match is running.
+- The challenge format stays orthogonal: `format: 'challenge'` ignores the
+  game's periods (as now).
+
+### Custom games — where they come from (open question 2)
+
+Proposed: JSON files in a `games/` directory next to `setup-config.json`
+(the data dir), validated on load, listed on `/admin` with any validation
+errors, selectable like built-ins. Works unchanged from the single-file
+binary (it only reads data). An in-browser editor can come later.
+
+## Decisions already made (don't re-ask)
+
+- REBUILT moves first with **no behaviour change**; existing tests must pass.
+- Wire contract with balls-counter is frozen (ids + field names above).
+- E-stop, network and radio behaviour are out of scope.
+- The CD draft is not edited here; wording is proposed to the user.
+
+## Plan / steps
+
+1. [x] Inventory (above).
+2. [x] Design (above). **← waiting on the user for open questions 1–2.**
+3. [ ] `src/game/` types, rules, built-ins (`rebuilt-2026`, `generic`), unit
+       tests incl. a parity test: rules(rebuilt) == old shiftState at every
+       0.25 s of a match for both auto winners.
+4. [ ] Backend wired to the layer: matchEngine (timing, auto winner, game
+       data, sub-period/inactive goal), matchTimeline, scoringEngine breakdown,
+       scoringApi text, setup setting + validator, history `game`.
+5. [ ] Frontend wired: MatchTimeline bar from periods, ScoreboardPage tint &
+       breakdown, MatchControlPage tint & pulse, MatchTimer, admin selector.
+6. [ ] Custom games loader (per answer to Q2) + sample game.
+7. [ ] Docs: `docs/scoring.md`, `docs/match-system.md`, README "Writing your
+       own game".
+8. [ ] Propose CD-draft wording to the user.
+
+## Findings / gotchas
+
+- `MatchSummaryPage`'s `PeriodTable` already renders arbitrary breakdown keys.
+- Audio has no shift cues today; a per-period `cue` is new capability, unused
+  by REBUILT so behaviour doesn't change.
+- `ScoringEngine` has no default elements and doesn't persist them; layer
+  `elements` would be a seed applied only while none are configured.
+
+## Progress log
+
+- [x] 2026-11-07: inventory + design written.
+
+## Open questions for the user
+
+1. **Custom rules: declarative only, or runtime code plugins too?**
+   Recommendation: declarative only. REBUILT fits the vocabulary, the
+   browser must evaluate the same rules, and a JS plugin loaded by the
+   binary is arbitrary code running as the field service.
+2. **Where custom games are defined.** Recommendation: JSON files in a
+   `games/` dir beside `setup-config.json`, selected on `/admin`.
+
+## Things not to do
+
+- Don't rename `subPeriod` / `inactiveGoalAlliance` or REBUILT's period ids.
+- Don't let a game switch change the rules of a match already running.
+- Don't edit `plans/chiefdelphi-intro-post-draft.md`.
