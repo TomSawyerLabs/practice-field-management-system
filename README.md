@@ -40,7 +40,7 @@ and provides:
 - **Practice video** — on for every team by default (a team can untick
   "record while enabled" on its station page): every enable outside a match
   becomes a clip (3 s either side), with the
-  balls scored and the robot's telemetry alongside; a per-day link (and zip)
+  points scored and the robot's telemetry alongside; a per-day link (and zip)
   for taking home, posted to the team's mentors on Slack. Clips are kept a
   week (match videos a month), pause while matches are being run, and pause
   if the disk runs short
