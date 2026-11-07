@@ -53,15 +53,19 @@ pFMS is built for that:
   ready up. Field staff (ref / scorekeeper / safety) ready up from their
   phones. Hold-to-start, official timing (2026 REBUILT), field audio, and
   E-Stop/A-Stop. 1v1, 2v2 and 3v3 all work, with a queue for busy days.
+  When the field is full, a team can get in line. A robot that's been off
+  the Wi-Fi for 5 minutes gives up its slot to the team waiting.
 - **E-stop works outside matches too.** Robots in free drive can still be
-  stopped from the field. The field takes the DS under control and sends it
-  the e-stop, the same way a real field does. As a backstop, in case a DS
-  misbehaves, the host also holds back that DS's control packets until the
-  DS reports the robot disabled. The robot then disables itself within about
-  100 ms. Nothing else is touched: cameras, NetworkTables and telemetry keep
-  flowing.
+  stopped from any staff page, and the robot stops within a second. The
+  field takes the DS under control, the same way a real field does. A DS in
+  free drive may not be talking to the field at that moment, so until it
+  takes the stop, the host briefly holds back that DS's control packets.
+  Nothing else is touched: cameras, NetworkTables and telemetry keep
+  flowing. An e-stop survives a pFMS restart, and it can't be cleared while
+  a Driver Station is still telling the robot to drive.
 - **Multiple robots per team, all active at once.** Bring your comp bot and
-  your practice bot and drive both together, each from its own laptop. Each
+  your practice bot and drive both together, each from its own laptop, even
+  a roboRIO and a SystemCore side by side. Each
   laptop's DS link, routing, `.local` names (Limelights, roboRIO) and E-stop
   reach only the robot it drives. One tap on the team page picks which robot
   that is.
@@ -76,7 +80,10 @@ pFMS is built for that:
   Pi 4/5)
 - One static route on your site router (`10.0.0.0/8` → the pFMS host)
 
-Start it, open `/setup`, and a wizard checks each step as you go: packages,
+pFMS ships as **one program file** for Linux (x64 or arm64). It carries its
+web interface, and it updates itself from the admin page, rolling back on
+its own if a new version doesn't start. Download it, start it, open `/setup`,
+and a wizard checks each step as you go: packages,
 trunk NIC, radio reachable, team VLANs, test sound, scoreboard cast. If you'd
 rather read than click, there's also a
 [linear getting-started guide](https://github.com/TomSawyerLabs/practice-field-management-system/blob/master/docs/getting-started.md).
@@ -96,15 +103,24 @@ poke at it.
   has detected (radio, DS links, robot links) and what to try. There's also a
   plug-in **robot network tester** for CSAs, and a watch for competing 6 GHz
   APs.
+- **Robot health on the team page.** It warns when your robot briefly loses
+  its connection and says when a brownout caused it. If your robot is
+  e-stopped until power cycled, it says so, and says which Driver Station
+  sent the e-stop.
+- **Volunteer-friendly access.** Lock the operator pages with a code.
+  Volunteers type it once, or a logged-in phone shows a QR code to bring in
+  another. Stop buttons never need a login.
 - **Speed challenges and relay races** for outreach days and field events,
   with a leaderboard on the TV.
 - **Field timelapse.** Each practice day becomes one film, with a timeline
   of robots, enables and matches underneath.
 - A support widget on every page that's bridged to Slack, so teams can ask
   for help without hunting down a mentor.
-- **Support for the 2027 FIRST Driver Station / SystemCore** as well as the
-  NI DS. (We learned a few protocol surprises the hard way and are happy to
-  share notes with anyone writing their own FMS.)
+- **Ready for 2027: SystemCore and the new FIRST Driver Station** work
+  alongside the roboRIO and NI DS, with the same battery voltage, link
+  quality, enabled/mode and e-stop warnings. (We learned a few protocol
+  surprises the hard way and are happy to share notes with anyone writing
+  their own FMS.)
 
 [SCREENSHOTS: team page · /scores on the TV · /csa · a /timelapse frame]
 
