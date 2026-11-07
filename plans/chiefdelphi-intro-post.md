@@ -81,6 +81,11 @@ Nothing has been posted; posting is the user's call.
 - [x] 2026-11-07: draft refreshed with the features added since 2026-10-13
       (`298daf7`), and the e-stop bullet brought in line with `4c4b24a`.
       Draft is open in plan-presenter session `s-1d33cba1cd4d`.
+- [x] 2026-11-07: per the user's review comment, launched a separate thread
+      (branch `feat/game-layers`, plan `plans/game-layers.md` there) to make
+      each season a swappable game layer and support custom games. When it
+      lands, update the draft's "hub shifts are the one game-specific rule"
+      wording; that thread will propose the new text.
 - [ ] User fills the placeholders (location, team count, screenshots) and
       reviews the tone.
 - [ ] User posts it (or asks for revisions).
