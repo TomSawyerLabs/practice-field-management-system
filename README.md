@@ -37,6 +37,10 @@ and provides:
 - **Scoring** — an HTTP API for goal sensors and referee tablets, a
   TV-ready scoreboard with optional live video, and post-match review
   ([details](docs/scoring.md))
+- **Swappable games** — each season's rules (timing, REBUILT's hub shifts,
+  game data) are one game layer, picked on `/admin`. A plain generic game
+  ships alongside, and a field can write its own
+  ([below](#writing-your-own-game), [details](docs/games.md))
 - **Practice video** — on for every team by default (a team can untick
   "record while enabled" on its station page): every enable outside a match
   becomes a clip (3 s either side), with the
@@ -175,7 +179,7 @@ bun run build       # Type-check backend + build frontend
 | `/overview`         | Admin station overview — status for all six stations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `/match`            | Match control — dedicated controller page for match lifecycle and history                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `/staff?role=…`     | Field-staff ready-up — a referee / scorekeeper / safety monitor marks ready, with the field E-Stop                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `/admin`            | Admin page — the field E-STOP latch (and Cancel match while one runs) above five tabs: Match (field reset, freeplay, control-system policy, Teams & Controls), Wi-Fi (radio changes, Wi-Fi cards, robot scans, 6 GHz watch, firmware), Video (recording streams, retention, timelapse settings), Scoring & integrations (scoring, API keys, Slack, match audio), Access (external access); `/admin#video` etc. open a tab                                                                                                                               |
+| `/admin`            | Admin page — the field E-STOP latch (and Cancel match while one runs) above five tabs: Match (field reset, game, freeplay, control-system policy, Teams & Controls), Wi-Fi (radio changes, Wi-Fi cards, robot scans, 6 GHz watch, firmware), Video (recording streams, retention, timelapse settings), Scoring & integrations (scoring, API keys, Slack, match audio), Access (external access); `/admin#video` etc. open a tab                                                                                                                         |
 | `/network`          | Network page — discovered devices, VLAN status, network stats                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `/csa`              | Field network triage — one screen for CSAs and field staff: only detected problems (radio, Driver Station links, robot links, host tables) with what to try, plus a six-station strip; tap a station for its raw numbers. Has the field E-Stop                                                                                                                                                                                                                                                                                                          |
 | `/queue`            | Match queue — upcoming matches from a schedule and the fill line teams join from their page, per-match shape (1v1, 2v2, 3v3), no-shows, and "Set up next match" (Wi-Fi batch, create, join)                                                                                                                                                                                                                                                                                                                                                             |
@@ -190,6 +194,34 @@ bun run build       # Type-check backend + build frontend
 | `/support`          | _(redirects to `/`)_ — support is a floating widget available on every page                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `/api/score/schema` | Scoring API schema — machine-readable API docs for building scoring clients                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
+## Writing your own game
+
+pFMS runs whatever [game](docs/games.md) a field selects on `/admin` →
+Match → Game: REBUILT (the default), a plain generic match, or one of your
+own. A custom game is a JSON file:
+
+```json
+{
+  "id": "cone-rush",
+  "name": "Cone Rush",
+  "timing": { "autoDuration": 15, "pauseDuration": 3, "teleopDuration": 120, "endgameDuration": 20 },
+  "teleopPeriods": [
+    { "id": "red-only", "label": "Red scores", "duration": 30, "goalOff": "blue" },
+    { "id": "blue-only", "label": "Blue scores", "duration": 30, "goalOff": "red" }
+  ],
+  "elements": [{ "id": "cone", "name": "Cone", "pointValue": 2 }]
+}
+```
+
+Upload it on the Game card (it's saved to `games/` beside
+`setup-config.json`), then **Use this game**. Timing, which goal is on in
+each period, the auto winner, Driver Station game data, scoring elements and
+period sound cues are all yours to set; the scoreboard, timeline bar, timer
+and score breakdowns follow. For a rule JSON can't express, drop a JS/TS
+**plugin** into `games/` instead (on the host — plugins run as code, so
+they can't be uploaded from the web). Start from
+[`samples/games/`](samples/games/): a JSON King of the Hill and a plugin.
+
 ## Documentation
 
 The [`docs/`](docs/README.md) directory has the full documentation:
@@ -203,6 +235,7 @@ The [`docs/`](docs/README.md) directory has the full documentation:
   variables
 - [Match system](docs/match-system.md) — lifecycle, ready check,
   E-Stop/A-Stop, audio, history
+- [Games](docs/games.md) — game layers, choosing one, writing your own
 - [Scoring](docs/scoring.md) — scoring API and match review
 - [Support system](docs/support.md) — issue reports, chat, Slack, admin
   auth
@@ -225,6 +258,8 @@ in-flight task notes live in [`plans/`](plans/).
 - `frontend/` — React frontend (Vite multi-page app)
 - `docs/` — documentation
 - `sounds/` — match audio WAV files (charge horn, buzzers, countdowns)
+- `src/game/` — game layers: the built-in games and the shared rule engine
+- `samples/games/` — example custom games (JSON and plugin)
 - `scripts/` — development and test harness scripts
 - `firmware/` — cached radio firmware binaries
 - `dist/`, `frontend/dist/` — build output

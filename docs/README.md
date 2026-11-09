@@ -16,6 +16,7 @@ start. These guides go deeper:
 | [setup.md](setup.md)                     | Installation, production deployment, systemd, update script, reverse proxy, external access |
 | [configuration.md](configuration.md)     | Environment variable reference, persistence files, trusted proxies                          |
 | [match-system.md](match-system.md)       | Match lifecycle, ready check, E-Stop/A-Stop, match window, audio, history                   |
+| [games.md](games.md)                     | Game layers: REBUILT, the generic game, choosing one, writing your own (JSON or plugin)     |
 | [scoring.md](scoring.md)                 | Scoring HTTP API, elements/sources/dedup, match review API                                  |
 | [support.md](support.md)                 | Support widget, issue reports, chat, Slack integration, admin auth                          |
 | [network.md](network.md)                 | Network architecture, VLANs, routing, DNAT, device discovery, mDNS                          |

@@ -18,7 +18,8 @@ translates them into points.
 
 - **Elements** — configurable scoring types (e.g. "speaker", "amp",
   "foul") with point values, optional phase restrictions, and
-  deduplication windows.
+  deduplication windows. A [game](games.md#scoring-elements) can supply a
+  starting set; elements configured through the API always win.
 - **Sources** — each device identifies itself; the server tracks health
   and event counts per source.
 - **Deduplication** — when multiple sensors watch the same goal, events
@@ -27,7 +28,7 @@ translates them into points.
 - **Fouls** — elements with `awardToOpponent: true` give points to the
   opposing alliance.
 - **Timing** — match scoring depends on _when the ball scored_: auto or
-  teleop, which shift, whether the goal was on. Detectors lag (video
+  teleop, which of the game's periods, whether the goal was on. Detectors lag (video
   pipelines, peak detection, retries), so a device should report `ageMs`
   — how many milliseconds before it sent the request the score happened.
   The server keeps a timeline of the match and judges each event at
@@ -45,14 +46,17 @@ translates them into points.
   auto-created (1 point each) up to `SCORING_AUTO_REGISTER_LIMIT`
   (default 1); beyond the limit they're rejected as `unknown_element`.
   Set the limit to `0` to require explicit configuration.
-- **Goal-active shift scoring (REBUILT)** — in match mode, balls scored
-  while the alliance's goal is off don't count toward the match total.
-  A goal is off during the other alliance's teleop shifts and while the
-  match is paused by the operator; in both cases balls scored within 3 s
-  of the goal turning off still count (they were in flight). Balls that
-  scored before the countdown ended are not part of the match at all.
-  Match scores break down by period: auto, transition, shifts 1–4, and
-  endgame. The auto winner is decided from balls that scored during
+- **Goal-active scoring (the game's rules)** — in match mode, balls
+  scored while the alliance's goal is off don't count toward the match
+  total. Which goal is off, and when, is up to the [game](games.md) the
+  field runs: in REBUILT a goal is off during the other alliance's teleop
+  shifts; in the generic game, never. Every game's goals are also off
+  while the match is paused by the operator. In both cases balls scored
+  within 3 s of the goal turning off still count (they were in flight).
+  Balls that scored before the countdown ended are not part of the match
+  at all. Match scores break down by the game's periods — REBUILT: auto,
+  transition, shifts 1–4, and endgame; generic: auto, teleop, endgame. In
+  a game with an auto winner, it is decided from balls that scored during
   auto and the pause after it, judged by their own timing — a detector
   whose lag exceeds the auto pause can still miss that decision.
 
@@ -137,4 +141,5 @@ The ball counter (balls-counter) depends on the read-only broadcast: it keeps
 `MatchState` (`phase`, `matchId`, `subPeriod`, `inactiveGoalAlliance`; it
 builds its pause spans from `phase`), joining on `matchId`, and its tally
 mirrors the 3 s in-flight grace. Don't drop or rename those fields:
-`src/matchEngine.test.ts` fails if one goes missing.
+`src/matchEngine.test.ts` fails if one goes missing. Nor REBUILT's
+sub-period ids (`src/game/rules.test.ts` pins them).

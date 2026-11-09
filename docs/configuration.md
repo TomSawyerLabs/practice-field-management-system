@@ -115,6 +115,10 @@ State files are JSON, written to the working directory by default:
 Not configurable: `match-history.json`, `usage-data.json`,
 `audio-config.json` (fixed names in the working directory).
 
+| Variable    | Default                             | Holds                                                                                               |
+| ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `GAMES_DIR` | `games/` beside `SETUP_CONFIG_FILE` | Custom [games](games.md): `*.json` definitions (uploadable from `/admin`) and `*.js`/`*.ts` plugins |
+
 ## Scoreboard casting
 
 Two ways to get the scoreboard onto a TV.

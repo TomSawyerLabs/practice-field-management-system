@@ -7,18 +7,23 @@ only ever takes control of stations that have joined. Stations that have
 
 ## Timing
 
-Matches follow the 2026 REBUILT official timing. Durations are **fixed**
-(not user-adjustable) — the only per-match options are _skip autonomous_
-and the _auto winner_ selection. (The one exception is the
-[speed challenge](#speed-challenge), a non-match format for field events
-whose window the host does set.) Those options are set only on `/match`;
-a team's station page shows the timeline of what's about to run but has
-no way to change it.
+Matches follow the official timing of the [game](games.md) the field runs
+— 2026 REBUILT unless staff pick another on `/admin`. Durations are
+**fixed** (not user-adjustable) — the only per-match options are _skip
+autonomous_ and, for a game that has one, the _auto winner_ selection. (The
+one exception is the [speed challenge](#speed-challenge), a non-match format
+for field events whose window the host does set.) Those options are set only
+on `/match`; a team's station page shows the timeline of what's about to run
+but has no way to change it.
+
+The phases are the same for every game; the durations below are REBUILT's
+(the [generic game](games.md#built-in-games) runs 15 / 3 / 135 / 20 s, and a
+custom game sets its own):
 
 | Phase       | Duration | Notes                                                                       |
 | ----------- | -------- | --------------------------------------------------------------------------- |
 | `countdown` | 3 s      | Pre-start countdown; all joined stations disabled                           |
-| `auto`      | 20 s     | Autonomous period                                                           |
+| `auto`      | 20 s     | Autonomous period (skipped entirely by a game with no auto)                 |
 | `autoPause` | 3 s      | Pause between auto and teleop; robots disabled                              |
 | `teleop`    | 140 s    | Teleop clock total; the last 30 s displays as `endgame`                     |
 | `endgame`   | 30 s     | Final portion of the teleop clock; triggers the warning sound               |
@@ -556,14 +561,16 @@ site (or use the **Pop Out** button) to bring it back.
 
 ## Auto Winner and the Match Timeline
 
-The auto winner (which alliance's goal goes inactive first during teleop
-shifts) can be set to scores-based, pre-selected (red/blue), or manually
-chosen during a pause between auto and teleop.
+In a game with an auto winner (REBUILT: which alliance's goal goes inactive
+first during the teleop shifts), it can be set to scores-based, pre-selected
+(red/blue), or manually chosen during a pause between auto and teleop. A
+game without one hides the control, and skipping auto needs no winner.
 
-The match timeline visualises the full match structure with shift
-colouring: when the auto winner is known, solid red/blue sections show
-which alliance is active during each 25-second shift. When unknown,
-diagonal stripes indicate uncertainty.
+The match timeline draws the game's periods, labelled with the game's name:
+auto, the pause, each teleop period, the endgame. A period that switches a
+goal off is coloured by the alliance that scores in it — solid red/blue when
+the auto winner is known (REBUILT's 25-second shifts), diagonal stripes while
+it isn't. Periods with both goals on are green.
 
 ## Match Audio
 
@@ -582,6 +589,9 @@ files in `sounds/`:
 | `pause`          | Match paused, or a resume countdown cancelled                   |
 | `abort`          | Match cancelled, field e-stopped, emptied, or countdown aborted |
 | `getready`       | Ready-check announcement                                        |
+
+A [game](games.md) can also cue one of these as teleop moves from one of its
+periods to the next (a period's `cue`). REBUILT cues none.
 
 A spoken "3… 2… 1…" announcer plays when the countdown begins:
 `countdown1.wav`–`countdown4.wav` are pre-timed clips (four different
@@ -644,8 +654,9 @@ between 10 s and 5 minutes. Two timing styles:
 Everything else about a match still applies: the ready check, the 3-2-1
 countdown and horn, E-Stop and A-Stop, pause and resume, video recording,
 and the post-match QR code. What a challenge does **not** have is an
-autonomous period, alliance shifts, an endgame, or an auto winner — so no
-goal ever goes inactive during one, and balls scored count normally.
+autonomous period, the game's periods (REBUILT's alliance shifts), an
+endgame, or an auto winner — so no goal ever goes inactive during one, and
+balls scored count normally. It runs the same whatever game is selected.
 
 The format sticks between runs, so an event host picks it once rather than
 every time. The setup card and the TV both say "Speed Challenge" so a run
