@@ -86,6 +86,9 @@ Nothing has been posted; posting is the user's call.
       each season a swappable game layer and support custom games. When it
       lands, update the draft's "hub shifts are the one game-specific rule"
       wording; that thread will propose the new text.
+- [x] 2026-11-08: game layers merged to local master (`b9a3f1c`). Applied
+      the user-approved wording: scoring bullet ends "a new game file, not
+      new code", plus a new "Swappable games" bullet.
 - [ ] User fills the placeholders (location, team count, screenshots) and
       reviews the tone.
 - [ ] User posts it (or asks for revisions).

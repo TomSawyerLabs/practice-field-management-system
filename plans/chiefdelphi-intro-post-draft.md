@@ -109,10 +109,14 @@ poke at it.
   values, auto-only bonuses, fouls that go to the other alliance, and
   de-duplication when two sensors watch the same goal. Devices report how
   long ago a score happened, so a slow vision pipeline still lands in the
-  right period. A new game is a new list of scoring elements, not new code
-  (this year's hub shifts are the one game-specific rule on top). Scores
-  show on a **TV scoreboard** you cast to the field TV, with optional live
-  video.
+  right period. A new game is a new game file, not new code. Scores show on
+  a **TV scoreboard** you cast to the field TV, with optional live video.
+- **Swappable games.** Each season's rules live in one game layer: the
+  timing, which goal is live when (this year's hub shifts), the game data
+  sent to the robots, and starter scoring elements. REBUILT is the default,
+  a plain generic match ships alongside, and you switch on `/admin`. Your own
+  game is a short JSON file, or a JS/TS plugin for rules JSON can't express,
+  so off-season events and made-up games run without forking pFMS.
 - **`/csa`: field network triage.** One screen that lists only the problems it
   has detected (radio, DS links, robot links) and what to try. There's also a
   plug-in **robot network tester** for CSAs, and a watch for competing 6 GHz
