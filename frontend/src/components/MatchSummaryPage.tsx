@@ -92,6 +92,7 @@ export function MatchSummaryPage({ token }: { token: string }) {
         Match {summary.matchNumber}
       </Typography>
       <Typography color="text.secondary" sx={{ mb: 2 }}>
+        {summary.game && `${summary.game.name}${summary.game.season ? ` (${summary.game.season})` : ''} · `}
         {when} · {formatDuration(summary.durationSeconds)} · {endLabels[summary.endReason] ?? summary.endReason}
       </Typography>
 
@@ -175,7 +176,7 @@ export function MatchSummaryPage({ token }: { token: string }) {
   );
 }
 
-/** Final points per period (auto/teleop/endgame or shift periods). */
+/** Final points per period, keyed by the game's sub-periods. */
 function PeriodTable({ breakdown }: { breakdown: Record<string, { red: number; blue: number }> }) {
   const rows = Object.entries(breakdown);
   if (rows.length === 0) return null;
