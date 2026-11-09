@@ -149,6 +149,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   installSystemdService: 'admin',
   installHostTools: 'admin',
   updateSetupSettings: 'admin',
+  gameReload: 'admin',
   markSetupStep: 'admin',
   testRecordingStream: 'admin',
   queueAdd: 'admin',
@@ -178,6 +179,9 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   renderTimelapse: 'adminOnly',
   testTimelapseLights: 'adminOnly',
   deleteTimelapseRender: 'adminOnly',
+  // Writes a file on the host. JSON only — plugins are disk-only.
+  gameUpload: 'adminOnly',
+  gameDelete: 'adminOnly',
 };
 
 /** The tier of a message, by its `type`. Anything unlisted is refused, so a

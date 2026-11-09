@@ -29,7 +29,8 @@ import {
   defaultSlotToRadio,
 } from './types.js';
 import { appWarn, appError } from './appLogger.js';
-import { getAllianceShiftState, getMatchSubPeriod } from './shiftState.js';
+import { fixedGameProvider, gameOf, hasAutoWinner, type GameProvider, type GameRules } from './game/rules.js';
+import type { GameDefinition } from './game/types.js';
 import type { SavedStops } from './stopStore.js';
 
 const TICK_INTERVAL_MS = 250;
@@ -99,16 +100,16 @@ const POST_MATCH_AUTO_CLEAR_MS = 2 * 60_000;
  *  earlier and never touched again). */
 export const SETUP_AUTO_CANCEL_MS = 10 * 60_000;
 
-// Official 2026 REBUILT match timing (fixed — not user-adjustable)
-// Teleop = transition (10s) + 4 shifts (25s each) + endgame (30s) = 140s
-const OFFICIAL_CONFIG: MatchConfig = {
-  autoDuration: 20,
-  teleopDuration: 140,
-  endgameDuration: 30,
-  pauseDuration: 3,
-  skipAuto: false,
-  autoWinner: 'scores',
-};
+/** A regulation match of `game`, on the game's official timing (fixed — not
+ *  user-adjustable). Only the challenge format picks its own durations. */
+function officialConfig(game: GameDefinition): MatchConfig {
+  return {
+    ...game.timing,
+    skipAuto: false,
+    autoWinner: game.autoWinner?.default ?? 'scores',
+    game,
+  };
+}
 
 /** Timing for a challenge run: one enabled window and nothing else. No auto
  *  (so no auto winner, no shifts, no game-data byte) and no endgame — with
@@ -157,7 +158,10 @@ export function mintShareToken(): string {
 export class MatchEngine {
   private phase: MatchPhase = 'idle';
   private config: MatchConfig | null = null;
-  private pendingConfig: MatchConfig = { ...OFFICIAL_CONFIG };
+  /** Which game a new match runs, and the rules for any game a match was
+   *  set up with. Swapped for the registry at startup (see index.ts). */
+  private games: GameProvider = fixedGameProvider();
+  private pendingConfig: MatchConfig = officialConfig(this.games.current());
   private remainingTime = 0;
   private totalMatchTime = 0;
   private tickTimer: NodeJS.Timeout | null = null;
@@ -482,6 +486,41 @@ export class MatchEngine {
     this.outOfMatchHold = resolver;
   }
 
+  /** Where games come from. Re-reads the current game into a match that is
+   *  only set up (or no match), so a switch on /admin shows at once. */
+  setGameProvider(provider: GameProvider) {
+    this.games = provider;
+    this.refreshGame();
+  }
+
+  /**
+   * Pick up the game staff selected. Only before a match starts: a running
+   * (or finished) match keeps the game it was set up with. Keeps the host's
+   * skip-auto and auto-winner choices where the new game still has them.
+   */
+  refreshGame() {
+    if (this.phase !== 'idle' && this.phase !== 'created') return;
+    if (isChallengeConfig(this.pendingConfig)) return;
+    const game = this.games.current();
+    if (this.pendingConfig.game === game) return;
+    this.pendingConfig = this.officialPending(game, this.pendingConfig);
+    if (this.phase === 'created') this.closeReadyCheck();
+    console.log(`Match game: ${game.name} (${game.id})`);
+    this.broadcast();
+  }
+
+  /** An official pending config for `game`, keeping what the host may set. */
+  private officialPending(game: GameDefinition, requested: Partial<MatchConfig>): MatchConfig {
+    const base = officialConfig(game);
+    if (!hasAutoWinner(game)) return { ...base, skipAuto: requested.skipAuto ?? false };
+    return { ...base, skipAuto: requested.skipAuto ?? false, autoWinner: requested.autoWinner ?? base.autoWinner };
+  }
+
+  /** The rules of the match on the field (or about to be). */
+  private rules(): GameRules {
+    return this.games.rulesFor(gameOf(this.config ?? this.pendingConfig));
+  }
+
   /** Set callback used to determine auto winner from scoring data. */
   setAutoScoreResolver(resolver: () => { red: number; blue: number }) {
     this.autoScoreResolver = resolver;
@@ -521,7 +560,7 @@ export class MatchEngine {
     // loudly so a real match can't quietly inherit a challenge clock.
     this.pendingConfig = isChallengeConfig(this.pendingConfig)
       ? challengeConfig(this.pendingConfig)
-      : { ...OFFICIAL_CONFIG };
+      : officialConfig(this.games.current());
     this.config = null;
     this.portToSlot.clear();
     this.autoWinnerAlliance = null;
@@ -1061,7 +1100,8 @@ export class MatchEngine {
     return changed;
   }
 
-  /** Update match config — only skipAuto and autoWinner are user-settable. Durations are fixed. */
+  /** Update match config — only skipAuto and autoWinner are user-settable.
+   *  Durations and the game are the server's. */
   updateMatchConfig(config: MatchConfig) {
     if (this.phase !== 'created') {
       appWarn(`Cannot update match config in phase ${this.phase}`);
@@ -1069,16 +1109,12 @@ export class MatchEngine {
     }
     if (config.format === 'challenge') {
       // A field event, not a match: the host picks the window. This is the
-      // ONLY path that may set a duration — an official match is always
-      // OFFICIAL_CONFIG, whatever a client sends.
+      // ONLY path that may set a duration — an official match always runs
+      // the selected game's timing, whatever a client sends.
       this.pendingConfig = challengeConfig(config);
     } else {
-      // Only accept skipAuto and autoWinner — durations are official
-      this.pendingConfig = {
-        ...OFFICIAL_CONFIG,
-        skipAuto: config.skipAuto ?? false,
-        autoWinner: config.autoWinner ?? 'scores',
-      };
+      // Only accept skipAuto and autoWinner — durations and game are the server's
+      this.pendingConfig = this.officialPending(this.games.current(), config);
     }
     // Changing config invalidates the whole ready check
     this.closeReadyCheck();
@@ -1245,8 +1281,13 @@ export class MatchEngine {
 
     // If skipAuto, auto winner must be pre-set. A challenge has no auto period
     // to win, and pre-setting a winner to satisfy this would leak alliance
-    // shift tinting and the game-data byte into a run that has neither.
-    if (this.pendingConfig.skipAuto && !isChallengeConfig(this.pendingConfig)) {
+    // shift tinting and the game-data byte into a run that has neither. Nor
+    // does a game without an auto winner.
+    if (
+      this.pendingConfig.skipAuto &&
+      !isChallengeConfig(this.pendingConfig) &&
+      hasAutoWinner(gameOf(this.pendingConfig))
+    ) {
       if (
         this.pendingConfig.autoWinner !== 'red' &&
         this.pendingConfig.autoWinner !== 'blue' &&
@@ -2057,24 +2098,16 @@ export class MatchEngine {
       staffStates[role] = { ready: s.ready, ignored: s.ignored, connected: this.isStaffConnected(role) };
     }
 
-    // Shift scoring state — computed from the game phase, which survives
+    // The game's rule state — computed from the game phase, which survives
     // pauses (a paused match stays in its pre-pause sub-period). A challenge
-    // run has no shifts: both goals stay active, and asking for a sub-period
-    // would give a nonsense answer, since shift boundaries are measured back
-    // from a 140 s teleop this run doesn't have.
+    // run has no periods: both goals stay active, and asking the game for a
+    // sub-period would give a nonsense answer, since its boundaries are
+    // measured back from a teleop this run doesn't have.
     const effectivePhase = this.phase === 'paused' ? (this.prePausePhase ?? undefined) : this.phase;
-    const shifts = this.config && !isChallengeConfig(this.config);
-    const subPeriod = shifts
-      ? getMatchSubPeriod(effectivePhase, this.remainingTime, this.config!.teleopDuration)
-      : null;
-    const inactiveGoalAlliance = shifts
-      ? getAllianceShiftState(
-          effectivePhase,
-          this.remainingTime,
-          this.config!.teleopDuration,
-          this.config!.endgameDuration,
-          this.autoWinnerAlliance,
-        )
+    const rules = this.config && !isChallengeConfig(this.config) ? this.rules() : null;
+    const subPeriod = rules ? rules.subPeriod(effectivePhase, this.remainingTime) : null;
+    const inactiveGoalAlliance = rules
+      ? rules.inactiveGoal(effectivePhase, this.remainingTime, this.autoWinnerAlliance)
       : null;
 
     return {
@@ -2255,6 +2288,8 @@ export class MatchEngine {
   /** Determine which alliance won the autonomous period. */
   private computeAutoWinner() {
     if (!this.config) return;
+    // A game with no auto winner has nothing to decide.
+    if (!hasAutoWinner(gameOf(this.config))) return;
     const mode = this.config.autoWinner ?? 'scores';
 
     if (mode === 'red') {
@@ -2271,14 +2306,9 @@ export class MatchEngine {
       if (this.autoScoreResolver) {
         try {
           const scores = this.autoScoreResolver();
-          if (scores.red > scores.blue) {
-            this.autoWinnerAlliance = 'red';
-          } else if (scores.blue > scores.red) {
-            this.autoWinnerAlliance = 'blue';
-          } else {
-            // Tie — REBUILT picks randomly
-            this.autoWinnerAlliance = Math.random() < 0.5 ? 'red' : 'blue';
-          }
+          // The game decides: the higher score, a tie at random unless a
+          // plugin says otherwise.
+          this.autoWinnerAlliance = this.rules().autoWinner(scores) ?? (Math.random() < 0.5 ? 'red' : 'blue');
           const tieNote = scores.red === scores.blue ? ', random tiebreak' : '';
           console.log(
             `Auto winner: ${this.autoWinnerAlliance} (scores: red=${scores.red}, blue=${scores.blue}${tieNote})`,
@@ -2484,15 +2514,9 @@ export class MatchEngine {
     // position, not the physical port.
     const allianceStation = this.slotForStation(station);
 
-    // Build game data tags — during teleop/endgame, send the auto winner character
-    // per REBUILT game rules: 'R' = red's goal inactive first, 'B' = blue's goal inactive first
     const tags: OutboundTag[] = [];
-    if (
-      this.autoWinnerAlliance &&
-      (this.phase === 'teleop' || this.phase === 'endgame' || this.phase === 'autoPause')
-    ) {
-      tags.push({ type: 'gameData', data: this.autoWinnerAlliance === 'red' ? 'R' : 'B' });
-    }
+    const gameData = this.currentGameData();
+    if (gameData) tags.push({ type: 'gameData', data: gameData });
 
     const endpoint = this.endpointFor(ip);
     const target = `${ip}:${endpoint.udpPort}/${endpoint.protocol}`;
@@ -2517,6 +2541,14 @@ export class MatchEngine {
     this.udpSocket.send(packet, 0, packet.length, endpoint.udpPort, ip, err => {
       if (err) appError(`Failed to send DS packet to ${station} (${ip}): ${err.message}`);
     });
+  }
+
+  /** What the Driver Station's game-data field carries right now: whatever
+   *  the game sends the robots (REBUILT: the auto winner's initial once auto
+   *  is decided). A challenge run sends none. */
+  private currentGameData(): string | null {
+    if (isChallengeConfig(this.config ?? this.pendingConfig)) return null;
+    return this.rules().gameData(this.phase, this.autoWinnerAlliance);
   }
 
   private broadcast() {

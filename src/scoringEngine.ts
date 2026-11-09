@@ -14,8 +14,9 @@ import {
   ScoreSample,
   ScoreTiming,
 } from './types.js';
-import { getMatchSubPeriod } from './shiftState.js';
 import { MatchTimeline, type MatchMoment } from './matchTimeline.js';
+import { gameOf, periodIds, type GameRules } from './game/rules.js';
+import type { GameDefinition } from './game/types.js';
 
 const DEFAULT_WINDOW_SECONDS = 30;
 const DEFAULT_PHASE_GRACE_SECONDS = 5;
@@ -97,11 +98,13 @@ export class ScoringEngine {
   /** Which alliances are in match mode. Empty = all follow the top-level mode. */
   private matchAlliances = new Set<Alliance>();
 
-  // ── Match timeline (REBUILT shift scoring at the time the ball scored) ──
+  // ── Match timeline (the game's rules at the time the ball scored) ──
   /** Record of the match engine's state over wall-clock time */
   private timeline = new MatchTimeline();
 
   private autoRegisterLimit = 1;
+  /** Id of the game whose `elements` are configured, null once anyone else set them. */
+  private elementsFromGame: string | null = null;
   private suppressBroadcast = false;
   private listeners: ((state: ScoreState) => void)[] = [];
   /** Told about every event as it is accepted (before any re-judging). */
@@ -315,22 +318,55 @@ export class ScoringEngine {
   /** Configure a scoring element. */
   configureElement(config: ScoringElementConfig): void {
     this.elements.set(config.id, config);
+    this.elementsFromGame = null;
     this.broadcast();
   }
 
   /** Remove a scoring element. */
   removeElement(id: string): void {
     this.elements.delete(id);
+    this.elementsFromGame = null;
     this.broadcast();
   }
 
   /** Replace all element configurations at once. */
   setElements(configs: ScoringElementConfig[]): void {
+    this.replaceElements(configs);
+    this.elementsFromGame = null;
+    this.broadcast();
+  }
+
+  private replaceElements(configs: ScoringElementConfig[]): void {
     this.elements.clear();
     for (const config of configs) {
       this.elements.set(config.id, config);
     }
+  }
+
+  /**
+   * Start from a game's scoring elements. Only while nobody has configured
+   * elements themselves (through the API, or by hand): those always win.
+   * Elements a previous game brought are swapped for this game's, and only
+   * auto-registered ones are otherwise replaced.
+   */
+  applyGameElements(game: Pick<GameDefinition, 'id' | 'elements'>): void {
+    const configured = [...this.elements.values()].some(e => !e.autoRegistered);
+    if (configured && this.elementsFromGame === null) return;
+    const elements = game.elements ?? [];
+    if (elements.length === 0 && this.elementsFromGame === null) return;
+    this.replaceElements(elements.map(e => ({ ...e, autoRegistered: undefined })));
+    this.elementsFromGame = elements.length > 0 ? game.id : null;
     this.broadcast();
+  }
+
+  /** Which game the current elements came from, or null if someone set them. */
+  getElementsSource(): string | null {
+    return this.elementsFromGame;
+  }
+
+  /** Rules for a game a match runs — the game registry's, so plugins apply. */
+  setGameRulesResolver(rulesFor: (game: GameDefinition) => GameRules): void {
+    this.timeline.setRulesResolver(rulesFor);
   }
 
   /** Get all configured elements. */
@@ -707,9 +743,10 @@ export class ScoringEngine {
     return breakdown;
   }
 
-  /** Calculate per-sub-period point totals for each alliance (counted scores only). */
+  /** Calculate per-sub-period point totals for each alliance (counted scores
+   *  only), keyed by the periods of the game the match runs. */
   private calculatePeriodBreakdown(): Record<string, { red: number; blue: number }> {
-    const periods = ['auto', 'transition', 'shift1', 'shift2', 'shift3', 'shift4', 'endgame'];
+    const periods = periodIds(gameOf(this.timeline.latestConfig));
     const breakdown: Record<string, { red: number; blue: number }> = {};
     for (const p of periods) {
       breakdown[p] = { red: 0, blue: 0 };

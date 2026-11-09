@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { MatchPhase, MatchEndReason } from '../../../src/types';
+import type { MatchPhase, MatchEndReason, MatchState } from '../../../src/types';
+import { gameOf, periodCue } from '../../../src/game/rules';
 import { useMatchState, onPlayGetReady } from './useBackend';
 
 type SoundName =
@@ -201,11 +202,34 @@ export function useMatchAudio(
 }
 
 /**
+ * Plays the sound a game cues as teleop moves from one period to the next
+ * (mirrors `src/matchAudio.ts`). REBUILT cues none.
+ */
+export function usePeriodCues(matchState: MatchState | null | undefined, enabled = true): void {
+  const prevRef = useRef<string | null | undefined>(undefined);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const subPeriod = matchState?.subPeriod;
+  const phase = matchState?.phase;
+  const config = matchState?.config;
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = subPeriod;
+    if (!config) return;
+    const cue = periodCue(gameOf(config), phase, prev, subPeriod);
+    if (cue && enabledRef.current) play(cue);
+    // Only the sub-period moving matters; config/phase are read at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subPeriod]);
+}
+
+/**
  * Renderless component that plays match audio. Drop into any React tree
  * that has access to the WebSocket event bus (useMatchState).
  */
 export function MatchAudioBridge(): null {
   const matchState = useMatchState();
   useMatchAudio(matchState?.phase, matchState?.endReason, matchState?.matchId, true, matchState?.resumeAt);
+  usePeriodCues(matchState);
   return null;
 }

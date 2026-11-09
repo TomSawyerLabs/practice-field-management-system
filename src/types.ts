@@ -1,5 +1,5 @@
-// Type-only import — shiftState imports types back, but both are erased at runtime
-import type { MatchSubPeriod } from './shiftState.js';
+// Type-only import — game/types imports types back, but both are erased at runtime
+import type { GameCatalogEntry, GameDefinition } from './game/types.js';
 
 export interface StationDetails {
   ssid: string;
@@ -302,6 +302,9 @@ export interface SetupSettings {
   /** Whether the single-file binary updates itself, and when (see
    *  src/updateManager.ts). Absent = off. A checkout ignores it. */
   autoUpdate?: AutoUpdatePolicy;
+  /** Id of the game new matches run (src/game/). Absent = REBUILT. A match
+   *  already set up keeps the game it was set up with. */
+  game?: string;
 }
 
 /** How the packaged binary handles new builds on its own.
@@ -908,7 +911,75 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   publicUrl: v => typeof v === 'string' && /^https?:\/\/[^\s/]+$/.test(v),
   timelapse: isTimelapseConfig,
   autoUpdate: isAutoUpdatePolicy,
+  // Any well-formed id: one whose file isn't loaded runs REBUILT and says so
+  // on /admin, rather than refusing a setting that a missing file broke.
+  game: v => typeof v === 'string' && /^[a-z0-9][a-z0-9-]{0,47}$/.test(v),
 };
+
+/** The games the field can run, for /admin. Sent on connect and whenever a
+ *  game file loads or the selection changes. */
+export interface GameCatalogState {
+  type: 'gameCatalog';
+  games: GameCatalogEntry[];
+  /** The `game` setting, even when that game isn't loadable. */
+  selected?: string;
+  /** Id of the game new matches run right now. */
+  current: string;
+  /** Where custom games and plugins are read from. */
+  dir: string;
+  /** Id of the game whose scoring elements are configured, or null when
+   *  someone set them through the API. */
+  elementsFrom: string | null;
+}
+
+export function isGameCatalogState(msg: unknown): msg is GameCatalogState {
+  const m = msg as GameCatalogState;
+  return m?.type === 'gameCatalog' && Array.isArray(m.games) && typeof m.current === 'string';
+}
+
+/** /admin: save a JSON game into the games directory. Never code. */
+export interface GameUpload {
+  type: 'gameUpload';
+  json: string;
+}
+
+export function isGameUpload(msg: unknown): msg is GameUpload {
+  const m = msg as GameUpload;
+  return m?.type === 'gameUpload' && typeof m.json === 'string' && m.json.length <= 256 * 1024;
+}
+
+/** /admin: delete an uploaded JSON game file. */
+export interface GameDelete {
+  type: 'gameDelete';
+  file: string;
+}
+
+export function isGameDelete(msg: unknown): msg is GameDelete {
+  const m = msg as GameDelete;
+  return m?.type === 'gameDelete' && typeof m.file === 'string';
+}
+
+/** /admin: re-read the games directory (after editing a file on disk). */
+export interface GameReload {
+  type: 'gameReload';
+}
+
+export function isGameReload(msg: unknown): msg is GameReload {
+  return (msg as GameReload)?.type === 'gameReload';
+}
+
+/** How an upload, delete or reload went, to the client that asked. */
+export interface GameActionResult {
+  type: 'gameActionResult';
+  action: 'upload' | 'delete' | 'reload';
+  ok: boolean;
+  errors?: string[];
+}
+
+export function isGameActionResult(msg: unknown): msg is GameActionResult {
+  const m = msg as GameActionResult;
+  return m?.type === 'gameActionResult' && typeof m.ok === 'boolean';
+}
 
 export function isUpdateSetupSettings(msg: unknown): msg is UpdateSetupSettings {
   const m = msg as UpdateSetupSettings;
@@ -1304,6 +1375,11 @@ export type MatchConfig = {
   challengePenaltyLaps?: number;
   /** What one penalty costs a stopwatch run, in seconds. Absent means the default. */
   challengePenaltySeconds?: number;
+  /** The game this match runs, snapshotted when it was set up so a game
+   *  switched on /admin mid-match can't change the rules under it. The
+   *  server fills it in; whatever a client sends is ignored. Absent on
+   *  matches from before game layers, which were all REBUILT (`gameOf`). */
+  game?: GameDefinition;
 };
 
 /** True for anything that isn't a regulation match. Centralised so the
@@ -1506,10 +1582,11 @@ export type MatchState = {
   shareToken?: string;
   /** Sequential match counter (since server start) for display purposes. */
   matchNumber?: number;
-  /** Current sub-period (auto/transition/shift1-4/endgame) for REBUILT shift
-   *  scoring. Frozen at its pre-pause value while paused. */
-  subPeriod?: MatchSubPeriod | null;
-  /** Whose goal is currently INACTIVE due to shift scoring (null = both
+  /** Current sub-period of the game (`config.game`): REBUILT's are
+   *  auto/transition/shift1-4/endgame. Frozen at its pre-pause value while
+   *  paused. Read by the ball counter — don't rename. */
+  subPeriod?: string | null;
+  /** Whose goal is currently INACTIVE by the game's rules (null = both
    *  active). Frozen at its pre-pause value while paused. */
   inactiveGoalAlliance?: Alliance | null;
   remainingTime: number;
@@ -4250,6 +4327,9 @@ export interface MatchHistoryEntry {
   durationSeconds: number;
   endReason: MatchEndReason;
   autoWinner: Alliance | null;
+  /** The game the match ran. Absent on challenge runs and on matches from
+   *  before game layers (those were REBUILT). */
+  game?: MatchHistoryGame;
   teams: MatchHistoryTeam[];
   redScore: number;
   blueScore: number;
@@ -4282,6 +4362,13 @@ export interface MatchHistoryEntry {
   };
 }
 
+/** Which game a recorded match ran: enough to label it, not the rules. */
+export interface MatchHistoryGame {
+  id: string;
+  name: string;
+  season?: number;
+}
+
 export interface ScoreSample {
   t: number;
   red: number;
@@ -4297,6 +4384,7 @@ export interface PublicMatchSummary {
   durationSeconds: number;
   endReason: MatchEndReason;
   autoWinner: Alliance | null;
+  game?: MatchHistoryGame;
   teams: (MatchHistoryTeam & { avatarUrl: string })[];
   redScore: number;
   blueScore: number;

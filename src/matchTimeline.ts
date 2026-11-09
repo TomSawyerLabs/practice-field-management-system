@@ -1,5 +1,6 @@
 import { isChallengeConfig, type Alliance, type MatchConfig, type MatchPhase, type MatchState } from './types.js';
-import { getAllianceShiftState, getMatchSubPeriod, type MatchSubPeriod } from './shiftState.js';
+import { cachedDeclarativeRules, gameOf, type GameRules } from './game/rules.js';
+import type { GameDefinition } from './game/types.js';
 
 /**
  * After a goal turns off (shift change or operator pause), balls already in
@@ -34,7 +35,7 @@ interface TimelineSample {
   /** Server wall clock (ms since epoch) this sample describes. */
   at: number;
   phase: MatchPhase;
-  /** The phase that matters for shift scoring — the pre-pause phase while paused. */
+  /** The phase that matters for the game's rules — the pre-pause phase while paused. */
   gamePhase: MatchPhase;
   /** Seconds remaining in `phase` at `at`. */
   remaining: number;
@@ -55,8 +56,8 @@ export interface MatchMoment {
   remaining: number;
   autoWinner: Alliance | null;
   config: MatchConfig | null;
-  subPeriod: MatchSubPeriod | null;
-  /** Alliance whose goal is inactive by REBUILT shift rules at this instant (null = both active). */
+  subPeriod: string | null;
+  /** Alliance whose goal is inactive by the game's rules at this instant (null = both active). */
   inactiveGoal: Alliance | null;
   /** Wall clock when the current run of `phase` began. */
   phaseStartedAt: number;
@@ -88,6 +89,15 @@ export type GoalVerdict = 'active' | 'grace' | 'inactive' | 'outsideMatch';
  */
 export class MatchTimeline {
   private samples: TimelineSample[] = [];
+
+  /** `rulesFor` gives the rules of the game a sample's match runs — a
+   *  plugin's, when the game is one. */
+  constructor(private rulesFor: (game: GameDefinition) => GameRules = cachedDeclarativeRules) {}
+
+  /** Change where rules come from (the game registry, once it's loaded). */
+  setRulesResolver(rulesFor: (game: GameDefinition) => GameRules): void {
+    this.rulesFor = rulesFor;
+  }
 
   /** Forget everything (called when a new match begins). */
   reset(): void {
@@ -157,9 +167,10 @@ export class MatchTimeline {
     const s = this.sampleAtOrBefore(t);
     if (!s) return null;
     const remaining = s.frozen ? s.remaining : Math.max(0, s.remaining - (t - s.at) / 1000);
-    const teleop = s.config?.teleopDuration ?? 0;
-    const endgame = s.config?.endgameDuration ?? 0;
-    const shifts = !!s.config && !isChallengeConfig(s.config);
+    // A challenge run has no periods. Deriving them anyway would read the
+    // window as the game's teleop, invent a shift, and switch a goal off —
+    // silently refusing balls scored during a field event.
+    const rules = s.config && !isChallengeConfig(s.config) ? this.rulesFor(gameOf(s.config)) : null;
     return {
       at: t,
       phase: s.phase,
@@ -167,13 +178,15 @@ export class MatchTimeline {
       remaining,
       autoWinner: s.autoWinner,
       config: s.config,
-      // A challenge run has no shifts. Deriving them anyway would read the
-      // window as a 140 s teleop, invent a shift, and switch a goal off —
-      // silently refusing balls scored during a field event.
-      subPeriod: shifts ? getMatchSubPeriod(s.gamePhase, remaining, teleop) : null,
-      inactiveGoal: shifts ? getAllianceShiftState(s.gamePhase, remaining, teleop, endgame, s.autoWinner) : null,
+      subPeriod: rules ? rules.subPeriod(s.gamePhase, remaining) : null,
+      inactiveGoal: rules ? rules.inactiveGoal(s.gamePhase, remaining, s.autoWinner) : null,
       phaseStartedAt: s.phaseStartedAt,
     };
+  }
+
+  /** The config of the most recent sample (the match on the field), if any. */
+  get latestConfig(): MatchConfig | null {
+    return this.samples[this.samples.length - 1]?.config ?? null;
   }
 
   /** The most recent recorded instant, or undefined when empty. */

@@ -13,6 +13,7 @@ import type {
 } from './types.js';
 import { StationNameList, isChallengeConfig, challengePenalties, type ChallengeTally } from './types.js';
 import { mintShareToken } from './matchEngine.js';
+import { gameOf } from './game/rules.js';
 
 /** Only alliances that actually had a robot on the field are recorded — a
  *  solo run shouldn't leave an empty second entry on the leaderboard. */
@@ -143,6 +144,10 @@ export class MatchHistoryStore {
           redScore: 0,
           blueScore: 0,
         };
+        if (!isChallengeConfig(state.config)) {
+          const game = gameOf(state.config);
+          entry.game = { id: game.id, name: game.name, ...(game.season ? { season: game.season } : {}) };
+        }
         if (isChallengeConfig(state.config) && state.challenge) {
           // The costs are recorded, not looked up later: changing them
           // mid-event must not silently re-score the morning's runs.

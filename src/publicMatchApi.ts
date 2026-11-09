@@ -110,6 +110,7 @@ function summarize(entry: MatchHistoryEntry, token: string): PublicMatchSummary 
     durationSeconds: entry.durationSeconds,
     endReason: entry.endReason,
     autoWinner: entry.autoWinner,
+    game: entry.game,
     teams: entry.teams.map(t => ({ ...t, avatarUrl: `${base}/avatar/${t.teamNumber}.png` })),
     redScore: entry.redScore,
     blueScore: entry.blueScore,

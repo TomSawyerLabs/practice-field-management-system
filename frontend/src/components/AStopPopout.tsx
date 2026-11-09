@@ -16,7 +16,7 @@ import {
 } from '../hooks/useBackend';
 import { describeStopPress, type StopPress } from '../utils/stopDelivery';
 import { STOPS_OFFLINE } from './FieldEStop';
-import { useMatchAudio } from '../hooks/useMatchAudio';
+import { useMatchAudio, usePeriodCues } from '../hooks/useMatchAudio';
 
 /**
  * The match pop-out window. One named browser window that follows the match:
@@ -519,6 +519,7 @@ export function AStopPopout({ station }: { station: StationName }) {
   // pages that render an AStopPopout per station.
   const audioEnabled = isOpen && !muted && lastState?.station === station;
   useMatchAudio(matchState?.phase, matchState?.endReason, matchState?.matchId, audioEnabled, matchState?.resumeAt);
+  usePeriodCues(matchState, audioEnabled);
 
   // Window lives from join (setup) through the match; closes at post-match,
   // on leave, and — if the box is ticked — at the countdown.

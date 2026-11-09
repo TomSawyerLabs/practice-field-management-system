@@ -5,6 +5,7 @@ import { bundledPath } from './assetRoot.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { MatchEngine } from './matchEngine.js';
 import type { AudioDeviceInfo, AudioDeviceState } from './types.js';
+import { gameOf, periodCue } from './game/rules.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -261,8 +262,14 @@ export class MatchAudio {
     // 'paused' — so it has to be tracked separately from phase transitions.
     let resumeChild: ChildProcess | null = null;
     let lastResumeAt: number | undefined;
+    let lastSubPeriod: string | null | undefined;
 
     engine.addStateListener(state => {
+      // A game may cue a sound as teleop moves from one period to the next.
+      const cue = periodCue(gameOf(state.config), state.phase, lastSubPeriod, state.subPeriod);
+      lastSubPeriod = state.subPeriod;
+      if (cue) this.play(cue);
+
       const resumeStarted = state.resumeAt !== undefined && lastResumeAt === undefined;
       const resumeEnded = state.resumeAt === undefined && lastResumeAt !== undefined;
       lastResumeAt = state.resumeAt;

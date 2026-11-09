@@ -120,6 +120,11 @@ import {
   isInstallSystemdService,
   type SystemdServiceInstallResult,
   isUpdateSetupSettings,
+  isGameUpload,
+  isGameDelete,
+  isGameReload,
+  type GameActionResult,
+  type GameCatalogState,
   isTestRecordingStream,
   isMarkSetupStep,
   type SetupConfigState,
@@ -197,6 +202,7 @@ import { challengeLeaderboard, hasChallengeRuns, startOfDay } from './challengeR
 import type { UsageTracker } from './usageTracker.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { SetupConfigStore } from './setupConfigStore.js';
+import type { GameRegistry } from './game/registry.js';
 import type { MatchRecorder } from './matchRecorder.js';
 import type { FieldTimelapse } from './fieldTimelapse.js';
 import type { PracticeRecorder } from './practiceRecorder.js';
@@ -298,6 +304,11 @@ export interface SetupWebSocketOptions {
   matchHistoryStore?: MatchHistoryStore;
   usageTracker?: UsageTracker;
   hostnameResolver?: HostnameResolver;
+  /** The games the field can run (src/game/registry.ts) and the /admin list of them. */
+  games?: {
+    registry: GameRegistry;
+    catalog: () => GameCatalogState;
+  };
   setup?: {
     configStore: SetupConfigStore;
     runProbe: () => Promise<SetupProbeState>;
@@ -386,6 +397,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     matchHistoryStore,
     usageTracker,
     hostnameResolver,
+    games,
     setup,
   } = opts;
   const serverVersion = buildInfo()?.version ?? 'unknown';
@@ -994,6 +1006,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     setup.timelapse.addListener(state => broadcast(state));
   }
 
+  if (games) {
+    games.registry.addListener(() => broadcast(games.catalog()));
+  }
+
   if (setup) {
     setup.configStore.addListener(() => broadcast(setupConfigMessage()));
     // Live re-check, so a step goes green the moment the operator fixes it.
@@ -1155,6 +1171,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // Send persisted setup state so the wizard can resume where it left off
     if (setup) {
       ws.send(JSON.stringify(setupConfigMessage()));
+    }
+
+    // The games the field can run, for the /admin game picker
+    if (games) {
+      ws.send(JSON.stringify(games.catalog()));
     }
 
     // Send audio device state
@@ -2201,6 +2222,32 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           );
           // Settings change what the probe reports, so re-run immediately.
           void runAndBroadcastProbe();
+        }
+      } else if (isGameUpload(data) || isGameDelete(data) || isGameReload(data)) {
+        if (games) {
+          const reply = (result: Omit<GameActionResult, 'type'>) => {
+            if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'gameActionResult', ...result }));
+          };
+          const work: Promise<Omit<GameActionResult, 'type'>> = isGameUpload(data)
+            ? games.registry
+                .saveJson(data.json)
+                .then(errors => ({ action: 'upload' as const, ok: !errors, errors: errors ?? undefined }))
+            : isGameDelete(data)
+              ? games.registry
+                  .deleteJson(data.file)
+                  .then(error => ({ action: 'delete' as const, ok: !error, errors: error ? [error] : undefined }))
+              : games.registry.load().then(() => ({ action: 'reload' as const, ok: true }));
+          void work
+            .catch(err => ({
+              action: isGameUpload(data)
+                ? ('upload' as const)
+                : isGameDelete(data)
+                  ? ('delete' as const)
+                  : ('reload' as const),
+              ok: false,
+              errors: [err instanceof Error ? err.message : String(err)],
+            }))
+            .then(reply);
         }
       } else if (isMarkSetupStep(data)) {
         if (setup) {

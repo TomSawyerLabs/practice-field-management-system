@@ -114,6 +114,8 @@ describe('the access table', () => {
     'renderTimelapse',
     'testTimelapseLights',
     'deleteTimelapseRender',
+    'gameUpload',
+    'gameDelete',
   ]);
 });
 

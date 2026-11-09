@@ -42,6 +42,11 @@ export class SetupConfigStore {
     return this.config;
   }
 
+  /** The file the config lives in (other per-field data sits beside it). */
+  get path(): string {
+    return this.file;
+  }
+
   /** The first step that is neither done nor deliberately skipped. */
   nextStep(): SetupStepId | null {
     for (const id of SetupStepOrder) {
