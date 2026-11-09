@@ -494,14 +494,15 @@ function buildApiSchema(engine: ScoringEngine) {
             matchPhase: { type: 'string', description: 'Match phase at occurredAt (match mode only).' },
             matchSubPeriod: {
               type: 'string',
-              description: 'Sub-period at occurredAt: auto, transition, shift1–4, endgame.',
+              description:
+                "Sub-period at occurredAt, from the running game's periods (REBUILT: auto, transition, shift1–4, endgame; generic: auto, teleop, endgame).",
             },
             counted: { type: 'boolean', description: 'Whether the event adds to the displayed score.' },
             reason: {
               type: 'string',
               enum: ['deduplicated', 'phaseRestricted', 'outsideMatch', 'goalInactive', 'invalid', 'unknownElement'],
               description:
-                'Why it did not count. goalInactive: the goal had been off (shift or pause) for longer than the 3 s grace. ' +
+                "Why it did not count. goalInactive: the goal had been off (switched off by the game's rules, or the match paused) for longer than the 3 s grace. " +
                 'outsideMatch: scored before the match started.',
             },
           },

@@ -1,0 +1,19 @@
+{
+  "id": "king-of-the-hill",
+  "name": "King of the Hill",
+  "description": "One goal at a time: red holds the hill, then blue, then a free-for-all. 2 points a ball, 5 for a climb.",
+  "timing": { "autoDuration": 15, "pauseDuration": 3, "teleopDuration": 120, "endgameDuration": 20 },
+  "teleopPeriods": [
+    { "id": "red-hill-1", "label": "Red holds", "short": "RED", "duration": 25, "goalOff": "blue", "cue": "warning" },
+    { "id": "blue-hill-1", "label": "Blue holds", "short": "BLUE", "duration": 25, "goalOff": "red", "cue": "warning" },
+    { "id": "red-hill-2", "label": "Red holds", "short": "RED", "duration": 15, "goalOff": "blue", "cue": "warning" },
+    { "id": "blue-hill-2", "label": "Blue holds", "short": "BLUE", "duration": 15, "goalOff": "red", "cue": "warning" },
+    { "id": "free-for-all", "label": "Free for all", "short": "FFA", "duration": 20, "cue": "start" }
+  ],
+  "gameData": { "kind": "fixed", "text": "KOTH" },
+  "elements": [
+    { "id": "ball", "name": "Ball", "pointValue": 2, "deduplicationWindowMs": 250 },
+    { "id": "climb", "name": "Climb", "pointValue": 5, "activePhases": ["endgame"] },
+    { "id": "foul", "name": "Foul", "pointValue": 3, "awardToOpponent": true }
+  ]
+}

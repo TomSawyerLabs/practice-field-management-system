@@ -213,9 +213,11 @@ only**:
        MatchTimer, `/admin` Match tab "Game" card (`GameSection.tsx`: select,
        list + load errors, JSON upload, delete, reload). `shiftState.ts`
        (both) deleted. End-to-end WS test: `src/game/gameAdmin.test.ts`.
-6. [ ] **← current** Sample JSON game + sample plugin in `samples/games/`; scoringApi
-       OpenAPI text made game-neutral.
-7. [ ] Docs: `docs/scoring.md`, `docs/match-system.md`, README "Writing your
+6. [x] Samples: `samples/games/king-of-the-hill.json` (fixed-alliance
+       goals, cues, fixed game data, elements) and `samples/games/hot-goal.ts`
+       (plugin: computed turns + tie rule); a registry test loads both.
+       scoringApi OpenAPI text made game-neutral.
+7. [ ] **← current** Docs: `docs/scoring.md`, `docs/match-system.md`, README "Writing your
        own game".
 8. [ ] Propose CD-draft wording to the user.
 

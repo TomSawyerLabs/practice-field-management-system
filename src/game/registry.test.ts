@@ -191,3 +191,23 @@ describe('pluginRules', () => {
     expect(warnings[0]).toContain('inactiveGoal failed (bug)');
   });
 });
+
+describe('the sample games in samples/games', () => {
+  test('all load, and the plugin computes its turns', async () => {
+    const r = new GameRegistry(join(__dirname, '..', '..', 'samples', 'games'));
+    await r.load();
+    expect(broken(r)).toEqual([]);
+    expect(ids(r)).toEqual(['rebuilt-2026', 'generic', 'hot-goal', 'king-of-the-hill']);
+
+    r.select('hot-goal');
+    const hot = r.rulesFor(r.current());
+    expect(r.current().ruleHooks).toEqual(['inactiveGoal', 'autoWinner']);
+    // Head start (declarative): the loser's goal is off.
+    expect(hot.inactiveGoal('teleop', 130, 'red')).toBe('blue');
+    // Turns: the winner's goal off first, then the loser's, every 10 s.
+    expect(hot.inactiveGoal('teleop', 115, 'red')).toBe('red');
+    expect(hot.inactiveGoal('teleop', 105, 'red')).toBe('blue');
+    expect(hot.autoWinner({ red: 2, blue: 2 })).toBe('blue');
+    expect(hot.autoWinner({ red: 3, blue: 2 })).toBe('red');
+  });
+});
