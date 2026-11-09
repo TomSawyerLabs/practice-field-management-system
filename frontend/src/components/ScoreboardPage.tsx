@@ -30,8 +30,7 @@ import type {
 } from '../../../src/types';
 import { StationNameList, StationSetupCheckList } from '../../../src/types';
 import { checkRow, checksTone, firstFailingCheck, robotAlert, type RobotAlert } from '../utils/stationChecks';
-import { getAllianceShiftState, getAllianceScoringShifts, getMatchSubPeriod } from '../utils/shiftState';
-import type { MatchSubPeriod } from '../utils/shiftState';
+import { breakdownRows, gameOf, inactiveGoalNow, periodIds, subPeriodNow, type GameDefinition } from '../utils/game';
 import { isChallengeConfig, formatName, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
 import { challengeScore, isCountUpTiming } from '../../../src/types';
 import { MatchTimeline } from './MatchTimeline';
@@ -82,16 +81,9 @@ function getMatchBgColor(matchState: ReturnType<typeof useMatchState>): string {
     case 'autoPause':
       return BG_GREY;
     case 'teleop': {
-      // A challenge run has no shifts to colour by — it's green start to buzzer.
-      if (isChallengeConfig(matchState.config)) return BG_GREEN;
-      const inactive = getAllianceShiftState(
-        phase,
-        matchState.remainingTime,
-        matchState.config.teleopDuration,
-        matchState.config.endgameDuration,
-        matchState.autoWinnerAlliance,
-      );
-      if (!inactive) return BG_GREEN; // transition — both active
+      // A challenge run has no goals switched off — it's green start to buzzer.
+      const inactive = inactiveGoalNow(matchState);
+      if (!inactive) return BG_GREEN; // both active (REBUILT: the transition)
       if (inactive === 'red') return BG_BLUE; // blue scoring
       return BG_RED; // red scoring
     }
@@ -380,27 +372,13 @@ export function ScoreboardPage() {
     (alliance: Alliance): boolean => {
       if (!matchState) return true;
       if (matchState.phase !== 'teleop') return true;
-      // No shifts in a challenge run — both goals stay live the whole window.
-      if (isChallengeConfig(matchState.config)) return true;
-
-      const inactive = getAllianceShiftState(
-        matchState.phase,
-        matchState.remainingTime,
-        matchState.config.teleopDuration,
-        matchState.config.endgameDuration,
-        matchState.autoWinnerAlliance,
-      );
+      // A challenge run never switches a goal off (inactiveGoalNow says so).
+      const inactive = inactiveGoalNow(matchState);
       if (inactive !== alliance) return true;
 
-      // Currently inactive — check 3-second grace
-      const graceRemaining = matchState.remainingTime + 3;
-      const inactiveAtGrace = getAllianceShiftState(
-        'teleop',
-        graceRemaining,
-        matchState.config.teleopDuration,
-        matchState.config.endgameDuration,
-        matchState.autoWinnerAlliance,
-      );
+      // Currently inactive — check 3-second grace. (A plugin-computed rule
+      // only has the server's present value, so it shows no grace.)
+      const inactiveAtGrace = inactiveGoalNow(matchState, matchState.remainingTime + 3, 'teleop');
       return inactiveAtGrace !== alliance;
     },
     [matchState],
@@ -453,10 +431,10 @@ export function ScoreboardPage() {
 
   // Current sub-period for period breakdown highlight / future detection
   // (must be before the early return so hook count is stable)
-  const currentSubPeriod: MatchSubPeriod | null = useMemo(() => {
+  const matchGame = gameOf(matchState?.config);
+  const currentSubPeriod: string | null = useMemo(() => {
     if (!matchState || !isMatchMode) return null;
-    if (isChallengeConfig(matchState.config)) return null;
-    return getMatchSubPeriod(matchState.phase, displayRemaining, matchState.config.teleopDuration);
+    return subPeriodNow(matchState, displayRemaining);
   }, [matchState, isMatchMode, displayRemaining]);
 
   // On a speed challenge day, match control puts the leaderboard on the TV
@@ -1001,6 +979,7 @@ export function ScoreboardPage() {
                       breakdown={score.periodBreakdown}
                       autoWinner={autoWinner}
                       currentSubPeriod={currentSubPeriod}
+                      game={matchGame}
                       align="right"
                     />
                   )}
@@ -1069,6 +1048,7 @@ export function ScoreboardPage() {
                       breakdown={score.periodBreakdown}
                       autoWinner={autoWinner}
                       currentSubPeriod={currentSubPeriod}
+                      game={matchGame}
                       align="left"
                     />
                   )}
@@ -2548,40 +2528,34 @@ function VideoSourceConfig({
 
 // ── Period Breakdown ──────────────────────────────────────────────────
 
-/** Ordered sub-periods for determining which are "in the future". */
-const SUB_PERIOD_ORDER: MatchSubPeriod[] = ['auto', 'transition', 'shift1', 'shift2', 'shift3', 'shift4', 'endgame'];
-
 function PeriodBreakdownImpl({
   alliance,
   breakdown,
   autoWinner,
   currentSubPeriod,
+  game,
   align,
 }: {
   alliance: Alliance;
   breakdown: Record<string, { red: number; blue: number }>;
   autoWinner: Alliance | null;
-  currentSubPeriod: MatchSubPeriod | null;
+  currentSubPeriod: string | null;
+  /** The game the match runs: its periods are the rows. */
+  game: GameDefinition;
   /** Which side of the score box this panel sits on. */
   align: 'left' | 'right';
 }) {
   const color = alliance === 'red' ? '#ef5350' : '#42a5f5';
-  const [scoring1, scoring2] = getAllianceScoringShifts(alliance, autoWinner);
-
-  // Map display rows to their absolute sub-period keys
-  const rows: { label: string; period: MatchSubPeriod }[] = [
-    { label: 'Auto', period: 'auto' },
-    { label: 'Transition', period: 'transition' },
-    { label: 'Period 1', period: scoring1 },
-    { label: 'Period 2', period: scoring2 },
-    { label: 'Endgame', period: 'endgame' },
-  ];
+  // REBUILT: Auto, Transition, the two shifts this alliance scores in
+  // ("Period 1/2"), Endgame.
+  const rows = breakdownRows(game, alliance, autoWinner);
 
   // Determine which sub-periods are in the future
-  const currentIdx = currentSubPeriod ? SUB_PERIOD_ORDER.indexOf(currentSubPeriod) : -1;
-  const isFuture = (period: MatchSubPeriod) => {
+  const order = periodIds(game);
+  const currentIdx = currentSubPeriod ? order.indexOf(currentSubPeriod) : -1;
+  const isFuture = (period: string) => {
     if (currentIdx < 0) return true; // no current period = all future (pre-match)
-    return SUB_PERIOD_ORDER.indexOf(period) > currentIdx;
+    return order.indexOf(period) > currentIdx;
   };
 
   return (

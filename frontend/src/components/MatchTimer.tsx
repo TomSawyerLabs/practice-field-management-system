@@ -1,6 +1,6 @@
 import Typography from '@mui/material/Typography';
 import type { MatchPhase, MatchState } from '../../../src/types';
-import { getAllianceShiftState } from '../utils/shiftState';
+import { inactiveGoalNow } from '../utils/game';
 
 // Concrete hex colours that match the MatchTimeline segment colours
 export const PHASE_HEX: Record<MatchPhase, string> = {
@@ -20,20 +20,14 @@ const BLUE_HEX = '#42a5f5';
 
 /**
  * Compute the active colour for the timer/chip based on the current match phase
- * and which alliance's shift is active during teleop.
+ * and, during teleop, whose goal the game has switched off.
  */
 export function getActiveColor(matchState: MatchState): string {
   const { phase } = matchState;
 
-  // During teleop shifts, colour by which alliance is scoring
+  // While one goal is off, colour by which alliance is scoring
   if (phase === 'teleop' || phase === 'endgame') {
-    const inactive = getAllianceShiftState(
-      phase,
-      matchState.remainingTime,
-      matchState.config.teleopDuration,
-      matchState.config.endgameDuration,
-      matchState.autoWinnerAlliance,
-    );
+    const inactive = inactiveGoalNow(matchState);
     if (inactive === 'red') return BLUE_HEX; // Blue is scoring
     if (inactive === 'blue') return RED_HEX; // Red is scoring
   }

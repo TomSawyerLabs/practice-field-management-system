@@ -30,23 +30,20 @@ import {
   RelayHandoff,
 } from '../../../src/types';
 import { sendUpdateMatchConfig } from '../hooks/useBackend';
+import { gameOf, gamePeriods, goalOffFor, hasAutoWinner, type GameDefinition } from '../utils/game';
+import type { GoalOffRule } from '../../../src/game/types';
 import { CHALLENGE_COLOR } from '../utils/matchFormat';
 
 // ── Colors ──────────────────────────────────────────────────────────
 const RED_SOLID = '#ef5350';
 const BLUE_SOLID = '#42a5f5';
-const NEUTRAL_COLOR = '#66bb6a'; // Both hubs active (auto, transition)
+const NEUTRAL_COLOR = '#66bb6a'; // Both goals active (auto, REBUILT's transition)
 const ENDGAME_COLOR = '#ffa726'; // End game — gold/orange
 const PAUSE_COLOR = '#9e9e9e';
 const SKIPPED_COLOR = '#bdbdbd'; // Greyed-out auto when skipped
 
 /** Window lengths offered as one-tap chips. */
 const CHALLENGE_PRESETS = [30, 45, 60, 90, 120];
-
-// ── REBUILT shift timing within teleop ──────────────────────────────
-const TRANSITION_DURATION = 10;
-const SHIFT_DURATION = 25;
-const ENDGAME_DURATION = 30;
 
 function formatDuration(seconds: number): string {
   if (seconds >= 60) {
@@ -70,56 +67,53 @@ const phaseLabelSx = {
 } as const;
 
 /**
- * CSS background for a shift sub-segment.
+ * CSS background for a teleop period, from whose goal it switches off.
  *
- * - Winner known: solid colour.
- *   Shifts 0,2 (1st,3rd) = loser; shifts 1,3 (2nd,4th) = winner.
- * - Winner unknown: diagonal red/blue stripes, alternating direction.
+ * - Nobody's: green, both goals on (REBUILT's transition).
+ * - A fixed alliance's: the other alliance's colour — they're the ones scoring.
+ * - The auto winner's or loser's, winner known: the scoring alliance's colour.
+ * - Winner not known yet: red/blue stripes, alternating direction.
  */
-function getShiftStyle(shiftIndex: number, winner: Alliance | null): React.CSSProperties {
-  if (!winner) {
-    const angle = shiftIndex % 2 === 0 ? 45 : -45;
+function getPeriodStyle(goalOff: GoalOffRule | undefined, index: number, winner: Alliance | null): React.CSSProperties {
+  if (!goalOff) return { backgroundColor: NEUTRAL_COLOR };
+  const off = goalOffFor(goalOff, winner);
+  if (!off) {
+    const angle = index % 2 === 0 ? 45 : -45;
     return {
       background: `repeating-linear-gradient(${angle}deg, ${RED_SOLID} 0px, ${RED_SOLID} 6px, ${BLUE_SOLID} 6px, ${BLUE_SOLID} 12px)`,
     };
   }
-  const isLoserShift = shiftIndex % 2 === 0;
-  const winnerColor = winner === 'red' ? RED_SOLID : BLUE_SOLID;
-  const loserColor = winner === 'red' ? BLUE_SOLID : RED_SOLID;
-  return { backgroundColor: isLoserShift ? loserColor : winnerColor };
+  return { backgroundColor: off === 'red' ? BLUE_SOLID : RED_SOLID };
 }
 
 // ── Period time label computation ───────────────────────────────────
 
-/** Describes one period in the bar for the time-label row. */
-interface PeriodInfo {
+/** One segment of the bar: the game's periods, plus the pause after auto. */
+interface BarSegment {
+  /** Unique key: `pause`, or the game's sub-period id. */
   id: string;
-  /** Flex weight (= duration in seconds). */
-  flex: number;
-  /** Total duration of this period. */
+  /** Total duration of this segment (also its flex weight). */
   duration: number;
 }
 
-/** The fixed set of periods shown in the bar. */
-const PERIODS: PeriodInfo[] = [
-  { id: 'auto', flex: 20, duration: 20 },
-  { id: 'pause', flex: 3, duration: 3 },
-  { id: 'ts', flex: TRANSITION_DURATION, duration: TRANSITION_DURATION },
-  { id: 's1', flex: SHIFT_DURATION, duration: SHIFT_DURATION },
-  { id: 's2', flex: SHIFT_DURATION, duration: SHIFT_DURATION },
-  { id: 's3', flex: SHIFT_DURATION, duration: SHIFT_DURATION },
-  { id: 's4', flex: SHIFT_DURATION, duration: SHIFT_DURATION },
-  { id: 'endgame', flex: ENDGAME_DURATION, duration: ENDGAME_DURATION },
-];
+/** The segments of the bar for a game, in order. */
+function barSegments(game: GameDefinition): BarSegment[] {
+  const out: BarSegment[] = [];
+  for (const p of gamePeriods(game)) {
+    out.push({ id: p.id, duration: p.duration });
+    if (p.phase === 'auto') out.push({ id: 'pause', duration: game.timing.pauseDuration });
+  }
+  return out;
+}
 
 /**
- * Given current match phase and remainingTime, return { activePeriodId, countdown }
- * where countdown is seconds remaining within that sub-period (ceiled for display).
+ * Given current match phase and remainingTime, return { id, countdown }
+ * where countdown is seconds remaining within that segment (ceiled for display).
  */
 function getActivePeriod(
+  game: GameDefinition,
   phase: MatchPhase | undefined,
   remainingTime: number,
-  teleopDuration: number,
 ): { id: string; countdown: number } | null {
   if (!phase) return null;
 
@@ -129,40 +123,18 @@ function getActivePeriod(
 
   if (phase === 'teleop' || phase === 'endgame') {
     const rt = Math.max(0, remainingTime);
-    // Period boundaries by remainingTime (teleopDuration = 140):
-    // TS:      140 → 130
-    // S1:      130 → 105
-    // S2:      105 →  80
-    // S3:       80 →  55
-    // S4:       55 →  30
-    // Endgame:  30 →   0
-    const boundaries: [string, number, number][] = [
-      ['ts', teleopDuration, teleopDuration - TRANSITION_DURATION],
-      ['s1', teleopDuration - TRANSITION_DURATION, teleopDuration - TRANSITION_DURATION - SHIFT_DURATION],
-      [
-        's2',
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION,
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 2,
-      ],
-      [
-        's3',
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 2,
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 3,
-      ],
-      [
-        's4',
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 3,
-        teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 4,
-      ],
-      ['endgame', teleopDuration - TRANSITION_DURATION - SHIFT_DURATION * 4, 0],
-    ];
-    for (const [id, top, bottom] of boundaries) {
-      if (rt > bottom && rt <= top) {
-        return { id, countdown: Math.ceil(rt - bottom) };
-      }
+    // Walk the teleop periods down from the top of teleop. REBUILT, by
+    // remaining time: TS 140→130, S1 →105, S2 →80, S3 →55, S4 →30, Endgame →0.
+    let top = game.timing.teleopDuration;
+    const periods = gamePeriods(game).filter(p => p.phase !== 'auto');
+    for (const p of periods) {
+      const bottom = Math.max(0, top - p.duration);
+      if (rt > bottom && rt <= top) return { id: p.id, countdown: Math.ceil(rt - bottom) };
+      top = bottom;
     }
     // At exactly 0
-    if (rt <= 0) return { id: 'endgame', countdown: 0 };
+    const last = periods[periods.length - 1];
+    if (rt <= 0 && last) return { id: last.id, countdown: 0 };
   }
 
   return null;
@@ -533,6 +505,8 @@ function OfficialTimeline({
   remainingTime,
 }: MatchTimelineProps) {
   const isProgressMode = progress !== undefined;
+  const game = gameOf(config);
+  const gameHasAutoWinner = hasAutoWinner(game);
 
   const [skipAuto, setSkipAuto] = useState(config.skipAuto ?? false);
   const [autoWinner, setAutoWinner] = useState<AutoWinnerMode>(config.autoWinner ?? 'scores');
@@ -555,20 +529,26 @@ function OfficialTimeline({
   const pauseDuration = config.pauseDuration;
   const teleopTotal = config.teleopDuration;
   const matchTotal = skipAuto ? teleopTotal : autoDuration + pauseDuration + teleopTotal;
+  const segments = useMemo(() => barSegments(game), [game]);
+  const periods = useMemo(() => gamePeriods(game), [game]);
+  const teleopSegments = periods.filter(p => p.phase !== 'auto');
 
   const fontSize = isProgressMode ? '0.65rem' : '0.75rem';
   const timeLabelFontSize = isProgressMode ? '0.6rem' : '0.65rem';
 
   // ── Active period (for countdown labels) ────────────────────────
   const activePeriod = useMemo(
-    () => (isProgressMode ? getActivePeriod(phase, remainingTime ?? 0, teleopTotal) : null),
-    [isProgressMode, phase, remainingTime, teleopTotal],
+    () => (isProgressMode ? getActivePeriod(game, phase, remainingTime ?? 0) : null),
+    [isProgressMode, game, phase, remainingTime],
   );
 
   // ── Handlers ────────────────────────────────────────────────────
   const handleSkipAutoChange = (checked: boolean) => {
     setSkipAuto(checked);
-    const newAutoWinner = checked && (autoWinner === 'scores' || autoWinner === 'pause') ? 'red' : autoWinner;
+    // Skipping auto means nobody wins it, so a game that has an auto winner
+    // needs one picked by hand.
+    const newAutoWinner =
+      gameHasAutoWinner && checked && (autoWinner === 'scores' || autoWinner === 'pause') ? 'red' : autoWinner;
     if (checked && newAutoWinner !== autoWinner) setAutoWinner(newAutoWinner);
     sendUpdateMatchConfig({ ...config, skipAuto: checked, autoWinner: newAutoWinner });
   };
@@ -590,23 +570,39 @@ function OfficialTimeline({
         { value: 'pause', label: 'Pause' },
       ];
 
+  const autoWinnerHint =
+    game.gameData?.kind === 'autoWinner'
+      ? `Decides whose goal goes inactive first, and the ${game.name} game data sent to the robots`
+      : 'Decides whose goal goes inactive first';
+
   // ── Per-period time label ───────────────────────────────────────
-  function periodTimeLabel(p: PeriodInfo): string {
+  function periodTimeLabel(p: BarSegment): string {
     if (activePeriod && activePeriod.id === p.id) {
       return `${activePeriod.countdown}s`;
     }
     return formatDuration(p.duration);
   }
 
+  const gameLabel = game.season ? `${game.name} (${game.season})` : game.name;
+
   return (
     <Box sx={{ mb: isProgressMode ? 0 : 2 }}>
+      {/* ── Which game this is ──────────────────────────────────── */}
+      {!isProgressMode && (
+        <Tooltip title={game.description ?? ''} arrow disableHoverListener={!game.description}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+            Game: <strong>{gameLabel}</strong>
+          </Typography>
+        </Tooltip>
+      )}
+
       {/* ── Per-period time labels above the bar ─────────────────── */}
       <Box sx={{ display: 'flex', mb: 0.25 }}>
-        {PERIODS.map(p => (
+        {segments.map(p => (
           <Box
             key={p.id}
             sx={{
-              flex: p.flex,
+              flex: p.duration,
               minWidth: 0,
               textAlign: 'center',
             }}
@@ -641,90 +637,66 @@ function OfficialTimeline({
           position: 'relative',
         }}
       >
-        {/* AUTO — green (greyed out when skipped) */}
-        <Tooltip title={`Autonomous: ${formatDuration(autoDuration)}`} arrow>
-          <Box
-            sx={{
-              flex: autoDuration,
-              minWidth: 32,
-              backgroundColor: skipAuto ? SKIPPED_COLOR : NEUTRAL_COLOR,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              opacity: skipAuto ? 0.6 : 1,
-              transition: 'background-color 0.4s ease, opacity 0.4s ease',
-            }}
-          >
-            <Typography
-              sx={{ ...phaseLabelSx, fontSize, opacity: skipAuto ? 0.7 : 1, transition: 'opacity 0.4s ease' }}
-            >
-              AUTO
-            </Typography>
-          </Box>
-        </Tooltip>
-
-        {/* Pause — no text label */}
-        <Tooltip title={`Scoring Delay: ${formatDuration(pauseDuration)}`} arrow>
-          <Box
-            sx={{
-              flex: pauseDuration,
-              minWidth: pauseDuration > 0 ? 8 : 0,
-              backgroundColor: skipAuto ? SKIPPED_COLOR : PAUSE_COLOR,
-              opacity: skipAuto ? 0.6 : 1,
-              transition: 'background-color 0.4s ease, opacity 0.4s ease',
-            }}
-          />
-        </Tooltip>
-
-        {/* Teleop section — sub-segments with per-phase labels */}
-        <Box sx={{ flex: teleopTotal, display: 'flex', minWidth: 0 }}>
-          {/* TS — Transition Shift */}
-          <Tooltip title="Transition Shift" arrow>
-            <Box
-              sx={{
-                flex: TRANSITION_DURATION,
-                backgroundColor: NEUTRAL_COLOR,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Typography sx={{ ...phaseLabelSx, fontSize }}>TS</Typography>
-            </Box>
-          </Tooltip>
-
-          {/* S1-S4 — shifts */}
-          {[0, 1, 2, 3].map(i => (
-            <Tooltip key={i} title={`Shift ${i + 1}: ${formatDuration(SHIFT_DURATION)}`} arrow>
+        {autoDuration > 0 && (
+          <>
+            {/* AUTO — green (greyed out when skipped) */}
+            <Tooltip title={`Autonomous: ${formatDuration(autoDuration)}`} arrow>
               <Box
                 sx={{
-                  flex: SHIFT_DURATION,
-                  ...getShiftStyle(i, visualWinner),
+                  flex: autoDuration,
+                  minWidth: 32,
+                  backgroundColor: skipAuto ? SKIPPED_COLOR : NEUTRAL_COLOR,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: skipAuto ? 0.6 : 1,
+                  transition: 'background-color 0.4s ease, opacity 0.4s ease',
+                }}
+              >
+                <Typography
+                  sx={{ ...phaseLabelSx, fontSize, opacity: skipAuto ? 0.7 : 1, transition: 'opacity 0.4s ease' }}
+                >
+                  AUTO
+                </Typography>
+              </Box>
+            </Tooltip>
+
+            {/* Pause — no text label */}
+            <Tooltip title={`Scoring Delay: ${formatDuration(pauseDuration)}`} arrow>
+              <Box
+                sx={{
+                  flex: pauseDuration,
+                  minWidth: pauseDuration > 0 ? 8 : 0,
+                  backgroundColor: skipAuto ? SKIPPED_COLOR : PAUSE_COLOR,
+                  opacity: skipAuto ? 0.6 : 1,
+                  transition: 'background-color 0.4s ease, opacity 0.4s ease',
+                }}
+              />
+            </Tooltip>
+          </>
+        )}
+
+        {/* Teleop — the game's periods, then the endgame */}
+        <Box sx={{ flex: teleopTotal, display: 'flex', minWidth: 0 }}>
+          {teleopSegments.map((p, i) => (
+            <Tooltip key={p.id} title={`${p.label}: ${formatDuration(p.duration)}`} arrow>
+              <Box
+                sx={{
+                  flex: p.duration,
+                  minWidth: 0,
+                  ...(p.phase === 'endgame'
+                    ? { backgroundColor: ENDGAME_COLOR }
+                    : getPeriodStyle(p.goalOff, i, visualWinner)),
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   transition: 'background-color 0.4s ease, background 0.4s ease',
                 }}
               >
-                <Typography sx={{ ...phaseLabelSx, fontSize }}>S{i + 1}</Typography>
+                <Typography sx={{ ...phaseLabelSx, fontSize }}>{p.short.toUpperCase()}</Typography>
               </Box>
             </Tooltip>
           ))}
-
-          {/* END GAME */}
-          <Tooltip title={`End Game: ${formatDuration(ENDGAME_DURATION)}`} arrow>
-            <Box
-              sx={{
-                flex: ENDGAME_DURATION,
-                backgroundColor: ENDGAME_COLOR,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Typography sx={{ ...phaseLabelSx, fontSize }}>END GAME</Typography>
-            </Box>
-          </Tooltip>
         </Box>
 
         {/* ── Progress cursor & future mask ───────────────────────── */}
@@ -763,16 +735,18 @@ function OfficialTimeline({
       )}
 
       {/* ── Controls (config mode only) ──────────────────────────── */}
-      {!isProgressMode && readOnly && (
+      {!isProgressMode && readOnly && (autoDuration > 0 || gameHasAutoWinner) && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-          {skipAuto ? 'Autonomous skipped · ' : ''}
-          {autoWinner === 'red'
-            ? 'Auto winner: Red.'
-            : autoWinner === 'blue'
-              ? 'Auto winner: Blue.'
-              : autoWinner === 'pause'
-                ? 'Auto winner: chosen during the pause after auto.'
-                : 'Auto winner: decided by auto scores.'}
+          {skipAuto ? 'Autonomous skipped' + (gameHasAutoWinner ? ' · ' : '.') : ''}
+          {!gameHasAutoWinner
+            ? ''
+            : autoWinner === 'red'
+              ? 'Auto winner: Red.'
+              : autoWinner === 'blue'
+                ? 'Auto winner: Blue.'
+                : autoWinner === 'pause'
+                  ? 'Auto winner: chosen during the pause after auto.'
+                  : 'Auto winner: decided by auto scores.'}
         </Typography>
       )}
       {!isProgressMode && !readOnly && (
@@ -780,7 +754,7 @@ function OfficialTimeline({
           <FormatSwitch config={config} disabled={disabled} />
         </Box>
       )}
-      {!isProgressMode && !readOnly && (
+      {!isProgressMode && !readOnly && autoDuration > 0 && (
         <Box sx={{ display: 'flex', gap: 3, mt: 1, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           <FormControlLabel
             control={
@@ -794,32 +768,38 @@ function OfficialTimeline({
             label={<Typography variant="body2">Skip Auto</Typography>}
           />
 
-          <FormControl disabled={disabled}>
-            <FormLabel sx={{ fontSize: '0.75rem' }}>
-              <Tooltip title="Determines which alliance's goal goes inactive first (REBUILT game data)" arrow>
-                <span>Auto Winner</span>
-              </Tooltip>
-            </FormLabel>
-            <RadioGroup row value={autoWinner} onChange={e => handleAutoWinnerChange(e.target.value as AutoWinnerMode)}>
-              {autoWinnerOptions.map(opt => (
-                <FormControlLabel
-                  key={opt.value}
-                  value={opt.value}
-                  control={
-                    <Radio
-                      size="small"
-                      sx={opt.color ? { color: opt.color, '&.Mui-checked': { color: opt.color } } : undefined}
-                    />
-                  }
-                  label={
-                    <Typography variant="body2" sx={opt.color ? { color: opt.color } : undefined}>
-                      {opt.label}
-                    </Typography>
-                  }
-                />
-              ))}
-            </RadioGroup>
-          </FormControl>
+          {gameHasAutoWinner && (
+            <FormControl disabled={disabled}>
+              <FormLabel sx={{ fontSize: '0.75rem' }}>
+                <Tooltip title={autoWinnerHint} arrow>
+                  <span>Auto Winner</span>
+                </Tooltip>
+              </FormLabel>
+              <RadioGroup
+                row
+                value={autoWinner}
+                onChange={e => handleAutoWinnerChange(e.target.value as AutoWinnerMode)}
+              >
+                {autoWinnerOptions.map(opt => (
+                  <FormControlLabel
+                    key={opt.value}
+                    value={opt.value}
+                    control={
+                      <Radio
+                        size="small"
+                        sx={opt.color ? { color: opt.color, '&.Mui-checked': { color: opt.color } } : undefined}
+                      />
+                    }
+                    label={
+                      <Typography variant="body2" sx={opt.color ? { color: opt.color } : undefined}>
+                        {opt.label}
+                      </Typography>
+                    }
+                  />
+                ))}
+              </RadioGroup>
+            </FormControl>
+          )}
         </Box>
       )}
     </Box>

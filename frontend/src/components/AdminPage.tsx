@@ -8,6 +8,7 @@ import Container from '@mui/material/Container';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import { MatchRecordingSection } from './MatchRecordingSection';
+import { GameSection } from './GameSection';
 import { TimelapseSettingsSection } from './TimelapseSection';
 import { SoftwareUpdateSection } from './SoftwareUpdateSection';
 import { OperatorAccessSection } from './OperatorAccess';
@@ -1378,6 +1379,7 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
       return (
         <>
           <FieldResetSection />
+          <GameSection />
           <OutOfMatchControlSection />
           <ControllerPolicySection />
           <StationControlSection />

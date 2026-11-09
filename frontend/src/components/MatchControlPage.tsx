@@ -93,7 +93,7 @@ import {
   stopWaitReason,
 } from './FieldEStop';
 import { MatchTimer, PHASE_HEX, getActiveColor } from './MatchTimer';
-import { getAllianceShiftState } from '../utils/shiftState';
+import { gameOf, inactiveGoalNow, teleopBoundaries } from '../utils/game';
 import { phaseLabel, formatName, isChallengeConfig, CHALLENGE_COLOR, challengeElapsed } from '../utils/matchFormat';
 
 // ── Phase display helpers ───────────────────────────────────────────
@@ -111,18 +111,12 @@ const PHASE_BG: Record<MatchPhase, string> = {
   postMatch: 'transparent',
 };
 
-/** Muted page background; during teleop shifts, tint by alliance colour. */
+/** Muted page background; while a goal is off, tint by the scoring alliance. */
 function getPageBg(matchState: MatchState): string {
   const { phase } = matchState;
 
-  if ((phase === 'teleop' || phase === 'endgame') && !isChallengeConfig(matchState.config)) {
-    const inactive = getAllianceShiftState(
-      phase,
-      matchState.remainingTime,
-      matchState.config.teleopDuration,
-      matchState.config.endgameDuration,
-      matchState.autoWinnerAlliance,
-    );
+  if (phase === 'teleop' || phase === 'endgame') {
+    const inactive = inactiveGoalNow(matchState);
     if (inactive === 'red') return 'rgba(66,165,245,0.10)';
     if (inactive === 'blue') return 'rgba(239,83,80,0.10)';
   }
@@ -1057,29 +1051,14 @@ function ActiveMatchView({
     // Auto / countdown: pulse at end of the phase
     if (phase === 'auto' || phase === 'countdown') return remainingTime <= 3;
 
-    // A challenge is one window with no shifts — the boundaries below are
-    // measured back from a 140 s teleop and would pulse at nonsense moments.
+    // A challenge is one window with no periods — the game's boundaries are
+    // measured back from its own teleop and would pulse at nonsense moments.
     if (isChallengeConfig(config)) return remainingTime <= 3;
 
-    // During teleop/endgame: pulse at the end of each sub-period boundary
+    // During teleop/endgame: pulse at the end of each of the game's periods
+    // (REBUILT: transition, shifts 1-4, endgame — 130/105/80/55/30/0 s left)
     if (phase === 'teleop' || phase === 'endgame') {
-      const teleopDur = config.teleopDuration; // 140
-      // Period boundaries are at these remainingTime values:
-      // TS ends:        130  (elapsed 10)
-      // S1 ends:        105  (elapsed 35)
-      // S2 ends:         80  (elapsed 60)
-      // S3 ends:         55  (elapsed 85)
-      // S4 ends:         30  (elapsed 110)
-      // End Game ends:    0  (elapsed 140)
-      const boundaries = [
-        teleopDur - 10, // 130 — end of transition
-        teleopDur - 35, // 105 — end of S1
-        teleopDur - 60, //  80 — end of S2
-        teleopDur - 85, //  55 — end of S3
-        teleopDur - 110, // 30 — end of S4
-        0, //               0 — end of endgame
-      ];
-      for (const b of boundaries) {
+      for (const b of teleopBoundaries(gameOf(config))) {
         if (remainingTime > b && remainingTime <= b + 3) return true;
       }
     }

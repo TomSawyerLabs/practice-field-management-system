@@ -50,6 +50,10 @@ import {
   isSlackConfigState,
   isSetupProbeState,
   isSetupConfigState,
+  isGameCatalogState,
+  isGameActionResult,
+  type GameCatalogState,
+  type GameActionResult,
   isAudioDeviceState,
   AudioDeviceState,
   isMatchHistoryState,
@@ -756,6 +760,7 @@ let currentOperatorDevices: OperatorDevicesState | null = null;
 let currentOperatorPairing: OperatorPairing | null = null;
 let currentSetupProbeState: SetupProbeState | null = null;
 let currentSetupConfigState: SetupConfigState | null = null;
+let currentGameCatalog: GameCatalogState | null = null;
 
 function handleSupportState(state: SupportState) {
   currentSupportState = state;
@@ -1132,6 +1137,17 @@ function receiveMessage(detail: Message) {
 
   if (isSystemdServiceInstallResult(detail)) {
     events.dispatchEvent(new CustomEvent('systemdServiceInstallResult', { detail }));
+    return;
+  }
+
+  if (isGameCatalogState(detail)) {
+    currentGameCatalog = detail;
+    events.dispatchEvent(new CustomEvent('gameCatalog', { detail }));
+    return;
+  }
+
+  if (isGameActionResult(detail)) {
+    events.dispatchEvent(new CustomEvent('gameActionResult', { detail }));
     return;
   }
 
@@ -2962,6 +2978,44 @@ export function useHostToolsInstall(): HostToolsInstallState | null {
 export function sendUpdateSetupSettings(settings: Partial<SetupSettings>) {
   const patch = Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, v === undefined ? null : v]));
   sendWhenOpen({ type: 'updateSetupSettings', settings: patch });
+}
+
+/** The games this field can run, and which one new matches use (/admin). */
+export function useGameCatalog(): GameCatalogState | null {
+  const [state, setState] = useState<GameCatalogState | null>(currentGameCatalog);
+  useEffect(() => {
+    setState(currentGameCatalog);
+    const handler = (e: Event) => setState((e as CustomEvent<GameCatalogState>).detail);
+    events.addEventListener('gameCatalog', handler);
+    return () => events.removeEventListener('gameCatalog', handler);
+  }, []);
+  return state;
+}
+
+/** The answer to this page's last game upload, delete or reload. */
+export function useGameActionResult(): GameActionResult | null {
+  const [state, setState] = useState<GameActionResult | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => setState((e as CustomEvent<GameActionResult>).detail);
+    events.addEventListener('gameActionResult', handler);
+    return () => events.removeEventListener('gameActionResult', handler);
+  }, []);
+  return state;
+}
+
+/** Save a JSON game into the field's games directory. */
+export function sendGameUpload(json: string) {
+  sendWhenOpen({ type: 'gameUpload', json });
+}
+
+/** Delete an uploaded JSON game file. */
+export function sendGameDelete(file: string) {
+  sendWhenOpen({ type: 'gameDelete', file });
+}
+
+/** Re-read the games directory. */
+export function sendGameReload() {
+  sendWhenOpen({ type: 'gameReload' });
 }
 
 export function sendMarkSetupStep(step: SetupStepId, status: 'pending' | 'done' | 'skipped') {

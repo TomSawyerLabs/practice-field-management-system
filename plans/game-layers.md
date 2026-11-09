@@ -207,12 +207,13 @@ only**:
      boundary tests in `src/game/matchEngineGames.test.ts`.
      Registry (`src/game/registry.ts`) loads `games/*.json` and plugins,
      WS `gameCatalog` / `gameUpload` / `gameDelete` / `gameReload`.
-5. [ ] **← current** Frontend wired: MatchTimeline bar from periods,
-       ScoreboardPage tint & breakdown, MatchControlPage tint & pulse,
-       MatchTimer, `/admin` game card (select, list + errors, JSON upload,
-       delete, reload). Then delete `src/shiftState.ts` and
-       `frontend/src/utils/shiftState.ts`.
-6. [ ] Sample JSON game + sample plugin in `samples/games/`; scoringApi
+5. [x] Frontend wired: MatchTimeline bar from the game's periods (game
+       name shown, auto-winner control only for games with one),
+       ScoreboardPage tint/grace/breakdown, MatchControlPage tint & pulse,
+       MatchTimer, `/admin` Match tab "Game" card (`GameSection.tsx`: select,
+       list + load errors, JSON upload, delete, reload). `shiftState.ts`
+       (both) deleted. End-to-end WS test: `src/game/gameAdmin.test.ts`.
+6. [ ] **← current** Sample JSON game + sample plugin in `samples/games/`; scoringApi
        OpenAPI text made game-neutral.
 7. [ ] Docs: `docs/scoring.md`, `docs/match-system.md`, README "Writing your
        own game".
@@ -239,6 +240,12 @@ only**:
   Use `ageMs: 0` for a timed event in tests.
 - `wsAccess.test.ts` keeps its own `ADMIN_ONLY` list; a new `adminOnly`
   message must be added there too.
+- `frontend/node_modules` in this worktree has TypeScript 5.9.3 (pnpm
+  install from worktree setup?) vs 5.8.2 at the root: `cd frontend && bun
+run build` fails in untouched `NudgeSettings.tsx` (Uint8Array/BufferSource).
+  Root `bun run typecheck` passes; `bunx vite build` bundles fine.
+- A plugin-hooked rule shows no 3 s grace on the scoreboard: the browser only
+  has the server's present value, not the history to tell grace from off.
 - Plugins work from the single binary and Bun; `node dist` can load `.js`
   / `.mjs` plugins but not `.ts`.
 
@@ -248,6 +255,8 @@ only**:
 - [x] 2026-11-07: user chose JSON + JS plugins, games/ dir + /admin upload.
 - [x] 2026-11-08: game core, registry, backend wiring, audio cues; 37 game
       tests + all match/scoring/history/wsAccess suites green.
+- [x] 2026-11-08: frontend + /admin game card; full suite 1279 pass / 27
+      known env failures; frontend 156 pass; vite bundle builds.
 
 ## Open questions for the user
 
