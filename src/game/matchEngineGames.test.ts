@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, jest, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MatchEngine } from '../matchEngine.js';
@@ -13,7 +13,9 @@ import { MatchHistoryStore } from '../matchHistoryStore.js';
 import { ScoringEngine } from '../scoringEngine.js';
 import type { MatchConfig } from '../types.js';
 import { GENERIC, REBUILT_2026 } from './builtin.js';
-import { pluginRules } from './registry.js';
+import { GameRegistry, pluginRules } from './registry.js';
+import { wireGameLayer } from './wire.js';
+import { SetupConfigStore } from '../setupConfigStore.js';
 import { cachedDeclarativeRules, fixedGameProvider, type GameProvider } from './rules.js';
 import type { GameDefinition, GamePlugin } from './types.js';
 
@@ -236,5 +238,78 @@ describe('history and scoring follow the game', () => {
     scoring.applyGameElements(cones);
     expect(scoring.getElements().map(e => e.id)).toEqual(['mine']);
     expect(scoring.getElementsSource()).toBeNull();
+  });
+});
+
+describe('switching games, the corners', () => {
+  test('a reload that re-reads the same game keeps a set-up match ready', () => {
+    const { provider, switchTo } = switchable(GENERIC);
+    const engine = new MatchEngine(() => 5940);
+    engine.setGameProvider(provider);
+    engine.createMatch();
+    engine.setReadyRequested(true);
+    switchTo(JSON.parse(JSON.stringify(GENERIC))); // what a reload hands back
+    engine.refreshGame();
+    expect(engine.getState().readyRequested).toBe(true);
+    switchTo(REBUILT_2026); // a real change does close it
+    engine.refreshGame();
+    expect(engine.getState().readyRequested).toBe(false);
+  });
+
+  test('skip auto carried into a game that needs a pre-set winner is turned off', () => {
+    const { provider, switchTo } = switchable(GENERIC);
+    const engine = new MatchEngine(() => 5940);
+    engine.setGameProvider(provider);
+    engine.createMatch();
+    engine.updateMatchConfig({ ...engine.getState().config, skipAuto: true });
+    switchTo(REBUILT_2026);
+    engine.refreshGame();
+    expect(engine.getState().config).toMatchObject({ skipAuto: false, autoWinner: 'scores' });
+  });
+
+  test('a match that clears shows the game switched while it ran', () => {
+    const { provider, switchTo } = switchable(REBUILT_2026);
+    const engine = new MatchEngine(() => 5940);
+    engine.setGameProvider(provider);
+    start(engine);
+    switchTo(GENERIC);
+    engine.refreshGame();
+    engine.stopMatch();
+    engine.clearMatch();
+    expect(engine.getState()).toMatchObject({ phase: 'idle', config: { game: GENERIC } });
+  });
+});
+
+describe('scoring elements follow the match on the field', () => {
+  test('a switch mid-match keeps the running match’s elements until it clears', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pfms-wire-'));
+    const store = new SetupConfigStore(join(dir, 'setup-config.json'));
+    mkdirSync(join(dir, 'games'));
+    const game = (id: string, element: string): GameDefinition => ({
+      ...GENERIC,
+      id,
+      name: id,
+      elements: [{ id: element, name: element, pointValue: 1 }],
+    });
+    writeFileSync(join(dir, 'games', 'cones.json'), JSON.stringify(game('cones', 'cone')));
+    writeFileSync(join(dir, 'games', 'cubes.json'), JSON.stringify(game('cubes', 'cube')));
+    const registry = new GameRegistry(GameRegistry.dirFor(store.path));
+    const engine = new MatchEngine(() => 5940);
+    const scoring = new ScoringEngine();
+    await wireGameLayer({ registry, matchEngine: engine, scoringEngine: scoring, setupConfigStore: store });
+    const elements = () => scoring.getElements().map(e => e.id);
+
+    store.updateSettings({ game: 'cones' });
+    expect(elements()).toEqual(['cone']);
+    start(engine);
+    store.updateSettings({ game: 'cubes' });
+    elapse(5_000);
+    expect(engine.getState().config.game?.id).toBe('cones');
+    expect(elements()).toEqual(['cone']);
+
+    engine.stopMatch();
+    engine.clearMatch();
+    expect(elements()).toEqual(['cube']);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

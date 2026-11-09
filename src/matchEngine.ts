@@ -499,14 +499,34 @@ export class MatchEngine {
    * skip-auto and auto-winner choices where the new game still has them.
    */
   refreshGame() {
-    if (this.phase !== 'idle' && this.phase !== 'created') return;
-    if (isChallengeConfig(this.pendingConfig)) return;
+    if (this.syncPendingGame()) this.broadcast();
+  }
+
+  /**
+   * Point the pending config at the current game, without broadcasting.
+   * True if it changed. Compared by content: a reload re-reads every game
+   * file into new objects, and an unchanged game mustn't cost a set-up
+   * match its ready check.
+   */
+  private syncPendingGame(): boolean {
+    if (this.phase !== 'idle' && this.phase !== 'created') return false;
+    if (isChallengeConfig(this.pendingConfig)) return false;
     const game = this.games.current();
-    if (this.pendingConfig.game === game) return;
-    this.pendingConfig = this.officialPending(game, this.pendingConfig);
+    if (this.pendingConfig.game === game) return false;
+    if (JSON.stringify(this.pendingConfig.game) === JSON.stringify(game)) {
+      this.pendingConfig = { ...this.pendingConfig, game };
+      return false;
+    }
+    const next = this.officialPending(game, this.pendingConfig);
+    // Skip auto needs a pre-set winner in a game that has one. One carried
+    // over from a game without would leave a match that can't start.
+    if (next.skipAuto && hasAutoWinner(game) && next.autoWinner !== 'red' && next.autoWinner !== 'blue') {
+      next.skipAuto = false;
+    }
+    this.pendingConfig = next;
     if (this.phase === 'created') this.closeReadyCheck();
     console.log(`Match game: ${game.name} (${game.id})`);
-    this.broadcast();
+    return true;
   }
 
   /** An official pending config for `game`, keeping what the host may set. */
@@ -2355,6 +2375,8 @@ export class MatchEngine {
     this.stopTick(); // In case counting period is still running
     this.config = null;
     this.phase = 'idle';
+    // A game switched while this match ran shows from now on.
+    this.syncPendingGame();
     this.remainingTime = 0;
     this.portToSlot.clear();
     this.autoWinnerAlliance = null;

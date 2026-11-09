@@ -62,6 +62,7 @@ import { dsClientMatch } from './wsAccess.js';
 import { handleTeamAvatarRequest } from './teamAvatarApi.js';
 import { ScoringEngine } from './scoringEngine.js';
 import { GameRegistry } from './game/registry.js';
+import { wireGameLayer } from './game/wire.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
@@ -120,7 +121,6 @@ import {
   WifiCardsState,
   FIELD_CONTROL_ADDRESS,
   type TelemetryUpdate,
-  type GameCatalogState,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -676,24 +676,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // plugins beside setup-config.json. The `game` setting picks the one new
   // matches run; a match already set up keeps its own.
   const gameRegistry = new GameRegistry(GameRegistry.dirFor(setupConfigStore.path));
-  matchEngine.setGameProvider(gameRegistry);
-  scoringEngine.setGameRulesResolver(game => gameRegistry.rulesFor(game));
-  gameRegistry.addListener(() => {
-    matchEngine.refreshGame();
-    scoringEngine.applyGameElements(gameRegistry.current());
-  });
-  const applyGameSetting = () => gameRegistry.select(setupConfigStore.get().settings.game);
-  setupConfigStore.addListener(applyGameSetting);
-  applyGameSetting();
-  await gameRegistry.load();
-  const gameCatalog = (): GameCatalogState => ({
-    type: 'gameCatalog',
-    games: gameRegistry.catalog(),
-    selected: gameRegistry.selected,
-    current: gameRegistry.current().id,
-    dir: gameRegistry.dir,
-    elementsFrom: scoringEngine.getElementsSource(),
-  });
+  const gameCatalog = await wireGameLayer({ registry: gameRegistry, matchEngine, scoringEngine, setupConfigStore });
 
   // Initialize match history (persist results across restarts)
   const matchHistoryStore = new MatchHistoryStore();

@@ -105,6 +105,8 @@ export class ScoringEngine {
   private autoRegisterLimit = 1;
   /** Id of the game whose `elements` are configured, null once anyone else set them. */
   private elementsFromGame: string | null = null;
+  /** Which game's elements, exactly, were applied (so re-applying is free). */
+  private elementsGameKey: string | null = null;
   private suppressBroadcast = false;
   private listeners: ((state: ScoreState) => void)[] = [];
   /** Told about every event as it is accepted (before any re-judging). */
@@ -350,12 +352,16 @@ export class ScoringEngine {
    * auto-registered ones are otherwise replaced.
    */
   applyGameElements(game: Pick<GameDefinition, 'id' | 'elements'>): void {
+    const elements = game.elements ?? [];
+    // Called on every match broadcast: the same game's elements again is a no-op.
+    const key = `${game.id}:${JSON.stringify(elements)}`;
+    if (this.elementsFromGame !== null && key === this.elementsGameKey) return;
     const configured = [...this.elements.values()].some(e => !e.autoRegistered);
     if (configured && this.elementsFromGame === null) return;
-    const elements = game.elements ?? [];
     if (elements.length === 0 && this.elementsFromGame === null) return;
     this.replaceElements(elements.map(e => ({ ...e, autoRegistered: undefined })));
     this.elementsFromGame = elements.length > 0 ? game.id : null;
+    this.elementsGameKey = elements.length > 0 ? key : null;
     this.broadcast();
   }
 

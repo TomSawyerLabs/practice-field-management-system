@@ -21,6 +21,7 @@ import type { SetupProbeState } from '../types.js';
 import type { GameCatalogState, GameActionResult, MatchState } from '../types.js';
 import { setupWebSocket, type WebSocketContext } from '../websocketServer.js';
 import { GameRegistry } from './registry.js';
+import { wireGameLayer } from './wire.js';
 
 const CHEAP_HASH = { N: 2 ** 10, r: 8, p: 1 };
 
@@ -60,16 +61,13 @@ describe('/admin games over the WebSocket', () => {
   beforeAll(async () => {
     await adminAuth.setPassphrase('correct horse');
     // The same wiring as index.ts.
-    engine.setGameProvider(registry);
-    scoring.setGameRulesResolver(game => registry.rulesFor(game));
-    registry.addListener(() => {
-      engine.refreshGame();
-      scoring.applyGameElements(registry.current());
+    engine.addStateListener(state => scoring.onMatchStateChange(state));
+    const catalog = await wireGameLayer({
+      registry,
+      matchEngine: engine,
+      scoringEngine: scoring,
+      setupConfigStore: setupStore,
     });
-    const applyGameSetting = () => registry.select(setupStore.get().settings.game);
-    setupStore.addListener(applyGameSetting);
-    applyGameSetting();
-    await registry.load();
 
     context = setupWebSocket({
       radioManager,
@@ -78,17 +76,7 @@ describe('/admin games over the WebSocket', () => {
       port: 0,
       trustedProxyMatcher: new CIDRMatcher(['127.0.0.0/8', '::ffff:127.0.0.0/104', '::1/128']),
       adminAuth,
-      games: {
-        registry,
-        catalog: (): GameCatalogState => ({
-          type: 'gameCatalog',
-          games: registry.catalog(),
-          selected: registry.selected,
-          current: registry.current().id,
-          dir: registry.dir,
-          elementsFrom: scoring.getElementsSource(),
-        }),
-      },
+      games: { registry, catalog },
       setup: {
         configStore: setupStore,
         runProbe: async () => ({ type: 'setupProbeState', steps: [] }) as unknown as SetupProbeState,
