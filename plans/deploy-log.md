@@ -35,14 +35,14 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                   | State                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Running on steamboat   | `8a6e6d2` (SystemCore low-battery recording limit), 3:38 PM PST (23:38Z) 2026-11-04, user's OK from the SystemCore thread |
-| `origin/master`        | `8a6e6d2`                                                                                                                 |
-| Last published release | `build-20261031-0000-8a2dd38`                                                                                             |
-| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30                                                           |
-| Release workflow       | Passed on `8a2dd38`                                                                                                       |
-| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                                   |
+| What                   | State                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Running on steamboat   | `1239b28` (swappable game layers), 11:34 PM PST (07:34Z Nov 9) 2026-11-08, user's OK from the game-layers thread |
+| `origin/master`        | `1239b28`                                                                                                        |
+| Last published release | `build-20261031-0000-8a2dd38`                                                                                    |
+| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30                                                  |
+| Release workflow       | Passed on `8a2dd38`                                                                                              |
+| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                          |
 
 Before the deploy, at 1:08 PM PDT (20:08Z): phase idle, no team on any slot, no DS, no
 pending radio commit, all six `eStop` false, no `fieldEStop`, no bookings. The admin
@@ -79,6 +79,13 @@ its data, both before and after the Caddy `X-Forwarded-For` change went live. A 
 on the team network hasn't been tried. Look for that refusal next time teams are on.
 
 Earlier on 2026-10-30: `67bb54e` at 5:17 PM PDT, `0586d9a` at 3:33 PM PDT.
+
+Game layers (`1239b28`, from `563e474`): pushed and deployed from the game-layers
+thread on the user's "deploy". Before: phase idle, no e-stop, no bookings in "All
+Field Events" that night. After: `/health` `1239b28`, idle, `eStopped:false`; the
+served bundle is `1239b28`; the journal shows `Games: rebuilt-2026, generic` and no
+errors. No `games/` directory on steamboat yet, so REBUILT runs as before. Not seen
+yet: the /admin Game card in a browser, and a match on another game.
 
 ## On local master only
 
