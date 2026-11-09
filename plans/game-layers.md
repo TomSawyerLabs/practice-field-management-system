@@ -217,9 +217,16 @@ only**:
        goals, cues, fixed game data, elements) and `samples/games/hot-goal.ts`
        (plugin: computed turns + tie rule); a registry test loads both.
        scoringApi OpenAPI text made game-neutral.
-7. [ ] **← current** Docs: `docs/scoring.md`, `docs/match-system.md`, README "Writing your
-       own game".
-8. [ ] Propose CD-draft wording to the user.
+7. [x] Docs: new `docs/games.md` (full reference), `docs/scoring.md`,
+       `docs/match-system.md`, `docs/configuration.md` (`GAMES_DIR`),
+       `docs/README.md`, README "Writing your own game"; public summary page
+       shows the game.
+8. [x] Self-review fixes (`e1da6c0`): elements follow the match not the
+       selection; content compare so reload keeps readiness; clear shows a
+       switched game; skip-auto reset when the new game needs a winner.
+9. [ ] **← current** CD-draft wording proposed to the user (not edited here;
+       the CD-post thread owns the draft). Waiting on the user to merge
+       `feat/game-layers` into master and hand the wording over.
 
 ## Findings / gotchas
 
@@ -257,12 +264,22 @@ run build` fails in untouched `NudgeSettings.tsx` (Uint8Array/BufferSource).
 - [x] 2026-11-07: user chose JSON + JS plugins, games/ dir + /admin upload.
 - [x] 2026-11-08: game core, registry, backend wiring, audio cues; 37 game
       tests + all match/scoring/history/wsAccess suites green.
+- [x] 2026-11-08: samples, docs, self-review fixes; full suite 1284 pass /
+      27 known env failures; frontend 156 pass.
+- [ ] Not done: no visual check of the new UI in a browser (typecheck,
+      vite bundle and WS end-to-end test only).
 - [x] 2026-11-08: frontend + /admin game card; full suite 1279 pass / 27
       known env failures; frontend 156 pass; vite bundle builds.
 
 ## Open questions for the user
 
-_None open._ (1: plugins too; 2: both — answered 2026-11-07.)
+1. Merge `feat/game-layers` into master (and deploy via the deploy-owner
+   thread)? Recommendation: yes after a look at the /admin Game card and the
+   match page in a browser.
+2. Pass the proposed CD wording (in the thread's final message) to the
+   CD-post thread?
+
+(Earlier: 1: plugins too; 2: both — answered 2026-11-07.)
 
 ## Things not to do
 

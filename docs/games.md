@@ -137,7 +137,9 @@ At most 8 plain ASCII characters: the 2027 Driver Station reads no more.
 A game's `elements` are what the scoring engine starts with, **unless
 someone has configured elements themselves** (`PUT /api/score/config`):
 those always win and a game switch leaves them alone. Switching from a game
-that brought elements to one that brings none clears them. `/admin` marks
+that brought elements to one that brings none clears them. Elements change
+with the match, not the selection: a switch while a match runs takes effect
+once that match clears, so its sensors' reports keep counting. `/admin` marks
 the game whose elements are in use.
 
 ## Plugins
