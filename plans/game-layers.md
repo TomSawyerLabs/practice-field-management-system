@@ -224,9 +224,10 @@ only**:
 8. [x] Self-review fixes (`e1da6c0`): elements follow the match not the
        selection; content compare so reload keeps readiness; clear shows a
        switched game; skip-auto reset when the new game needs a winner.
-9. [ ] **← current** CD-draft wording proposed to the user (not edited here;
-       the CD-post thread owns the draft). Waiting on the user to merge
-       `feat/game-layers` into master and hand the wording over.
+9. [x] Merged into local master 2026-11-08 (fast-forward to `b9a3f1c`
+       after rebasing onto `f31579c`); not pushed — deploys go through the
+       deploy-owner thread. CD wording handed to the "Introduce pFMS to FIRST
+       community" thread to apply.
 
 ## Findings / gotchas
 
@@ -273,13 +274,7 @@ run build` fails in untouched `NudgeSettings.tsx` (Uint8Array/BufferSource).
 
 ## Open questions for the user
 
-1. Merge `feat/game-layers` into master (and deploy via the deploy-owner
-   thread)? Recommendation: yes after a look at the /admin Game card and the
-   match page in a browser.
-2. Pass the proposed CD wording (in the thread's final message) to the
-   CD-post thread?
-
-(Earlier: 1: plugins too; 2: both — answered 2026-11-07.)
+_None open._ (Merge and CD hand-off approved 2026-11-08.)
 
 ## Things not to do
 
