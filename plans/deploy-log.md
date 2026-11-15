@@ -35,14 +35,14 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                   | State                                                                                                            |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Running on steamboat   | `1239b28` (swappable game layers), 11:34 PM PST (07:34Z Nov 9) 2026-11-08, user's OK from the game-layers thread |
-| `origin/master`        | `1239b28`                                                                                                        |
-| Last published release | `build-20261031-0000-8a2dd38`                                                                                    |
-| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30                                                  |
-| Release workflow       | Passed on `8a2dd38`                                                                                              |
-| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                          |
+| What                   | State                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Running on steamboat   | `64949cd` (Network page Web links), 3:41 PM PST (23:41Z) 2026-11-15, user's "deploy" from the Web-links thread |
+| `origin/master`        | `64949cd`                                                                                                      |
+| Last published release | `build-20261031-0000-8a2dd38`                                                                                  |
+| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30                                                |
+| Release workflow       | Passed on `8a2dd38`                                                                                            |
+| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                        |
 
 Before the deploy, at 1:08 PM PDT (20:08Z): phase idle, no team on any slot, no DS, no
 pending radio commit, all six `eStop` false, no `fieldEStop`, no bookings. The admin
@@ -86,6 +86,13 @@ Field Events" that night. After: `/health` `1239b28`, idle, `eStopped:false`; th
 served bundle is `1239b28`; the journal shows `Games: rebuilt-2026, generic` and no
 errors. No `games/` directory on steamboat yet, so REBUILT runs as before. Not seen
 yet: the /admin Game card in a browser, and a match on another game.
+
+Web links (`64949cd`): pushed and deployed from the Web-links thread on the user's
+"deploy", with Team 2854 on slot 1 (user knew and said deploy). After: `/health`
+`64949cd`, idle, `eStopped:false`; 2854's DS reconnected and linked to `10.28.54.2`
+within 5 s; robot traffic still flowing; no errors in the journal. From `br-slot1`,
+`10.28.54.1` answers 302 and `10.28.54.2` answers 200, so both should show **Web**.
+Not seen yet: the chip in a browser.
 
 ## On local master only
 
