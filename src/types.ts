@@ -2286,6 +2286,8 @@ export interface DiscoveredHost {
   onlineSince: number;
   /** How this host was discovered: 'fping' (team subnet scan) or 'conntrack' (guest network flow) */
   source?: 'fping' | 'conntrack';
+  /** Answered HTTP on port 80 when last asked (team-subnet devices only). */
+  web?: boolean;
 }
 
 export interface StationSubnetScan {

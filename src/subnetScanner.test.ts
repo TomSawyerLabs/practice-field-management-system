@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SubnetScanner, fpingArgs } from './subnetScanner.js';
+import { SubnetScanner, fpingArgs, webProbeArgs } from './subnetScanner.js';
 import type { StationName, SubnetScanResults } from './types.js';
 
 describe('fpingArgs', () => {
@@ -131,5 +131,61 @@ describe('two robots of one team', () => {
       const guests = await scanGuests({ slot1: 1967 }, [flow('10.19.67.2', '10.55.1.2')]);
       expect(guests('slot1')).toEqual(['10.55.1.2']);
     });
+  });
+});
+
+describe('web pages', () => {
+  test('the probe is pinned to the bridge and asks plain http on port 80', () => {
+    const args = webProbeArgs('10.19.67.2', 'br-slot1');
+    expect(args.slice(0, 2)).toEqual(['--interface', 'br-slot1']);
+    expect(args.at(-1)).toBe('http://10.19.67.2/');
+    expect(webProbeArgs('10.19.67.2')).not.toContain('--interface');
+  });
+
+  async function scanWith(answers: Record<string, string | Error>) {
+    const probed: string[] = [];
+    const results = await new Promise<SubnetScanResults>(resolve => {
+      const scanner = new SubnetScanner(
+        station => (station === 'slot1' ? 1967 : null),
+        scan => {
+          scanner.stop();
+          resolve(scan);
+        },
+        () => 'br-slot1',
+        undefined,
+        false,
+        async (tool, args) => {
+          if (tool === 'fping')
+            return { stdout: ['10.19.67.1', '10.19.67.2', '10.19.67.11', '10.19.67.12'].join('\n') };
+          if (tool !== 'curl') return { stdout: '' };
+          const ip = args.at(-1)!.slice('http://'.length, -1);
+          probed.push(ip);
+          const answer = answers[ip];
+          if (answer instanceof Error) throw answer;
+          return { stdout: answer ?? '000' };
+        },
+      );
+      scanner.start(60_000);
+    });
+    const web = results.stations.slot1!.hosts.filter(h => h.web).map(h => h.ip);
+    return { web, probed };
+  }
+
+  test('devices that answer HTTP are marked, whatever the status', async () => {
+    const { web, probed } = await scanWith({
+      '10.19.67.1': '200',
+      '10.19.67.2': '302',
+      // curl exits 7 on a refused connection, still printing 000
+      '10.19.67.11': Object.assign(new Error('refused'), { code: 7, stdout: '000' }),
+      // a page that answered, then timed out sending its body
+      '10.19.67.12': Object.assign(new Error('timeout'), { code: 28, stdout: '200' }),
+    });
+    expect(probed.sort()).toEqual(['10.19.67.1', '10.19.67.11', '10.19.67.12', '10.19.67.2']);
+    expect(web.sort()).toEqual(['10.19.67.1', '10.19.67.12', '10.19.67.2']);
+  });
+
+  test('a missing curl marks nothing', async () => {
+    const { web } = await scanWith({ '10.19.67.1': Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) });
+    expect(web).toEqual([]);
   });
 });

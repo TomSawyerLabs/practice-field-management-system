@@ -19,6 +19,32 @@ export function fpingArgs(rangeStart: string, rangeEnd: string, ifname?: string)
   return [...(ifname ? ['-I', ifname] : []), '-a', '-r', '0', '-t', '200', '-q', '-g', rangeStart, rangeEnd];
 }
 
+/** How often a host that stays up is asked again whether it serves a web page. */
+export const WEB_RECHECK_MS = 60_000;
+
+/**
+ * curl arguments asking whether `ip` answers HTTP on port 80, pinned to the
+ * station's bridge for the same reason as the fping sweep. Only the status
+ * code is printed; "000" means nothing answered.
+ */
+export function webProbeArgs(ip: string, ifname?: string): string[] {
+  return [
+    ...(ifname ? ['--interface', ifname] : []),
+    '--silent',
+    '--noproxy',
+    '*',
+    '--connect-timeout',
+    '1',
+    '--max-time',
+    '2',
+    '--output',
+    '/dev/null',
+    '--write-out',
+    '%{http_code}',
+    `http://${ip}/`,
+  ];
+}
+
 interface HostState {
   firstSeen: number;
   lastSeen: number;
@@ -27,6 +53,10 @@ interface HostState {
   onlineSince: number;
   /** How this host was discovered */
   source: 'fping' | 'conntrack';
+  /** Answered HTTP on port 80 when last asked. */
+  web?: boolean;
+  /** When it was last asked. */
+  webCheckedAt?: number;
 }
 
 export class SubnetScanner {
@@ -93,6 +123,7 @@ export class SubnetScanner {
           lastSeen: state.lastSeen,
           onlineSince: state.onlineSince,
           source: state.source,
+          ...(state.web ? { web: true } : {}),
         });
       }
 
@@ -177,7 +208,43 @@ export class SubnetScanner {
       }
     }
 
+    await this.probeWeb(station, hostMap, now);
     this.lastScanTime.set(station, now);
+  }
+
+  /**
+   * Ask the station's devices whether they serve a web page (the radio's and
+   * roboRIO's status pages, a coprocessor's camera UI), so the Network page
+   * can link to them. A device is asked when it appears or comes back, then
+   * once a minute while it stays up.
+   */
+  private async probeWeb(station: StationName, hostMap: Map<string, HostState>, now: number): Promise<void> {
+    const due = [...hostMap].filter(
+      ([, h]) =>
+        h.source === 'fping' &&
+        h.alive &&
+        (h.webCheckedAt === undefined || h.webCheckedAt < h.onlineSince || now - h.webCheckedAt >= WEB_RECHECK_MS),
+    );
+    const ifname = this.bridgeOf?.(station);
+    await Promise.all(
+      due.map(async ([ip, host]) => {
+        host.web = await this.answersHttp(ip, ifname);
+        host.webCheckedAt = now;
+      }),
+    );
+  }
+
+  private async answersHttp(ip: string, ifname?: string): Promise<boolean> {
+    let stdout: string | undefined;
+    try {
+      ({ stdout } = await this.run('curl', webProbeArgs(ip, ifname), { timeout: 5_000 }));
+    } catch (err) {
+      // Refused (7) prints "000"; a slow page that timed out (28) after
+      // answering still prints its status.
+      stdout = (err as { stdout?: string }).stdout;
+    }
+    const status = stdout?.trim() ?? '';
+    return /^\d{3}$/.test(status) && status !== '000';
   }
 
   private async runFping(station: StationName, rangeStart: string, rangeEnd: string): Promise<Set<string> | null> {
