@@ -522,6 +522,22 @@ It is a per-laptop bridge, not a flood:
   and conntrack then dropped a pinned socket's query (EPERM) when the same
   flow had already gone out the other bridge of a two-robot team.
 
+### Lookup Log
+
+Every lookup the reflector sees is logged with what became of it: asked of a
+station's robot, answered (by which device, and to which laptops), unanswered
+after 3 s, not sent (the device isn't tied to a robot, the station has no
+robot, or its socket isn't open), or an answer that couldn't be delivered. The
+Network page shows the newest under **Name lookups (.local)**, from
+`GET /api/mdns-lookups` (on site only). Lookups from devices pFMS can't tie to
+a robot, mostly the site router's own mDNS proxy, are hidden there by default.
+
+The same lookup repeated within 30 s is counted rather than written again, and
+the next one written carries the count. The log is `mdns-lookups.jsonl`
+(`MDNS_LOOKUP_LOG`), rotated at 2 MB with one old copy, and read back at start,
+so a deploy doesn't lose it. Requesters in `MDNS_EXCLUDE_REQUESTERS` are left
+out.
+
 The reflector is optional, so it never takes pFMS down with it. A port it
 can't bind or a multicast group it can't join (a host with no default route
 yet, an interface whose address isn't up) is logged once and retried every

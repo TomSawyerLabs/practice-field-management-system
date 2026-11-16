@@ -47,6 +47,8 @@ import { TelemetryManager } from './telemetryManager.js';
 import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
 import { SubnetScanner } from './subnetScanner.js';
+import { handleMdnsLookupsRequest } from './mdnsLookupApi.js';
+import { MdnsLookupLog } from './mdnsLookupLog.js';
 import { MdnsReflector } from './mdnsReflector.js';
 import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
@@ -901,6 +903,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // instead of bare IPs. `broadcast` is const-declared below; the callback only
   // fires after async resolutions, well past initialization.
   const hostnameResolver = new HostnameResolver(state => broadcast(state));
+  // What became of each .local lookup the mDNS reflector saw (Network page)
+  const mdnsLookupLog = new MdnsLookupLog({ file: process.env.MDNS_LOOKUP_LOG || 'mdns-lookups.jsonl' });
   // Driver Station laptop Wi-Fi reports: the collector script teams run, and
   // where it uploads to (see src/diagReportApi.ts). A report is tagged with
   // the team on the station whose DS spoke from the same address.
@@ -941,6 +945,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleFirmwareRequest(req, res, firmwareStore, staffHttp),
       handleTeamAvatarRequest,
       handleManifestRequest,
+      (req, res) => handleMdnsLookupsRequest(req, res, mdnsLookupLog, staffHttp),
     ],
     onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
@@ -1448,13 +1453,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       bridgeName,
       process.env.MDNS_EXCLUDE_REQUESTERS,
       process.env.MDNS_LISTEN_INTERFACES?.split(/[,\s]+/).filter(Boolean) ?? [],
+      undefined,
+      mdnsLookupLog,
     );
     reflector.start();
+    mdnsLookupLog.start();
     mdnsReflector = reflector;
   };
   const stopMdnsReflector = () => {
     mdnsReflector?.stop();
     mdnsReflector = undefined;
+    mdnsLookupLog.stop();
   };
   // Refresh after commit — VLAN interfaces only exist after configureNetwork completes
   radioManager.addCommitCompleteListener(() => mdnsReflector?.refreshMemberships());

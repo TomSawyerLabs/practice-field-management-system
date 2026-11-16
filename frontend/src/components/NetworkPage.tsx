@@ -36,6 +36,7 @@ import {
 } from '../hooks/useBackend';
 import { HostDisplay } from './HostDisplay';
 import { HostServiceChips } from './HostServiceChips';
+import { MdnsLookupsCard } from './MdnsLookupsCard';
 
 const PULSE_STYLES = {
   '@keyframes ds-pulse': {
@@ -368,6 +369,7 @@ export function NetworkPage() {
           ))}
         </Grid>
       </Grid>
+      <MdnsLookupsCard />
     </Container>
   );
 }

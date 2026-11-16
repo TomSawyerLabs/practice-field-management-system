@@ -2923,6 +2923,43 @@ export function isMdnsActivity(msg: unknown): msg is MdnsActivity {
   return (msg as MdnsActivity).type === 'mdnsActivity';
 }
 
+/** One question of a lookup: the name, the record type ("A", "PTR"…) and
+ *  whether the laptop asked for a unicast answer (the QU bit). */
+export interface MdnsQuestion {
+  name: string;
+  type: string;
+  qu: boolean;
+}
+
+/** Why the reflector didn't forward a laptop's lookup. */
+export type MdnsDropReason = 'not placed' | 'no team on station' | 'station socket not open';
+
+/** What became of a `.local` lookup (src/mdnsLookupLog.ts). `t` is epoch ms;
+ *  `repeatsBefore` counts identical events folded into this one's predecessor. */
+export type MdnsLookupEvent = { t: number; repeatsBefore?: number } & (
+  | {
+      kind: 'forwarded';
+      requester: string;
+      port: number;
+      station: StationName;
+      team: number;
+      questions: MdnsQuestion[];
+    }
+  | { kind: 'dropped'; requester: string; port: number; reason: MdnsDropReason; questions: MdnsQuestion[] }
+  | {
+      kind: 'answered';
+      station: StationName;
+      team: number;
+      /** The robot-side device that answered. */
+      from: string;
+      records: MdnsResolvedName[];
+      /** The laptops it went back to, as "ip:port". */
+      to: string[];
+    }
+  | { kind: 'unanswered'; requester: string; port: number; station: StationName; name: string }
+  | { kind: 'send failed'; to: string; error: string }
+);
+
 // ── Team Checks ─────────────────────────────────────────────────────
 
 export type CheckStatus = 'pending' | 'pass' | 'fail' | 'warn' | 'error';
