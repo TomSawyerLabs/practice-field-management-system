@@ -4,7 +4,7 @@ import { MatchAudioBridge } from '../hooks/useMatchAudio';
 import { WrapAll } from './wrap';
 
 createRoot(document.getElementById('root')!).render(
-  <WrapAll showReconfigOverlay={false}>
+  <WrapAll>
     <MatchAudioBridge />
     <MatchControlPage />
   </WrapAll>,

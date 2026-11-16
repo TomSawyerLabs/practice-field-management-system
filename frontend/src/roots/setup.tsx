@@ -6,7 +6,7 @@ import { WrapAll } from './wrap';
 // passphrase yet, and setup is how you get there. Same trust-on-first-use as
 // the admin passphrase itself.
 createRoot(document.getElementById('root')!).render(
-  <WrapAll showReconfigOverlay={false}>
+  <WrapAll>
     <SetupPage />
   </WrapAll>,
 );

@@ -29,7 +29,7 @@ if (!raw) {
   }
 
   createRoot(document.getElementById('root')!).render(
-    <WrapAll>
+    <WrapAll reconfigBanner>
       <ControlPage teamNumber={teamNumber} selectedSsid={raw} />
     </WrapAll>,
   );

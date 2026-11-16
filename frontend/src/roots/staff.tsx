@@ -3,7 +3,7 @@ import { StaffPage } from '../components/StaffPage';
 import { WrapAll } from './wrap';
 
 createRoot(document.getElementById('root')!).render(
-  <WrapAll showReconfigOverlay={false}>
+  <WrapAll>
     <StaffPage />
   </WrapAll>,
 );

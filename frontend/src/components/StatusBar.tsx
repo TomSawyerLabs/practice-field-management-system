@@ -12,6 +12,8 @@ import { useConnectivity, ConnectivityState } from '../hooks/useConnectivity';
 import { usePendingCommitState, useLatest, useServerStartTime, serverToBrowserTime } from '../hooks/useBackend';
 import { StationNameList, type StagedStationChange } from '../../../src/types';
 import { useSupportWidget } from './SupportChatWidget';
+import { ReconfigureHeaderFill, ReconfigureHeaderLabel } from './ReconfigureNotice';
+import type { ReconfigProgress } from '../hooks/useReconfigProgress';
 import {
   describeStationChange,
   describePendingChange,
@@ -234,7 +236,13 @@ function PendingChangeList() {
   );
 }
 
-export function StatusBar() {
+export function StatusBar({
+  reconfigure,
+}: {
+  /** A radio reconfigure to show as a progress fill across the bar. `onShow`
+   *  is set when there is a hidden banner to bring back. */
+  reconfigure?: { progress: ReconfigProgress; onShow?: () => void };
+}) {
   const connectivity = useConnectivity();
   const internet = getInternetIndicator(connectivity);
   const pfms = getPfmsIndicator(connectivity);
@@ -257,8 +265,10 @@ export function StatusBar() {
         transition: 'background-color 0.3s',
       }}
     >
+      {reconfigure && <ReconfigureHeaderFill progress={reconfigure.progress} />}
       <Box
         sx={{
+          position: 'relative', // above the reconfigure fill
           display: 'flex',
           alignItems: 'center',
           // Beside the larger icons a narrow phone has no room for every status on one line
@@ -278,6 +288,7 @@ export function StatusBar() {
             </Typography>
           </Tooltip>
         )}
+        {reconfigure && <ReconfigureHeaderLabel progress={reconfigure.progress} onShow={reconfigure.onShow} />}
       </Box>
       <Box
         sx={{

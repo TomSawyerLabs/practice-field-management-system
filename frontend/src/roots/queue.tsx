@@ -6,7 +6,7 @@ import { WrapAll } from './wrap';
 // The queue manager keeps working through a radio reconfigure (that is what
 // "Set up next match" causes), so no backdrop.
 createRoot(document.getElementById('root')!).render(
-  <WrapAll showReconfigOverlay={false}>
+  <WrapAll>
     <AdminAuthGate>
       <QueuePage />
     </AdminAuthGate>
