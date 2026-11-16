@@ -96,11 +96,14 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 - The driving laptop 10.55.18.177 was placed on slot1 from 1:08 PM ("Drive
   started"), so its queries would have been forwarded. A second laptop,
   10.55.216.169, showed up as a DS at 1:29 PM (blocked as a duplicate).
-- **Likely cause: the app ran on a device pFMS hadn't placed.** A laptop, phone
-  or tablet that isn't driving and hasn't yet talked to `10.28.54.x` gets its
-  queries silently dropped (`handleLaptopPacket`: no station, return). Typing
-  the IP makes it talk to the subnet, conntrack places it, and mDNS then works:
-  the fix that worked is also the thing that would have unblocked mDNS.
+- ~~Likely cause: the app ran on a device pFMS hadn't placed.~~ **Ruled out**:
+  the user says it was the DS laptop, which was placed on slot1 from 1:08 PM.
+  (An unplaced device's queries are still dropped silently, so that remains a
+  gap for phones and second laptops.)
+- **Cause unknown.** The path worked on 1700's robot on 2026-10 (tested with a
+  Node script from this PC, not a Windows resolver or a real app). Untested:
+  whether Windows (or the app) accepts the reflector's unicast answer to a QM
+  query sent from port 5353, and how the app discovers cameras at all.
 - Laptop mDNS does reach steamboat on VLAN 3 (`eno1.3`): tcpdump saw queries
   from Wi-Fi clients directly. Most VLAN-3 mDNS comes from 10.55.0.1, the site
   router's own mDNS proxy, which pFMS can never place.
@@ -121,10 +124,10 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
    on `http://pfms.tsl` only, then main display, with the bandwidth gate.
 2. Build an NT readout (robot code up, dashboards, FMSInfo seen by the robot)?
    Recommend yes, FMSInfo first: it's a real CSA check.
-3. mDNS for laptops pFMS hasn't placed? Recommend: when only one team is on
-   the field, forward an unplaced laptop's query to that station; always count
-   dropped queries per name, and show them on the Network page, so the next
-   incident leaves evidence.
+3. mDNS evidence for next time? Recommend: log each forwarded query's fate
+   (forwarded, answered, delivered to the laptop, or dropped and why), keep the
+   last few hundred so a deploy doesn't wipe them, and show them on the Network
+   page. Also ask 2854 which app they use.
 
 ## Things not to do
 
