@@ -10,6 +10,7 @@ import type {
   RouteOptions,
   ForwardCounter,
   IptablesRuleInfo,
+  ChainRuleCounter,
 } from './types.js';
 
 /** OS-agnostic network management backend */
@@ -61,6 +62,23 @@ export interface NetworkBackend {
 
   /** Delete a rule that listRulesByComment found. */
   deleteRule(rule: IptablesRuleInfo): Promise<void>;
+
+  /**
+   * Replace a chain's rules in one step (iptables-restore --noflush), creating
+   * the chain if it's missing. Nothing passing through it ever sees it half
+   * written. Each rule is its arguments after `-A <chain>`. Counters restart.
+   */
+  replaceChain(table: string, chain: string, rules: string[][]): Promise<void>;
+
+  /** Empty and remove a chain. No-op if it doesn't exist. Remove every jump
+   *  to it first, or the kernel refuses. */
+  deleteChain(table: string, chain: string): Promise<void>;
+
+  /** Names of the chains in a table that start with the prefix. */
+  listChains(table: string, prefix: string): Promise<string[]>;
+
+  /** A chain's rules with their packet counters, in order. Empty if missing. */
+  chainCounters(table: string, chain: string): Promise<ChainRuleCounter[]>;
 
   /** Get packet/byte counters for FORWARD rules matching the comment prefix. */
   getForwardCounters(commentPrefix: string): Promise<ForwardCounter[]>;

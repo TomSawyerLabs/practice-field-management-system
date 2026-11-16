@@ -83,8 +83,30 @@ export function createDryRunBackend(inner?: NetworkBackend): NetworkBackend {
           (opts.destinationPort != null ? ` --dport ${opts.destinationPort}` : '') +
           ` -j ${opts.jump}` +
           (opts.toDestination ? ` --to-destination ${opts.toDestination}` : '') +
+          (opts.ctState ? ` -m conntrack --ctstate ${opts.ctState}` : '') +
           (opts.comment ? ` (${opts.comment})` : ''),
       );
+    },
+
+    async replaceChain(table: string, chain: string, rules: string[][]) {
+      console.log(
+        `[dry-run] Would replace ${table} chain ${chain} with:` +
+          rules.map(r => `\n  -A ${chain} ${r.join(' ')}`).join(''),
+      );
+    },
+
+    async deleteChain(table: string, chain: string) {
+      console.log(`[dry-run] Would delete ${table} chain ${chain}`);
+    },
+
+    async listChains(table: string, prefix: string) {
+      if (inner) return inner.listChains(table, prefix);
+      return [];
+    },
+
+    async chainCounters(table: string, chain: string) {
+      if (inner) return inner.chainCounters(table, chain);
+      return [];
     },
 
     async getForwardCounters() {

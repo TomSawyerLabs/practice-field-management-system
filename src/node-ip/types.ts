@@ -117,5 +117,15 @@ export interface IptablesOptions {
   jump: string;
   /** DNAT target address (e.g. "192.168.1.5:1150") — used with jump: 'DNAT' */
   toDestination?: string;
+  /** `-m conntrack --ctstate <state>`, e.g. "DNAT" for traffic a REDIRECT sent here. */
+  ctState?: string;
   comment?: string;
+}
+
+/** A rule of a chain, with its counter, as `iptables -L <chain> -v -n -x` shows it. */
+export interface ChainRuleCounter {
+  target: string;
+  packets: number;
+  /** "0.0.0.0/0" when the rule matches any source. A single host shows bare. */
+  source: string;
 }

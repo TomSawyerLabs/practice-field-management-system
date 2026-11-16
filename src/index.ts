@@ -32,7 +32,15 @@ import {
   migrateAllBridgeNat,
   networkBackend,
   flushManagedNetworkState,
+  teamsOnBridges,
 } from './networkManager.js';
+import { TeamAuth } from './teamAuth.js';
+import { TeamLock } from './teamLock.js';
+import { createLockPortal, createTeamAuthHandler } from './teamAuthApi.js';
+import { AdminPushStore } from './adminPushStore.js';
+import { alertForgotPassword } from './teamPasswordAlert.js';
+import { ipv4OfNeighbor } from './neighborAlias.js';
+import { isOnSite } from './onLink.js';
 import {
   onConfigChange as onRouteConfigChange,
   cleanupAllPreferences,
@@ -100,7 +108,7 @@ import { captureSnapshot, SlackSnapshots } from './slackSnapshots.js';
 import { handleTimelapseRequest } from './timelapseApi.js';
 import { createDiagReportHandler } from './diagReportApi.js';
 import { findAssetDir } from './staticServer.js';
-import { getRealClientIp } from './utils.js';
+import { getRealClientIp, normalizeIp } from './utils.js';
 import { PracticeNotifier } from './practiceNotifier.js';
 import { countPracticeDayItems, handlePracticeRequest, type PracticeApiDeps } from './practiceApi.js';
 import { UsageTracker } from './usageTracker.js';
@@ -893,6 +901,66 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     publicUrl,
   });
 
+  // Optional team passwords, and the network lock that lets only a team's
+  // logged-in laptops reach its robots (plans/team-password-login.md).
+  const teamAuth = new TeamAuth();
+  const adminPushStore = new AdminPushStore();
+  const leaseIdleMs = () => ((setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000) / 2;
+  const portalPort = Number(process.env.TEAM_PORTAL_PORT) || 8180;
+  const teamLock = vlanInterface
+    ? new TeamLock({
+        auth: teamAuth,
+        net: networkBackend,
+        teamsOnBridges,
+        bridgeName,
+        portalPort,
+        idleMs: leaseIdleMs,
+      })
+    : undefined;
+  if (teamLock) {
+    teamAuth.onChange(change => {
+      if (change.network) void teamLock.reconcile();
+    });
+    // The bridges only hold their teams once a commit is done (or, after a
+    // graceful reload, once recoverLostCommit has read them; see below).
+    radioManager.addCommitCompleteListener(() => void teamLock.activate());
+    teamLock.start();
+    // Plain HTTP aimed at a locked team's robots lands here and is sent to
+    // the login page, then back. LAN_URL is how laptops reach pFMS; without
+    // it, the address and port they just reached this host at.
+    const portal = createLockPortal({
+      loginBase: req =>
+        process.env.LAN_URL?.replace(/\/+$/, '') ||
+        `http://${req.socket.localAddress?.replace(/^::ffff:/, '')}:${WebSocketPort}`,
+    });
+    portal.on('error', err => appWarn(`Team login portal on port ${portalPort}: ${err.message}`));
+    portal.listen(portalPort, () => console.log(`Team login portal listening on port ${portalPort}`));
+  }
+  // Devices forgotten for a year go, once a day.
+  setInterval(() => teamAuth.pruneDevices(), 24 * 3600_000).unref();
+  const siteNetworksForTeams = new OnLinkChecker(undefined, undefined, ON_SITE_IPV6_PREFIX);
+  const handleTeamAuthRequest = createTeamAuthHandler({
+    auth: teamAuth,
+    clientIp: req => normalizeIp(getRealClientIp(req.socket.remoteAddress, req.headers, trustedProxyMatcher)),
+    ipv4Of: ipv4OfNeighbor,
+    isOnSite: ip => isOnSite(ip, siteNetworksForTeams),
+    networkSettled: () => teamLock?.reconcile() ?? Promise.resolve(),
+    alertForgot: (team, address) =>
+      alertForgotPassword(
+        {
+          postToSlack: text => slackBridge.postToChannel(text),
+          pushStore: adminPushStore,
+          sendPush: (sub, payload) => pushService.send(sub, payload),
+          adminUrl: () => {
+            const base = publicUrl();
+            return base ? `${base.replace(/\/+$/, '')}/admin` : undefined;
+          },
+        },
+        team,
+        address,
+      ),
+  });
+
   // Initialize WebSocket server (callbacks are set below after subsystems are created)
   let onRunTeamChecks: ((station: StationName) => void) | undefined;
   let onDriveAction: ((dsIp: string, station: StationName | null) => void) | undefined;
@@ -941,6 +1009,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleFirmwareRequest(req, res, firmwareStore, staffHttp),
       handleTeamAvatarRequest,
       handleManifestRequest,
+      handleTeamAuthRequest,
     ],
     onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
@@ -970,6 +1039,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     slackBridge,
     adminAuth,
     operatorAuth,
+    teamAuth,
+    teamLockInfo: () => ({ idleMs: leaseIdleMs(), available: !!teamLock }),
+    adminPush: { store: adminPushStore, vapidPublicKey: () => pushService.publicKey },
     externalAccessStore,
     // Station test port mode callbacks
     onStationTestMode: (station, portVlanId) => {
@@ -2224,7 +2296,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       stopAllDHCP();
       if (!vlanInterface) process.exit(0);
       console.log('Cleaning up network rules...');
-      Promise.all([flushManagedNetworkState(), cleanupAllPreferences()]).then(
+      teamLock?.stop();
+      Promise.all([flushManagedNetworkState().then(() => teamLock?.removeAll()), cleanupAllPreferences()]).then(
         () => process.exit(0),
         err => {
           console.error('Error during cleanup:', err);
@@ -2256,7 +2329,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     // Tell networkManager which teams are already configured so future config
     // changes properly tear down old routes and iptables rules, and put right
     // a bridge that doesn't match the config.
-    radioManager.recoverLostCommit().catch(err => appWarn(`Could not check the bridges: ${(err as Error).message}`));
+    radioManager
+      .recoverLostCommit()
+      .catch(err => appWarn(`Could not check the bridges: ${(err as Error).message}`))
+      .finally(() => void teamLock?.activate());
     // Rules written by an older pFMS: bring the bridges' NAT up to date.
     void migrateAllBridgeNat(s => radioManager.getTeamForStation(s));
     radioManager

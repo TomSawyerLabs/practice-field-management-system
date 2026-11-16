@@ -9,6 +9,7 @@ import { AdminAuth } from './adminAuth.js';
 import { ExternalAccessStore } from './externalAccessStore.js';
 import { LoginLimiter } from './loginLimiter.js';
 import { OperatorAuth } from './operatorAuth.js';
+import { TeamAuth } from './teamAuth.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
@@ -100,6 +101,8 @@ describe('the access table', () => {
   /** The ones that really are `adminOnly`, to tell them from unclassified. */
   const ADMIN_ONLY = new Set([
     'saveSlackConfig',
+    'adminPushSubscribe',
+    'adminPushUnsubscribe',
     'operatorSetCode',
     'operatorRevokeDevice',
     'createExternalAccessToken',
@@ -151,6 +154,8 @@ function sentByExport(): Map<string, string[]> {
   );
 }
 
+const OPEN_TIERS = new Set(['anyone', 'team']);
+
 describe('pages with no login', () => {
   const sent = sentByExport();
   const sends = (root: string) =>
@@ -168,9 +173,11 @@ describe('pages with no login', () => {
     'cancelPendingChange', // the same panel
   ]);
   const gated = (root: string) => [
-    ...new Set(sends(root).filter(t => accessOf(t) !== 'anyone' && !importedNotRendered.has(t))),
+    ...new Set(sends(root).filter(t => !OPEN_TIERS.has(accessOf(t)) && !importedNotRendered.has(t))),
   ];
 
+  // `team` is open too, until a team sets a password, and then a login for
+  // that team is all it takes: a Driver Station laptop can log in like any.
   test('a team page, which a Driver Station runs, sends nothing gated', () => {
     expect(gated('control.tsx')).toEqual([]);
   });
@@ -216,6 +223,7 @@ describe('the WebSocket gate', () => {
   const authDir = mkdtempSync(join(tmpdir(), 'pfms-ws-access-'));
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
+  let teamAuth = new TeamAuth(join(authDir, 'unused-team.json'));
   const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
   let adminLogins = new LoginLimiter();
   let context: WebSocketContext;
@@ -284,6 +292,12 @@ describe('the WebSocket gate', () => {
           return typeof member === 'function' ? member.bind(operatorAuth) : member;
         },
       }),
+      teamAuth: new Proxy({} as TeamAuth, {
+        get: (_, key: keyof TeamAuth) => {
+          const member = teamAuth[key];
+          return typeof member === 'function' ? member.bind(teamAuth) : member;
+        },
+      }),
       externalAccessStore: externalAccess,
       strangerAdminLogins: {
         take: (address: string) => adminLogins.take(address),
@@ -310,6 +324,7 @@ describe('the WebSocket gate', () => {
     Object.assign(hostnames, { [DS_IP]: 'TEAM1678-DS', [SAME_NAME_IP]: 'team1678-ds' });
     adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
     operatorAuth = new OperatorAuth(join(authDir, `operator-${Math.random()}.json`));
+    teamAuth = new TeamAuth(join(authDir, `team-${Math.random()}.json`));
     adminLogins = new LoginLimiter();
   });
 
@@ -327,6 +342,8 @@ describe('the WebSocket gate', () => {
     retryAfterMs?: number;
     secret?: string;
     devices?: { id: string; name: string }[];
+    team?: number;
+    loggedIn?: boolean;
   };
 
   async function client(ip: string, headers: Record<string, string> = {}) {
@@ -669,6 +686,69 @@ describe('the WebSocket gate', () => {
     });
   });
 
+  describe('with a team password', () => {
+    const prefs = { type: 'teamPrefsSet', team: 1678, nudge: { slack: true } };
+
+    test("a team's settings are open until it sets one", async () => {
+      const ds = await client(DS_IP);
+      expect(await ds.send(prefs)).toEqual([]);
+    });
+
+    test('then they take a login for that team, and nothing else does', async () => {
+      const set = await teamAuth.setPassword(1678, 'gearbox42!');
+      const other = await teamAuth.setPassword(254, 'cheesypoofs');
+      if (!set || !('token' in set) || !other || !('token' in other)) throw new Error('set failed');
+
+      const ds = await client(DS_IP);
+      expect((await ds.send(prefs))[0].error).toContain('Team 1678 has a password');
+      // Stops and the rest of the team page stay open.
+      expect(await ds.send({ type: 'stationReady', station: 'slot2', ready: true })).toEqual([]);
+      expect(await ds.send({ type: 'adminGlobalEStop' })).toEqual([]);
+
+      // Another team's login doesn't count.
+      expect(await ds.send({ type: 'teamAuth', team: 254, token: other.token })).toEqual([
+        { type: 'teamAuthResult', team: 254, loggedIn: true },
+      ]);
+      expect((await ds.send(prefs))[0].error).toContain('Team 1678 has a password');
+
+      expect(await ds.send({ type: 'teamAuth', team: 1678, token: set.token })).toEqual([
+        { type: 'teamAuthResult', team: 1678, loggedIn: true },
+      ]);
+      expect(await ds.send(prefs)).toEqual([]);
+
+      // Signed out from elsewhere: refused again at once.
+      teamAuth.removeDevice(1678, set.device.id);
+      expect((await ds.send(prefs))[0].error).toContain('Team 1678 has a password');
+    });
+
+    test('a wrong token logs nothing in', async () => {
+      await teamAuth.setPassword(1678, 'gearbox42!');
+      const ds = await client(DS_IP);
+      expect(await ds.send({ type: 'teamAuth', team: 1678, token: 'nope' })).toEqual([
+        { type: 'teamAuthResult', team: 1678, loggedIn: false },
+      ]);
+      expect((await ds.send(prefs))[0].error).toContain('Team 1678 has a password');
+    });
+
+    test('admin may change any team, and reset it', async () => {
+      await claimField();
+      await teamAuth.setPassword(1678, 'gearbox42!');
+      const admin = await client(STAFF_IP);
+      expect((await admin.adminLogin('correct horse')).authenticated).toBe(true);
+      expect(await admin.send(prefs)).toEqual([]);
+      await admin.send({ type: 'teamAuthReset', team: 1678 });
+      expect(teamAuth.hasPassword(1678)).toBe(false);
+    });
+
+    test('resetting a team takes an admin login', async () => {
+      await claimField();
+      await teamAuth.setPassword(1678, 'gearbox42!');
+      const anyone = await client(STAFF_IP);
+      expect((await anyone.send({ type: 'teamAuthReset', team: 1678 }))[0].error).toBe('Admin authentication required');
+      expect(teamAuth.hasPassword(1678)).toBe(true);
+    });
+  });
+
   describe('before the field has a passphrase', () => {
     beforeEach(unclaimField);
 
@@ -891,6 +971,7 @@ describe('the WebSocket gate', () => {
         'matchState',
         'hostnames',
         'operatorAuthResult',
+        'teamAuthStatus',
         'routePreferenceState',
         'dsClientState',
         'pendingCommitState',

@@ -110,6 +110,16 @@ import {
   isOperatorPairRedeem,
   isOperatorPairStart,
   isOperatorRevokeDevice,
+  isTeamAuthPresent,
+  isTeamAuthAdminGet,
+  isTeamAuthReset,
+  isTeamAuthRevokeDevice,
+  isTeamAuthSetLock,
+  isAdminPushSubscribe,
+  isAdminPushUnsubscribe,
+  type TeamAuthResult,
+  type TeamAuthStatusMessage,
+  type TeamAuthAdminState,
   isOperatorSetCode,
   type OperatorAuthResult,
   type OperatorDevicesState,
@@ -172,7 +182,16 @@ import {
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
-import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, type MessageAccess } from './wsAccess.js';
+import {
+  accessOf,
+  dsClientMatch,
+  isCrossSite,
+  isOpenToOutsiders,
+  teamsOfMessage,
+  type MessageAccess,
+} from './wsAccess.js';
+import type { TeamAuth } from './teamAuth.js';
+import type { AdminPushStore } from './adminPushStore.js';
 import { accessCookieOf } from './externalAccessAuth.js';
 import { LoginLimiter } from './loginLimiter.js';
 import { isOnSite, ON_SITE_IPV6_PREFIX, OnLinkChecker } from './onLink.js';
@@ -291,6 +310,13 @@ export interface SetupWebSocketOptions {
   slackBridge?: SlackBridge;
   adminAuth?: AdminAuth;
   operatorAuth?: OperatorAuth;
+  /** Optional per-team passwords; see src/teamAuth.ts. */
+  teamAuth?: TeamAuth;
+  /** For /admin's team login card: how long a laptop stays let through with
+   *  no traffic, and whether this field can lock networks at all. */
+  teamLockInfo?: () => { idleMs: number; available: boolean };
+  /** Admin devices that hear about forgotten team passwords. */
+  adminPush?: { store: AdminPushStore; vapidPublicKey: () => string | null };
   externalAccessStore?: ExternalAccessStore;
   /** The login has to stay open to the internet, and an old passphrase can be
    *  short. Only strangers count: a flood can't lock out anyone on site or
@@ -387,6 +413,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     slackBridge,
     adminAuth,
     operatorAuth,
+    teamAuth,
+    teamLockInfo,
+    adminPush,
     externalAccessStore,
     strangerAdminLogins = new LoginLimiter(),
     onStationTestMode,
@@ -494,6 +523,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
   /** Connections logged in as an operator, and as which device. */
   const operatorConnections = new Map<WebSocket, { id: string; name: string }>();
+
+  /** The teams each connection has presented a login for: team → device id. */
+  const teamConnections = new Map<WebSocket, Map<number, string>>();
 
   /** The operator state each connection last heard, to send only changes. */
   const operatorStateSent = new Map<WebSocket, string>();
@@ -841,11 +873,25 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     return isStranger(ws) && !isOpenToOutsiders(type) ? 'This only works from the field network' : null;
   }
 
+  /** Whether this connection holds a live login for the team. */
+  function loggedInAsTeam(ws: WebSocket, team: number): boolean {
+    const deviceId = teamConnections.get(ws)?.get(team);
+    return !!deviceId && !!teamAuth?.listDevices(team).some(d => d.id === deviceId);
+  }
+
   /** Why this connection may not send a message of this tier, or null. */
-  function refusal(ws: WebSocket, access: MessageAccess): string | null {
+  function refusal(ws: WebSocket, access: MessageAccess, data?: unknown): string | null {
     switch (access) {
       case 'anyone':
         return null;
+      case 'team': {
+        if (!teamAuth || adminConnections.has(ws)) return null;
+        const locked = teamsOfMessage(data, s => radioManager.getTeamForStation(s)).filter(
+          t => teamAuth.hasPassword(t) && !loggedInAsTeam(ws, t),
+        );
+        if (!locked.length) return null;
+        return `Team ${locked.join(' and ')} has a password. Log in on the team's page first.`;
+      }
       case 'admin':
         return setupWritesAllowed(ws) ? null : 'Admin authentication required';
       case 'adminOnly':
@@ -1114,6 +1160,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // Whether this page needs an operator login
     sendOperatorState(ws);
 
+    // Which teams have a password, and which have locked their network
+    if (teamAuth) ws.send(JSON.stringify(teamAuthStatusMessage()));
+
     // Send initial route preference state
     sendRouteState(ws, wsToIp.get(ws) ?? 'unknown');
 
@@ -1309,6 +1358,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       admitted.delete(ws);
       adminConnections.delete(ws);
       operatorConnections.delete(ws);
+      teamConnections.delete(ws);
       operatorStateSent.delete(ws);
       dsNoticeDismissed.delete(ws);
       dsClientStateSent.delete(ws);
@@ -1340,7 +1390,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
       // Who may send what is decided in one place: see src/wsAccess.ts.
       const type = (data as { type?: unknown } | null)?.type;
-      const refused = outsiderRefusal(ws, type) ?? refusal(ws, accessOf(type));
+      const refused = outsiderRefusal(ws, type) ?? refusal(ws, accessOf(type), data);
       if (refused) {
         appWarn(`Refused ${String(type)} from ${whoIs(clientIp)}: ${refused}`);
         ws.send(JSON.stringify({ error: refused }));
@@ -2158,6 +2208,33 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
             void operatorAuth.setCode(data.code).then(operatorsChanged);
           }
         }
+        // ── Team logins ─────────────────────────────────────────────
+      } else if (isTeamAuthPresent(data)) {
+        const device = teamAuth?.validate(data.team, data.token);
+        if (device) {
+          const teams = teamConnections.get(ws) ?? new Map<number, string>();
+          teams.set(data.team, device.id);
+          teamConnections.set(ws, teams);
+        } else {
+          teamConnections.get(ws)?.delete(data.team);
+        }
+        ws.send(
+          JSON.stringify({ type: 'teamAuthResult', team: data.team, loggedIn: !!device } satisfies TeamAuthResult),
+        );
+      } else if (isTeamAuthAdminGet(data)) {
+        sendTeamAuthAdmin(ws);
+      } else if (isTeamAuthReset(data)) {
+        if (teamAuth?.reset(data.team)) console.log(`Team ${data.team}'s password was reset by ${whoIs(clientIp)}`);
+      } else if (isTeamAuthRevokeDevice(data)) {
+        teamAuth?.removeDevice(data.team, data.deviceId);
+      } else if (isTeamAuthSetLock(data)) {
+        teamAuth?.setLock(data.team, data.lock);
+      } else if (isAdminPushSubscribe(data)) {
+        adminPush?.store.add(data.subscription, data.label);
+        for (const admin of adminConnections) sendTeamAuthAdmin(admin);
+      } else if (isAdminPushUnsubscribe(data)) {
+        adminPush?.store.remove(data.endpoint);
+        for (const admin of adminConnections) sendTeamAuthAdmin(admin);
       } else if (isOperatorRevokeDevice(data)) {
         if (data.id) operatorAuth?.revokeDevice(data.id);
         else operatorAuth?.revokeAllDevices();
@@ -2410,6 +2487,36 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         appWarn('Unknown message type from client: ' + JSON.stringify(redactForLog(data)));
       }
     });
+  });
+
+  function teamAuthStatusMessage(): TeamAuthStatusMessage {
+    return { type: 'teamAuthStatus', teams: teamAuth?.allStatus() ?? {} };
+  }
+
+  function sendTeamAuthAdmin(ws: WebSocket) {
+    if (!teamAuth || ws.readyState !== WebSocket.OPEN) return;
+    const info = teamLockInfo?.() ?? { idleMs: 0, available: false };
+    const state: TeamAuthAdminState = {
+      type: 'teamAuthAdmin',
+      teams: Object.entries(teamAuth.allStatus())
+        .map(([team, s]) => ({ team: Number(team), lock: s.lock, devices: teamAuth.listDevices(Number(team)) }))
+        .sort((a, b) => a.team - b.team),
+      idleMs: info.idleMs,
+      lockAvailable: info.available,
+      pushDevices: (adminPush?.store.list() ?? []).map(({ endpoint, label, addedAt }) => ({
+        endpoint,
+        label,
+        addedAt,
+      })),
+      vapidPublicKey: adminPush?.vapidPublicKey() ?? undefined,
+      slackConfigured: !!slackBridge?.isConfigured(),
+    };
+    ws.send(JSON.stringify(state));
+  }
+
+  teamAuth?.onChange(() => {
+    broadcast(teamAuthStatusMessage());
+    for (const ws of adminConnections) sendTeamAuthAdmin(ws);
   });
 
   server.listen(port, () => {

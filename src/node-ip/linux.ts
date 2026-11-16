@@ -1,4 +1,4 @@
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { NetworkBackend } from './backend.js';
 import type {
@@ -14,6 +14,7 @@ import type {
   ForwardCounter,
   IpRuleInfo,
   IptablesRuleInfo,
+  ChainRuleCounter,
 } from './types.js';
 
 const execFile = promisify(execFileCb);
@@ -21,6 +22,30 @@ const execFile = promisify(execFileCb);
 async function run(command: string, args: string[]): Promise<string> {
   const { stdout } = await execFile(command, args);
   return stdout;
+}
+
+/** Run a command with `input` on its stdin. */
+function runWithInput(command: string, args: string[], input: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    child.on('error', reject);
+    child.on('close', code =>
+      code === 0
+        ? resolve()
+        : reject(Object.assign(new Error(`${command} exited ${code}: ${stderr.trim()}`), { stderr })),
+    );
+    child.stdin.end(input);
+  });
+}
+
+/** One line of `iptables -L <chain> -v -n -x`, if it's a rule. Columns:
+ *  pkts bytes target prot opt in out source destination [matches]. */
+export function parseChainRuleLine(line: string): ChainRuleCounter | undefined {
+  const m = /^\s*(\d+)\s+\d+\s+(\S+)\s+\S+\s+\S+\s+\S+\s+\S+\s+(\S+)\s+\S+/.exec(line);
+  if (!m) return undefined;
+  return { packets: Number(m[1]), target: m[2], source: m[3] };
 }
 
 async function ip(...args: string[]): Promise<string> {
@@ -236,6 +261,7 @@ export function createLinuxBackend(): NetworkBackend {
         if (opts.notLocalSource) args.push('-m', 'addrtype', '!', '--src-type', 'LOCAL');
         if (opts.protocol) args.push('-p', opts.protocol);
         if (opts.destinationPort != null) args.push('--dport', String(opts.destinationPort));
+        if (opts.ctState) args.push('-m', 'conntrack', '--ctstate', opts.ctState);
         args.push('-j', opts.jump);
         if (opts.toDestination) args.push('--to-destination', opts.toDestination);
         if (opts.comment) args.push('-m', 'comment', '--comment', opts.comment);
@@ -262,6 +288,46 @@ export function createLinuxBackend(): NetworkBackend {
       }
 
       await run('iptables', buildArgs(opts.action));
+    },
+
+    async replaceChain(table: string, chain: string, rules: string[][]): Promise<void> {
+      // Declaring a chain in a --noflush restore empties it (creating it if
+      // need be), and the table commits as one: no moment with the chain empty.
+      const lines = [`*${table}`, `:${chain} - [0:0]`, ...rules.map(r => ['-A', chain, ...r].join(' ')), 'COMMIT', ''];
+      await runWithInput('iptables-restore', ['--noflush'], lines.join('\n'));
+    },
+
+    async deleteChain(table: string, chain: string): Promise<void> {
+      try {
+        await run('iptables', ['-t', table, '-F', chain]);
+      } catch (err) {
+        if (isExecError(err) && /No chain|does not exist/i.test(err.stderr)) return;
+        throw err;
+      }
+      await run('iptables', ['-t', table, '-X', chain]);
+    },
+
+    async listChains(table: string, prefix: string): Promise<string[]> {
+      const out = await run('iptables', ['-t', table, '-S']);
+      return out
+        .split('\n')
+        .filter(l => l.startsWith('-N '))
+        .map(l => l.slice(3).trim())
+        .filter(name => name.startsWith(prefix));
+    },
+
+    async chainCounters(table: string, chain: string): Promise<ChainRuleCounter[]> {
+      let out: string;
+      try {
+        out = await run('iptables', ['-t', table, '-L', chain, '-v', '-n', '-x']);
+      } catch {
+        return [];
+      }
+      // Two header lines: "Chain …" and the column names.
+      return out
+        .split('\n')
+        .slice(2)
+        .flatMap(l => parseChainRuleLine(l) ?? []);
     },
 
     async getForwardCounters(commentPrefix: string): Promise<ForwardCounter[]> {

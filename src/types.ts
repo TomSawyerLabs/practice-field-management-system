@@ -305,6 +305,12 @@ export interface SetupSettings {
   /** Id of the game new matches run (src/game/). Absent = REBUILT. A match
    *  already set up keeps the game it was set up with. */
   game?: string;
+  /** DHCP lease time of the guest/laptop network, in hours. A team's network
+   *  lock lets a logged-in laptop's address through until half of this has
+   *  passed with no traffic from it: a client renews at half its lease, so no
+   *  other device can be handed the address sooner. Absent = 24 (UniFi's
+   *  default). */
+  guestLeaseHours?: number;
 }
 
 /** How the packaged binary handles new builds on its own.
@@ -914,6 +920,7 @@ const SETUP_SETTING_VALIDATORS: Record<keyof SetupSettings, (v: unknown) => bool
   // Any well-formed id: one whose file isn't loaded runs REBUILT and says so
   // on /admin, rather than refusing a setting that a missing file broke.
   game: v => typeof v === 'string' && /^[a-z0-9][a-z0-9-]{0,47}$/.test(v),
+  guestLeaseHours: v => typeof v === 'number' && v >= 0.5 && v <= 24 * 30,
 };
 
 /** The games the field can run, for /admin. Sent on connect and whenever a
@@ -5634,4 +5641,136 @@ export type TeamPrefsState = {
 export function isTeamPrefsState(msg: unknown): msg is TeamPrefsState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as TeamPrefsState).type === 'teamPrefsState';
+}
+
+// ── Team logins (src/teamAuth.ts) ───────────────────────────────────
+
+/** What anyone may know about a team's login. Broadcast to every page. */
+export interface TeamAuthPublicStatus {
+  passwordSet: boolean;
+  /** Only the team's logged-in laptops reach its robots. */
+  lock: boolean;
+  devices: number;
+}
+
+/** Every team with a password, keyed by team number. Teams without one are
+ *  absent. Sent on connecting and after any change. */
+export interface TeamAuthStatusMessage {
+  type: 'teamAuthStatus';
+  teams: Record<number, TeamAuthPublicStatus>;
+}
+
+/** A team page presents the token its login cookie holds (see
+ *  src/teamAuthApi.ts), so this socket may change the team's settings. */
+export interface TeamAuthPresent {
+  type: 'teamAuth';
+  team: number;
+  token: string;
+}
+
+export function isTeamAuthPresent(msg: unknown): msg is TeamAuthPresent {
+  const m = msg as TeamAuthPresent;
+  return m?.type === 'teamAuth' && isTeamNumber(m.team) && typeof m.token === 'string' && m.token.length <= 128;
+}
+
+export interface TeamAuthResult {
+  type: 'teamAuthResult';
+  team: number;
+  loggedIn: boolean;
+}
+
+/** /admin's view: every team with a password, and its devices. */
+export interface TeamAuthAdminState {
+  type: 'teamAuthAdmin';
+  teams: {
+    team: number;
+    lock: boolean;
+    devices: {
+      id: string;
+      name: string;
+      createdAt: number;
+      lastSeenAt: number;
+      address?: string;
+      addressSeenAt?: number;
+    }[];
+  }[];
+  /** How long a laptop stays let through with no traffic, in ms. */
+  idleMs: number;
+  /** Whether this field can lock networks at all (it manages the VLANs). */
+  lockAvailable: boolean;
+  /** Where "Forgot password" goes besides Slack: admin devices with push. */
+  pushDevices: { endpoint: string; label?: string; addedAt: number }[];
+  /** For subscribing this device. Absent when push isn't available. */
+  vapidPublicKey?: string;
+  /** Whether the Slack support channel is set up. */
+  slackConfigured: boolean;
+}
+
+/** /admin: send this device the team password alerts. */
+export interface AdminPushSubscribe {
+  type: 'adminPushSubscribe';
+  subscription: PushSubscriptionInput;
+  label?: string;
+}
+
+export function isAdminPushSubscribe(msg: unknown): msg is AdminPushSubscribe {
+  const m = msg as AdminPushSubscribe;
+  return (
+    m?.type === 'adminPushSubscribe' &&
+    isPushSubscriptionInput(m.subscription) &&
+    (m.label === undefined || (typeof m.label === 'string' && m.label.length <= 80))
+  );
+}
+
+export interface AdminPushUnsubscribe {
+  type: 'adminPushUnsubscribe';
+  endpoint: string;
+}
+
+export function isAdminPushUnsubscribe(msg: unknown): msg is AdminPushUnsubscribe {
+  const m = msg as AdminPushUnsubscribe;
+  return m?.type === 'adminPushUnsubscribe' && typeof m.endpoint === 'string';
+}
+
+export interface TeamAuthAdminGet {
+  type: 'teamAuthAdminGet';
+}
+
+export function isTeamAuthAdminGet(msg: unknown): msg is TeamAuthAdminGet {
+  return (msg as TeamAuthAdminGet)?.type === 'teamAuthAdminGet';
+}
+
+/** /admin: forget a team's password, devices and lock. */
+export interface TeamAuthReset {
+  type: 'teamAuthReset';
+  team: number;
+}
+
+export function isTeamAuthReset(msg: unknown): msg is TeamAuthReset {
+  const m = msg as TeamAuthReset;
+  return m?.type === 'teamAuthReset' && isTeamNumber(m.team);
+}
+
+/** /admin: sign one of a team's devices out. */
+export interface TeamAuthRevokeDevice {
+  type: 'teamAuthRevokeDevice';
+  team: number;
+  deviceId: string;
+}
+
+export function isTeamAuthRevokeDevice(msg: unknown): msg is TeamAuthRevokeDevice {
+  const m = msg as TeamAuthRevokeDevice;
+  return m?.type === 'teamAuthRevokeDevice' && isTeamNumber(m.team) && typeof m.deviceId === 'string';
+}
+
+/** /admin: turn a team's network lock off (or back on). */
+export interface TeamAuthSetLock {
+  type: 'teamAuthSetLock';
+  team: number;
+  lock: boolean;
+}
+
+export function isTeamAuthSetLock(msg: unknown): msg is TeamAuthSetLock {
+  const m = msg as TeamAuthSetLock;
+  return m?.type === 'teamAuthSetLock' && isTeamNumber(m.team) && typeof m.lock === 'boolean';
 }

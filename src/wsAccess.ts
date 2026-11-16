@@ -1,11 +1,15 @@
 import type { IncomingHttpHeaders } from 'node:http';
 import type { DsClientMatch, StationName } from './types.js';
+import { teamOfSsid } from './utils.js';
 
 /**
  * Who may send a WebSocket message:
  *
  * - `anyone`: team pages and everything else. Team pages have no login, so
- *   nothing a team page sends may ever move out of this tier.
+ *   nothing a team page sends may ever move out of this tier, except:
+ * - `team`: a team's own settings. Open like `anyone`, until the team the
+ *   message is about sets a password (src/teamAuth.ts); then it takes a device
+ *   logged in as that team, or an admin login. Stops are never in this tier.
  * - `staff`: any device that isn't a Driver Station, because a laptop driving
  *   a robot shouldn't also be running the field. Once the field has an operator
  *   code or paired devices, it must also be logged in as an operator. An admin
@@ -17,31 +21,35 @@ import type { DsClientMatch, StationName } from './types.js';
  *   setup wizard's trust-on-first-use window).
  * - `adminOnly`: an admin login, always.
  */
-export type MessageAccess = 'anyone' | 'staff' | 'operator' | 'admin' | 'adminOnly';
+export type MessageAccess = 'anyone' | 'team' | 'staff' | 'operator' | 'admin' | 'adminOnly';
 
 /** Every message the server acts on. Missing from here means refused. */
 const MESSAGE_ACCESS: Record<string, MessageAccess> = {
-  // ── Sent by team pages ──────────────────────────────────────────────
-  station: 'anyone',
-  cancelStationChange: 'anyone',
-  leaveWifiLine: 'anyone',
-  internetToggle: 'anyone',
+  // ── Sent by team pages: a team's own settings. Behind the team's login
+  //    once it has a password; see teamsOfMessage for whose. ────────────
+  station: 'team',
+  cancelStationChange: 'team',
+  leaveWifiLine: 'team',
+  internetToggle: 'team',
+  saveSavedTeam: 'team',
+  enableSavedRobot: 'team',
+  portBridge: 'team',
+  teamPrefsSet: 'team',
+  pushSubscribe: 'team',
+  pushUnsubscribe: 'team',
+  setPracticeRecording: 'team',
+  requestPracticeDayLink: 'team',
+
+  // ── Sent by team pages, open to all ────────────────────────────────
   drive: 'anyone',
   routePreference: 'anyone',
   robotWifiTest: 'anyone',
-  saveSavedTeam: 'anyone',
-  enableSavedRobot: 'anyone',
-  portBridge: 'anyone',
   runTeamChecks: 'anyone',
   queueJoinLine: 'anyone',
   queueLeaveLine: 'anyone',
   teamPrefsGet: 'anyone',
-  teamPrefsSet: 'anyone',
-  pushSubscribe: 'anyone',
-  pushUnsubscribe: 'anyone',
   pushTest: 'anyone',
-  setPracticeRecording: 'anyone',
-  requestPracticeDayLink: 'anyone',
+  teamAuth: 'anyone', // presents a team login's token; checked in TeamAuth
   stationJoinAlliance: 'anyone',
   stationLeave: 'anyone',
   stationReady: 'anyone',
@@ -162,9 +170,15 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   queueLineMove: 'admin',
   queueClear: 'admin',
   queueImport: 'admin',
+  teamAuthAdminGet: 'admin',
+  teamAuthReset: 'admin',
+  teamAuthRevokeDevice: 'admin',
+  teamAuthSetLock: 'admin',
 
   // ── Always a login, even before the field has a passphrase ──────────
   saveSlackConfig: 'adminOnly',
+  adminPushSubscribe: 'adminOnly',
+  adminPushUnsubscribe: 'adminOnly',
   operatorSetCode: 'adminOnly',
   operatorRevokeDevice: 'adminOnly',
   createExternalAccessToken: 'adminOnly',
@@ -189,6 +203,25 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
 export function accessOf(type: unknown): MessageAccess {
   if (typeof type === 'string' && Object.hasOwn(MESSAGE_ACCESS, type)) return MESSAGE_ACCESS[type];
   return 'adminOnly';
+}
+
+/**
+ * The teams a `team`-tier message is about: each must be logged in to, if it
+ * has a password. A Wi-Fi request is about the robot it names and whoever is
+ * on the station now, so one team can't push another's robot off. Unknown
+ * shapes give no teams; their handlers refuse them anyway.
+ */
+export function teamsOfMessage(data: unknown, teamAt: (station: StationName) => number | null): number[] {
+  const m = (data ?? {}) as Record<string, unknown>;
+  const teams = new Set<number>();
+  const add = (t: unknown) => {
+    if (typeof t === 'number' && Number.isInteger(t) && t > 0) teams.add(t);
+  };
+  if (typeof m.ssid === 'string') add(teamOfSsid(m.ssid));
+  if (typeof m.station === 'string' && /^slot[1-6]$/.test(m.station)) add(teamAt(m.station as StationName));
+  add(m.team);
+  add(m.teamNumber);
+  return [...teams];
 }
 
 /** Every message type in the table. */
