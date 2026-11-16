@@ -86,6 +86,28 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
   stdin closed; a refused port exits 7, an open one times out (28) with
   `time_connect` > 0.
 
+## The incident that started this (2854, ~1:20 PM PST 2026-11-15)
+
+2854's usual camera app couldn't find their cameras (probably by mDNS); they
+connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
+
+- **No record of the queries survives.** The reflector keeps only in-memory
+  counters (reset by the 3:41 PM deploy) and logs nothing per query.
+- The driving laptop 10.55.18.177 was placed on slot1 from 1:08 PM ("Drive
+  started"), so its queries would have been forwarded. A second laptop,
+  10.55.216.169, showed up as a DS at 1:29 PM (blocked as a duplicate).
+- **Likely cause: the app ran on a device pFMS hadn't placed.** A laptop, phone
+  or tablet that isn't driving and hasn't yet talked to `10.28.54.x` gets its
+  queries silently dropped (`handleLaptopPacket`: no station, return). Typing
+  the IP makes it talk to the subnet, conntrack places it, and mDNS then works:
+  the fix that worked is also the thing that would have unblocked mDNS.
+- Laptop mDNS does reach steamboat on VLAN 3 (`eno1.3`): tcpdump saw queries
+  from Wi-Fi clients directly. Most VLAN-3 mDNS comes from 10.55.0.1, the site
+  router's own mDNS proxy, which pFMS can never place.
+- Unverified alternatives: the app discovers by broadcast (never crosses the
+  router), or the forwarded multicast query doesn't reach a device behind the
+  robot radio (robot-tester.md notes multicast to a robot is unreliable).
+
 ## Progress log
 
 - [x] Port 80 Web link shipped and deployed (`64949cd`).
@@ -99,6 +121,10 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
    on `http://pfms.tsl` only, then main display, with the bandwidth gate.
 2. Build an NT readout (robot code up, dashboards, FMSInfo seen by the robot)?
    Recommend yes, FMSInfo first: it's a real CSA check.
+3. mDNS for laptops pFMS hasn't placed? Recommend: when only one team is on
+   the field, forward an unplaced laptop's query to that station; always count
+   dropped queries per name, and show them on the Network page, so the next
+   incident leaves evidence.
 
 ## Things not to do
 
