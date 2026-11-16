@@ -28,6 +28,11 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
 - Robot-code camera streams 1181–1190, connect-only probe. (user: "sure")
 - SSH: a small icon when 22 is open; click copies `ssh 10.TE.AM.x`. (user)
 - 443 isn't probed (same page as 80 on a roboRIO, self-signed cert).
+- mDNS lookup log: yes, "on a short log rotation" (user, 2026-11-16). 2 MB + one
+  `.1` copy, repeats within 30 s folded into a count.
+- Camera stream view: yes (user, 2026-11-16). Built as a pFMS relay (works on
+  https, one copy over the robot's Wi-Fi), gated on the radio's QoS BW Limit
+  being reported off.
 
 ## Survey: Team 2854, 3:4x PM PST 2026-11-15 (TCP connect, then page titles)
 
@@ -48,9 +53,18 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
        an SSH chip that copies `ssh <ip>` and says "Copied" inline (no tooltips;
        falls back to `execCommand('copy')` on plain-http pages).
 3. [x] Docs (`docs/network.md` Device Discovery), typecheck, 1326 tests, commit.
-4. [ ] Deploy (when the user says).
-5. [ ] ← next team day: check the chips against real devices, including a
-       CameraServer stream and a PhotonVision box if one shows up.
+4. [x] mDNS lookup log + Network page "Name lookups (.local)" card (`d4a7724`).
+5. [x] Inline camera view: relay `src/cameraRelay.ts`, `GET /api/camera`,
+       "Watch" chip (`1a53254`). Checked with real curl against a fake MJPEG
+       server on this PC (19 frames in 0.6 s, stops after the viewer leaves).
+6. [ ] ← Deploy (when the user says): `d64f6a9`, `6e992aa`, `d4a7724`, `1a53254`.
+       After deploy, check Caddy streams the multipart reply without buffering
+       (open Watch on the https site).
+7. [ ] Next team day: check chips, a CameraServer stream through Watch, the
+       lookup log while a team uses an app that finds devices by name, and ask
+       2854 which camera app they use.
+8. [ ] Camera on the main display (temporary view). Not started.
+9. [ ] Camera for a caster. Not started; needs what "caster" means here.
 
 ## Ideas proposed, not started (need the user's go)
 
@@ -116,18 +130,15 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 - [x] Port 80 Web link shipped and deployed (`64949cd`).
 - [x] Port survey of 2854's devices.
 - [x] Steps 1–3 (2026-11-15 evening PST), `d64f6a9` fix + feature commit.
-- [ ] Steps 4–5.
+- [x] Steps 4–5 (2026-11-16 early AM PST).
+- [ ] Steps 6–9.
 
 ## Open questions for the user
 
-1. Build the caster/main-display/inline stream view? Recommend: inline view first,
-   on `http://pfms.tsl` only, then main display, with the bandwidth gate.
+1. Main display and caster: what should they look like? (inline view is done)
 2. Build an NT readout (robot code up, dashboards, FMSInfo seen by the robot)?
    Recommend yes, FMSInfo first: it's a real CSA check.
-3. mDNS evidence for next time? Recommend: log each forwarded query's fate
-   (forwarded, answered, delivered to the laptop, or dropped and why), keep the
-   last few hundred so a deploy doesn't wipe them, and show them on the Network
-   page. Also ask 2854 which app they use.
+3. ~~mDNS evidence~~: answered yes, built (`d4a7724`).
 
 ## Things not to do
 
