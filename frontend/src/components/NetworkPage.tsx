@@ -191,7 +191,7 @@ export function StationNetworkCard({
                   <TableRow key={host.ip} sx={{ opacity: host.alive ? 1 : 0.5 }}>
                     <TableCell sx={{ fontFamily: 'monospace', py: 0.5 }}>
                       <HostDisplay ip={host.ip} />
-                      {host.alive && <HostServiceChips ip={host.ip} services={host.services} />}
+                      {host.alive && <HostServiceChips station={station} ip={host.ip} services={host.services} />}
                       {host.source === 'conntrack' && (
                         <Chip
                           label="Guest"

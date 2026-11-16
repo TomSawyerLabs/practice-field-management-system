@@ -47,10 +47,12 @@ import { TelemetryManager } from './telemetryManager.js';
 import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
 import { SubnetScanner } from './subnetScanner.js';
+import { CameraRelay } from './cameraRelay.js';
+import { handleCameraRequest, type CameraVerdict } from './cameraRelayApi.js';
 import { handleMdnsLookupsRequest } from './mdnsLookupApi.js';
 import { MdnsLookupLog } from './mdnsLookupLog.js';
 import { MdnsReflector } from './mdnsReflector.js';
-import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
+import { TeamChecker, setControllerPolicyResolver, controllerBlockReason, qosEnabledFrom } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotLinkWatch } from './robotLinkWatch.js';
 import { describeDropout, RobotDropoutTracker } from './robotDropouts.js';
@@ -905,6 +907,32 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const hostnameResolver = new HostnameResolver(state => broadcast(state));
   // What became of each .local lookup the mDNS reflector saw (Network page)
   const mdnsLookupLog = new MdnsLookupLog({ file: process.env.MDNS_LOOKUP_LOG || 'mdns-lookups.jsonl' });
+  // Robot camera streams, relayed for an inline view on the Network page
+  const cameraRelay = new CameraRelay();
+  const cameraVerdict = (station: StationName, ip: string, port: number): CameraVerdict => {
+    if (!vlanInterface) return { ok: false, status: 503, error: 'The field network is not up' };
+    if (radioManager.getTeamForStation(station) === null) {
+      return { ok: false, status: 404, error: 'No robot on that station' };
+    }
+    const host = subnetScanner.getResults().stations[station]?.hosts.find(h => h.ip === ip && h.alive);
+    if (!host?.services?.some(s => s.kind === 'camera' && s.port === port)) {
+      return { ok: false, status: 404, error: "pFMS hasn't found a camera stream there" };
+    }
+    // An extra copy of a stream counts against a radio's bandwidth cap, and
+    // control packets share that cap: only relay when the robot has none.
+    const limited = qosEnabledFrom(latestCheckResults.get(station)?.checks);
+    if (limited !== false) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          limited === undefined
+            ? "pFMS hasn't read this robot's radio settings yet, so it can't tell whether a stream copy would slow the robot down. Open the camera directly."
+            : "This robot's radio limits its bandwidth (QoS BW Limit is on), so pFMS won't add a copy of its stream. Open the camera directly.",
+      };
+    }
+    return { ok: true, key: { ifname: bridgeName(station), ip, port } };
+  };
   // Driver Station laptop Wi-Fi reports: the collector script teams run, and
   // where it uploads to (see src/diagReportApi.ts). A report is tagged with
   // the team on the station whose DS spoke from the same address.
@@ -946,6 +974,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       handleTeamAvatarRequest,
       handleManifestRequest,
       (req, res) => handleMdnsLookupsRequest(req, res, mdnsLookupLog, staffHttp),
+      (req, res) => handleCameraRequest(req, res, cameraRelay, staffHttp, cameraVerdict),
     ],
     onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
@@ -2227,6 +2256,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Shutdown signal handlers
   {
     const fullCleanup = () => {
+      cameraRelay.stop();
+      mdnsLookupLog.stop();
       robotTestMonitor?.stop();
       stationTestManager?.stopAll();
       robotPacketCapture?.stop();

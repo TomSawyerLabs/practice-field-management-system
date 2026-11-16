@@ -447,6 +447,17 @@ so 5800 is skipped once port 80 says "Limelight". Page probes stop after
 a moment of video, no more. 443 isn't probed: on a roboRIO it is the same page
 behind a self-signed certificate.
 
+**Watch** beside a camera chip shows the stream inline, relayed by pFMS
+(`GET /api/camera`, `src/cameraRelay.ts`, on site only). The relay works on the
+https site (the browser never fetches `http://10.TE.AM.x` itself), sends one
+copy of the stream over the robot's Wi-Fi however many people watch (up to 8
+per camera, 6 cameras at once), and is pinned to the station's bridge. It stops
+a few seconds after the last viewer leaves. pFMS relays only cameras the scan
+found, and only when the robot's radio reports its bandwidth limit (QoS BW
+Limit) off: with the limit on, an extra copy of the stream would compete with
+the robot's control packets for the capped link. Otherwise the reason shows in
+place of the picture, and the plain link still works.
+
 The links go from your browser, not from pFMS, so they only work from a network
 routed to team subnets (the guest Wi-Fi, per the site router's static route
 above). For a team on two stations the browser reaches whichever robot the
