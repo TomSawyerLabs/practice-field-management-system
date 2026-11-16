@@ -37,6 +37,20 @@ treated as the truth, with "Enable anyway" kept as the escape hatch.
   network first. Never reconfigure the field on an unverified key automatically.
 - Opt-out is per saved robot (`autoConnect: false` in saved-teams.json), a
   toggle on the robot's row. Default on.
+- (Round 2, user 2026-11-16) **Keep every passphrase each team has ever
+  used**, for good, rolling over year to year: `team-passphrases.json`
+  (team → keys, newest first), seeded from saved robots on first run. No
+  caps on what is kept or tried. Replaces the per-robot `formerKeys` (last 5).
+- (Round 2) "Arrival" = first heard after ~90 s unheard: OK as is.
+- (Round 2) Not during a match: confirmed.
+- (Round 2) **Coalesce auto-connects and show them on the scoreboard.**
+  `src/autoConnectBatch.ts`: first robot waits 5 s, extended 5 s at a time
+  while another heard robot is still being checked (`arrivalChecks()`),
+  60 s cap; then `radioManager.enableTogether()` = one radio change, which
+  still respects holds and the enabled-robot deferral. Scoreboard strip
+  (`FieldWifiNote`, `utils/fieldWifiNotice.ts`): live countdown "in N s, once
+  robots are disabled", then "once robots are disabled"; also shows a
+  deferred reconfiguration and held changes (admin / match / staff).
 
 ## Design (my calls — flag to user if they disagree)
 
@@ -51,12 +65,11 @@ treated as the truth, with "Enable anyway" kept as the escape hatch.
   pending list. An explicit team request (feature 3) is not held back by
   this; it goes through the pending list like pressing Enable.
 - Field full: an auto-connect goes in line like pressing Enable does.
-- **Recovery candidates**, in order, max 6: the team's other saved
-  passphrases (most recent first), passphrases a robot was saved with before
-  (new `formerKeys`, last 5 per robot, server-only), then `{NUM}{NUM}`. Keys
-  that aren't valid WPA (8–63 chars) are skipped (`{NUM}{NUM}` for a
-  3-digit team is 6 chars → skipped).
-- A found passphrase is **saved** on the robot (old one kept in formerKeys)
+- **Recovery candidates**, in order, no cap: the team's saved robots'
+  passphrases (most recent first), every passphrase in the team's history,
+  then `{NUM}{NUM}`. Keys that aren't valid WPA (8–63 chars) are skipped
+  (`{NUM}{NUM}` for a 3-digit team is 6 chars → skipped).
+- A found passphrase is **saved** on the robot (every one stays in the team history)
   and the row says it was recovered. Then auto-connect proceeds.
 - Recovery also runs for a heard network of a known team whose name isn't
   saved (other suffix, or capitals differ): if a team passphrase opens it,
@@ -80,7 +93,7 @@ treated as the truth, with "Enable anyway" kept as the escape hatch.
 
 1. Plan doc.
 2. Types + saved store (`autoConnect`, `formerKeys`, `keysForTeam`,
-   `setAutoConnect`, client state strips formerKeys). Tests.
+   `setAutoConnect`). Tests. (formerKeys later replaced by the team history.)
 3. Scanner: candidates, search, found callback, arrival tracking,
    auto-connect, requests, unreachable retry, forget on expiry. Tests.
 4. Wiring: index.ts options; websocketServer gating + `setRobotAutoConnect`;
@@ -119,6 +132,10 @@ Current step: **8 — deploy and verify on a real robot** (implementation done, 
       note). Unit-tested wording only — not looked at in a browser.
 - [x] 6 docs (`docs/robot-tester.md`, README intro)
 - [x] 7 typecheck, prettier, full suite 1340/1340
+- [x] Round 2: permanent passphrase history (`team-passphrases.json`),
+      shared reconfiguration (`AutoConnectBatch`, `enableTogether`),
+      scoreboard note. Tests: batch 4, notice 6, radioManager +3, scanner
+      +2, store rewritten (5). Scoreboard strip not looked at in a browser.
 - [ ] Verify on a real robot at steamboat (needs a deploy + a team)
 
 ## Open questions for the user
