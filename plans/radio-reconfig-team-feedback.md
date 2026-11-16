@@ -66,7 +66,7 @@ should see what is happening and when it ends, without losing their page:
 
 ## Progress log
 
-- [x] 1–6 done on branch `t3/radio-reconfig-team-feedback`
+- [x] 1–6 done; fast-forwarded into local master at `e40c7f9` (2026-11-16), to be pushed with other recent work
 - [ ] 7 deploy
 
 ## Open questions for the user
