@@ -91,7 +91,9 @@ They're worth knowing before you set up a field:
   single team takes about 30 seconds and drops **every** robot's Wi-Fi.
   pFMS decides when that happens: it waits for enabled robots to be
   disabled, and it holds changes while a match is set up
-  ([details](docs/match-system.md#wi-fi-changes-and-matches)).
+  ([details](docs/match-system.md#wi-fi-changes-and-matches)). While it
+  runs, the scoreboard TVs show a countdown and which robots join or
+  leave, and team pages show it in a banner without blocking the page.
 - **The AP gives each team one subnet, `10.TE.AM.0/24`.** So two robots
   from one team sit on identical subnets on different VLANs. pFMS keeps
   them apart (see _Multiple robots per team_ above).

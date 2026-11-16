@@ -407,8 +407,8 @@ matches, when nobody is driving.
 If the radio and pFMS disagree about what is configured, pFMS pushes its
 config again after 15 seconds, then backs off (1, 2, 4, 8 minutes, capped
 at 10) until the radio agrees, logging both sides' SSIDs each time. Every
-push shows "Reconfiguration in progress" on every page and drops each
-robot's Wi-Fi, which is why it does not retry faster. For a field that is
+push shows "Field Wi-Fi is updating" on every page and the scoreboard TVs
+and drops each robot's Wi-Fi, which is why it does not retry faster. For a field that is
 stuck anyway, the admin page has a **Field reset** card: **Clear all robots
 from the radio** empties every station and drops waiting requests (teams
 press Enable Robot again), and **Restart pFMS** restarts the backend the

@@ -532,6 +532,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     'queueState',
     'stationChecks',
     'challengeLeaderboard',
+    // The scoreboard TVs show a reconfigure to the teams waiting on it.
+    // Station and SSID only.
+    'radioReconfigure',
   ]);
 
   /** Track which WebSocket connections are in which chat sessions */
@@ -694,6 +697,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   radioManager.addPendingCommitListener(() => {
     broadcast({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState);
   });
+
+  // Broadcast radio reconfigures (start, end) to every page and the TVs
+  radioManager.addReconfigureListener(broadcast);
 
   // Broadcast last-linked timestamp changes to all clients
   radioManager.addLastLinkedListener(timestamps => {
@@ -1125,6 +1131,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       JSON.stringify({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState),
     );
 
+    // Whether the radio is reconfiguring, and what that changes
+    ws.send(JSON.stringify(radioManager.getReconfigureState()));
+
     // Send initial last-linked timestamps
     ws.send(
       JSON.stringify({
@@ -1220,6 +1229,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       ws.send(JSON.stringify(matchEngine.getState()));
       if (leaderboardJson) ws.send(leaderboardJson);
       ws.send(serverInfoMessage());
+      ws.send(JSON.stringify(radioManager.getReconfigureState()));
       // Cast receivers (Chromecast TVs) load the public scores page, so their
       // registration arrives on this socket. Accept ONLY that message here —
       // everything else on the read-only socket stays ignored.

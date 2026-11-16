@@ -164,6 +164,8 @@ import {
   isTeamPrefsState,
   NudgeChannels,
   PushSubscriptionInput,
+  isRadioReconfigureState,
+  type RadioReconfigureState,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -585,6 +587,7 @@ let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
+let currentRadioReconfigure: RadioReconfigureState | null = null;
 let currentRobotDropouts: RobotDropoutsState | null = null;
 let currentRobotEStops: RobotEStopsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
@@ -1161,6 +1164,12 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isRadioReconfigureState(detail)) {
+    currentRadioReconfigure = detail;
+    events.dispatchEvent(new CustomEvent('radioReconfigure', { detail }));
+    return;
+  }
+
   if (isChallengeLeaderboardState(detail)) {
     handleChallengeLeaderboard({
       tables: detail.tables,
@@ -1504,6 +1513,20 @@ export interface ChallengeLeaderboard {
 
 /** The speed challenge leaderboard, computed by the server. Unlike
  *  `useMatchHistory`, this reaches the read-only /scores socket too. */
+/** The server's word on a radio reconfigure: whether one is running, since
+ *  when, and what it changes. Reaches the read-only /scores socket too.
+ *  Null until the server has said (an older server never does). */
+export function useRadioReconfigure(): RadioReconfigureState | null {
+  const [state, setState] = useState(currentRadioReconfigure);
+  useEffect(() => {
+    setState(currentRadioReconfigure);
+    const handler = (e: Event) => setState((e as CustomEvent<RadioReconfigureState>).detail);
+    events.addEventListener('radioReconfigure', handler);
+    return () => events.removeEventListener('radioReconfigure', handler);
+  }, []);
+  return state;
+}
+
 export function useChallengeLeaderboard(): ChallengeLeaderboard {
   const [leaderboard, setLeaderboard] = useState<ChallengeLeaderboard>(currentChallengeLeaderboard);
 

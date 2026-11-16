@@ -5680,3 +5680,33 @@ export function isTeamPrefsState(msg: unknown): msg is TeamPrefsState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as TeamPrefsState).type === 'teamPrefsState';
 }
+
+/** One station a radio reconfigure changes: the robot it had (`from`) and
+ *  the one it will have (`to`). Either may be absent — a robot joining an
+ *  empty station has no `from`; one leaving has no `to`. SSIDs only: this
+ *  goes to the public scoreboard socket. */
+export interface ReconfigureStationChange {
+  station: StationName;
+  from?: string;
+  to?: string;
+}
+
+/** Whether the field radio is reconfiguring right now, and what it changes.
+ *  Public: the scoreboard TVs show it to the teams waiting on their robots. */
+export interface RadioReconfigureState {
+  type: 'radioReconfigure';
+  active: boolean;
+  /** Server epoch ms the configuration was sent to the radio. Set while active. */
+  since?: number;
+  /** How long a reconfigure takes on this radio, ms: the median of recent
+   *  ones, or a default before there are any. */
+  expectedMs: number;
+  /** Stations whose robot changes. Empty when it only re-applies what the
+   *  radio should already have (after a radio reboot, a settings change). */
+  changes: ReconfigureStationChange[];
+}
+
+export function isRadioReconfigureState(msg: unknown): msg is RadioReconfigureState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RadioReconfigureState).type === 'radioReconfigure';
+}
