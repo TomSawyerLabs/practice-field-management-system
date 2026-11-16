@@ -197,6 +197,35 @@ describe("on a saved robot's row", () => {
     expect(ok?.chips.map(c => c.text)).toEqual(['Radio on', 'Passphrase OK']);
   });
 
+  test("while the team's other passphrases are tried, the row says so", () => {
+    const w = robotRowWifi(scan([heard({ ...key('wrongKey'), keySearch: 'searching' })]), '1234-Comp', null);
+    expect(w?.chips.map(c => c.text)).toEqual(['Radio on', 'Trying other passphrases…']);
+    expect(w?.line).toMatchObject({ severity: 'warning' });
+    const none = robotRowWifi(scan([heard({ ...key('wrongKey'), keySearch: 'exhausted' })]), '1234-Comp', null);
+    expect(none?.chips.map(c => c.text)).toEqual(['Radio on', 'Passphrase wrong']);
+    expect(none?.line?.text).toContain("your team's other ones");
+  });
+
+  test('a recovered passphrase is announced', () => {
+    const w = robotRowWifi(
+      scan([heard({ keyCheck: { result: 'ok', at: NOW, fieldSsid: '1234-Comp', recovered: true } })]),
+      '1234-Comp',
+      null,
+    );
+    expect(w?.line).toMatchObject({ severity: 'success' });
+    expect(w?.line?.text).toContain('found the passphrase');
+  });
+
+  test('a robot waiting for its check: turn it on, then checking', () => {
+    const off = robotRowWifi(scan([], [], { awaiting: ['1234-Comp'] }), '1234-Comp', null);
+    expect(off?.awaiting).toBe(true);
+    expect(off?.chips.map(c => c.text)).toEqual(['Waiting for robot']);
+    expect(off?.line?.text).toContain('FRC-1234-Comp');
+    const on = robotRowWifi(scan([heard(key('checking'))], [], { awaiting: ['1234-Comp'] }), '1234-Comp', null);
+    expect(on?.line?.text).toContain('before the field switches');
+    expect(robotRowWifi(scan([], [], { awaiting: ['1234-Comp'] }), '1234-Practice', null)).toBeNull();
+  });
+
   test("once on the field, the saved check gives way to the field's", () => {
     expect(robotRowWifi(scan([heard(key('wrongKey'))]), '1234-Comp', 'slot3')).toBeNull();
   });

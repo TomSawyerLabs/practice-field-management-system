@@ -66,7 +66,13 @@ import { wireGameLayer } from './game/wire.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
-import { RobotWifiScanner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
+import {
+  RobotWifiScanner,
+  listWirelessInterfaces,
+  type ConnectAttempt,
+  type KeyFound,
+  type SavedRobot,
+} from './robotWifiScan.js';
 import { SixGhzWatch, type FieldRadio } from './sixGhzWatch.js';
 import { WifiCardPool } from './wifiCard.js';
 import { WifiCards } from './wifiCards.js';
@@ -537,6 +543,51 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       return [{ station, ssid: config.ssid, wpaKey: config.wpaKey, since, linked: linkedNow[station] ?? false }];
     });
   };
+  // Robot auto-connect (plans/robot-auto-connect.md): a saved robot heard on
+  // its own network, its passphrase checked on it, goes on the field by
+  // itself — once per arrival, never during a match, unless the team turned
+  // it off for that robot. A robot "placed" is on the field or waiting to go on.
+  const robotPlaced = (ssid: string) =>
+    StationNameList.some(s => radioManager.getStationConfig(s)?.ssid === ssid) ||
+    radioManager.getPendingChanges().some(c => c.kind === 'enable' && c.ssid === ssid);
+  const enableHeardRobot = (robot: SavedRobot, why: 'arrived' | 'asked') => {
+    // Like the team's Enable Robot: a free station, or in line when full.
+    const station = radioManager.getFreeProjectedStation() ?? StationNameList[0];
+    appInfo(
+      why === 'arrived'
+        ? `${robot.ssid} is on and its passphrase checks out — connecting it to the field`
+        : `${robot.ssid}: passphrase checked on the robot — connecting it to the field as the team asked`,
+    );
+    radioManager
+      .configure(station, { ssid: robot.ssid, wpaKey: robot.wpaKey, internetAccess: robot.internetAccess })
+      .catch(err => appError(`Error connecting ${robot.ssid} to the field: ${err.message}`));
+  };
+  // A passphrase that opens a team's robot, found among the team's others:
+  // save it on the robot (the old one stays as a former key). A name the
+  // team never saved becomes a new robot, connecting by itself unless the
+  // team turned that off. A stalled robot on the field is switched to it.
+  const saveFoundKey = (f: KeyFound) => {
+    const from = f.savedSsid ? savedTeamStore.getTeam(f.savedSsid) : undefined;
+    const existing = savedTeamStore.getTeam(f.robotSsid);
+    const team = teamOfSsid(f.robotSsid);
+    const autoConnect = existing
+      ? undefined
+      : from
+        ? from.autoConnect !== false
+        : !(team !== null && savedTeamStore.robotsOfTeam(team).some(r => r.autoConnect === false));
+    appInfo(
+      existing
+        ? `${f.robotSsid}: its saved passphrase was wrong; found the right one among the team's others and saved it`
+        : `${f.robotSsid}: heard it, and one of the team's passphrases opens it — saved it as a robot of theirs`,
+    );
+    savedTeamStore.saveTeam(f.robotSsid, f.wpaKey, existing?.internetAccess ?? from?.internetAccess, { autoConnect });
+    const config = f.station ? radioManager.getStationConfig(f.station) : null;
+    if (f.station && config?.ssid === f.robotSsid && config.wpaKey !== f.wpaKey) {
+      radioManager
+        .configure(f.station, { ssid: f.robotSsid, wpaKey: f.wpaKey, internetAccess: config.internetAccess })
+        .catch(err => appError(`Error switching ${f.robotSsid} to its found passphrase: ${err.message}`));
+    }
+  };
   const applyRobotWifiSetting = () => {
     const iface = setupConfigStore.resolveSetting('robotWifiInterface', 'ROBOT_WIFI_INTERFACE').value || undefined;
     if ((robotWifi?.iface ?? undefined) === iface) return;
@@ -549,6 +600,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         card: wifiCardPool.get(iface),
         savedRobots: () => savedTeamStore.getTeams(),
         connectAttempts,
+        teamKeys: team => savedTeamStore.keysForTeam(team),
+        onKeyFound: saveFoundKey,
+        placed: robotPlaced,
+        canAutoConnect: () => matchEngine.getState().phase === 'idle',
+        enableRobot: enableHeardRobot,
         onChange: () => {
           broadcastRobotWifi(robotWifiState());
           wifiCards.refresh();
@@ -1011,7 +1067,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
-      robotWifi: { getState: robotWifiState, test: station => robotWifi?.test(station) },
+      robotWifi: {
+        getState: robotWifiState,
+        test: station => robotWifi?.test(station),
+        listening: () => !!robotWifi?.listening,
+        requestConnect: ssid => robotWifi?.requestConnect(ssid),
+        cancelRequest: ssid => robotWifi?.cancelRequest(ssid),
+      },
       sixGhzWatch: { getState: sixGhzWatchState },
       wifiCards,
       selfUpdate: {

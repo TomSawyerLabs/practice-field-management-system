@@ -64,6 +64,7 @@ import {
   isRadioConfigureRequest,
   isRemoveSavedTeam,
   isSaveSavedTeam,
+  isSetRobotAutoConnect,
   isEnableSavedRobot,
   isCreateApiKey,
   isRevokeApiKey,
@@ -345,6 +346,12 @@ export interface SetupWebSocketOptions {
       getState: () => RobotWifiScanState;
       /** "Test connection" for a stalled station (rate-limited in the scanner) */
       test: (station: StationName) => void;
+      /** Listening for robots, so a new passphrase can be checked on the
+       *  robot before the field switches to it */
+      listening: () => boolean;
+      /** Put saved robot `ssid` on the field once its passphrase checks out */
+      requestConnect: (ssid: string) => void;
+      cancelRequest: (ssid: string) => void;
     };
     /** Other access points using teams' network names on 6 GHz
      *  (src/sixGhzWatch.ts). */
@@ -1367,6 +1374,27 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
               appError('Error toggling internet access: ' + err.message);
               ws.send(JSON.stringify({ error: 'Failed to toggle internet access', details: err.message }));
             });
+          } else if (
+            data.ssid &&
+            !current?.ssid &&
+            savedTeamStore &&
+            setup?.robotWifi?.listening() &&
+            savedTeamStore.getTeam(data.ssid)?.wpaKey !== data.wpaKey &&
+            !StationNameList.some(s => radioManager.getStationConfig(s)?.ssid === data.ssid)
+          ) {
+            // A passphrase pFMS doesn't know yet, for a robot not on the
+            // field: check it on the robot's own network before the field
+            // reconfigures (a wrong one would cost everyone a reconfigure to
+            // find out). Saved now; on the field once it checks out.
+            savedTeamStore.saveTeam(data.ssid, data.wpaKey, data.internetAccess);
+            setup.robotWifi.requestConnect(data.ssid);
+            ws.send(
+              JSON.stringify({
+                info:
+                  `Saved ${data.ssid}. pFMS checks the passphrase on your robot first, and connects it as soon ` +
+                  `as it works — make sure the robot is on.`,
+              }),
+            );
           } else {
             // Everything else goes through the pending list, which decides
             // whether it is a no-op, a kept robot, a wait, or an apply.
@@ -1686,6 +1714,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isRemoveSavedTeam(data)) {
         if (savedTeamStore) {
           savedTeamStore.removeTeam(data.ssid);
+          setup?.robotWifi?.cancelRequest(data.ssid);
         }
         // Also release any radio slot currently configured with this SSID
         // so the team can re-add the robot without it appearing "already active".
@@ -1700,6 +1729,13 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isSaveSavedTeam(data)) {
         if (savedTeamStore) {
           savedTeamStore.saveTeam(data.ssid, data.wpaKey);
+        }
+      } else if (isSetRobotAutoConnect(data)) {
+        if (!savedTeamStore?.setAutoConnect(data.ssid, data.autoConnect)) {
+          ws.send(JSON.stringify({ error: `No saved robot "${data.ssid}"` }));
+        } else if (!data.autoConnect) {
+          // Off also withdraws a connect still waiting for its check.
+          setup?.robotWifi?.cancelRequest(data.ssid);
         }
       } else if (isEnableSavedRobot(data)) {
         // Enable a previously-saved robot by SSID — server looks up the passphrase

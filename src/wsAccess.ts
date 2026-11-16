@@ -30,6 +30,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   routePreference: 'anyone',
   robotWifiTest: 'anyone',
   saveSavedTeam: 'anyone',
+  setRobotAutoConnect: 'anyone',
   enableSavedRobot: 'anyone',
   portBridge: 'anyone',
   runTeamChecks: 'anyone',

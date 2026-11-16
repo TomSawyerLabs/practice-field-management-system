@@ -1,8 +1,17 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { SavedTeamConfig, SavedTeamsState } from './types.js';
+import { teamOfSsid } from './utils.js';
 
 const DEFAULT_FILE = 'saved-teams.json';
+
+/** How many replaced passphrases a robot keeps. */
+const MAX_FORMER_KEYS = 5;
+
+/** Former passphrases: distinct, not the current one, newest first, a few. */
+function tidyFormerKeys(keys: string[], current: string): string[] {
+  return [...new Set(keys)].filter(k => k && k !== current).slice(0, MAX_FORMER_KEYS);
+}
 
 /** Compute the passphrase verification hash: SHA-256(ssid + wpaKey) */
 export function computeWpaKeyHash(ssid: string, wpaKey: string): string {
@@ -27,12 +36,19 @@ export class SavedTeamStore {
     this.load();
   }
 
-  /** Save or update a team config. Called automatically when radioManager.configure() succeeds. */
-  saveTeam(ssid: string, wpaKey: string, internetAccess?: boolean): void {
+  /** Save or update a team config. Called automatically when radioManager.configure() succeeds.
+   *  A replaced passphrase is kept in `formerKeys`, to try if the new one
+   *  turns out wrong. `autoConnect` is kept unless given (a new robot: on). */
+  saveTeam(ssid: string, wpaKey: string, internetAccess?: boolean, opts: { autoConnect?: boolean } = {}): void {
     if (!ssid || !wpaKey) return;
 
     const existing = this.teams.get(ssid);
     const now = Date.now();
+    const formerKeys =
+      existing && existing.wpaKey !== wpaKey
+        ? [existing.wpaKey, ...(existing.formerKeys ?? [])]
+        : (existing?.formerKeys ?? []);
+    const autoConnect = opts.autoConnect ?? existing?.autoConnect;
 
     this.teams.set(ssid, {
       ssid,
@@ -41,10 +57,37 @@ export class SavedTeamStore {
       internetAccess,
       createdAt: existing?.createdAt ?? now,
       lastUsedAt: now,
+      ...(autoConnect === false && { autoConnect: false }),
+      ...(formerKeys.length > 0 && { formerKeys: tidyFormerKeys(formerKeys, wpaKey) }),
     });
 
     this.persist();
     this.notifyListeners();
+  }
+
+  /** Turn a saved robot's auto-connect on or off. False if it isn't saved. */
+  setAutoConnect(ssid: string, autoConnect: boolean): boolean {
+    const config = this.teams.get(ssid);
+    if (!config) return false;
+    if ((config.autoConnect !== false) === autoConnect) return true;
+    const { autoConnect: _, ...rest } = config;
+    this.teams.set(ssid, autoConnect ? rest : { ...rest, autoConnect: false });
+    this.persist();
+    this.notifyListeners();
+    return true;
+  }
+
+  /** Every passphrase pFMS has for a team, distinct: its robots' current
+   *  ones (most recently used first), then the ones they had before. */
+  keysForTeam(team: number): string[] {
+    const mine = this.getTeams().filter(c => teamOfSsid(c.ssid) === team);
+    const keys = [...mine.map(c => c.wpaKey), ...mine.flatMap(c => c.formerKeys ?? [])];
+    return [...new Set(keys)];
+  }
+
+  /** The saved robots of a team. */
+  robotsOfTeam(team: number): SavedTeamConfig[] {
+    return this.getTeams().filter(c => teamOfSsid(c.ssid) === team);
   }
 
   /** Remove a saved team config by SSID. */
@@ -62,11 +105,11 @@ export class SavedTeamStore {
     return [...this.teams.values()].sort((a, b) => b.lastUsedAt - a.lastUsedAt);
   }
 
-  /** Get the client-facing broadcast state (wpaKey stripped). */
+  /** Get the client-facing broadcast state (passphrases stripped). */
   getState(): SavedTeamsState {
     return {
       type: 'savedTeamsState',
-      teams: this.getTeams().map(({ wpaKey: _, ...rest }) => rest),
+      teams: this.getTeams().map(({ wpaKey: _, formerKeys: _former, ...rest }) => rest),
     };
   }
 
@@ -131,6 +174,13 @@ export class SavedTeamStore {
               internetAccess: entry.internetAccess,
               createdAt: entry.createdAt ?? Date.now(),
               lastUsedAt: entry.lastUsedAt ?? Date.now(),
+              ...(entry.autoConnect === false && { autoConnect: false }),
+              ...(Array.isArray(entry.formerKeys) && {
+                formerKeys: tidyFormerKeys(
+                  entry.formerKeys.filter((k: unknown) => typeof k === 'string'),
+                  entry.wpaKey,
+                ),
+              }),
             });
           }
         }

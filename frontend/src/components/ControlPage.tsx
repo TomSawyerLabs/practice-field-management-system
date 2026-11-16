@@ -24,6 +24,7 @@ import {
   sendNewConfig,
   sendSaveTeam,
   sendEnableSavedRobot,
+  sendSetRobotAutoConnect,
   sendInternetToggle,
   useLatestTelemetry,
   useUpdateCallback,
@@ -79,6 +80,7 @@ import { createHash } from './cryptoUtils';
 import { StationChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
 import { CopyToClipboard } from './CopyToClipboard';
 import IconButton from '@mui/material/IconButton';
+import Link from '@mui/material/Link';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import PublicIcon from '@mui/icons-material/Public';
 import PublicOffIcon from '@mui/icons-material/PublicOff';
@@ -651,6 +653,8 @@ function RobotList({
     teamConfigs.map(c => [c.ssid, robotRowWifi(scan, c.ssid, activeStations.get(c.ssid) ?? null)]),
   );
   const anyOnAir = [...rowWifi.values()].some(w => w?.onAir);
+  // Robots connect by themselves only while pFMS can hear them.
+  const listening = scan?.status === 'running' && !scan.problem;
 
   // Passphrase verification state
   const [showVerifyField, setShowVerifyField] = useState(false);
@@ -777,6 +781,7 @@ function RobotList({
                 wifi={rowWifi.get(config.ssid) ?? null}
                 quietEnable={anyOnAir && !rowWifi.get(config.ssid)?.onAir}
                 onFixPassphrase={() => openAddForm(suffixOf(config.ssid), true)}
+                listening={listening}
               />
             ))}
           </Box>
@@ -882,6 +887,7 @@ function RobotRow({
   wifi,
   quietEnable,
   onFixPassphrase,
+  listening,
 }: {
   config: SavedTeamClientConfig;
   isActive: boolean;
@@ -901,6 +907,8 @@ function RobotRow({
   quietEnable: boolean;
   /** Open the form to re-enter this robot's passphrase */
   onFixPassphrase: () => void;
+  /** The robot Wi-Fi scan is listening, so robots connect by themselves */
+  listening: boolean;
 }) {
   const [pendingDrive, setPendingDrive] = useState(false);
   const [showEnableHint, setShowEnableHint] = useState(false);
@@ -1142,6 +1150,24 @@ function RobotRow({
           </Box>
           <Typography variant="caption" color="text.secondary">
             Last used {formatAge(config.lastUsedAt)}
+            {listening && (
+              <>
+                {' · '}
+                {config.autoConnect === false ? "Doesn't connect by itself" : 'Connects by itself when turned on'}
+                {' · '}
+                <Link
+                  component="button"
+                  variant="caption"
+                  sx={{ verticalAlign: 'baseline' }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    sendSetRobotAutoConnect(config.ssid, config.autoConnect === false);
+                  }}
+                >
+                  {config.autoConnect === false ? 'Turn on' : 'Turn off'}
+                </Link>
+              </>
+            )}
           </Typography>
           {wifi?.line && (
             <Typography variant="caption" sx={{ display: 'block', color: `${wifi.line.severity}.main` }}>
@@ -1224,13 +1250,14 @@ function RobotRow({
             </>
           ) : (
             // With the field full this puts the robot in line (see FieldFullAlert).
+            // Waiting for its passphrase check: enabling skips the check.
             <Button
               size="small"
-              variant={quietEnable ? 'outlined' : 'contained'}
+              variant={quietEnable || wifi?.awaiting ? 'outlined' : 'contained'}
               disabled={configCooldown}
               onClick={e => handleEnable(e)}
             >
-              Enable Robot
+              {wifi?.awaiting ? 'Enable anyway' : 'Enable Robot'}
             </Button>
           )}
         </Box>
@@ -1375,6 +1402,8 @@ function AddRobotForm({
   const [suffix, setSuffix] = useState(initialSuffix);
   const [passphrase, setPassphrase] = useState('');
   const allActiveSSIDs = useAllActiveSSIDs();
+  const scan = useRobotWifiScan();
+  const checksFirst = scan?.status === 'running' && !scan.problem;
 
   const ssid = suffix ? `${teamNumber}-${suffix}` : `${teamNumber}`;
   const passphraseRegex = /^[a-zA-Z0-9]{8,16}$/;
@@ -1448,10 +1477,18 @@ function AddRobotForm({
         error={!!passphrase && !isValid}
         sx={{ mb: 2 }}
       />
-      {fixing && (
+      {fixing ? (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           Save, and pFMS tries it on your robot within a few seconds — its row says whether it works.
         </Typography>
+      ) : (
+        checksFirst &&
+        !duplicateStation && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            pFMS checks the passphrase on your robot first and connects it as soon as it works, so turn the robot on.
+            Next time, it connects by itself when you turn it on.
+          </Typography>
+        )
       )}
       <Box sx={{ display: 'flex', gap: 1 }}>
         {fixing && !duplicateStation ? (

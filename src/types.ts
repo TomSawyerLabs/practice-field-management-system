@@ -2597,10 +2597,16 @@ export interface SavedTeamConfig {
   internetAccess?: boolean;
   createdAt: number;
   lastUsedAt: number;
+  /** Put on the field by itself when the robot scan hears it and its
+   *  passphrase checks out. Absent = on; the team can turn it off per robot. */
+  autoConnect?: boolean;
+  /** Passphrases this robot was saved with before, newest first (a few).
+   *  Tried when the current one doesn't open the robot. Server-only. */
+  formerKeys?: string[];
 }
 
-/** Client-facing saved team config — wpaKey stripped so passphrases stay server-side. */
-export type SavedTeamClientConfig = Omit<SavedTeamConfig, 'wpaKey'>;
+/** Client-facing saved team config — keys stripped so passphrases stay server-side. */
+export type SavedTeamClientConfig = Omit<SavedTeamConfig, 'wpaKey' | 'formerKeys'>;
 
 /** Broadcast from server to clients with saved team configs (keys stripped). */
 export interface SavedTeamsState {
@@ -2646,6 +2652,14 @@ export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
   );
 }
 
+/** Client request: a saved robot connects by itself when heard, or not. */
+export type SetRobotAutoConnect = { type: 'setRobotAutoConnect'; ssid: string; autoConnect: boolean };
+export function isSetRobotAutoConnect(msg: unknown): msg is SetRobotAutoConnect {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as SetRobotAutoConnect;
+  return m.type === 'setRobotAutoConnect' && typeof m.ssid === 'string' && typeof m.autoConnect === 'boolean';
+}
+
 // ── Robot Wi-Fi Scan ────────────────────────────────────────────────
 
 /** Whether a passphrase — the field's for a stalled connection, or the
@@ -2660,6 +2674,9 @@ export interface RobotWifiKeyCheck {
   /** The SSID whose passphrase was tried: what the field is set up to join,
    *  or the saved robot's. */
   fieldSsid: string;
+  /** The saved passphrase didn't open the robot; this one, found among the
+   *  team's other passphrases, did — and pFMS saved it. */
+  recovered?: boolean;
 }
 
 /** A robot radio's 2.4 GHz network, heard by pFMS. */
@@ -2680,6 +2697,10 @@ export interface RobotWifiBroadcast {
   /** The saved robot's passphrase, tried on this network once it is heard
    *  (and again whenever the saved passphrase changes). */
   keyCheck?: RobotWifiKeyCheck;
+  /** The saved passphrase didn't open it (or it isn't saved under this
+   *  name), so the team's other passphrases are being tried; `exhausted`
+   *  once none of them worked. */
+  keySearch?: 'searching' | 'exhausted';
 }
 
 /** A team trying to connect whose robot has not joined the field for a
@@ -2715,6 +2736,9 @@ export interface RobotWifiScanState {
   broadcasts: RobotWifiBroadcast[];
   /** Connections that are taking too long, with the robot on the air */
   stalls: RobotWifiStall[];
+  /** Saved robots a team asked to enable with a passphrase not checked yet:
+   *  the field switches to one once the check on the robot passes. */
+  awaiting?: string[];
 }
 
 export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {

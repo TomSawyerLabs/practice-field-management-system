@@ -1707,6 +1707,11 @@ export function sendSaveTeam(ssid: string, wpaKey: string) {
   ws?.send(JSON.stringify({ type: 'saveSavedTeam', ssid, wpaKey }));
 }
 
+/** Whether a saved robot connects by itself when its radio is heard. */
+export function sendSetRobotAutoConnect(ssid: string, autoConnect: boolean) {
+  ws?.send(JSON.stringify({ type: 'setRobotAutoConnect', ssid, autoConnect }));
+}
+
 /** Remove a saved team config from the server. */
 export function sendRemoveSavedTeam(ssid: string) {
   ws?.send(JSON.stringify({ type: 'removeSavedTeam', ssid }));

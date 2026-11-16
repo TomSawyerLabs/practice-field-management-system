@@ -6,7 +6,11 @@ self-service matches, and enabling team laptop ↔ robot routing.
 **Teams bring their robot exactly as it's set up at home.** There's no
 radio reprogramming and no kiosk: a team enters the SSID and WPA key its
 robot already uses, once, and the field AP serves that network. pFMS
-remembers it for the next visit. Laptops stay on the site's ordinary
+remembers it for the next visit — and, with the
+[robot Wi-Fi scan](docs/robot-tester.md#robot-wi-fi-scan) on, connects the
+robot by itself when it's turned on, checks a new passphrase on the robot
+before changing the field, and tries the team's other passphrases when one
+is forgotten. Laptops stay on the site's ordinary
 Wi-Fi with internet, and everything they use at home just works across
 the field's routed network: Driver Station by team number, code deploys,
 `roboRIO-TEAM-FRC.local`, `limelight-*.local` and other mDNS names,
