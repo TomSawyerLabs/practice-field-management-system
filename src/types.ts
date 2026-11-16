@@ -5660,6 +5660,11 @@ export interface TeamAuthStatusMessage {
   teams: Record<number, TeamAuthPublicStatus>;
 }
 
+export function isTeamAuthStatusMessage(msg: unknown): msg is TeamAuthStatusMessage {
+  const m = msg as TeamAuthStatusMessage;
+  return m?.type === 'teamAuthStatus' && typeof m.teams === 'object' && m.teams !== null;
+}
+
 /** A team page presents the token its login cookie holds (see
  *  src/teamAuthApi.ts), so this socket may change the team's settings. */
 export interface TeamAuthPresent {
@@ -5677,6 +5682,11 @@ export interface TeamAuthResult {
   type: 'teamAuthResult';
   team: number;
   loggedIn: boolean;
+}
+
+export function isTeamAuthResult(msg: unknown): msg is TeamAuthResult {
+  const m = msg as TeamAuthResult;
+  return m?.type === 'teamAuthResult' && typeof m.team === 'number' && typeof m.loggedIn === 'boolean';
 }
 
 /** /admin's view: every team with a password, and its devices. */
@@ -5730,6 +5740,11 @@ export interface AdminPushUnsubscribe {
 export function isAdminPushUnsubscribe(msg: unknown): msg is AdminPushUnsubscribe {
   const m = msg as AdminPushUnsubscribe;
   return m?.type === 'adminPushUnsubscribe' && typeof m.endpoint === 'string';
+}
+
+export function isTeamAuthAdminState(msg: unknown): msg is TeamAuthAdminState {
+  const m = msg as TeamAuthAdminState;
+  return m?.type === 'teamAuthAdmin' && Array.isArray(m.teams);
 }
 
 export interface TeamAuthAdminGet {

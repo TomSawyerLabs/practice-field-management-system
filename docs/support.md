@@ -148,7 +148,51 @@ determined:
   passphrase does.
 - Team-page actions stay open to anyone on the network, because a Driver
   Station has no login to give, and that includes changing any station's
-  Wi-Fi.
+  Wi-Fi. A team can close that for itself with a
+  [team password](#team-passwords).
+
+## Team passwords
+
+A team may set a password on its page (**Network** tab → **Team password**).
+Most won't, and a team with none works exactly as before.
+
+- **Settings take a login.** With a password, only devices logged in as that
+  team (or an admin) can change its Wi-Fi, internet, ports, saved robots,
+  nudges and practice recording. A Wi-Fi request also needs the login of the
+  team already on that station, so one team can't push another's robot off.
+  Stops, joining, ready and the queue stay open to everyone, as does viewing
+  the page.
+- **Logins last a year from the last visit.** A browser that logs in keeps an
+  `HttpOnly` cookie; every visit starts the year again. Changing the password
+  logs out every device but the one that changed it. Each device is listed on
+  the team's page and on `/admin`, with a **Log out** button.
+- **The network lock** (optional, once a password is set): only the team's
+  logged-in laptops can reach its robots (`10.TE.AM.x`). Anyone else is
+  refused at once. Plain HTTP aimed at a robot, from a laptop that isn't let
+  through, is sent to `/login?team=…`, and back to the page it wanted once it
+  logs in. A laptop that logged in before goes straight through without
+  typing. HTTPS, SSH, a code deploy or the Driver Station can't be sent
+  anywhere: a laptop on a new address opens the team page or any robot web
+  page once. **A Driver Station laptop has to be logged in too**, or it can't
+  drive, matches included. See [network.md](network.md#team-network-lock).
+- **Forgot password** on the login form tells the field's admins: the Slack
+  support channel, and a push notification to each device added under
+  `/admin` → **Access** → **Team Logins** → **Notify this device** (needs the
+  https address). At most once every 10 minutes per team. If neither is set up,
+  the team is told to find an admin.
+- **Admin reset**: `/admin` → **Access** → **Team Logins** → **Reset
+  password** forgets the password, every device and the lock. The team sets a
+  new one from its page. **Unlock network** turns just the lock off.
+
+Typed passwords are limited like the operator code (5 tries a minute per
+address, 30 overall), are at least 8 characters, and are hashed with scrypt.
+Team logins only work on site.
+
+What it isn't: the lock goes by address, so a device that takes over a
+logged-in laptop's address (a recycled DHCP lease, or a forged one) gets
+through until the binding ends. It keeps honest mistakes and casual snooping
+out, not someone determined on the same Wi-Fi. On `http://pfms.tsl` the
+password crosses the network unencrypted.
 
 ## From the internet
 

@@ -69,6 +69,7 @@ import { FreeplayControl, FreeplayStopButton, MatchPanelForControl } from './Mat
 import { QueueBanner } from './QueueBanner';
 import { RobotEStopBanner, StopPressNotes, TeamEStopBanner } from './FieldEStop';
 import { NudgeSettings } from './NudgeSettings';
+import { TeamLoginBanner, TeamLoginChip, TeamPasswordCard } from './TeamLogin';
 import { MatchVideoCard } from './MatchVideoCard';
 import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
@@ -444,6 +445,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
         <Typography variant="h4" sx={{ fontWeight: 700 }}>
           Team {teamNumber}
         </Typography>
+        <TeamLoginChip team={teamNumber} />
         {selectedStation && (
           <Box sx={{ ml: 'auto' }}>
             <FreeplayStopButton station={selectedStation} />
@@ -463,6 +465,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
       <QueueBanner teamNumber={teamNumber} />
+
+      {/* A team with a password: its settings need this device logged in */}
+      <TeamLoginBanner team={teamNumber} />
 
       {/* What this laptop drives, or which robot its traffic goes to */}
       {drivenSsid ? (
@@ -591,6 +596,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           ))}
 
       {tab === 'network' && <LaptopWifiCheck />}
+      {tab === 'network' && <TeamPasswordCard team={teamNumber} />}
 
       {tab === 'video' && (
         <MatchVideoCard

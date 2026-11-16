@@ -12,6 +12,7 @@ import { GameSection } from './GameSection';
 import { TimelapseSettingsSection } from './TimelapseSection';
 import { SoftwareUpdateSection } from './SoftwareUpdateSection';
 import { OperatorAccessSection } from './OperatorAccess';
+import { TeamLoginsSection } from './TeamLoginsAdmin';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { TeamAvatar } from './TeamAvatar';
@@ -1417,6 +1418,7 @@ function AdminTabContent({ tab }: { tab: AdminTab }) {
       return (
         <>
           <OperatorAccessSection />
+          <TeamLoginsSection />
           <ExternalAccessSection />
         </>
       );

@@ -164,6 +164,11 @@ import {
   isTeamPrefsState,
   NudgeChannels,
   PushSubscriptionInput,
+  type TeamAuthPublicStatus,
+  type TeamAuthAdminState,
+  isTeamAuthStatusMessage,
+  isTeamAuthResult,
+  isTeamAuthAdminState,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -301,6 +306,10 @@ function connect() {
       if (operatorToken) nws.send(JSON.stringify({ type: 'operatorCheckAuth', token: operatorToken }));
       const secret = takePairingSecret();
       if (secret) nws.send(JSON.stringify({ type: 'operatorPairRedeem', secret, name: deviceLabel() }));
+    }
+    // And each team login this page holds, which unlocks that team's settings.
+    if (wsPath === '/ws') {
+      for (const [team, token] of teamTokens) nws.send(JSON.stringify({ type: 'teamAuth', team, token }));
     }
     // Same for "this isn't a Driver Station", which lasts as long as the tab.
     if (wsPath === '/ws' && sessionStorage.getItem(NOT_A_DS_KEY)) {
@@ -729,6 +738,90 @@ function handleQueueState(state: QueueState) {
 function handleChallengeLeaderboard(leaderboard: ChallengeLeaderboard) {
   currentChallengeLeaderboard = leaderboard;
   events.dispatchEvent(new CustomEvent('challengeLeaderboard', { detail: leaderboard }));
+}
+
+// ── Team logins ──────────────────────────────────────────────────────
+
+/** Tokens of the team logins this page holds, presented on every new socket.
+ *  In memory only: the login itself is an HttpOnly cookie (see
+ *  src/teamAuthApi.ts), and the page fetches the token from it on load. */
+const teamTokens = new Map<number, string>();
+let currentTeamAuthStatus: Record<number, TeamAuthPublicStatus> = {};
+let currentTeamAuthAdmin: TeamAuthAdminState | null = null;
+
+/** Hold (or drop) a team login on this page's socket. */
+export function presentTeamToken(team: number, token: string | null) {
+  if (token) {
+    if (teamTokens.get(team) === token) return;
+    teamTokens.set(team, token);
+    sendWhenOpen({ type: 'teamAuth', team, token });
+  } else {
+    teamTokens.delete(team);
+  }
+}
+
+/** Which teams have a password, and which have locked their network. */
+export function useTeamAuthStatus(): Record<number, TeamAuthPublicStatus> {
+  const [state, setState] = useState(currentTeamAuthStatus);
+  useEffect(() => {
+    setState(currentTeamAuthStatus);
+    const handler = (e: Event) => setState((e as CustomEvent<Record<number, TeamAuthPublicStatus>>).detail);
+    events.addEventListener('teamAuthStatus', handler);
+    return () => events.removeEventListener('teamAuthStatus', handler);
+  }, []);
+  return state;
+}
+
+/** Calls `onRejected` when the server turns down a token this page presented
+ *  (the device was signed out elsewhere). */
+export function useTeamAuthRejected(team: number, onRejected: () => void) {
+  const ref = useRef(onRejected);
+  ref.current = onRejected;
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent<{ team: number; loggedIn: boolean }>).detail;
+      if (d.team === team && !d.loggedIn) ref.current();
+    };
+    events.addEventListener('teamAuthResult', handler);
+    return () => events.removeEventListener('teamAuthResult', handler);
+  }, [team]);
+}
+
+/** /admin: every team with a password, its devices, and admin push. */
+export function useTeamAuthAdmin(): TeamAuthAdminState | null {
+  const [state, setState] = useState(currentTeamAuthAdmin);
+  useEffect(() => {
+    setState(currentTeamAuthAdmin);
+    const handler = (e: Event) => setState((e as CustomEvent<TeamAuthAdminState>).detail);
+    events.addEventListener('teamAuthAdmin', handler);
+    sendWhenOpen({ type: 'teamAuthAdminGet' });
+    return () => events.removeEventListener('teamAuthAdmin', handler);
+  }, []);
+  return state;
+}
+
+export function sendTeamAuthAdminGet() {
+  sendWhenOpen({ type: 'teamAuthAdminGet' });
+}
+
+export function sendTeamAuthReset(team: number) {
+  ws?.send(JSON.stringify({ type: 'teamAuthReset', team }));
+}
+
+export function sendTeamAuthRevokeDevice(team: number, deviceId: string) {
+  ws?.send(JSON.stringify({ type: 'teamAuthRevokeDevice', team, deviceId }));
+}
+
+export function sendTeamAuthSetLock(team: number, lock: boolean) {
+  ws?.send(JSON.stringify({ type: 'teamAuthSetLock', team, lock }));
+}
+
+export function sendAdminPushSubscribe(subscription: PushSubscriptionInput, label?: string) {
+  ws?.send(JSON.stringify({ type: 'adminPushSubscribe', subscription, label }));
+}
+
+export function sendAdminPushUnsubscribe(endpoint: string) {
+  ws?.send(JSON.stringify({ type: 'adminPushUnsubscribe', endpoint }));
 }
 
 const currentTeamPrefs = new Map<number, TeamPrefsState>();
@@ -1174,6 +1267,24 @@ function receiveMessage(detail: Message) {
 
   if (isTeamPrefsState(detail)) {
     handleTeamPrefsState(detail);
+    return;
+  }
+
+  if (isTeamAuthStatusMessage(detail)) {
+    currentTeamAuthStatus = detail.teams;
+    events.dispatchEvent(new CustomEvent('teamAuthStatus', { detail: detail.teams }));
+    return;
+  }
+
+  if (isTeamAuthResult(detail)) {
+    if (!detail.loggedIn) teamTokens.delete(detail.team);
+    events.dispatchEvent(new CustomEvent('teamAuthResult', { detail }));
+    return;
+  }
+
+  if (isTeamAuthAdminState(detail)) {
+    currentTeamAuthAdmin = detail;
+    events.dispatchEvent(new CustomEvent('teamAuthAdmin', { detail }));
     return;
   }
 

@@ -84,6 +84,10 @@ function stationRoutes(): Plugin {
         if (url === '/route') {
           req.url = '/route.html';
         }
+        // Team login, where a locked team's robots send unknown laptops
+        if (url === '/login') {
+          req.url = '/login.html';
+        }
         if (url === '/test') {
           req.url = '/test.html';
         }
@@ -186,6 +190,11 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      // Keeps the page's Host: the backend refuses a POST whose Origin and
+      // Host disagree (a form on another site).
+      '/api/team-auth': {
+        target: 'http://localhost:3000',
+      },
       '/api/timelapse': {
         target: 'http://localhost:3000',
         changeOrigin: true,
@@ -203,6 +212,7 @@ export default defineConfig({
         csa: 'csa.html',
         queue: 'queue.html',
         route: 'route.html',
+        login: 'login.html',
         test: 'test.html',
         scores: 'scores.html',
         match: 'match.html',

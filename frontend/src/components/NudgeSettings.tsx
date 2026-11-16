@@ -14,7 +14,7 @@ import {
   sendPushTest,
 } from '../hooks/useBackend';
 
-function urlBase64ToUint8Array(base64: string): Uint8Array {
+export function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(b64);
@@ -22,7 +22,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
 }
 
 /** A short name for this device, for the team's list of subscribed devices. */
-function deviceLabel(): string {
+export function deviceLabel(): string {
   const ua = navigator.userAgent;
   const os = /iPhone|iPad/.test(ua)
     ? 'iPhone'

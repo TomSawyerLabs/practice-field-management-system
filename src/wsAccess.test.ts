@@ -775,6 +775,7 @@ describe('the WebSocket gate', () => {
       'operatorCheckAuth',
       'operatorPairRedeem',
       'dsClientDismiss',
+      'teamAuth',
       'castReceiverRegister',
     ];
 

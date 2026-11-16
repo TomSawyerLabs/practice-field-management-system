@@ -945,6 +945,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     ipv4Of: ipv4OfNeighbor,
     isOnSite: ip => isOnSite(ip, siteNetworksForTeams),
     networkSettled: () => teamLock?.reconcile() ?? Promise.resolve(),
+    lockAvailable: () => !!teamLock,
     alertForgot: (team, address) =>
       alertForgotPassword(
         {

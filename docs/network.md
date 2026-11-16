@@ -194,6 +194,46 @@ The 2027 DS only includes
 FMS support in its Windows build. Reference for the new format: Cheesy
 Arena `field/driver_station_connection.go`.
 
+## Team network lock
+
+A team with a [password](support.md#team-passwords) can lock its network:
+only the current addresses of its logged-in devices reach its robots. Built
+in `src/teamLock.ts`, one custom chain per locked team, rewritten whole with
+`iptables-restore --noflush` so nothing passing through ever sees it half
+written:
+
+```text
+filter  FORWARD -o br-slotN -j pfms-lock-<team>          (comment pfms-lock-slotN, one per station)
+        pfms-lock-<team>:
+          -m conntrack --ctdir REPLY -j RETURN            replies to what a robot started
+          -s 10.TE.AM.0/24 -j RETURN                      the team's own robots
+          -s <laptop>/32 -j RETURN                        each logged-in laptop (its counter is the traffic clock)
+          -p tcp -j REJECT --reject-with tcp-reset
+          -j REJECT --reject-with icmp-admin-prohibited
+nat     PREROUTING -d 10.TE.AM.0/24 -p tcp --dport 80 -j pfms-lockweb-<team>
+        pfms-lockweb-<team>: the team and laptops RETURN, the rest REDIRECT to the portal
+filter  INPUT -p tcp --dport <portal> -m conntrack --ctstate DNAT -j ACCEPT   (pfms-lockportal)
+```
+
+- The chain sees every laptop → robot packet, not just new connections: a
+  Driver Station's UDP stream never looks new to conntrack, and taking an
+  address off has to cut what it has open.
+- **The portal** (`TEAM_PORTAL_PORT`, default 8180) answers every request with
+  a redirect to `LAN_URL/login?team=…&return=…`, never cached. Without
+  `LAN_URL`, it uses the address and port the laptop just reached the host at.
+- **A laptop is let through** whenever its logged-in browser asks pFMS about
+  its team (the team page, `/login`), at the address pFMS sees it at. It stays
+  let through until **half the guest network's DHCP lease** passes with no
+  traffic from it (`/admin` → Access → Team Logins, default 24 h, so 12 h). A
+  client renews at half its lease, so no other device can be handed the
+  address sooner. Another device logging in from the same address, a log out,
+  or a reset ends it at once.
+- Rules follow the stations: a commit, a team leaving, unlocking or a reset
+  rebuilds them. A graceful reload keeps them, and nothing is changed until
+  the bridges have been read back. A full stop removes them.
+- Only IPv4 (the team network has no IPv6). A browser seen only over IPv6 is
+  let through at its neighbour table's IPv4 address, if any.
+
 ## Host tuning pFMS applies
 
 At startup pFMS enables IP forwarding and raises the kernel neighbor (ARP)

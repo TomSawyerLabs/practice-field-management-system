@@ -241,6 +241,7 @@ const OPEN_TO_OUTSIDERS: ReadonlySet<string> = new Set([
   'operatorCheckAuth', // every page presents a stored token on connecting
   'operatorPairRedeem', // the secret is itself a one-time credential
   'dsClientDismiss', // sets a flag on this socket and nothing else
+  'teamAuth', // likewise: team settings stay refused to strangers whatever it says
   'castReceiverRegister', // already open to everyone on /ws/scores
 ]);
 

@@ -28,6 +28,9 @@ and provides:
 - **Operator login** — an optional code or QR pairing for the pages that run
   the field, which stop buttons never need
   ([details](docs/support.md#operator-login))
+- **Team passwords** — a team may set one so only its own devices change its
+  settings, and lock its robots' network to its logged-in laptops
+  ([details](docs/support.md#team-passwords))
 - **Speed challenges and relay races** — non-match formats for field
   events: one robot (or two racing) enabled for a window you choose, laps
   and penalties tallied from a phone, or a relay where the FMS sends each

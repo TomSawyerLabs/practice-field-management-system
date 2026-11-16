@@ -36,6 +36,8 @@ export interface TeamAuthApiDeps {
   networkSettled: () => Promise<void>;
   /** Tell admin a team forgot its password. Resolves to what was reached. */
   alertForgot: (team: number, address: string) => Promise<{ slack: boolean; push: number }>;
+  /** Whether this field can lock a team's network (it manages the VLANs). */
+  lockAvailable?: () => boolean;
   now?: () => number;
 }
 
@@ -44,6 +46,8 @@ export interface TeamAuthStatusResponse {
   passwordSet: boolean;
   lock: boolean;
   minLength: number;
+  /** Whether the field can lock networks at all. */
+  lockAvailable: boolean;
   loggedIn: boolean;
   /** This browser, when logged in. */
   device?: TeamDevice;
@@ -146,6 +150,7 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
       passwordSet: s.passwordSet,
       lock: s.lock,
       minLength: MIN_TEAM_PASSWORD_LENGTH,
+      lockAvailable: deps.lockAvailable?.() ?? false,
       loggedIn: !!device,
       device: device ?? undefined,
       token: device ? token : undefined,

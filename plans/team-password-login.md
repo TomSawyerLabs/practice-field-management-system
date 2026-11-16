@@ -1,6 +1,8 @@
 # Team passwords and network lock
 
-**Status: building.**
+**Status: built and verified off the field (unit tests, headless browser,
+real-kernel netns test). Not deployed. Waiting on the user for the deploy
+checks below.**
 
 ## Goal
 
@@ -94,8 +96,9 @@ what it does today.
   logged-in devices list with "log out" each), and the lock switch, with a
   plain warning that a Driver Station laptop that isn't logged in can't reach
   the robot, matches included.
-- Team page warning while locked: "A laptop at 192.168.x.y is trying to reach
-  your robot but isn't logged in", from the DS handshake and reject counters.
+- _Not built (follow-up):_ a team page warning while locked, "A laptop at
+  192.168.x.y is trying to reach your robot but isn't logged in", from the DS
+  handshake. The page already says a DS laptop must be logged in.
 - `/login/1234`: password box, "Forgot password", and the return URL.
 - `/admin` teams table: password set? lock on? devices; **Reset password**.
 
@@ -135,18 +138,65 @@ what it does today.
 
 - (none)
 
+## Findings / gotchas
+
+- **Custom chains, replaced whole with `iptables-restore --noflush`.** The
+  backend had no chain support and `-I` ordering of per-address rules would
+  have been fragile. Declaring `:chain - [0:0]` in a `--noflush` restore
+  empties and refills it in one commit, so traffic never sees it half written.
+  Counters restart on each rewrite, so the poller treats a rewrite as zero.
+- **Every packet goes through the chain, not just NEW.** A DS's UDP stream to
+  1110 is never NEW again once it's flowing, so NEW-only counters would let a
+  binding expire under an active Driver Station, and unbinding wouldn't cut it.
+  `--ctdir REPLY` lets replies to robot-started flows through.
+- **The lock can't act until the bridges are known** (`TeamLock.activate()`).
+  At startup `teamsOnBridges()` is empty; reconciling then would tear down the
+  locks a graceful reload kept. It activates on the first commit, or after
+  `recoverLostCommit` on a reload.
+- **The portal's redirect must be `no-store`**, or a browser caches
+  `http://10.TE.AM.2/` → login and keeps going there after logging in.
+- **A login page that auto-redirects can loop** if the laptop is logged in but
+  can't be let through (address only seen over IPv6, say). A 15 s
+  sessionStorage guard stops after one bounce and says why.
+- **Real-kernel test** (`scripts/test-team-lock-netns.sh`, WSL Ubuntu 24.04,
+  iptables 1.8.10 nf_tables): 16/16 pass, including the REDIRECT → portal
+  → 302, tcp-reset, admin-prohibited ping, robot-started flows, moving a
+  binding, counters, and cleanup. Steamboat's iptables flavour (legacy vs
+  nft) is unchecked: the script must never run on
+  the field server itself.
+  Check `iptables --version` on steamboat (read-only) before deploying.
+- Frontend `eslint` is broken repo-wide (`typescript-eslint` not installed),
+  pre-existing and not in the commit hooks.
+
+## Deploy checks (need the user)
+
+1. Read-only on steamboat: `iptables --version`, and that the INPUT policy or
+   any host firewall allows the portal port (pFMS adds an INPUT accept for
+   redirected traffic only, `pfms-lockportal`).
+2. `LAN_URL` is set on steamboat (`http://pfms.tsl/`), so the portal sends
+   laptops to the right place.
+3. First real use: a test team on a station, lock on, one laptop logged in and
+   one not. Needs the user's go-ahead (real field hardware).
+
 ## Progress
 
 - [x] Survey network, auth and notification code
 - [x] Draft this plan
 - [x] User answers open questions (2026-11-16)
-- [ ] `teamAuth.ts` + tests
-- [ ] Login page, team card, `/admin` reset
-- [ ] Forgot password: Slack + admin push
-- [ ] Network lock: chains, portal listener, binding, expiry + tests (fake
+- [x] `teamAuth.ts` + tests
+- [x] Login page, team card, `/admin` reset
+- [x] Forgot password: Slack + admin push
+- [x] Network lock: chains, portal listener, binding, expiry + tests (fake
       backend)
-- [ ] Docs (`docs/network.md`, `docs/internals.md`, README)
-- [ ] Headless browser check against a stub engine
+- [x] Real-kernel netns test of the lock (`scripts/test-team-lock-netns.sh`)
+- [x] Docs (`docs/network.md`, `docs/internals.md`, `docs/support.md`,
+      `docs/configuration.md`, README)
+- [x] Headless browser check (sandboxed backend, fake radio): set password,
+      banner, wrong password, forgot, login + return, open-redirect refused,
+      `/admin` card
+- [ ] Deploy (other thread owns deploys: `plans/deploy-log.md`)
+- [ ] Deploy checks above
+- [ ] Follow-up: "unlogged DS is trying to reach your robot" warning
 
 ## Things not to do
 
