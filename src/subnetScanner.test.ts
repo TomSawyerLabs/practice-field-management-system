@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { SubnetScanner, fpingArgs, webProbeArgs } from './subnetScanner.js';
 import type { StationName, SubnetScanResults } from './types.js';
 
@@ -187,5 +187,57 @@ describe('web pages', () => {
   test('a missing curl marks nothing', async () => {
     const { web } = await scanWith({ '10.19.67.1': Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) });
     expect(web).toEqual([]);
+  });
+});
+
+describe('online since', () => {
+  test('a device that stays up keeps its start; one that drops and returns starts again', async () => {
+    let clock = 1_000_000;
+    const nowSpy = spyOn(Date, 'now').mockImplementation(() => clock);
+    let alive = ['10.28.54.2'];
+    let guests = ['10.55.1.2'];
+    const scanner = new SubnetScanner(
+      station => (station === 'slot1' ? 2854 : null),
+      undefined,
+      undefined,
+      undefined,
+      false,
+      async tool => {
+        if (tool === 'fping') return { stdout: alive.join('\n') };
+        if (tool === 'conntrack')
+          return {
+            stdout: guests.map(g => `tcp 6 100 ESTABLISHED src=${g} dst=10.28.54.2 sport=1 dport=2`).join('\n'),
+          };
+        throw Object.assign(new Error('refused'), { code: 7, stdout: '' });
+      },
+    );
+    const scan = async () => {
+      await (scanner as unknown as { runScan(): Promise<void> }).runScan();
+      const hosts = scanner.getResults().stations.slot1!.hosts;
+      return (ip: string) => hosts.find(h => h.ip === ip)!;
+    };
+    try {
+      await scan();
+      clock += 10_000;
+      let host = await scan();
+      expect(host('10.28.54.2').onlineSince).toBe(1_000_000);
+      expect(host('10.55.1.2').onlineSince).toBe(1_000_000);
+
+      alive = [];
+      guests = [];
+      clock += 10_000;
+      host = await scan();
+      expect(host('10.28.54.2').alive).toBe(false);
+      expect(host('10.55.1.2').alive).toBe(false);
+
+      alive = ['10.28.54.2'];
+      guests = ['10.55.1.2'];
+      clock += 10_000;
+      host = await scan();
+      expect(host('10.28.54.2').onlineSince).toBe(1_030_000);
+      expect(host('10.55.1.2').onlineSince).toBe(1_030_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });

@@ -190,22 +190,20 @@ export class SubnetScanner {
     }
     const hostMap = this.state.get(station)!;
 
-    // Mark all fping-sourced hosts as down (conntrack hosts handled separately)
-    for (const host of hostMap.values()) {
-      if (host.source === 'fping') host.alive = false;
+    // Up or down by this sweep (conntrack hosts handled separately). A host
+    // that stays up keeps its onlineSince; only down → up restarts it.
+    for (const [ip, host] of hostMap) {
+      if (host.source !== 'fping') continue;
+      const up = aliveIps.has(ip);
+      if (up && !host.alive) host.onlineSince = now;
+      if (up) host.lastSeen = now;
+      host.alive = up;
     }
 
-    // Update alive hosts
+    // New hosts
     for (const ip of aliveIps) {
-      const existing = hostMap.get(ip);
-      if (existing) {
-        // Reset onlineSince when transitioning from down → up
-        if (!existing.alive) existing.onlineSince = now;
-        existing.alive = true;
-        existing.lastSeen = now;
-      } else {
-        hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'fping' });
-      }
+      if (hostMap.has(ip)) continue;
+      hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'fping' });
     }
 
     await this.probeWeb(station, hostMap, now);
@@ -350,30 +348,27 @@ export class SubnetScanner {
       const hostMap = this.state.get(station);
       if (!hostMap) continue;
 
-      // Mark all conntrack-sourced hosts as down, and prune stale ones.
-      // Conntrack entries expire from the kernel naturally (UDP ~30s, TCP varies),
-      // so hosts not seen for 60s are removed from the map entirely.
+      // Up or down by this scan, and prune stale ones. Conntrack entries
+      // expire from the kernel naturally (UDP ~30s, TCP varies), so hosts not
+      // seen for 60s are removed from the map entirely. A host that stays up
+      // keeps its onlineSince.
+      const guests = activeGuests.get(station) ?? new Set<string>();
       for (const [ip, host] of hostMap) {
         if (host.source !== 'conntrack') continue;
-        if (now - host.lastSeen > 60_000) {
+        const up = guests.has(ip);
+        if (!up && now - host.lastSeen > 60_000) {
           hostMap.delete(ip);
-        } else {
-          host.alive = false;
+          continue;
         }
+        if (up && !host.alive) host.onlineSince = now;
+        if (up) host.lastSeen = now;
+        host.alive = up;
       }
 
-      // Update active guest hosts
-      const guests = activeGuests.get(station);
-      if (!guests) continue;
+      // New guest hosts
       for (const ip of guests) {
-        const existing = hostMap.get(ip);
-        if (existing) {
-          if (!existing.alive) existing.onlineSince = now;
-          existing.alive = true;
-          existing.lastSeen = now;
-        } else {
-          hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'conntrack' });
-        }
+        if (hostMap.has(ip)) continue;
+        hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'conntrack' });
       }
     }
   }
