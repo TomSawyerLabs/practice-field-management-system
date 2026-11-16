@@ -74,6 +74,7 @@ import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
+import { useReconfigProgress } from '../hooks/useReconfigProgress';
 import { StationName, StationNameList, SavedTeamClientConfig, PortConfig } from '../../../src/types';
 import { createHash } from './cryptoUtils';
 import { StationChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
@@ -429,6 +430,11 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const selectedLinked = selectedStation ? !!latest?.radioUpdate?.stationStatuses[selectedStation]?.isLinked : false;
   const checkResults = useTeamCheckResults(selectedStation);
 
+  // While the radio reconfigures every robot drops off. Point the team at
+  // the Radio tab's dot, which turns green when theirs is back.
+  const { isConfiguring } = useReconfigProgress();
+  const radioCallout = isConfiguring && !!selectedStation;
+
   // Status dots on the tabs, so a dropped link or an equipment problem shows from any tab
   const tabDot = (id: ControlTab): string | null => {
     if (!selectedStation) return null;
@@ -519,7 +525,25 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           <Tab
             key={t.id}
             value={t.id}
-            label={t.label}
+            label={
+              t.id === 'radio' ? (
+                <Tooltip
+                  open={radioCallout}
+                  arrow
+                  placement="top"
+                  slotProps={{ popper: { sx: { zIndex: 'appBar' } } }}
+                  title={
+                    <Box onClick={() => selectTab('radio')} sx={{ cursor: 'pointer', fontSize: '0.8rem', p: 0.25 }}>
+                      👀 Watch here: this dot turns green when your robot is on the field Wi-Fi
+                    </Box>
+                  }
+                >
+                  <span>{t.label}</span>
+                </Tooltip>
+              ) : (
+                t.label
+              )
+            }
             disabled={t.needsRobot && !selectedStation}
             icon={(() => {
               const dot = tabDot(t.id);
