@@ -651,6 +651,30 @@ class RadioManager {
     return { result: 'noop' };
   }
 
+  /**
+   * Put several robots on the field in one radio change (robots that
+   * connected by themselves, gathered over a few seconds — one ~30 s
+   * reconfigure instead of one each). Each goes on the pending list as an
+   * enable; then, unless something already held changes back (a match, an
+   * admin hold, changes waiting for staff), they are applied together, like
+   * configure() does for one.
+   */
+  async enableTogether(robots: { ssid: string; wpaKey: string; internetAccess?: boolean }[]): Promise<void> {
+    const wait = this.waitReason();
+    let added = 0;
+    for (const r of robots) {
+      const station = this.getFreeProjectedStation() ?? StationNameList[0];
+      if (this.addChange({ id: newChangeId(), kind: 'enable', station, ...r }) === 'added') added++;
+    }
+    if (added === 0 || wait) {
+      if (wait && added > 0) console.log(`Holding ${added} robot(s) that connected by themselves (${wait})`);
+      this.afterListChange();
+      return;
+    }
+    this.stageIdleReleases(Date.now());
+    await this.applyPendingChanges();
+  }
+
   /** Why a new change waits instead of applying now: the hold (a match
    *  exists, or the admin switch), or other changes already waiting for
    *  staff — a new one joins that batch rather than reconfiguring the radio

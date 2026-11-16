@@ -533,7 +533,7 @@ describe('the scanner', () => {
 });
 
 describe("trying a team's other passphrases", () => {
-  test('known passphrases first, then the team number twice; distinct, valid, a few', () => {
+  test('every known passphrase first, then the team number twice; distinct and valid', () => {
     expect(candidateKeys(1234, ['passphrase1', 'passphrase2', 'passphrase1'])).toEqual([
       'passphrase1',
       'passphrase2',
@@ -543,7 +543,7 @@ describe("trying a team's other passphrases", () => {
     // A 3-digit team's pattern is too short for WPA
     expect(candidateKeys(254, ['passphrase1'])).toEqual(['passphrase1']);
     const many = ['key00001', 'key00002', 'key00003', 'key00004', 'key00005', 'key00006', 'key00007'];
-    expect(candidateKeys(1234, many)).toEqual([...many.slice(0, 5), '12341234']);
+    expect(candidateKeys(1234, many)).toEqual([...many, '12341234']);
   });
 });
 
@@ -833,5 +833,31 @@ describe('putting a robot on the field by itself', () => {
     await scanner.start();
     await flush();
     expect(enabled).toEqual([['1234-Comp', 'arrived']]);
+  });
+});
+
+describe('robots still being checked', () => {
+  test('are named while their check runs, so a reconfiguration can wait for them', async () => {
+    const { runner, scanner } = setup([], { keyCheckTimeoutMs: 30 });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'silent';
+    await scanner.start();
+    await Bun.sleep(5);
+    expect(scanner.arrivalChecks()).toEqual(['1234-Comp']);
+    await flush();
+    expect(scanner.arrivalChecks()).toEqual([]);
+  });
+
+  test('but not a robot whose team turned auto-connect off', async () => {
+    const { runner, scanner } = setup([], {
+      keyCheckTimeoutMs: 30,
+      saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }],
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'silent';
+    await scanner.start();
+    await Bun.sleep(5);
+    expect(scanner.arrivalChecks()).toEqual([]);
+    await flush();
   });
 });

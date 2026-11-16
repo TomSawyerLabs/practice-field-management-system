@@ -207,13 +207,28 @@ it joins. The rules:
   `saved-teams.json`). Shown only while the scan is listening.
 - Each arrival re-checks the passphrase (results are forgotten when the
   network drops off), so a radio reconfigured since last time is caught.
+- **One reconfiguration for robots that arrive together.** Every
+  reconfiguration drops all robots for ~30 seconds, so a robot that
+  connects by itself waits 5 seconds for others, and longer — up to a minute
+  in all — while another robot heard is still having its passphrase
+  checked. Then they all go on in one radio change. That change still waits
+  for enabled robots to be disabled, and for **Apply now** when Wi-Fi
+  changes are held.
+- **The scoreboard says so.** A strip along its bottom edge counts down
+  ("Field Wi-Fi reconfiguration in 4 s, once robots are disabled"), names
+  the robots, and any robot still being waited for. It also shows a
+  reconfiguration waiting for robots to be disabled, and Wi-Fi changes held
+  by the admin, a match, or waiting for staff.
 
 **Forgotten passphrases.** When a robot's saved passphrase (or, for a
 stalled robot, the field's) doesn't open its network, pFMS tries the
 others it has for that team, one at a time: the passphrases of the team's
-other saved robots, the ones its robots were saved with before (the last 5
-per robot are kept, server-side only), then the team number twice
-(`12341234`) — six at most. The row shows **Trying other passphrases…**.
+other saved robots, then every passphrase the team has ever used here
+(newest first), then the team number twice (`12341234`). Every passphrase a
+team uses is kept for good in `team-passphrases.json` (server-side only,
+`TEAM_PASSPHRASES_FILE`) — removing a robot or changing its passphrase
+forgets none, and teams reuse them from year to year; the first run seeds
+it from the saved robots. The row shows **Trying other passphrases…**.
 One that works is saved on the robot (the row says so), and the robot then
 connects by itself as above; a stalled robot on the field is switched to it.
 A heard name the team never saved (another suffix), or one that differs

@@ -963,3 +963,30 @@ describe('releasing a robot off the Wi-Fi for a team in line', () => {
     expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
   });
 });
+
+describe('robots that connected by themselves', () => {
+  test('go on together, in one radio change, on separate stations', async () => {
+    const rm = manager();
+    const commit = spyOn(rm, 'commitConfiguration');
+    await rm.enableTogether([robot, other]);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+  });
+
+  test('wait like any request when a hold is on', async () => {
+    const rm = manager();
+    rm.setShouldHold(() => 'admin');
+    await rm.enableTogether([robot]);
+    expect(rm.getStationConfig('slot1')).toBeNull();
+    expect(rm.getPendingState().hold).toBe('admin');
+  });
+
+  test('a robot already on the field is left alone', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    const commit = spyOn(rm, 'commitConfiguration');
+    await rm.enableTogether([robot]);
+    expect(commit).not.toHaveBeenCalled();
+  });
+});

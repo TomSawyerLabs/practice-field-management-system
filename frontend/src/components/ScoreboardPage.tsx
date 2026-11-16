@@ -38,6 +38,7 @@ import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { MatchTimer, getActiveColor } from './MatchTimer';
 import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
 import { MatchAudioBridge, stopAllSounds } from '../hooks/useMatchAudio';
+import { FieldWifiNote } from './FieldWifiNote';
 import { useCastReceiverRegistration } from '../hooks/useCastReceiverRegistration';
 import { switchScoreboardView } from '../utils/scoreboardView';
 import { ControlChip } from './ControlChip';
@@ -574,6 +575,9 @@ export function ScoreboardPage() {
       {!muted && <MatchAudioBridge />}
 
       {matchState?.fieldEStop && <FieldEStopBand />}
+
+      {/* Field Wi-Fi about to reconfigure (every robot drops ~30 s) */}
+      <FieldWifiNote />
 
       {/* Freeplay score-reactive glow backgrounds (skipped in lite mode) */}
       {isFreePlay && !LITE && (

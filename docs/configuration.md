@@ -94,23 +94,24 @@ variables — see [support.md](support.md#slack-integration).
 
 State files are JSON, written to the working directory by default:
 
-| Variable               | Default                 | Holds                                                                                                                                                        |
-| ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                                           |
-| `STAGED_CONFIG_FILE`   | `staged-config.json`    | The pending list — Wi-Fi changes (enable/release, named by robot) waiting for staff to apply them; a release per robot is queued when a match ends           |
-| `MATCH_QUEUE_FILE`     | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
-| `TEAM_PREFS_FILE`      | `team-prefs.json`       | Per-team nudge preferences (Slack, push) and subscribed push devices                                                                                         |
-| `PUSH_KEYS_FILE`       | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
-| `ESTOP_STATE_FILE`     | `estop-state.json`      | The field E-Stop, each station's e-stop and team Stops in force, restored at startup so a restart lifts none of them                                         |
-| `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
-| `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
-| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |
-| `OPERATOR_AUTH_FILE`   | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
-| `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                                                       |
-| `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                                                        |
-| `SUPPORT_CHATS_FILE`   | `support-chats.json`    | Support chat sessions                                                                                                                                        |
-| `SLACK_CONFIG_FILE`    | `slack-config.json`     | Slack integration configuration                                                                                                                              |
-| `DEPLOY_ANNOUNCE_FILE` | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel, grouped by kind of change. |
+| Variable                | Default                 | Holds                                                                                                                                                        |
+| ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ACTIVE_CONFIG_FILE`    | `active-config.json`    | Active radio/station configuration                                                                                                                           |
+| `STAGED_CONFIG_FILE`    | `staged-config.json`    | The pending list — Wi-Fi changes (enable/release, named by robot) waiting for staff to apply them; a release per robot is queued when a match ends           |
+| `MATCH_QUEUE_FILE`      | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
+| `TEAM_PREFS_FILE`       | `team-prefs.json`       | Per-team nudge preferences (Slack, push) and subscribed push devices                                                                                         |
+| `PUSH_KEYS_FILE`        | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
+| `ESTOP_STATE_FILE`      | `estop-state.json`      | The field E-Stop, each station's e-stop and team Stops in force, restored at startup so a restart lifts none of them                                         |
+| `SAVED_TEAMS_FILE`      | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
+| `TEAM_PASSPHRASES_FILE` | `team-passphrases.json` | Every Wi-Fi passphrase each team has used, kept for good; tried on a robot whose saved one doesn't open it                                                   |
+| `API_KEYS_FILE`         | `api-keys.json`         | Scoring API keys                                                                                                                                             |
+| `ADMIN_AUTH_FILE`       | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |
+| `OPERATOR_AUTH_FILE`    | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
+| `EXTERNAL_ACCESS_FILE`  | `external-access.json`  | External access tokens                                                                                                                                       |
+| `SUPPORT_ISSUES_FILE`   | `support-issues.json`   | Support issue reports                                                                                                                                        |
+| `SUPPORT_CHATS_FILE`    | `support-chats.json`    | Support chat sessions                                                                                                                                        |
+| `SLACK_CONFIG_FILE`     | `slack-config.json`     | Slack integration configuration                                                                                                                              |
+| `DEPLOY_ANNOUNCE_FILE`  | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel, grouped by kind of change. |
 
 Not configurable: `match-history.json`, `usage-data.json`,
 `audio-config.json` (fixed names in the working directory).

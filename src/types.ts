@@ -2600,13 +2600,10 @@ export interface SavedTeamConfig {
   /** Put on the field by itself when the robot scan hears it and its
    *  passphrase checks out. Absent = on; the team can turn it off per robot. */
   autoConnect?: boolean;
-  /** Passphrases this robot was saved with before, newest first (a few).
-   *  Tried when the current one doesn't open the robot. Server-only. */
-  formerKeys?: string[];
 }
 
-/** Client-facing saved team config — keys stripped so passphrases stay server-side. */
-export type SavedTeamClientConfig = Omit<SavedTeamConfig, 'wpaKey' | 'formerKeys'>;
+/** Client-facing saved team config — wpaKey stripped so passphrases stay server-side. */
+export type SavedTeamClientConfig = Omit<SavedTeamConfig, 'wpaKey'>;
 
 /** Broadcast from server to clients with saved team configs (keys stripped). */
 export interface SavedTeamsState {
@@ -2739,6 +2736,10 @@ export interface RobotWifiScanState {
   /** Saved robots a team asked to enable with a passphrase not checked yet:
    *  the field switches to one once the check on the robot passes. */
   awaiting?: string[];
+  /** Robots that connected by themselves, gathered for one field Wi-Fi
+   *  reconfiguration: it starts at `at` (server epoch ms) — later while
+   *  `waitingFor` robots are still being checked, so they join the same one. */
+  upcoming?: { at: number; robots: string[]; waitingFor: string[] };
 }
 
 export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {

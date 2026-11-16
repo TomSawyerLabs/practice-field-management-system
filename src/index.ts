@@ -66,6 +66,7 @@ import { wireGameLayer } from './game/wire.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
+import { AutoConnectBatch } from './autoConnectBatch.js';
 import {
   RobotWifiScanner,
   listWirelessInterfaces,
@@ -510,9 +511,22 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   // Cards come and go (USB), and the host can take one over at any time.
   setInterval(() => wifiCards.refresh(), 10_000);
+  // Robots that connected by themselves share one field reconfiguration
+  // (src/autoConnectBatch.ts); the scoreboard counts it down.
+  const autoConnectBatch = new AutoConnectBatch({
+    stillChecking: () => robotWifi?.arrivalChecks() ?? [],
+    apply: robots => {
+      appInfo(`Connecting ${robots.map(r => r.ssid).join(', ')} to the field together`);
+      radioManager
+        .enableTogether(robots.map(r => ({ ssid: r.ssid, wpaKey: r.wpaKey, internetAccess: r.internetAccess })))
+        .catch(err => appError(`Error connecting robots to the field: ${err.message}`));
+    },
+    onChange: () => broadcastRobotWifi(robotWifiState()),
+  });
   const robotWifiState = (): RobotWifiScanState => ({
     ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [], stalls: [] }),
     interfaces: listWirelessInterfaces(),
+    ...(autoConnectBatch.upcoming() && { upcoming: autoConnectBatch.upcoming() }),
   });
   // What the field is trying to connect, for spotting a robot that is taking
   // too long to join: every configured station, whether its robot is linked,
@@ -548,22 +562,19 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // itself — once per arrival, never during a match, unless the team turned
   // it off for that robot. A robot "placed" is on the field or waiting to go on.
   const robotPlaced = (ssid: string) =>
+    autoConnectBatch.has(ssid) ||
     StationNameList.some(s => radioManager.getStationConfig(s)?.ssid === ssid) ||
     radioManager.getPendingChanges().some(c => c.kind === 'enable' && c.ssid === ssid);
   const enableHeardRobot = (robot: SavedRobot, why: 'arrived' | 'asked') => {
-    // Like the team's Enable Robot: a free station, or in line when full.
-    const station = radioManager.getFreeProjectedStation() ?? StationNameList[0];
     appInfo(
       why === 'arrived'
         ? `${robot.ssid} is on and its passphrase checks out — connecting it to the field`
         : `${robot.ssid}: passphrase checked on the robot — connecting it to the field as the team asked`,
     );
-    radioManager
-      .configure(station, { ssid: robot.ssid, wpaKey: robot.wpaKey, internetAccess: robot.internetAccess })
-      .catch(err => appError(`Error connecting ${robot.ssid} to the field: ${err.message}`));
+    autoConnectBatch.add(robot);
   };
   // A passphrase that opens a team's robot, found among the team's others:
-  // save it on the robot (the old one stays as a former key). A name the
+  // save it on the robot (every passphrase stays in the team's history). A name the
   // team never saved becomes a new robot, connecting by itself unless the
   // team turned that off. A stalled robot on the field is switched to it.
   const saveFoundKey = (f: KeyFound) => {

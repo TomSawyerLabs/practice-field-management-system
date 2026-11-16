@@ -446,19 +446,16 @@ export interface SavedRobot {
   autoConnect?: boolean;
 }
 
-/** How many of a team's known passphrases are tried on a robot whose own
- *  doesn't open it (the team-number pattern comes on top). */
-export const MAX_TEAM_KEYS = 5;
-
 /** A WPA passphrase: 8 to 63 printable ASCII characters. */
 const VALID_KEY = /^[\x20-\x7e]{8,63}$/;
 
 /** What to try on a team's robot when the passphrase saved for it doesn't
- *  open it: the team's other passphrases (as given: most likely first), then
- *  the team number twice — `12341234` — the commonest made-up one. Distinct,
- *  valid WPA passphrases only, so a 3-digit team's `254254` is skipped. */
+ *  open it: every passphrase the team has used (as given: most likely
+ *  first), then the team number twice — `12341234` — the commonest made-up
+ *  one. Distinct, valid WPA passphrases only, so a 3-digit team's `254254`
+ *  is skipped. */
 export function candidateKeys(team: number, known: readonly string[]): string[] {
-  const keys = [...new Set(known)].filter(k => VALID_KEY.test(k)).slice(0, MAX_TEAM_KEYS);
+  const keys = [...new Set(known)].filter(k => VALID_KEY.test(k));
   const pattern = `${team}${team}`;
   if (VALID_KEY.test(pattern) && !keys.includes(pattern)) keys.push(pattern);
   return keys;
@@ -490,6 +487,8 @@ interface KeyCheckJob {
   why: string;
   /** Part of a search: if it opens the network, this is what was found */
   found?: KeyFound;
+  /** The field's passphrase on a stalled connection (not a robot arriving) */
+  stall?: true;
 }
 
 /** The passphrases to try on one heard network, in order: the one the field
@@ -562,7 +561,7 @@ export class RobotWifiScanner {
   private keyChecks = new Map<string, RobotWifiKeyCheck>();
   /** Stations whose team pressed "Test connection", waiting for the radio */
   private asked = new Set<StationName>();
-  private checking: string | null = null;
+  private checking: KeyCheckJob | null = null;
   /** Heard networks whose robot has been on the field, or put on it by
    *  itself, since it was first heard: it isn't put on again by itself
    *  until it goes quiet off the field (powered off) and comes back. So a
@@ -691,6 +690,7 @@ export class RobotWifiScanner {
       ssid,
       wpaKey,
       why: `${station} set up for ${ssid}, stalled; field passphrase`,
+      stall: true,
     };
   }
 
@@ -849,6 +849,30 @@ export class RobotWifiScanner {
     void this.checkNextKey();
   }
 
+  /** Robots on the air whose passphrase is being checked, or is about to
+   *  be, before they can connect by themselves (opted-out ones aside), as
+   *  the names they broadcast minus `FRC-`. Worth waiting a few seconds for,
+   *  so robots turned on together go on in one radio change. */
+  arrivalChecks(): string[] {
+    if (this.status !== 'running') return [];
+    const saved = this.o.savedRobots();
+    const optedOut = (heardSsid: string) => {
+      const name = this.seen.get(heardSsid)?.robotSsid;
+      const robot = saved.find(r => r.ssid === name);
+      return robot?.autoConnect === false && !this.requests.has(robot.ssid);
+    };
+    const jobs = [
+      ...(this.checking && !this.checking.stall ? [this.checking] : []),
+      ...this.savedJobs().filter(j => this.due(j)),
+      ...this.searchJobs(this.stalls()),
+    ];
+    const names = jobs
+      .filter(j => !optedOut(j.heardSsid))
+      .map(j => this.seen.get(j.heardSsid)?.robotSsid)
+      .filter((n): n is string => !!n);
+    return [...new Set(names)];
+  }
+
   /** "Test connection" for a stalled station: try the field's passphrase
    *  now. Rate-limited, so a button cannot hammer a robot. */
   test(station: StationName): void {
@@ -916,7 +940,7 @@ export class RobotWifiScanner {
     }
     if (joinProblem(seen.ssid, security, wpaKey)) return;
 
-    this.checking = seen.ssid;
+    this.checking = job;
     this.keyChecks.set(id, { result: 'checking', at: this.o.now(), fieldSsid });
     this.emit();
     let result: RobotWifiKeyCheck['result'];
