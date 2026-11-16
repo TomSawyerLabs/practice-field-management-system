@@ -995,6 +995,39 @@ like `/api/public/match/*` must be reachable without the external-access
 check, and the page path `/practice/*` must be served as the scores bundle
 by the reverse proxy exactly as `/matches/*` is.
 
+### Spare robots on 99xx team numbers
+
+Some teams set their second robot up as a 99xx team number (5940's spare
+as 9940), because other software can't tell two identical `10.TE.AM.x`
+subnets apart. pFMS could (see [Duplicate Team Handling](network.md#duplicate-team-handling)),
+but on the field the robot stays exactly what it was set up as: 9940's own
+SSID, `10.99.40.x`, station and routes. Nothing on the network changes.
+
+What changes is where its records go. Team numbers 9900–9999 are reserved
+for this, so 9940's team page asks which team the robot is for today. Once
+linked, 9940's practice runs, and the matches it played that day, are filed
+under 5940's practice day: they are on 5940's day link and in its zip, both
+team pages show both robots' videos (marked with the robot's number), and
+the mentors' Slack message covers them. Runs and match history keep the
+robot's own number; the link is applied when reading, so it covers the
+whole day whenever it is made, and **Unlink** (on either page) puts it all
+back. A link lasts one practice day (`team-links.json`,
+`src/teamLinkStore.ts`); the next day the page asks again.
+
+The real team's saved robot Wi-Fi passphrase guards the link. If 5940 has
+one, linking needs it, so a stranger can't file their robot under 5940.
+Two ways past that:
+
+- **Automatically.** When a 99xx robot is enabled with a passphrase that
+  only one real team's saved robots use, pFMS links it to that team for the
+  day. A passphrase two teams share decides nothing. Once someone unlinks a
+  robot, it isn't re-linked automatically until the next day.
+- **Field staff.** An admin, or a device logged in as an operator, can link
+  without the passphrase (`linkTeam` over the WebSocket).
+
+With no saved passphrase, anyone on the team page can link, the same trust
+as the rest of the team page.
+
 ### Sending the link to the team's mentors
 
 When a team that recorded something has been quiet for 20 minutes (no robot

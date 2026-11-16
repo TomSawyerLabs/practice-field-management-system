@@ -13,11 +13,10 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mintShareToken } from './matchEngine.js';
 import type { PracticeDayToken, PracticeRunEntry } from './types.js';
+import { DAY_ROLLOVER_HOUR, practiceDayOf } from './utils.js';
 
 const DEFAULT_FILE = 'practice-recordings.json';
 const MAX_RUNS = 500;
-/** Days start at 04:00 local, so a session that runs past midnight stays together. */
-const DAY_ROLLOVER_HOUR = 4;
 
 interface Persisted {
   version: 2;
@@ -27,12 +26,8 @@ interface Persisted {
   days: PracticeDayToken[];
 }
 
-/** Local practice day (`YYYY-MM-DD`) a timestamp belongs to. */
-export function practiceDayOf(ts: number): string {
-  const d = new Date(ts - DAY_ROLLOVER_HOUR * 60 * 60 * 1000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// Shared with the pages, which group a day's videos the same way.
+export { practiceDayOf };
 
 /** When a practice day ends (the next 04:00 local), epoch ms. */
 export function practiceDayEnd(day: string): number {
@@ -52,17 +47,47 @@ export class PracticeStore {
   private days: PracticeDayToken[] = [];
   private readonly filePath: string;
   private listeners: (() => void)[] = [];
+  private resolveTeam: (team: number, day: string) => number = team => team;
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? process.env.PRACTICE_RECORDINGS_FILE ?? DEFAULT_FILE;
     this.load();
   }
 
+  // ── stand-in robots ────────────────────────────────────────────────
+
+  /** Where a robot's runs are filed on a day: a 99xx stand-in's are filed
+   *  under the team it is linked to (see teamLinkStore.ts). */
+  setTeamResolver(fn: (team: number, day: string) => number): void {
+    this.resolveTeam = fn;
+  }
+
+  /** The team a robot's records are filed under on a day. */
+  teamOf(team: number, day: string): number {
+    return this.resolveTeam(team, day);
+  }
+
+  /** A link changed: give each team with runs filed under it that day a day
+   *  link, as its own first recording would have. */
+  refile(day: string): void {
+    const before = this.days.length;
+    for (const run of this.runs) {
+      if (practiceDayOf(run.startedAt) !== day) continue;
+      const team = this.teamOf(run.teamNumber, day);
+      if (!this.findDay(team, day))
+        this.days.push({ token: mintShareToken(), teamNumber: team, day, createdAt: Date.now() });
+    }
+    if (this.days.length !== before) this.persist();
+    this.notify();
+  }
+
   // ── opt-out ────────────────────────────────────────────────────────
 
-  /** Every team records unless it turned recording off. */
+  /** Every team records unless it turned recording off. A stand-in robot
+   *  also stops when the team it is linked to today did. */
   isOptedIn(teamNumber: number): boolean {
-    return !this.optOut.has(teamNumber);
+    if (this.optOut.has(teamNumber)) return false;
+    return !this.optOut.has(this.teamOf(teamNumber, practiceDayOf(Date.now())));
   }
 
   getOptOut(): number[] {
@@ -84,7 +109,8 @@ export class PracticeStore {
     if (this.runs.length > MAX_RUNS) this.runs = this.runs.slice(-MAX_RUNS);
     // A day link exists from the first recording on, so the station page
     // can show it right away and the notifier knows there is something to send.
-    this.getOrCreateDayToken(run.teamNumber, practiceDayOf(run.startedAt));
+    const day = practiceDayOf(run.startedAt);
+    this.getOrCreateDayToken(this.teamOf(run.teamNumber, day), day);
     this.persist();
     this.notify();
   }
@@ -93,9 +119,10 @@ export class PracticeStore {
     return this.runs;
   }
 
-  /** Runs a team took part in on a practice day, oldest first. */
+  /** Runs filed under a team on a practice day, oldest first: its own, and
+   *  those of stand-in robots linked to it that day. */
   runsFor(teamNumber: number, day: string): PracticeRunEntry[] {
-    return this.runs.filter(r => practiceDayOf(r.startedAt) === day && r.teamNumber === teamNumber);
+    return this.runs.filter(r => practiceDayOf(r.startedAt) === day && this.teamOf(r.teamNumber, day) === teamNumber);
   }
 
   /** Drop runs whose directory the retention sweep has deleted. */

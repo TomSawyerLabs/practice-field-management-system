@@ -152,6 +152,8 @@ import {
   isClearMatchHistory,
   isSetPracticeRecording,
   isRequestPracticeDayLink,
+  isLinkTeam,
+  isUnlinkTeam,
   isRequestRecordingsInventory,
   redactSetupSettings,
   restoreSetupSecrets,
@@ -163,6 +165,7 @@ import {
   isDeleteRecording,
   isDeleteRecordingsBefore,
   type PracticeDayLink,
+  type TeamLinkResult,
   AdminAuthResult,
   CastReceiverList,
   RoutePreferenceState,
@@ -204,6 +207,7 @@ import CIDRMatcher from 'cidr-matcher';
 import { appError, appWarn } from './appLogger.js';
 import { healthReport, MatchEngine } from './matchEngine.js';
 import type { SavedTeamStore } from './savedTeamStore.js';
+import { linkAuthorization, type TeamLinkStore } from './teamLinkStore.js';
 import type { MatchQueue } from './matchQueue.js';
 import type { SetupMode, SetupResult } from './matchSetup.js';
 import type { TeamPrefsStore } from './teamPrefsStore.js';
@@ -350,6 +354,12 @@ export interface SetupWebSocketOptions {
       store: PracticeStore;
       /** Recordings a team's day link lists right now (matches + runs). */
       countItems: (teamNumber: number, day: string) => number;
+    };
+    /** 99xx stand-in robots linked to their real team for the day. */
+    teamLinks?: {
+      store: TeamLinkStore;
+      /** Where each team's saved Wi-Fi passphrases are: the link's guard. */
+      savedTeams: SavedTeamStore;
     };
     /** "Restart pFMS" on the admin page: exit gracefully (network rules
      *  kept) and let systemd bring the service back. */
@@ -717,6 +727,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
   // Broadcast saved team config changes to all clients
   savedTeamStore?.addListener(broadcast);
+
+  // Today's stand-in links: a handful of team numbers, for every page.
+  setup?.teamLinks?.store.addListener(broadcast);
 
   // Broadcast the match queue (team numbers and positions only; also goes
   // to public connections so a TV can show "next up")
@@ -1186,6 +1199,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     ws.send(serverInfoMessage());
 
     // Saved team configs are a topic: a team page subscribes to its own.
+
+    // Today's stand-in (99xx) robot links
+    if (setup?.teamLinks) {
+      ws.send(JSON.stringify(setup.teamLinks.store.getState()));
+    }
 
     // Send the match queue
     if (setup?.queue) {
@@ -2473,15 +2491,50 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         // The token is answered to this client only, never broadcast.
         if (setup?.practice) {
           const day = practiceDayOf(Date.now());
-          const entry = setup.practice.store.findDay(data.teamNumber, day);
+          // A stand-in robot linked to its team gets that team's link.
+          const filedUnder = setup.practice.store.teamOf(data.teamNumber, day);
+          const entry = setup.practice.store.findDay(filedUnder, day);
           const reply: PracticeDayLink = {
             type: 'practiceDayLink',
             teamNumber: data.teamNumber,
+            filedUnder: filedUnder === data.teamNumber ? undefined : filedUnder,
             day,
             token: entry?.token ?? null,
-            count: entry ? setup.practice.countItems(data.teamNumber, day) : 0,
+            count: entry ? setup.practice.countItems(filedUnder, day) : 0,
           };
           ws.send(JSON.stringify(reply));
+        }
+      } else if (isLinkTeam(data)) {
+        const links = setup?.teamLinks;
+        if (links) {
+          const keys = (team: number) => links.savedTeams.configsForTeam(team).map(c => c.wpaKey);
+          const auth = linkAuthorization({
+            teamKeys: keys(data.team),
+            robotKeys: keys(data.robotTeam),
+            passphrase: data.passphrase,
+            // Logged-in field staff can vouch for a team. Without a login
+            // every phone on site counts as "staff", so that isn't enough.
+            staff: adminConnections.has(ws) || (operatorConnections.has(ws) && dsRefusal(ws) === null),
+          });
+          if (auth.ok) {
+            links.store.link(data.robotTeam, data.team, auth.via);
+            console.log(`Linked stand-in robot ${data.robotTeam} to team ${data.team} for today (${auth.via})`);
+          } else {
+            appWarn(`Refused to link ${data.robotTeam} to team ${data.team}: ${auth.error} (${whoIs(clientIp)})`);
+          }
+          const reply: TeamLinkResult = {
+            type: 'teamLinkResult',
+            robotTeam: data.robotTeam,
+            team: data.team,
+            ok: auth.ok,
+            error: auth.ok ? undefined : auth.error,
+          };
+          ws.send(JSON.stringify(reply));
+        }
+      } else if (isUnlinkTeam(data)) {
+        if (setup?.teamLinks) {
+          setup.teamLinks.store.unlink(data.robotTeam);
+          console.log(`Unlinked stand-in robot ${data.robotTeam} for today (${whoIs(clientIp)})`);
         }
       } else {
         appWarn('Unknown message type from client: ' + JSON.stringify(redactForLog(data)));

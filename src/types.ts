@@ -4814,6 +4814,9 @@ export function isRequestPracticeDayLink(msg: unknown): msg is RequestPracticeDa
 export interface PracticeDayLink {
   type: 'practiceDayLink';
   teamNumber: number;
+  /** A stand-in (99xx) robot linked to its real team today: the team whose
+   *  link this is. */
+  filedUnder?: number;
   day: string;
   token: string | null;
   /** Recordings (matches + runs) filed under the day so far. */
@@ -4948,6 +4951,104 @@ export interface RecordingsInventory {
 export function isRecordingsInventory(msg: unknown): msg is RecordingsInventory {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as RecordingsInventory).type === 'recordingsInventory';
+}
+
+// ── Stand-in (99xx) team numbers linked to a real team ──────────────
+
+/** Team numbers a team gives an extra robot so other software can tell its
+ *  two `10.TE.AM.x` networks apart (5940's spare runs as 9940). */
+export const STAND_IN_TEAM_MIN = 9900;
+export const STAND_IN_TEAM_MAX = 9999;
+
+export function isStandInTeam(team: number): boolean {
+  return Number.isInteger(team) && team >= STAND_IN_TEAM_MIN && team <= STAND_IN_TEAM_MAX;
+}
+
+/** A real team number a stand-in can be linked to. */
+export function isLinkableTeam(team: unknown): team is number {
+  return typeof team === 'number' && Number.isInteger(team) && team > 0 && team <= 99999 && !isStandInTeam(team);
+}
+
+/**
+ * How a link was made: `open` — the real team has no saved Wi-Fi
+ * passphrase; `passphrase` — whoever linked typed it; `auto` — the stand-in
+ * robot was enabled with that team's passphrase; `staff` — field staff.
+ */
+export type TeamLinkVia = 'open' | 'passphrase' | 'auto' | 'staff';
+
+/** One practice day's link from a stand-in robot to its real team.
+ *  `team: null` means someone unlinked it that day: keep it apart, and don't
+ *  auto-link it again until tomorrow. */
+export interface TeamLink {
+  robotTeam: number;
+  team: number | null;
+  /** Practice day (`YYYY-MM-DD`, rolls over at 04:00 local). */
+  day: string;
+  at: number;
+  via: TeamLinkVia | 'unlinked';
+}
+
+/** Server → all clients: today's links (tombstones left out). */
+export interface TeamLinksState {
+  type: 'teamLinksState';
+  day: string;
+  links: (TeamLink & { team: number })[];
+}
+
+export function isTeamLinksState(msg: unknown): msg is TeamLinksState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TeamLinksState).type === 'teamLinksState';
+}
+
+/** Client → Server: file a stand-in robot's day under a real team.
+ *  `passphrase` is that team's saved robot Wi-Fi passphrase, needed when it
+ *  has one. */
+export interface LinkTeam {
+  type: 'linkTeam';
+  robotTeam: number;
+  team: number;
+  passphrase?: string;
+}
+
+export function isLinkTeam(msg: unknown): msg is LinkTeam {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as LinkTeam;
+  return (
+    m.type === 'linkTeam' &&
+    Number.isInteger(m.robotTeam) &&
+    isStandInTeam(m.robotTeam) &&
+    isLinkableTeam(m.team) &&
+    (m.passphrase === undefined || typeof m.passphrase === 'string')
+  );
+}
+
+/** Client → Server: keep a stand-in robot's day apart again. */
+export interface UnlinkTeam {
+  type: 'unlinkTeam';
+  robotTeam: number;
+}
+
+export function isUnlinkTeam(msg: unknown): msg is UnlinkTeam {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as UnlinkTeam;
+  return m.type === 'unlinkTeam' && isStandInTeam(m.robotTeam);
+}
+
+/** Why a link was refused. */
+export type TeamLinkError = 'passphraseRequired' | 'wrongPassphrase';
+
+/** Server → the client that asked: how a link request went. */
+export interface TeamLinkResult {
+  type: 'teamLinkResult';
+  robotTeam: number;
+  team: number;
+  ok: boolean;
+  error?: TeamLinkError;
+}
+
+export function isTeamLinkResult(msg: unknown): msg is TeamLinkResult {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TeamLinkResult).type === 'teamLinkResult';
 }
 
 // ── Topic subscriptions ─────────────────────────────────────────────

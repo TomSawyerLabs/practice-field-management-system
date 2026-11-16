@@ -97,7 +97,10 @@ They're worth knowing before you set up a field:
   ([details](docs/match-system.md#wi-fi-changes-and-matches)).
 - **The AP gives each team one subnet, `10.TE.AM.0/24`.** So two robots
   from one team sit on identical subnets on different VLANs. pFMS keeps
-  them apart (see _Multiple robots per team_ above).
+  them apart (see _Multiple robots per team_ above). A team that set its spare
+  up as a 99xx number (9940 for 5940) instead keeps that number on the
+  field, and links it to its real team for the day so the videos land in
+  one place ([details](docs/match-system.md#spare-robots-on-99xx-team-numbers)).
 
 **Other field APs are welcome.** The VH-113/VH-109 is the only radio
 supported today, but given the limits above, we'd be very happy to support

@@ -19,7 +19,9 @@ import {
   usePracticeDayLink,
   usePracticeRecordingState,
   usePublicUrl,
+  useTeamsFiledTogether,
 } from '../hooks/useBackend';
+import { practiceDayOf } from '../../../src/utils';
 import { CopyToClipboard } from './CopyToClipboard';
 
 /** Download URL for one recorded file. `download` forces an attachment with a
@@ -149,10 +151,13 @@ export function MatchVideoCard({
   /** Shown in place of the card when there's nothing to show; omit to render nothing. */
   emptyText?: string;
 }) {
-  // Only this team's matches and runs: the full history is for /match.
-  const history = useMatchHistory({ team: teamNumber });
+  // Only this team's matches and runs: the full history is for /match. With
+  // a stand-in (99xx) robot linked today, its videos and the real team's are
+  // filed together, so both pages show both.
+  const filedTogether = useTeamsFiledTogether(teamNumber);
+  const history = useMatchHistory({ team: teamNumber, teams: filedTogether });
   const recording = useMatchRecordingState();
-  const practice = usePracticeRecordingState({ team: teamNumber });
+  const practice = usePracticeRecordingState({ team: teamNumber, teams: filedTogether });
   const dayLink = usePracticeDayLink(teamNumber);
   const publicUrl = usePublicUrl();
 
@@ -162,18 +167,34 @@ export function MatchVideoCard({
 
   const rows: VideoRow[] = [];
   if (teamNumber !== null) {
+    // The other numbers are linked for today only.
+    const today = practiceDayOf(Date.now());
+    const robotOf = (teams: number[], startedAt: number): number | undefined =>
+      teams.includes(teamNumber)
+        ? teamNumber
+        : practiceDayOf(startedAt) === today
+          ? teams.find(t => filedTogether.includes(t))
+          : undefined;
+    // Which robot, when it isn't this page's.
+    const whose = (robot: number) => (robot === teamNumber ? '' : ` · ${robot}`);
     for (const m of history?.matches ?? []) {
-      if (!m.recordings?.length || !m.teams.some(t => t.teamNumber === teamNumber)) continue;
+      if (!m.recordings?.length) continue;
+      const robot = robotOf(
+        m.teams.map(t => t.teamNumber),
+        m.startedAt,
+      );
+      if (robot === undefined) continue;
       rows.push({
         key: m.matchId ?? String(m.startedAt),
-        label: `Match ${m.matchNumber}`,
+        label: `Match ${m.matchNumber}${whose(robot)}`,
         startedAt: m.startedAt,
         match: m,
       });
     }
     for (const r of practice?.runs ?? []) {
-      if (r.teamNumber !== teamNumber) continue;
-      rows.push({ key: r.id, label: 'Practice run', startedAt: r.startedAt, match: runAsMatch(r) });
+      const robot = robotOf([r.teamNumber], r.startedAt);
+      if (robot === undefined) continue;
+      rows.push({ key: r.id, label: `Practice run${whose(robot)}`, startedAt: r.startedAt, match: runAsMatch(r) });
     }
   }
   rows.sort((a, b) => b.startedAt - a.startedAt);
@@ -242,7 +263,9 @@ export function MatchVideoCard({
         {dayLink?.token && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>
             <Typography variant="body2">
-              Today&apos;s videos ({dayLink.count}), for downloading later or from home:
+              {dayLink.filedUnder
+                ? `Team ${dayLink.filedUnder}'s videos today, this robot's included (${dayLink.count}), for downloading later or from home:`
+                : `Today's videos (${dayLink.count}), for downloading later or from home:`}
             </Typography>
             <Button
               size="small"

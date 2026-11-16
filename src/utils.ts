@@ -85,6 +85,17 @@ export function teamOfSsid(ssid: string | null | undefined): number | null {
   return Number.isNaN(num) ? null : num;
 }
 
+/** Practice days start at 04:00 local, so a session that runs past midnight
+ *  stays together. */
+export const DAY_ROLLOVER_HOUR = 4;
+
+/** Local practice day (`YYYY-MM-DD`) a timestamp belongs to. */
+export function practiceDayOf(ts: number): string {
+  const d = new Date(ts - DAY_ROLLOVER_HOUR * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 /** Matches are being run from the queue: its line is open, or a match is
  *  lined up or playing. */
 export function queueInUse(queue: Pick<QueueState, 'settings' | 'entries'>): boolean {

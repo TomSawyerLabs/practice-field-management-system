@@ -62,16 +62,18 @@ export function handlePracticeRequest(req: IncomingMessage, res: ServerResponse,
     json(res, 404, { error: 'No such practice day' });
     return true;
   }
-  const items = collectDay(deps, day.teamNumber, day.day);
+  // A stand-in robot's own link opens the day of the team it is linked to.
+  const team = deps.practiceStore.teamOf(day.teamNumber, day.day);
+  const items = collectDay(deps, team, day.day);
 
   if (!m[2]) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    json(res, 200, summarizeDay(deps, token, day.teamNumber, day.day, items));
+    json(res, 200, summarizeDay(deps, token, team, day.day, items));
     return true;
   }
 
   if (m[2] === 'zip') {
-    void serveZip(req, res, deps, day.teamNumber, day.day, items);
+    void serveZip(req, res, deps, team, day.day, items);
     return true;
   }
 
@@ -96,7 +98,7 @@ export function handlePracticeRequest(req: IncomingMessage, res: ServerResponse,
     json(res, 404, { error: 'No such file' });
     return true;
   }
-  serveSidecar(req, res, join(dir, file), file, `${prefixFor(day.teamNumber, day.day, item)}_${file}`);
+  serveSidecar(req, res, join(dir, file), file, `${prefixFor(team, day.day, item)}_${file}`);
   return true;
 }
 
@@ -115,15 +117,19 @@ interface DayItem {
   endedAt: number;
   match?: MatchHistoryEntry;
   run?: PracticeRunEntry;
+  /** The number the robot ran as: the team's own, or a stand-in linked to it. */
+  robotTeam: number;
   recordings: NonNullable<MatchHistoryEntry['recordings']>;
 }
 
 function collectDay(deps: PracticeApiDeps, teamNumber: number, day: string): DayItem[] {
   const items: DayItem[] = [];
+  const filedHere = (team: number) => deps.practiceStore.teamOf(team, day) === teamNumber;
   for (const match of deps.historyStore.getState().matches) {
     if (!match.matchId || !match.recordings?.length) continue;
     if (practiceDayOf(match.startedAt) !== day) continue;
-    if (!match.teams.some(t => t.teamNumber === teamNumber)) continue;
+    const robots = match.teams.filter(t => filedHere(t.teamNumber)).map(t => t.teamNumber);
+    if (robots.length === 0) continue;
     // Only what is still on disk — the sweep may have removed it.
     const dir = deps.recorder.matchDirectory(match.matchId);
     if (!dir || !exists(dir)) continue;
@@ -134,6 +140,7 @@ function collectDay(deps: PracticeApiDeps, teamNumber: number, day: string): Day
       startedAt: match.startedAt,
       endedAt: match.endedAt,
       match,
+      robotTeam: robots.includes(teamNumber) ? teamNumber : robots[0],
       recordings: match.recordings,
     });
   }
@@ -147,6 +154,7 @@ function collectDay(deps: PracticeApiDeps, teamNumber: number, day: string): Day
       startedAt: run.startedAt,
       endedAt: run.endedAt,
       run,
+      robotTeam: run.teamNumber,
       recordings: run.recordings,
     });
   }
@@ -186,7 +194,7 @@ function summarizeDay(
   for (const item of items) {
     const dir = deps.recorder.matchDirectory(item.id)!;
     const meta = readMetadata(dir);
-    const summary = meta ? summarizeMetadata(meta, teamNumber) : undefined;
+    const summary = meta ? summarizeMetadata(meta, item.robotTeam) : undefined;
     const sidecar = (file: string) =>
       fileSize(join(dir, file)) !== undefined ? `${base}/meta/${encodeURIComponent(item.id)}/${file}` : undefined;
     const teams = item.match
@@ -208,7 +216,7 @@ function summarizeDay(
           : undefined,
       scored: summary?.scored,
       battery: summary?.battery,
-      activity: meta ? activityFor(meta, teamNumber) : undefined,
+      activity: meta ? activityFor(meta, item.robotTeam) : undefined,
       recordings: item.recordings
         .filter(r => r.status !== 'failed')
         .map(r => ({

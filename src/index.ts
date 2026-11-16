@@ -100,7 +100,8 @@ import { describeSpaceChange, MatchRecorder } from './matchRecorder.js';
 import { handleRecordingsRequest } from './recordingsApi.js';
 import { handlePublicMatchRequest } from './publicMatchApi.js';
 import { SessionMetadataCollector } from './sessionMetadata.js';
-import { PracticeStore } from './practiceStore.js';
+import { PracticeStore, practiceDayOf } from './practiceStore.js';
+import { TeamLinkStore, autoLinkTarget } from './teamLinkStore.js';
 import { PracticeRecorder } from './practiceRecorder.js';
 import { FieldTimelapse } from './fieldTimelapse.js';
 import { FieldActivityLog } from './fieldActivityLog.js';
@@ -128,6 +129,7 @@ import {
   SelfUpdateStatus,
   WifiCardsState,
   FIELD_CONTROL_ADDRESS,
+  isStandInTeam,
   type TelemetryUpdate,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -811,6 +813,30 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // "Record while enabled": practice runs outside matches, filed per team
   // with a per-day share link, and the link posted to the team's mentors.
   const practiceStore = new PracticeStore();
+  // A team's extra robot running as 99xx (5940's spare as 9940) is linked to
+  // its real team for the day: its runs and matches are filed under that
+  // team's practice day. The network side is untouched. See
+  // plans/stand-in-team-links.md.
+  const teamLinkStore = new TeamLinkStore();
+  practiceStore.setTeamResolver((team, day) => teamLinkStore.teamFor(team, day));
+  teamLinkStore.addListener(state => practiceStore.refile(state.day));
+  // A stand-in robot enabled with a passphrase only one real team is saved
+  // with is that team's: link it, unless someone unlinked it today.
+  const autoLinkStandIns = () => {
+    const saved = savedTeamStore.getTeams();
+    const today = practiceDayOf(Date.now());
+    for (const config of saved) {
+      const robotTeam = teamOfSsid(config.ssid);
+      if (robotTeam === null || !isStandInTeam(robotTeam)) continue;
+      if (practiceDayOf(config.lastUsedAt) !== today || teamLinkStore.entryFor(robotTeam)) continue;
+      const team = autoLinkTarget(robotTeam, saved);
+      if (team === undefined) continue;
+      teamLinkStore.link(robotTeam, team, 'auto');
+      console.log(`Linked stand-in robot ${robotTeam} to team ${team} for today: same Wi-Fi passphrase`);
+    }
+  };
+  savedTeamStore.addListener(autoLinkStandIns);
+  autoLinkStandIns();
   const practiceRecorder = new PracticeRecorder({
     directory: matchRecorder.recordingsDirectory,
     ffmpegPath: matchRecorder.ffmpegPath,
@@ -883,6 +909,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     historyStore: matchHistoryStore,
     slack: slackBridge,
     lastSeen: team => practiceRecorder.lastSeenForTeam(team),
+    teamsFiledUnder: (team, day) => teamLinkStore.teamsFiledUnder(team, day),
     countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
     publicUrl,
     retentionDays: () => matchRecorder.effectiveRetentionDays(),
@@ -1103,6 +1130,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         recorder: practiceRecorder,
         store: practiceStore,
         countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
+      },
+      teamLinks: {
+        store: teamLinkStore,
+        savedTeams: savedTeamStore,
       },
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose

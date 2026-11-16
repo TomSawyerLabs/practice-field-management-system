@@ -12,6 +12,11 @@ import {
   MdnsActivity,
   NetworkStats,
   SavedTeamsState,
+  TeamLinkResult,
+  TeamLinksState,
+  isStandInTeam,
+  isTeamLinkResult,
+  isTeamLinksState,
   SubnetScanResults,
   TeamCheckResults,
   TelemetryUpdate,
@@ -591,6 +596,7 @@ let currentMatchState: MatchState | null = null;
 let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
+let currentTeamLinks: TeamLinksState | null = null;
 let currentQueueState: QueueState | null = null;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
@@ -1208,6 +1214,17 @@ function receiveMessage(detail: Message) {
 
   if (isSavedTeamsState(detail)) {
     handleSavedTeamsState(detail);
+    return;
+  }
+
+  if (isTeamLinksState(detail)) {
+    currentTeamLinks = detail;
+    events.dispatchEvent(new CustomEvent('teamLinksState', { detail }));
+    return;
+  }
+
+  if (isTeamLinkResult(detail)) {
+    events.dispatchEvent(new CustomEvent('teamLinkResult', { detail }));
     return;
   }
 
@@ -3315,8 +3332,11 @@ export function sendRefreshAudioDevices() {
  * that team played (a team page); `null` means no team chosen yet, so
  * nothing is fetched; omit it for every match (/match, /recordings).
  */
-export function useMatchHistory({ team }: { team?: number | null } = {}): MatchHistoryState | null {
-  useTopic('matchHistory', team == null ? undefined : [team], team !== null);
+export function useMatchHistory({
+  team,
+  teams,
+}: { team?: number | null; teams?: readonly number[] } = {}): MatchHistoryState | null {
+  useTopic('matchHistory', teams ?? (team == null ? undefined : [team]), team !== null);
   const [state, setState] = useState<MatchHistoryState | null>(currentMatchHistoryState);
 
   useEffect(() => {
@@ -3392,8 +3412,11 @@ export function practiceDayUrl(publicUrl: string, token: string): string {
 // ── Practice recording ("record while enabled") ─────────────────────
 
 /** Practice recording, subscribed while mounted; `team` as in useMatchHistory. */
-export function usePracticeRecordingState({ team }: { team?: number | null } = {}): PracticeRecordingState | null {
-  useTopic('practiceRecording', team == null ? undefined : [team], team !== null);
+export function usePracticeRecordingState({
+  team,
+  teams,
+}: { team?: number | null; teams?: readonly number[] } = {}): PracticeRecordingState | null {
+  useTopic('practiceRecording', teams ?? (team == null ? undefined : [team]), team !== null);
   const [state, setState] = useState<PracticeRecordingState | null>(currentPracticeRecordingState);
 
   useEffect(() => {
@@ -3440,12 +3463,15 @@ export function sendSetPracticeRecording(teamNumber: number, enabled: boolean) {
  */
 export function usePracticeDayLink(teamNumber: number | null): PracticeDayLink | null {
   const [link, setLink] = useState<PracticeDayLink | null>(null);
-  // Only this team's runs and matches move its link.
-  const practice = usePracticeRecordingState({ team: teamNumber });
-  const history = useMatchHistory({ team: teamNumber });
+  // Only this team's runs and matches move its link, and those of any
+  // stand-in robot filed with it today (which also moves when one is linked).
+  const teams = useTeamsFiledTogether(teamNumber);
+  const practice = usePracticeRecordingState({ team: teamNumber, teams });
+  const history = useMatchHistory({ team: teamNumber, teams });
   const connected = useWsConnected();
   const runCount = practice?.runs.length ?? 0;
   const matchCount = history?.matches.length ?? 0;
+  const teamsKey = teams.join(',');
 
   useEffect(() => {
     if (teamNumber === null) {
@@ -3459,9 +3485,57 @@ export function usePracticeDayLink(teamNumber: number | null): PracticeDayLink |
     events.addEventListener('practiceDayLink', handler);
     sendWhenOpen({ type: 'requestPracticeDayLink', teamNumber });
     return () => events.removeEventListener('practiceDayLink', handler);
-  }, [teamNumber, runCount, matchCount, connected]);
+  }, [teamNumber, runCount, matchCount, connected, teamsKey]);
 
   return link;
+}
+
+// ── Stand-in (99xx) robots linked to their real team ───────────────
+
+/** Today's links from stand-in robots (9940) to their real teams (5940). */
+export function useTeamLinks(): TeamLinksState | null {
+  const [state, setState] = useState<TeamLinksState | null>(currentTeamLinks);
+  useEffect(() => {
+    setState(currentTeamLinks);
+    const handler = (e: Event) => setState((e as CustomEvent<TeamLinksState>).detail);
+    events.addEventListener('teamLinksState', handler);
+    return () => events.removeEventListener('teamLinksState', handler);
+  }, []);
+  return state;
+}
+
+/** Every number filed together with this team's today, real team first:
+ *  5940 → [5940, 9940] once 9940 is linked to it, and the same from 9940.
+ *  Just the team when nothing is linked. */
+export function useTeamsFiledTogether(team: number | null): number[] {
+  const links = useTeamLinks();
+  if (team === null) return [];
+  const real = (isStandInTeam(team) && links?.links.find(l => l.robotTeam === team)?.team) || team;
+  const standIns = (links?.links ?? []).filter(l => l.team === real).map(l => l.robotTeam);
+  return [real, ...standIns.sort((a, b) => a - b)];
+}
+
+export function sendLinkTeam(robotTeam: number, team: number, passphrase?: string) {
+  sendWhenOpen({ type: 'linkTeam', robotTeam, team, passphrase: passphrase || undefined });
+}
+
+export function sendUnlinkTeam(robotTeam: number) {
+  sendWhenOpen({ type: 'unlinkTeam', robotTeam });
+}
+
+/** The answer to this page's last link request for a stand-in robot. */
+export function useTeamLinkResult(robotTeam: number): TeamLinkResult | null {
+  const [result, setResult] = useState<TeamLinkResult | null>(null);
+  useEffect(() => {
+    setResult(null);
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<TeamLinkResult>).detail;
+      if (detail.robotTeam === robotTeam) setResult(detail);
+    };
+    events.addEventListener('teamLinkResult', handler);
+    return () => events.removeEventListener('teamLinkResult', handler);
+  }, [robotTeam]);
+  return result;
 }
 
 export function useServerStartTime(): number | null {

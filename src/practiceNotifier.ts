@@ -28,6 +28,9 @@ export interface PracticeNotifierDeps {
   slack: SlackBridge;
   /** Last time any station configured for this team sent telemetry, epoch ms (0 = never). */
   lastSeen: (teamNumber: number) => number;
+  /** The team and the stand-in (99xx) robots linked to it that day; just
+   *  the team when omitted. */
+  teamsFiledUnder?: (teamNumber: number, day: string) => number[];
   /** How many recordings (matches + runs) the day link lists right now. */
   countItems: (teamNumber: number, day: string) => number;
   /** Absolute base URL of the field, when configured. */
@@ -68,6 +71,9 @@ export class PracticeNotifier {
     const now = this.now();
     for (const day of this.deps.practiceStore.getDays()) {
       if (day.slackPostedAt) continue;
+      // A stand-in robot's own day, now filed under the team it's linked to:
+      // that team's link covers it.
+      if (this.deps.practiceStore.teamOf(day.teamNumber, day.day) !== day.teamNumber) continue;
       const count = this.deps.countItems(day.teamNumber, day.day);
       if (count === 0) continue;
       const lastActivity = this.lastActivity(day.teamNumber, day.day);
@@ -124,10 +130,14 @@ export class PracticeNotifier {
 
   /** Latest sign of the team on this day: telemetry, a run ending, a match ending. */
   private lastActivity(teamNumber: number, day: string): number {
-    let last = this.deps.lastSeen(teamNumber);
-    for (const run of this.deps.practiceStore.runsFor(teamNumber, day)) last = Math.max(last, run.endedAt);
+    const store = this.deps.practiceStore;
+    let last = 0;
+    for (const team of this.deps.teamsFiledUnder?.(teamNumber, day) ?? [teamNumber]) {
+      last = Math.max(last, this.deps.lastSeen(team));
+    }
+    for (const run of store.runsFor(teamNumber, day)) last = Math.max(last, run.endedAt);
     for (const m of this.deps.historyStore.getState().matches) {
-      if (m.teams.some(t => t.teamNumber === teamNumber)) last = Math.max(last, m.endedAt);
+      if (m.teams.some(t => store.teamOf(t.teamNumber, day) === teamNumber)) last = Math.max(last, m.endedAt);
     }
     return last;
   }

@@ -66,6 +66,7 @@ import {
 import { clashesForTeam, describeClashForTeam, isSixGhzWatching } from '../utils/sixGhzWatch';
 import { describeDropoutRow, describeDropoutsForTeam } from '../utils/robotDropouts';
 import { FreeplayControl, FreeplayStopButton, MatchPanelForControl } from './MatchPanel';
+import { TeamLinkCard } from './TeamLinkCard';
 import { QueueBanner } from './QueueBanner';
 import { RobotEStopBanner, StopPressNotes, TeamEStopBanner } from './FieldEStop';
 import { NudgeSettings } from './NudgeSettings';
@@ -462,6 +463,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
         .map(([ssid, station]) => (
           <RobotEStopBanner key={ssid} station={station} robot={ssid} />
         ))}
+
+      {/* A spare robot running as 99xx: which team it's for today */}
+      <TeamLinkCard teamNumber={teamNumber} />
 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
       <QueueBanner teamNumber={teamNumber} />
