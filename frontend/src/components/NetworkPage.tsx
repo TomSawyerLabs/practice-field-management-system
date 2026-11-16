@@ -1,4 +1,3 @@
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -36,6 +35,7 @@ import {
   useSubnetScan,
 } from '../hooks/useBackend';
 import { HostDisplay } from './HostDisplay';
+import { HostServiceChips } from './HostServiceChips';
 
 const PULSE_STYLES = {
   '@keyframes ds-pulse': {
@@ -190,22 +190,7 @@ export function StationNetworkCard({
                   <TableRow key={host.ip} sx={{ opacity: host.alive ? 1 : 0.5 }}>
                     <TableCell sx={{ fontFamily: 'monospace', py: 0.5 }}>
                       <HostDisplay ip={host.ip} />
-                      {host.alive && host.web && (
-                        <Chip
-                          component="a"
-                          href={`http://${host.ip}/`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          clickable
-                          label="Web"
-                          aria-label={`Open ${host.ip}'s web page in a new tab`}
-                          icon={<OpenInNewIcon />}
-                          size="small"
-                          variant="outlined"
-                          color="primary"
-                          sx={{ ml: 0.75, height: 18, fontSize: '0.6rem', '& .MuiChip-icon': { fontSize: '0.75rem' } }}
-                        />
-                      )}
+                      {host.alive && <HostServiceChips ip={host.ip} services={host.services} />}
                       {host.source === 'conntrack' && (
                         <Chip
                           label="Guest"

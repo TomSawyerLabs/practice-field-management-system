@@ -2286,9 +2286,17 @@ export interface DiscoveredHost {
   onlineSince: number;
   /** How this host was discovered: 'fping' (team subnet scan) or 'conntrack' (guest network flow) */
   source?: 'fping' | 'conntrack';
-  /** Answered HTTP on port 80 when last asked (team-subnet devices only). */
-  web?: boolean;
+  /** What it offered when last asked (team-subnet devices only). */
+  services?: HostService[];
 }
+
+/** Something on a team-subnet device a person can open from the Network page. */
+export type HostService =
+  /** A web page on `port`, named for what serves it ("Limelight", "roboRIO"). */
+  | { kind: 'web'; port: number; label: string }
+  /** A robot-code (CameraServer) MJPEG stream. */
+  | { kind: 'camera'; port: number }
+  | { kind: 'ssh' };
 
 export interface StationSubnetScan {
   team: number;

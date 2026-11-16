@@ -428,14 +428,29 @@ first/last-seen timestamps, and broadcast to frontend clients. Results
 appear in the **Discovered Devices** section on the Network page and are
 cleared when station config is cleared.
 
-Each device is also asked whether it serves a web page on port 80 (`curl
-http://<ip>/`, any HTTP status counts) when it first appears or comes back,
-then once a minute while it stays up. Those that answer get a **Web** link on
-the Network page that opens `http://<ip>/` in a new tab: the radio's and
-roboRIO's status pages, a coprocessor's camera UI. The link goes from your
-browser, so it only works from a network routed to team subnets (the guest
-Wi-Fi, per the site router's static route above). For a team on two stations
-the browser reaches whichever robot the routing table picks.
+Each team device is also asked what it offers when it first appears or comes
+back, then once a minute while it stays up (`src/deviceServices.ts`). The
+probes run beside the sweeps, at most 24 curls at a time, so a slow device
+never holds up the 10-second scan. Each one shows on the Network page as a
+chip next to the device:
+
+| Chip                      | Found by                                                    | Tap it to                     |
+| ------------------------- | ----------------------------------------------------------- | ----------------------------- |
+| **Radio**, **roboRIO**, … | Any HTTP reply on port 80, named from the page title/server | Open `http://<ip>/`           |
+| **PhotonVision**          | An HTML page on 5800 (not asked of a Limelight)             | Open `http://<ip>:5800/`      |
+| **Camera 1181**…**1190**  | A TCP connection only; a stream is never requested          | Open that CameraServer stream |
+| **SSH**                   | A TCP connection to 22                                      | Copy `ssh <ip>`               |
+
+A Limelight serves its UI on 80 (and 5801), and its 5800 is the camera stream,
+so 5800 is skipped once port 80 says "Limelight". Page probes stop after
+64 KB (`--max-filesize`), so a stream answering where a page was expected costs
+a moment of video, no more. 443 isn't probed: on a roboRIO it is the same page
+behind a self-signed certificate.
+
+The links go from your browser, not from pFMS, so they only work from a network
+routed to team subnets (the guest Wi-Fi, per the site router's static route
+above). For a team on two stations the browser reaches whichever robot the
+routing table picks.
 
 Each sweep is pinned to the station's bridge (`fping -I br-slotN`), and so is
 the HTTP in the team checks (`curl --interface br-slotN`). A team on two
