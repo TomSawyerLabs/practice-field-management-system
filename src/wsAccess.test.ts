@@ -12,6 +12,7 @@ import { OperatorAuth } from './operatorAuth.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
+import type { TimelineSnapshot } from './timeline/store.js';
 import { setupWebSocket, type WebSocketContext } from './websocketServer.js';
 import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, messageTypes } from './wsAccess.js';
 
@@ -442,6 +443,39 @@ describe('the WebSocket gate', () => {
     expect(staff.dsState()).toEqual({ type: 'dsClientState', station: null });
     expect(await staff.send({ type: 'matchCreate' })).toEqual([]);
     expect(engineCalls).toEqual(['createMatch']);
+  });
+
+  test("a page asking for the chart timeline is sent what was broadcast before it opened, its team's only", async () => {
+    const t = Date.now();
+    const linked = (ssid: string) => ({
+      ssid,
+      isLinked: true,
+      signalDbm: -52,
+      noiseDbm: -95,
+      connectionQuality: 'good',
+    });
+    const stationStatuses = { slot1: linked('1967-Elsa'), slot2: null, slot3: null, slot4: linked('254') };
+    context.broadcast({ timestamp: t - 1_000, radioUpdate: { status: 'ACTIVE', stationStatuses } });
+    context.broadcast({ type: 'telemetry', station: 'slot1', timestamp: t - 500, batteryVoltage: 12.4 });
+    context.broadcast({ type: 'telemetry', station: 'slot4', timestamp: t - 500, batteryVoltage: 11.9 });
+
+    const page = await client(STAFF_IP);
+    const answer = await page.send({ type: 'subscribe', topic: 'timeline', teams: [1967] });
+    const snapshot = answer[0] as unknown as TimelineSnapshot;
+    expect(snapshot.type).toBe('timelineSnapshot');
+    expect(Object.keys(snapshot.stations)).toEqual(['slot1']);
+    expect(snapshot.stations.slot1).toMatchObject({
+      ssid: '1967-Elsa',
+      numeric: { battery: { t: [t - 500], v: [12.4] }, signalDbm: { v: [-52] } },
+      wifi: { v: ['good'] },
+    });
+
+    // Sent once: what follows is the ordinary live messages.
+    const before = page.heard.length;
+    context.broadcast({ type: 'telemetry', station: 'slot1', timestamp: t, batteryVoltage: 12.3 });
+    await page.send({ type: 'dsClientDismiss' });
+    expect(page.heard.slice(before)).toContain('telemetry');
+    expect(page.heard.slice(before)).not.toContain('timelineSnapshot');
   });
 
   test("a laptop's other interface is refused until it says it isn't the DS", async () => {

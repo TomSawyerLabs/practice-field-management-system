@@ -8,9 +8,15 @@
  * No React, no DOM beyond the context it is handed. All coordinates are CSS
  * pixels; the caller scales the context for the device pixel ratio.
  */
-import { bucketize, endOf, type EventSeries, type NumericSeries, type TimelineEvent } from './series';
+import {
+  bucketize,
+  endOf,
+  type EventSeries,
+  type NumericSeries,
+  type TimelineEvent,
+} from '../../../src/timeline/series';
 import type { Lane, NumericLane, StateLane, Tone } from './lanes';
-import type { NumericKey, StationTracks } from './store';
+import type { NumericKey, StationTracks } from '../../../src/timeline/store';
 
 // ── Palette ─────────────────────────────────────────────────────────
 
@@ -944,7 +950,7 @@ function laneDetail(
       if (sample.hi - sample.lo > spread) {
         const lo = formatValue(sample.lo, lane.decimals);
         const hi = formatValue(sample.hi, lane.decimals);
-        row.text += `, ${lo} to ${hi} ${lane.unit} around then`;
+        row.text += `, ranged ${lo} to ${hi} ${lane.unit}`;
       }
       marks.push({ row, y: laneY(box, scale, sample.v), color });
     }

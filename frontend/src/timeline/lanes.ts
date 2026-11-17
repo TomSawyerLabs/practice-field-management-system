@@ -3,8 +3,8 @@
  * how its values read. The renderer knows how to draw a numeric lane and a
  * state lane; this file is where a new measurement gets added.
  */
-import type { NumericKey, StationTracks } from './store';
-import type { StateSeries } from './series';
+import type { NumericKey, StationTracks } from '../../../src/timeline/store';
+import type { StateSeries } from '../../../src/timeline/series';
 
 /** How a state reads at a glance. `hollow` is "known, and nothing is
  *  happening" (an outline); `off` barely marks the lane (a hairline). */

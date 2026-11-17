@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { RadioUpdate, StationDetails, StationName, StatusEntry, TelemetryUpdate } from '../../../src/types';
-import { FieldTimeline } from './store';
+import type { RadioUpdate, StationDetails, StationName, StatusEntry, TelemetryUpdate } from '../types.js';
+import { FieldTimeline } from './store.js';
 
 const T = 1_700_000_000_000;
 

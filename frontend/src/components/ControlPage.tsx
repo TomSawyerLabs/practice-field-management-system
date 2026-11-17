@@ -46,6 +46,7 @@ import {
   getServerTime,
   sendStationClearEmptyMatch,
   serverToBrowserTime,
+  useTimelineBackfill,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -322,8 +323,10 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const latest = useLatest();
 
   // Collect chart data from the page root, so the chart is already full
-  // when the Radio tab is opened.
+  // when the Radio tab is opened — starting from what the server kept of the
+  // team's robots before this page was.
   useEffect(startLiveTimeline, []);
+  useTimelineBackfill(teamNumber);
 
   // Radio card toggles live here so they survive switching tabs.
   const [chartMode, setChartMode] = useState(true);

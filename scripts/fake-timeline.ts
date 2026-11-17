@@ -16,15 +16,22 @@
  *   76 s  the laptop loses the robot, then the roboRIO
  *   84 s  everything back, e-stop cleared
  *
- * START_AT=<seconds> starts the story part-way through.
+ * Like the real server it keeps the last ten minutes and sends them to a page
+ * that subscribes to the `timeline` topic, so the chart opens filled in. It
+ * starts with HISTORY seconds of the story already behind it (default 300;
+ * HISTORY=0 to watch a chart fill from nothing). START_AT=<seconds> shifts
+ * where in the story "now" is.
  */
 import { WebSocketServer } from 'ws';
 import { MatchEngine } from '../src/matchEngine.js';
-import type { MatchPhase, StationName, TelemetryUpdate } from '../src/types.js';
+import { FieldTimeline } from '../src/timeline/store.js';
+import { payloadFor } from '../src/topicSubscriptions.js';
+import { isSubscribeTopic, type MatchPhase, type StationName, type TelemetryUpdate } from '../src/types.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const LOOP_S = 90;
-const started = Date.now() - Number(process.env.START_AT ?? 0) * 1000;
+const HISTORY_S = Number(process.env.HISTORY ?? 300);
+const started = Date.now() - (HISTORY_S + Number(process.env.START_AT ?? 0)) * 1000;
 /** Seconds into the current loop at wall-clock time `t`. */
 const storyAt = (t: number) => ((((t - started) / 1000) % LOOP_S) + LOOP_S) % LOOP_S;
 const between = (s: number, from: number, to: number) => s >= from && s < to;
@@ -115,14 +122,18 @@ function telemetry(station: StationName, t: number): TelemetryUpdate | null {
   const rest = elsa ? 12.6 : 12.1;
   const load = enabled ? 1.1 + Math.sin(t / 700) * 0.6 + Math.random() * 0.3 : Math.random() * 0.05;
   const batteryVoltage = brownout ? 6.4 + Math.random() * 0.3 : rest - load;
-  // Now and then a dip between two broadcasts: only its lowest point survives.
-  const dipped = enabled && Math.random() < 0.25;
+  // What the server's 4 Hz summary of ~12 readings carries: under load the
+  // voltage ripples, and now and then dips hard between two broadcasts.
+  const ripple = enabled && !brownout ? 0.15 + Math.random() * 0.25 : 0;
+  const dip = enabled && Math.random() < 0.25 ? 0.8 + Math.random() * 1.5 : 0;
   return {
     type: 'telemetry',
     station,
     timestamp: t,
     batteryVoltage,
-    batteryVoltageMin: dipped ? batteryVoltage - 0.8 - Math.random() * 1.5 : undefined,
+    batteryVoltageMin: ripple || dip ? batteryVoltage - ripple - dip : undefined,
+    batteryVoltageMax: ripple ? batteryVoltage + ripple : undefined,
+    batteryVoltageAvg: ripple || dip ? batteryVoltage - dip / 12 : undefined,
     robotLinkRttMs: Math.round(4 + (elsa ? 0 : 3) + Math.random() * 3 + (elsa && between(s, 62, 70) ? 22 : 0)),
     robotLinkLossPct: elsa && between(s, 62, 70) ? Math.round(Math.random() * 12) : 0,
     rttMs: Math.round(7 + Math.random() * 4),
@@ -179,11 +190,77 @@ function dropoutsState(t: number) {
   };
 }
 
+// ── One stream of messages, to the server's own copy and to every page ──
+
+const timeline = new FieldTimeline();
+let lastStatus = '';
+let lastPhase: MatchPhase = 'idle';
+let lastReconfigure = false;
+let lastDropouts = '';
+let tick = 0;
+const lastDs = new Map<StationName, string>();
+
+function statusChanged(station: StationName, update: TelemetryUpdate): boolean {
+  const key = JSON.stringify([update.dsStatus, update.brownout]);
+  if (lastDs.get(station) === key) return false;
+  lastDs.set(station, key);
+  return true;
+}
+
+/** Everything the server would broadcast in the 50 ms ending at `t`. */
+function step(t: number, emit: (msg: unknown) => void): void {
+  const s = storyAt(t);
+  tick++;
+
+  // Like the real poller: only a status that differs is sent on.
+  const entry = statusEntry(t);
+  const key = JSON.stringify(entry.radioUpdate);
+  if (key !== lastStatus) {
+    lastStatus = key;
+    emit(entry);
+  }
+  // 4 Hz steady, and at once when a robot's status changes.
+  for (const station of Object.keys(ROBOTS) as StationName[]) {
+    const update = telemetry(station, t);
+    if (update && (tick % 5 === 0 || statusChanged(station, update))) emit(update);
+  }
+
+  const phase = phaseAt(s);
+  if (phase !== lastPhase) {
+    lastPhase = phase;
+    emit({ ...engine.getState(), phase });
+  }
+  if (reconfiguring(s) !== lastReconfigure) {
+    lastReconfigure = reconfiguring(s);
+    emit(reconfigureState(t));
+  }
+  const dropouts = JSON.stringify(dropoutsState(t));
+  if (dropouts !== lastDropouts) {
+    lastDropouts = dropouts;
+    emit(JSON.parse(dropouts));
+  }
+}
+
+// The story so far, as if the server had been up all along.
+const startedAt = Date.now();
+for (let t = started; t < startedAt; t += 50) step(t, msg => timeline.ingestMessage(msg, t));
+
 const wss = new WebSocketServer({ port: PORT });
+setInterval(() => {
+  const t = Date.now();
+  step(t, msg => {
+    timeline.ingestMessage(msg, t);
+    const data = JSON.stringify(msg);
+    for (const client of wss.clients) if (client.readyState === client.OPEN) client.send(data);
+  });
+}, 50);
+setInterval(() => timeline.trim(Date.now()), 5000);
+
 wss.on('connection', ws => {
   const send = (msg: unknown) => ws.send(JSON.stringify(msg));
   const now = Date.now();
-  send({ type: 'serverInfo', startTime: started, version: 'dev', now });
+  // 'unknown' keeps the page from reloading itself to match the server's build.
+  send({ type: 'serverInfo', startTime: started, version: 'unknown', now });
   send({ ...engine.getState(), phase: phaseAt(storyAt(now)) });
   // The last minute of radio status, as the real server replays it.
   const history = [];
@@ -192,54 +269,17 @@ wss.on('connection', ws => {
   send(reconfigureState(now));
   send(dropoutsState(now));
 
-  let lastStatus = '';
-  let lastPhase = phaseAt(storyAt(now));
-  let lastReconfigure = reconfiguring(storyAt(now));
-  let lastDropouts = JSON.stringify(dropoutsState(now));
-  let tick = 0;
-  const timer = setInterval(() => {
-    const t = Date.now();
-    const s = storyAt(t);
-    tick++;
-
-    // Like the real poller: only a status that differs is sent on.
-    const entry = statusEntry(t);
-    const key = JSON.stringify(entry.radioUpdate);
-    if (key !== lastStatus) {
-      lastStatus = key;
-      send(entry);
+  ws.on('message', raw => {
+    let msg: unknown;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
     }
-    // 4 Hz steady, and at once when a robot's status changes (20 Hz here).
-    for (const station of Object.keys(ROBOTS) as StationName[]) {
-      const update = telemetry(station, t);
-      if (update && (tick % 5 === 0 || statusChanged(station, update))) send(update);
+    // The chart's history, for the team that asks (the only topic served here).
+    if (isSubscribeTopic(msg) && msg.topic === 'timeline') {
+      send(payloadFor('timeline', timeline.snapshot(Date.now()), msg.teams ?? null));
     }
-
-    const phase = phaseAt(s);
-    if (phase !== lastPhase) {
-      lastPhase = phase;
-      send({ ...engine.getState(), phase });
-    }
-    if (reconfiguring(s) !== lastReconfigure) {
-      lastReconfigure = reconfiguring(s);
-      send(reconfigureState(t));
-    }
-    const dropouts = JSON.stringify(dropoutsState(t));
-    if (dropouts !== lastDropouts) {
-      lastDropouts = dropouts;
-      send(JSON.parse(dropouts));
-    }
-  }, 50);
-
-  const lastDs = new Map<StationName, string>();
-  function statusChanged(station: StationName, update: TelemetryUpdate): boolean {
-    const key = JSON.stringify([update.dsStatus, update.brownout]);
-    if (lastDs.get(station) === key) return false;
-    lastDs.set(station, key);
-    return true;
-  }
-
-  ws.on('close', () => clearInterval(timer));
-  ws.on('message', () => {});
+  });
 });
-console.log(`fake timeline backend on :${PORT}`);
+console.log(`fake timeline backend on :${PORT}, ${HISTORY_S} s of history`);

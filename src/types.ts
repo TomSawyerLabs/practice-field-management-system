@@ -2074,6 +2074,12 @@ export interface TelemetryUpdate {
    *  coalescing window's envelope so battery charts can still show them.
    *  Omitted when it equals batteryVoltage. */
   batteryVoltageMin?: number;
+  /** Highest batteryVoltage observed since the previous broadcast. Omitted
+   *  when it equals batteryVoltage. */
+  batteryVoltageMax?: number;
+  /** Mean of every batteryVoltage reading since the previous broadcast.
+   *  Omitted when this one reading is all there was. */
+  batteryVoltageAvg?: number;
   /** Trip time the Driver Station reports (ms). Only while the DS is under
    *  FMS control — it reports to the field only then. */
   rttMs?: number;
@@ -5004,11 +5010,14 @@ export const TOPIC_MESSAGE_TYPES = {
   usage: 'usageState',
   timelapse: 'timelapseState',
   savedTeams: 'savedTeamsState',
+  /** The last ten minutes of chart data (src/timeline/store.ts): sent once,
+   *  on subscribe. What follows comes from the ordinary live messages. */
+  timeline: 'timelineSnapshot',
 } as const;
 export type Topic = keyof typeof TOPIC_MESSAGE_TYPES;
 
 /** Topics that can be narrowed to some teams' entries. */
-export const TEAM_FILTERED_TOPICS: readonly Topic[] = ['matchHistory', 'practiceRecording', 'savedTeams'];
+export const TEAM_FILTERED_TOPICS: readonly Topic[] = ['matchHistory', 'practiceRecording', 'savedTeams', 'timeline'];
 
 /**
  * Start (or change) a subscription; the server answers with the current

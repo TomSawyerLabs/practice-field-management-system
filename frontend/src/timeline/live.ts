@@ -4,7 +4,7 @@
  * Radio tab is opened.
  */
 import { backendSnapshot, getServerTime, onBackendEvent } from '../hooks/useBackend';
-import { FieldTimeline } from './store';
+import { FieldTimeline } from '../../../src/timeline/store';
 
 export const liveTimeline = new FieldTimeline();
 
@@ -29,6 +29,8 @@ export function startLiveTimeline(): void {
   onBackendEvent('matchState', state => liveTimeline.ingestMatchPhase(state.phase, getServerTime()));
   onBackendEvent('radioReconfigure', state => liveTimeline.ingestReconfigure(state, getServerTime()));
   onBackendEvent('robotDropouts', state => liveTimeline.ingestDropouts(state));
+  // What the server kept from before this page opened (pages that ask for it).
+  onBackendEvent('timelineSnapshot', snapshot => liveTimeline.hydrate(snapshot));
 
   setInterval(() => liveTimeline.trim(getServerTime()), 5_000);
 }

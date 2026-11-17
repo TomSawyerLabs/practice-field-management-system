@@ -18,6 +18,7 @@ import {
   type SavedTeamsState,
   type Topic,
 } from './types.js';
+import type { TimelineSnapshot } from './timeline/store.js';
 
 /** null = every entry; otherwise only these teams' entries. */
 type TeamFilter = readonly number[] | null;
@@ -77,6 +78,11 @@ export function filterForTeams<T>(topic: Topic, msg: T, teams: TeamFilter): T {
   if (topic === 'savedTeams') {
     const s = msg as unknown as SavedTeamsState;
     return { ...s, teams: s.teams.filter(t => has(ssidTeam(t.ssid))) } as T;
+  }
+  if (topic === 'timeline') {
+    const t = msg as unknown as TimelineSnapshot;
+    const stations = Object.fromEntries(Object.entries(t.stations).filter(([, d]) => has(ssidTeam(d.ssid))));
+    return { ...t, stations } as T;
   }
   return msg;
 }

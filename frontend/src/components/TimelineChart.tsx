@@ -15,7 +15,7 @@ import { getServerTime } from '../hooks/useBackend';
 import { DEFAULT_LANES, LANES } from '../timeline/lanes';
 import { liveTimeline, startLiveTimeline } from '../timeline/live';
 import { drawTimeline, GUTTER, layoutLanes, paletteFor } from '../timeline/render';
-import { RETAIN_MS } from '../timeline/store';
+import { RETAIN_MS } from '../../../src/timeline/store';
 
 const SPANS = [
   { ms: 30_000, label: '30 s' },

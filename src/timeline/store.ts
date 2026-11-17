@@ -10,6 +10,10 @@
  */
 import {
   StationNameList,
+  isMatchState,
+  isRadioReconfigureState,
+  isRobotDropoutsState,
+  isTelemetryUpdate,
   type ConnectionQuality,
   type MatchPhase,
   type RadioReconfigureState,
@@ -17,8 +21,16 @@ import {
   type StationName,
   type StatusEntry,
   type TelemetryUpdate,
-} from '../../../src/types';
-import { EventSeries, NumericSeries, StateSeries, type EventTone } from './series';
+} from '../types.js';
+import {
+  EventSeries,
+  NumericSeries,
+  StateSeries,
+  type EventTone,
+  type NumericDump,
+  type StateDump,
+  type TimelineEvent,
+} from './series.js';
 
 /** How much history the page keeps. */
 export const RETAIN_MS = 10 * 60_000;
@@ -98,6 +110,38 @@ class CounterRate {
   }
 }
 
+/** One station's tracks as sent to a page. */
+export interface StationDump {
+  ssid: string;
+  /** Only the series that hold anything. */
+  numeric: Partial<Record<NumericKey, NumericDump>>;
+  wifi: StateDump<WifiState>;
+  comms: StateDump<CommsState>;
+  robot: StateDump<RobotState>;
+  brownout: StateDump<boolean>;
+  events: TimelineEvent[];
+}
+
+/**
+ * What the server remembers of the last {@link RETAIN_MS}: sent to a page
+ * that subscribes to the `timeline` topic, so its chart opens already filled
+ * in instead of starting from the moment the page loaded.
+ */
+export interface TimelineSnapshot {
+  type: 'timelineSnapshot';
+  /** When it was taken (server epoch ms). */
+  at: number;
+  /** The stations asked for that have a robot on them. */
+  stations: Partial<Record<StationName, StationDump>>;
+  field: TimelineEvent[];
+  phase?: MatchPhase;
+}
+
+export function isTimelineSnapshot(msg: unknown): msg is TimelineSnapshot {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as TimelineSnapshot).type === 'timelineSnapshot';
+}
+
 export class StationTracks {
   /** The robot (Wi-Fi name) these tracks describe. */
   ssid = '';
@@ -119,6 +163,34 @@ export class StationTracks {
     this.events.clear();
     this.rxPackets.reset();
     this.txPackets.reset();
+  }
+
+  dump(): StationDump {
+    const numeric: StationDump['numeric'] = {};
+    for (const k of NUMERIC_KEYS) if (this.numeric[k].length > 0) numeric[k] = this.numeric[k].dump();
+    return {
+      ssid: this.ssid,
+      numeric,
+      wifi: this.wifi.dump(),
+      comms: this.comms.dump(),
+      robot: this.robot.dump(),
+      brownout: this.brownout.dump(),
+      events: this.events.dump(),
+    };
+  }
+
+  load(d: StationDump): void {
+    this.clear();
+    this.ssid = d.ssid;
+    for (const k of NUMERIC_KEYS) {
+      const dump = d.numeric[k];
+      if (dump) this.numeric[k].load(dump);
+    }
+    this.wifi.load(d.wifi);
+    this.comms.load(d.comms);
+    this.robot.load(d.robot);
+    this.brownout.load(d.brownout);
+    this.events.load(d.events);
   }
 
   trim(before: number, now: number): void {
@@ -153,7 +225,52 @@ export class FieldTimeline {
   /** The field Wi-Fi update in progress, if any. */
   private reconfigure: { id: string; sawConfiguring: boolean } | null = null;
   private radioDownId: string | null = null;
-  private nextId = 1;
+
+  // ── The server's copy, and a page catching up from it ──────────────
+
+  /** Any message the server broadcasts: the ones the timeline is made of
+   *  are taken in, the rest ignored. This is how the server keeps its copy —
+   *  from the very stream the pages get. */
+  ingestMessage(msg: unknown, now: number): void {
+    if (typeof msg !== 'object' || !msg) return;
+    const type = (msg as { type?: unknown }).type;
+    if (type === undefined) {
+      // Radio status is the one message without a type.
+      if (typeof (msg as StatusEntry).timestamp === 'number') this.ingestStatus(msg as StatusEntry);
+    } else if (isTelemetryUpdate(msg)) this.ingestTelemetry(msg);
+    else if (isMatchState(msg)) this.ingestMatchPhase(msg.phase, now);
+    else if (isRadioReconfigureState(msg)) this.ingestReconfigure(msg, now);
+    else if (isRobotDropoutsState(msg)) this.ingestDropouts(msg);
+  }
+
+  /** Everything remembered, for a page to start from. Stations with no robot
+   *  on them are left out. */
+  snapshot(now: number): TimelineSnapshot {
+    this.trim(now);
+    const stations: TimelineSnapshot['stations'] = {};
+    for (const station of StationNameList) {
+      if (this.stations[station].ssid) stations[station] = this.stations[station].dump();
+    }
+    return { type: 'timelineSnapshot', at: now, stations, field: this.field.dump(), phase: this.phase };
+  }
+
+  /** Take the server's word for the stations in a snapshot and for the field,
+   *  replacing what the page had gathered for them by itself. */
+  hydrate(snapshot: TimelineSnapshot): void {
+    for (const station of StationNameList) {
+      const dump = snapshot.stations[station];
+      if (dump) this.stations[station].load(dump);
+    }
+    this.field.load(snapshot.field);
+    this.phase = snapshot.phase;
+    // Anything older than the snapshot is already in it.
+    this.lastStatusAt = Math.max(this.lastStatusAt, snapshot.at);
+    // Pick up what was running when it was taken.
+    const running = (prefix: string) => snapshot.field.find(e => e.open && e.id.startsWith(prefix))?.id ?? null;
+    const reconfigure = running('reconfigure:');
+    this.reconfigure = reconfigure ? { id: reconfigure, sawConfiguring: true } : null;
+    this.radioDownId = running('radioDown:');
+  }
 
   // ── Radio status ───────────────────────────────────────────────────
 
@@ -247,7 +364,18 @@ export class FieldTimeline {
     const t = u.timestamp;
     const n = tracks.numeric;
 
-    if (u.batteryVoltage !== undefined) n.battery.push(t, u.batteryVoltage, u.batteryVoltageMin);
+    if (u.batteryVoltage !== undefined) {
+      // The server sends four of these a second from dozens of readings: the
+      // line follows their average, the band their lowest and highest.
+      const latest = u.batteryVoltage;
+      const v = u.batteryVoltageAvg ?? latest;
+      n.battery.push(
+        t,
+        v,
+        Math.min(v, latest, u.batteryVoltageMin ?? latest),
+        Math.max(v, latest, u.batteryVoltageMax ?? latest),
+      );
+    }
     if (u.dsCpuPercent !== undefined) n.dsCpuPercent.push(t, u.dsCpuPercent);
     if (u.rttMs !== undefined) n.dsRttMs.push(t, u.rttMs);
     if (u.robotLinkRttMs !== undefined) n.linkRttMs.push(t, u.robotLinkRttMs);
@@ -306,7 +434,7 @@ export class FieldTimeline {
     if (previous === undefined || previous === phase) return;
     const event = PHASE_EVENT[phase];
     if (!event) return;
-    this.field.upsert({ id: `phase:${this.nextId++}`, t: now, rule: true, ...event });
+    this.field.upsert({ id: `phase:${now}`, t: now, rule: true, ...event });
   }
 
   ingestReconfigure(state: RadioReconfigureState, now: number): void {
@@ -370,7 +498,9 @@ export class FieldTimeline {
     rule = false,
     detail?: string,
   ): void {
-    tracks.events.upsert({ id: `e:${this.nextId++}`, t, label, tone, rule, detail });
+    // The id says what happened when, so a page that already has the event
+    // (from the server's snapshot) does not get it twice.
+    tracks.events.upsert({ id: `${t}:${label}`, t, label, tone, rule, detail });
   }
 
   private openReconfigure(id: string, t: number, detail?: string): void {
