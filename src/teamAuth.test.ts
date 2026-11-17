@@ -40,6 +40,9 @@ describe('TeamAuth', () => {
 
   test('a short password is refused', async () => {
     expect(await auth.setPassword(1234, 'short')).toBeNull();
+    // 99xx numbers are spare robots: they join a team's login, never own one.
+    expect(await auth.setPassword(9940, 'long-enough-password')).toBeNull();
+    expect(auth.hasPassword(9940)).toBe(false);
     expect(auth.hasPassword(1234)).toBe(false);
   });
 

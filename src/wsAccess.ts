@@ -39,8 +39,8 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   pushUnsubscribe: 'team',
   setPracticeRecording: 'team',
   requestPracticeDayLink: 'team',
-  // A 99xx spare robot's link to its real team for the day: both teams'
-  // logins, where they have passwords (robotTeam and team, see below).
+  // A 99xx spare robot's link to its real team for the day: the real team's
+  // login, when it has a password. Spares never have one.
   linkTeam: 'team',
   unlinkTeam: 'team',
 
@@ -225,7 +225,6 @@ export function teamsOfMessage(data: unknown, teamAt: (station: StationName) => 
   if (typeof m.station === 'string' && /^slot[1-6]$/.test(m.station)) add(teamAt(m.station as StationName));
   add(m.team);
   add(m.teamNumber);
-  add(m.robotTeam);
   return [...teams];
 }
 

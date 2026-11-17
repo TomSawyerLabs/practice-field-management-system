@@ -76,7 +76,7 @@ import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
-import { StationName, StationNameList, SavedTeamClientConfig, PortConfig } from '../../../src/types';
+import { StationName, StationNameList, SavedTeamClientConfig, PortConfig, isStandInTeam } from '../../../src/types';
 import { createHash } from './cryptoUtils';
 import { StationChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
 import { CopyToClipboard } from './CopyToClipboard';
@@ -600,7 +600,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           ))}
 
       {tab === 'network' && <LaptopWifiCheck />}
-      {tab === 'network' && <TeamPasswordCard team={teamNumber} />}
+      {/* A 99xx spare can't have a password: it joins its team's instead. */}
+      {tab === 'network' && !isStandInTeam(teamNumber) && <TeamPasswordCard team={teamNumber} />}
 
       {tab === 'video' && (
         <MatchVideoCard

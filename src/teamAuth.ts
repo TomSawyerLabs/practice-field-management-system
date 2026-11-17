@@ -2,6 +2,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { LoginLimiter } from './loginLimiter.js';
+import { isStandInTeam } from './types.js';
 
 const DEFAULT_FILE = 'team-auth.json';
 
@@ -149,6 +150,8 @@ export class TeamAuth {
     { keepDeviceId, deviceName }: { keepDeviceId?: string; deviceName?: string } = {},
   ): Promise<{ token: string; device: TeamDevice } | { kept: TeamDevice } | null> {
     if (password.length < MIN_TEAM_PASSWORD_LENGTH) return null;
+    // 99xx numbers are spare robots: they join a real team, never own a login.
+    if (isStandInTeam(team)) return null;
     const salt = randomBytes(16).toString('hex');
     const hash = (await scryptAsync(password, salt, 32)).toString('hex');
 

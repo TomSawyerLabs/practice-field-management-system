@@ -1022,9 +1022,10 @@ again.
 
 **Team passwords are respected.** If 5940 has set a team password, linking
 (and unlinking) takes a device logged in as 5940, so the 9940 page offers
-5940's login right there. The same goes for 9940, if it has one. An admin
-can link anything. A team without a password can be linked from the spare's
-page by anyone, the same trust as the rest of the team page.
+5940's login right there. A 99xx number can never have a password of its
+own: it only ever borrows the team it joins. An admin can link anything. A
+team without a password can be linked from the spare's page by anyone, the
+same trust as the rest of the team page.
 
 **Automatically.** When a 99xx robot is enabled with a Wi-Fi passphrase
 that only one real team's saved robots use, pFMS links it to that team for

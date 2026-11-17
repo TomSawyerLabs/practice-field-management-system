@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { isIPv4 } from 'node:net';
 import { readBody } from './httpApiUtils.js';
 import { MIN_TEAM_PASSWORD_LENGTH, TEAM_DEVICE_TTL_MS, type TeamAuth, type TeamDevice } from './teamAuth.js';
+import { isStandInTeam } from './types.js';
 import { isCrossSite } from './wsAccess.js';
 
 /**
@@ -216,6 +217,11 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
         }
 
         case 'password': {
+          if (isStandInTeam(team)) {
+            return send(res, 400, {
+              error: `${team} is a spare-robot number, so it can't have a password. Link it to your team instead.`,
+            });
+          }
           if (typeof input.password !== 'string' || input.password.length < MIN_TEAM_PASSWORD_LENGTH) {
             return send(res, 400, { error: `Use at least ${MIN_TEAM_PASSWORD_LENGTH} characters` });
           }

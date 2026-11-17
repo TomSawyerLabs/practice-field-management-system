@@ -1284,14 +1284,9 @@ describe('the WebSocket gate', () => {
 });
 
 describe('teamsOfMessage for spare robot links', () => {
-  test('linking needs both teams’ logins, where they have passwords', () => {
-    expect(teamsOfMessage({ type: 'linkTeam', robotTeam: 9940, team: 5940 }, () => null).sort()).toEqual([5940, 9940]);
-  });
-
-  test('unlinking names the team it is linked to', () => {
-    expect(teamsOfMessage({ type: 'unlinkTeam', robotTeam: 9940, team: 5940 }, () => null).sort()).toEqual([
-      5940, 9940,
-    ]);
+  test('linking and unlinking need the real team’s login, not the spare’s', () => {
+    expect(teamsOfMessage({ type: 'linkTeam', robotTeam: 9940, team: 5940 }, () => null)).toEqual([5940]);
+    expect(teamsOfMessage({ type: 'unlinkTeam', robotTeam: 9940, team: 5940 }, () => null)).toEqual([5940]);
   });
 
   test('both are in the team tier', () => {
