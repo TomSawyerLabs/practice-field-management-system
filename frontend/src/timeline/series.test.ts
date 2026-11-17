@@ -11,7 +11,12 @@ describe('NumericSeries (linear)', () => {
     s.push(T, 12.4);
     s.push(T + 250, 12.1, 9.8);
     expect(s.length).toBe(2);
-    expect(s.sampleAt(T + 300)).toEqual({ t: T + 250, v: expect.closeTo(12.1, 5), lo: expect.closeTo(9.8, 5) });
+    expect(s.sampleAt(T + 300)).toEqual({
+      t: T + 250,
+      v: expect.closeTo(12.1, 5),
+      lo: expect.closeTo(9.8, 5),
+      hi: expect.closeTo(12.1, 5),
+    });
     expect(s.range(T, T + 1000)).toEqual({ min: expect.closeTo(9.8, 5), max: expect.closeTo(12.4, 5) });
   });
 
@@ -48,7 +53,7 @@ describe('NumericSeries (linear)', () => {
     expect(s.length).toBe(1_001);
     expect(s.timeAt(0)).toBe(T + 3_999 * 20);
     for (let i = 5_000; i < 12_000; i++) s.push(T + i * 20, i);
-    expect(s.latest()).toEqual({ t: T + 11_999 * 20, v: 11_999, lo: 11_999 });
+    expect(s.latest()).toEqual({ t: T + 11_999 * 20, v: 11_999, lo: 11_999, hi: 11_999 });
     expect(s.valueAt(0)).toBe(3_999);
   });
 });

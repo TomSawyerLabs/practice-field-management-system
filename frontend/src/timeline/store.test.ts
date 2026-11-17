@@ -152,6 +152,7 @@ describe('telemetry', () => {
       t: T + 250,
       v: expect.closeTo(12.2, 5),
       lo: expect.closeTo(8.9, 5),
+      hi: expect.closeTo(12.2, 5),
     });
   });
 

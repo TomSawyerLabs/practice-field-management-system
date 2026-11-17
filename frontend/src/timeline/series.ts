@@ -29,8 +29,10 @@ export interface NumericOptions {
 export interface NumericSample {
   t: number;
   v: number;
-  /** Lowest value seen since the previous sample, when the source says. */
+  /** Lowest and highest value seen since the previous sample, when the
+   *  source says; otherwise both equal `v`. */
   lo: number;
+  hi: number;
 }
 
 /** What one pixel column of a numeric series covers. */
@@ -41,8 +43,9 @@ export interface NumericBucket {
   last: number;
   min: number;
   max: number;
-  /** Lowest `lo` in the column (≤ min). */
+  /** Lowest `lo` and highest `hi` in the column (≤ min, ≥ max). */
   lo: number;
+  hi: number;
 }
 
 const INITIAL_CAPACITY = 256;
@@ -54,6 +57,7 @@ export class NumericSeries {
   private times = new Float64Array(INITIAL_CAPACITY);
   private values = new Float32Array(INITIAL_CAPACITY);
   private lows = new Float32Array(INITIAL_CAPACITY);
+  private highs = new Float32Array(INITIAL_CAPACITY);
   private head = 0;
   private tail = 0;
   /** When the source last reported, whether or not a sample was stored. */
@@ -85,12 +89,17 @@ export class NumericSeries {
     return this.lows[this.head + i];
   }
 
+  highAt(i: number): number {
+    return this.highs[this.head + i];
+  }
+
   /**
-   * A reading from the source. `lo` is the lowest value since the previous
-   * reading, for sources that summarise several raw samples into one.
-   * Readings older than the newest one are ignored (a replayed history).
+   * A reading from the source. `lo` and `hi` are the lowest and highest
+   * values since the previous reading, for sources that summarise several
+   * raw samples into one. Readings older than the newest one are ignored (a
+   * replayed history).
    */
-  push(t: number, v: number, lo = v): void {
+  push(t: number, v: number, lo = v, hi = v): void {
     if (!Number.isFinite(t) || !Number.isFinite(v)) return;
     if (t <= this.seen) return;
 
@@ -99,9 +108,9 @@ export class NumericSeries {
       // rather than drawing the old value across the silence.
       if (this.length > 0 && t - this.seen > this.staleAfterMs) this.gap(this.seen + this.staleAfterMs);
       const lastValue = this.length > 0 ? this.values[this.tail - 1] : NaN;
-      if (lastValue !== v) this.append(t, v, v);
+      if (lastValue !== v) this.append(t, v, v, v);
     } else {
-      this.append(t, v, Math.min(v, Number.isFinite(lo) ? lo : v));
+      this.append(t, v, Math.min(v, Number.isFinite(lo) ? lo : v), Math.max(v, Number.isFinite(hi) ? hi : v));
     }
     this.seen = t;
   }
@@ -111,7 +120,7 @@ export class NumericSeries {
     if (this.length === 0) return;
     if (Number.isNaN(this.values[this.tail - 1])) return;
     if (t <= this.times[this.tail - 1]) t = this.times[this.tail - 1] + 1;
-    this.append(t, NaN, NaN);
+    this.append(t, NaN, NaN, NaN);
     if (t > this.seen) this.seen = t;
   }
 
@@ -157,19 +166,19 @@ export class NumericSeries {
     } else if (t - st > this.staleAfterMs) {
       return null;
     }
-    return { t: st, v, lo: this.lowAt(i) };
+    return { t: st, v, lo: this.lowAt(i), hi: this.highAt(i) };
   }
 
   /** The newest real reading, however old. */
   latest(): NumericSample | null {
     for (let i = this.length - 1; i >= 0; i--) {
       const v = this.valueAt(i);
-      if (!Number.isNaN(v)) return { t: this.timeAt(i), v, lo: this.lowAt(i) };
+      if (!Number.isNaN(v)) return { t: this.timeAt(i), v, lo: this.lowAt(i), hi: this.highAt(i) };
     }
     return null;
   }
 
-  /** Lowest and highest value (lows included) between two times. */
+  /** Lowest and highest value (lows and highs included) between two times. */
   range(t0: number, t1: number): { min: number; max: number } | null {
     let min = Infinity;
     let max = -Infinity;
@@ -180,17 +189,19 @@ export class NumericSeries {
       const v = this.valueAt(i);
       if (Number.isNaN(v)) continue;
       const lo = this.lowAt(i);
+      const hi = this.highAt(i);
       if (lo < min) min = lo;
-      if (v > max) max = v;
+      if (hi > max) max = hi;
     }
     return min <= max ? { min, max } : null;
   }
 
-  private append(t: number, v: number, lo: number): void {
+  private append(t: number, v: number, lo: number, hi: number): void {
     if (this.tail === this.times.length) this.makeRoom();
     this.times[this.tail] = t;
     this.values[this.tail] = v;
     this.lows[this.tail] = lo;
+    this.highs[this.tail] = hi;
     this.tail++;
   }
 
@@ -201,17 +212,21 @@ export class NumericSeries {
       this.times.copyWithin(0, this.head, this.tail);
       this.values.copyWithin(0, this.head, this.tail);
       this.lows.copyWithin(0, this.head, this.tail);
+      this.highs.copyWithin(0, this.head, this.tail);
     } else {
       const capacity = this.times.length * 2;
       const times = new Float64Array(capacity);
       const values = new Float32Array(capacity);
       const lows = new Float32Array(capacity);
+      const highs = new Float32Array(capacity);
       times.set(this.times.subarray(this.head, this.tail));
       values.set(this.values.subarray(this.head, this.tail));
       lows.set(this.lows.subarray(this.head, this.tail));
+      highs.set(this.highs.subarray(this.head, this.tail));
       this.times = times;
       this.values = values;
       this.lows = lows;
+      this.highs = highs;
     }
     this.head = 0;
     this.tail = n;
@@ -456,20 +471,22 @@ export function bucketize(
       if (current) each(current, firstT, lastT);
       current = null;
       // A gap is its own bucket, so the caller knows the line stops here.
-      each({ x, first: NaN, last: NaN, min: NaN, max: NaN, lo: NaN }, t, t);
+      each({ x, first: NaN, last: NaN, min: NaN, max: NaN, lo: NaN, hi: NaN }, t, t);
       if (t > t1) break;
       continue;
     }
     const lo = series.lowAt(i);
+    const hi = series.highAt(i);
     if (current && current.x === x) {
       current.last = v;
       if (v < current.min) current.min = v;
       if (v > current.max) current.max = v;
       if (lo < current.lo) current.lo = lo;
+      if (hi > current.hi) current.hi = hi;
       lastT = t;
     } else {
       if (current) each(current, firstT, lastT);
-      current = { x, first: v, last: v, min: v, max: v, lo };
+      current = { x, first: v, last: v, min: v, max: v, lo, hi };
       firstT = t;
       lastT = t;
     }

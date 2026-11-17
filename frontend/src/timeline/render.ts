@@ -127,10 +127,14 @@ export interface Scene {
   /** Following the present: the axis counts back from "now". */
   live: boolean;
   primary: StationTracks;
+  /** What the team calls the robot ("Elsa"), for the readings at the pointer. */
+  primaryName: string;
   compare: { tracks: StationTracks; name: string } | null;
   field: EventSeries;
-  /** The crosshair, if the pointer is over the chart. */
+  /** The crosshair, if the pointer is over the chart, and how far down the
+   *  chart the pointer is (which lane, and which line in it, it is on). */
   hoverT: number | null;
+  hoverY: number | null;
   palette: ChartPalette;
   fontFamily: string;
 }
@@ -182,7 +186,7 @@ export function drawTimeline(ctx: CanvasRenderingContext2D, scene: Scene): void 
 
   drawRulesAndFlags(ctx, scene, events, xOf, plotX, plotW, font);
   drawAxis(ctx, scene, xOf, plotX, plotW, font);
-  if (scene.hoverT !== null) drawCrosshair(ctx, scene, events, xOf, plotX, plotW, font);
+  if (scene.hoverT !== null) drawCrosshair(ctx, scene, events, scales, xOf, plotX, plotW, font);
 }
 
 // ── Numeric lanes ───────────────────────────────────────────────────
@@ -315,9 +319,11 @@ function drawSeries(
   const { t0, t1, now } = scene;
   const bottom = box.plotY + box.plotH;
 
-  /** One unbroken stretch: the line on top, the lowest readings underneath. */
+  /** One unbroken stretch: the line, and the lowest and highest readings
+   *  either side of it. */
   let top: number[] = [];
   let low: number[] = [];
+  let high: number[] = [];
   const flush = () => {
     if (top.length >= 2) {
       if (fillBelow) {
@@ -331,8 +337,8 @@ function drawSeries(
       }
       if (low.length > 0) {
         ctx.beginPath();
-        ctx.moveTo(top[0], top[1]);
-        for (let i = 2; i < top.length; i += 2) ctx.lineTo(top[i], top[i + 1]);
+        ctx.moveTo(high[0], high[1]);
+        for (let i = 2; i < high.length; i += 2) ctx.lineTo(high[i], high[i + 1]);
         for (let i = low.length - 2; i >= 0; i -= 2) ctx.lineTo(low[i], low[i + 1]);
         ctx.closePath();
         ctx.fillStyle = withAlpha(color, 0.28);
@@ -354,6 +360,7 @@ function drawSeries(
     }
     top = [];
     low = [];
+    high = [];
   };
 
   if (series.mode === 'hold') {
@@ -376,12 +383,12 @@ function drawSeries(
   }
 
   let lastT = -Infinity;
-  // The band under the line is only drawn where some reading dipped below it.
-  let anyLow = false;
+  // The band around the line is only drawn where some reading strayed from it.
+  let anySpread = false;
   const end = () => {
-    if (!anyLow) low = [];
+    if (!anySpread) low = [];
     flush();
-    anyLow = false;
+    anySpread = false;
   };
   bucketize(series, t0, t1, Math.ceil(plotW), (b, firstT, lastBucketT) => {
     const isGap = Number.isNaN(b.first);
@@ -396,7 +403,8 @@ function drawSeries(
       top.push(xMid, yOf(b.max), xMid, yOf(b.min), xLast, yOf(b.last));
     }
     low.push((xFirst + xLast) / 2, yOf(b.lo));
-    if (b.lo < b.min - 1e-3 || b.lo < b.first - 1e-3) anyLow = true;
+    high.push((xFirst + xLast) / 2, yOf(b.hi));
+    if (b.hi - b.lo > b.max - b.min + 1e-3) anySpread = true;
     lastT = lastBucketT;
   });
   end();
@@ -450,7 +458,8 @@ function drawNumericChrome(
   for (const s of lane.series) {
     const sample = scene.primary.numeric[s.key].sampleAt(readT);
     if (sample) values[s.key] = sample.v;
-    entries.push({ color: p[s.color], label: s.label, value: sample?.v, unit: lane.unit });
+    const label = s.label || (scene.compare ? scene.primaryName : '');
+    entries.push({ color: p[s.color], label, value: sample?.v, unit: lane.unit });
   }
   if (lane.derived) {
     const value = lane.derived.from(values);
@@ -862,10 +871,123 @@ export function formatClock(t: number, zone: boolean): string {
 
 // ── Crosshair ───────────────────────────────────────────────────────
 
+/** One line of the box at the crosshair. */
+interface DetailRow {
+  /** The time, at the top. */
+  heading?: boolean;
+  /** What marks this reading on the chart: its line, or its band. */
+  key?: { color: string; shape: 'line' | 'block' | 'hollow' | 'dot' };
+  /** The reading itself, which leads; who and what it is follows in `text`. */
+  strong?: string;
+  text: string;
+  /** The one the pointer is on. */
+  pointed?: boolean;
+}
+
+/** Where a value sits in a numeric lane. */
+function laneY(box: LaneBox, scale: Scale, v: number): number {
+  return box.plotY + 3 + (1 - (v - scale.min) / (scale.max - scale.min)) * (box.plotH - 6);
+}
+
+/**
+ * The readings in the lane under the pointer, each named for its robot, and
+ * a ring on the line the pointer is nearest. Hovering the other robot's line
+ * (or its thin state strip) says so by name.
+ */
+function laneDetail(
+  ctx: CanvasRenderingContext2D,
+  scene: Scene,
+  box: LaneBox,
+  scales: Map<string, Scale>,
+  x: number,
+): DetailRow[] {
+  const p = scene.palette;
+  const t = scene.hoverT!;
+  const y = scene.hoverY!;
+  const lane = box.lane;
+  const rows: DetailRow[] = [];
+
+  if (lane.kind === 'state') {
+    const onStrip = !!scene.compare && y > box.plotY + box.plotH + 1;
+    const row = (tracks: StationTracks, name: string, pointed: boolean) => {
+      const seg = lane.series(tracks).segments(t, t + 1, scene.now)[0];
+      const style = seg && seg.start <= t ? lane.values[String(seg.value)] : undefined;
+      if (!seg || !style) {
+        rows.push({ strong: 'Unknown', text: `${name} \u00b7 ${lane.title}: nothing heard`, pointed });
+        return;
+      }
+      const solid = style.tone !== 'hollow' && style.tone !== 'off';
+      rows.push({
+        key: { color: solid ? p[style.tone as 'good'] : p.muted, shape: solid ? 'block' : 'hollow' },
+        strong: style.label,
+        text: `${name} \u00b7 ${lane.title}, for ${formatSpan(seg.end - seg.start)}${seg.open ? ' so far' : ''}`,
+        pointed,
+      });
+    };
+    row(scene.primary, scene.primaryName, !onStrip);
+    if (scene.compare) row(scene.compare.tracks, scene.compare.name, onStrip);
+    return rows;
+  }
+
+  const scale = scales.get(lane.id)!;
+  const marks: { row: DetailRow; y: number; color: string }[] = [];
+  const values: Partial<Record<NumericKey, number>> = {};
+  const reading = (series: NumericSeries, color: string, name: string, label: string) => {
+    const sample = series.sampleAt(t);
+    const row: DetailRow = { key: { color, shape: 'line' }, text: `${name} \u00b7 ${label}` };
+    if (!sample) {
+      row.strong = '\u2014';
+      row.text += ': no reading';
+    } else {
+      row.strong = `${formatValue(sample.v, lane.decimals)} ${lane.unit}`;
+      const spread = Math.pow(10, -lane.decimals) / 2;
+      if (sample.hi - sample.lo > spread) {
+        const lo = formatValue(sample.lo, lane.decimals);
+        const hi = formatValue(sample.hi, lane.decimals);
+        row.text += `, ${lo} to ${hi} ${lane.unit} around then`;
+      }
+      marks.push({ row, y: laneY(box, scale, sample.v), color });
+    }
+    rows.push(row);
+    return sample?.v;
+  };
+  for (const s of lane.series) {
+    const v = reading(scene.primary.numeric[s.key], p[s.color], scene.primaryName, s.label || lane.title);
+    if (v !== undefined) values[s.key] = v;
+  }
+  if (lane.derived) {
+    const v = lane.derived.from(values);
+    if (v !== undefined) {
+      rows.push({
+        strong: `${formatValue(v, lane.decimals)} ${lane.derived.unit}`,
+        text: `${scene.primaryName} \u00b7 ${lane.derived.label}`,
+      });
+    }
+  }
+  const compared = scene.compare && lane.series.find(s => s.compare);
+  if (scene.compare && compared) {
+    reading(scene.compare.tracks.numeric[compared.key], p.compare, scene.compare.name, compared.label || lane.title);
+  }
+
+  // The line the pointer is nearest, if it is near one at all.
+  let nearest: (typeof marks)[number] | undefined;
+  for (const m of marks) if (!nearest || Math.abs(m.y - y) < Math.abs(nearest.y - y)) nearest = m;
+  if (nearest && (marks.length === 1 || Math.abs(nearest.y - y) <= 14)) {
+    nearest.row.pointed = true;
+    ctx.strokeStyle = nearest.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, nearest.y, 7.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  return rows;
+}
+
 function drawCrosshair(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
   events: TimelineEvent[],
+  scales: Map<string, Scale>,
   xOf: (t: number) => number,
   plotX: number,
   plotW: number,
@@ -881,79 +1003,133 @@ function drawCrosshair(
   ctx.lineWidth = 1;
   strokeRule(ctx, x, ruleSpans(layout));
 
-  // What happened here: anything within a few pixels of the line.
-  const reachMs = (6 / plotW) * (scene.t1 - scene.t0);
-  const near = events.filter(e => e.t - reachMs <= t && endOf(e, now) + reachMs >= t);
   const ago = now - t;
-  interface Line {
-    text: string;
-    color?: string;
-    bold?: boolean;
-  }
-  const wanted: Line[] = [
-    { text: `${formatClock(t, true)}  \u00b7  ${ago < 950 ? 'now' : `${formatSpan(ago)} ago`}`, bold: true },
+  const rows: DetailRow[] = [
+    { heading: true, text: `${formatClock(t, true)}  \u00b7  ${ago < 950 ? 'now' : `${formatSpan(ago)} ago`}` },
   ];
-  const MAX_EVENTS = 3;
-  for (const e of near.slice(0, MAX_EVENTS)) {
-    const length = e.end !== undefined && e.end > e.t ? ` (${formatSpan(e.end - e.t)})` : e.open ? ' (so far)' : '';
-    wanted.push({ text: `${e.label}${e.detail ? `: ${e.detail}` : ''}${length}`, color: toneColor(p, e.tone) });
-  }
-  if (near.length > MAX_EVENTS)
-    wanted.push({ text: `and ${near.length - MAX_EVENTS} more: zoom in to tell them apart` });
 
-  // Wrap to the chart's width, so a long line on a phone is not cut off.
+  // The lane the pointer is in (the gap under a lane counts as that lane).
+  const hy = scene.hoverY;
+  const box =
+    hy === null ? undefined : layout.lanes.find(b => hy >= b.y - LANE_GAP / 2 && hy < b.y + b.h + LANE_GAP / 2);
+  if (box) rows.push(...laneDetail(ctx, scene, box, scales, x));
+
+  // What happened here: anything within a few pixels of the line. The other
+  // robot's events have no flags of their own, so they are named.
+  const reachMs = (6 / plotW) * (scene.t1 - scene.t0);
+  const within = (e: TimelineEvent) => e.t - reachMs <= t && endOf(e, now) + reachMs >= t;
+  const near: { e: TimelineEvent; who?: string }[] = events.filter(within).map(e => ({ e }));
+  if (scene.compare) {
+    const who = scene.compare.name;
+    for (const e of scene.compare.tracks.events.inRange(scene.t0, scene.t1, now)) if (within(e)) near.push({ e, who });
+  }
+  const MAX_EVENTS = 3;
+  for (const { e, who } of near.slice(0, MAX_EVENTS)) {
+    const length = e.end !== undefined && e.end > e.t ? ` (${formatSpan(e.end - e.t)})` : e.open ? ' (so far)' : '';
+    rows.push({
+      key: { color: toneColor(p, e.tone), shape: 'dot' },
+      text: `${who ? `${who}: ` : ''}${e.label}${e.detail ? `: ${e.detail}` : ''}${length}`,
+    });
+  }
+  if (near.length > MAX_EVENTS) rows.push({ text: `and ${near.length - MAX_EVENTS} more: zoom in to tell them apart` });
+
+  // Lay the rows out, wrapping to the chart's width so a long one is not
+  // cut off on a phone.
   const padX = 8;
-  const maxText = Math.max(80, width - 4 - padX * 2 - 12);
-  const lines: (Line & { indent: number })[] = [];
-  for (const line of wanted) {
-    ctx.font = font(11, line.bold ? 600 : 400);
-    const indent = line.color ? 12 : 0;
+  const KEY_W = 14;
+  const lineH = 16;
+  const maxW = Math.max(120, width - 4 - padX * 2);
+  const strongFont = font(11, 600);
+  const textFont = (row: DetailRow) => font(11, row.heading || row.pointed ? 600 : 400);
+  interface Line {
+    row: DetailRow;
+    /** Later lines of a wrapped row carry only text. */
+    first: boolean;
+    text: string;
+    textX: number;
+  }
+  const lines: Line[] = [];
+  let boxW = 0;
+  for (const row of rows) {
+    let lead = row.key ? KEY_W : 0;
+    if (row.strong) {
+      ctx.font = strongFont;
+      lead += ctx.measureText(row.strong).width + 6;
+    }
+    ctx.font = textFont(row);
     let current = '';
     let first = true;
-    for (const word of line.text.split(' ')) {
+    const flushLine = () => {
+      const textX = first ? lead : row.key ? KEY_W : 0;
+      lines.push({ row, first, text: current, textX });
+      boxW = Math.max(boxW, textX + ctx.measureText(current).width);
+      first = false;
+    };
+    for (const word of row.text.split(' ')) {
       const trial = current ? `${current} ${word}` : word;
-      if (current && ctx.measureText(trial).width > maxText) {
-        lines.push({ ...line, text: current, color: first ? line.color : undefined, indent });
-        first = false;
+      const room = maxW - (first ? lead : row.key ? KEY_W : 0);
+      if (current && ctx.measureText(trial).width > room) {
+        flushLine();
         current = word;
       } else current = trial;
     }
-    lines.push({ ...line, text: current, color: first ? line.color : undefined, indent });
+    flushLine();
   }
-
-  const lineH = 15;
-  let boxW = 0;
-  for (const line of lines) {
-    ctx.font = font(11, line.bold ? 600 : 400);
-    boxW = Math.max(boxW, ctx.measureText(line.text).width + line.indent);
-  }
-  boxW += padX * 2;
+  boxW = Math.min(maxW, boxW) + padX * 2;
   const boxH = lines.length * lineH + 6;
-  // Beside the line, on whichever side has room, so it covers no reading.
-  let boxX = x + 8;
-  if (boxX + boxW > width - 2) boxX = x - 8 - boxW;
+
+  // Beside the line, on whichever side has room; above the lane the pointer
+  // is in (below it, when there is no room above), so it covers neither the
+  // reading nor a finger.
+  let boxX = x + 10;
+  if (boxX + boxW > width - 2) boxX = x - 10 - boxW;
   boxX = Math.max(2, Math.min(boxX, width - 2 - boxW));
+  let boxY = 1;
+  if (box) {
+    boxY = box.y - 6 - boxH;
+    if (boxY < 1) boxY = Math.min(box.y + box.h + 6, layout.height - boxH - 1);
+    boxY = Math.max(1, boxY);
+  }
 
   ctx.fillStyle = p.surface;
-  roundRect(ctx, boxX, 1, boxW, boxH, 4);
+  roundRect(ctx, boxX, boxY, boxW, boxH, 4);
   ctx.fill();
   ctx.strokeStyle = p.axis;
-  roundRect(ctx, boxX + 0.5, 1.5, boxW - 1, boxH - 1, 4);
+  ctx.lineWidth = 1;
+  roundRect(ctx, boxX + 0.5, boxY + 0.5, boxW - 1, boxH - 1, 4);
   ctx.stroke();
 
   ctx.textAlign = 'left';
   lines.forEach((line, i) => {
-    const y = 4 + lineH * i + lineH / 2;
-    const tx = boxX + padX;
-    if (line.color) {
-      ctx.fillStyle = line.color;
-      ctx.beginPath();
-      ctx.arc(tx + 3, y, 3, 0, Math.PI * 2);
-      ctx.fill();
+    const { row } = line;
+    const y = boxY + 3 + lineH * i + lineH / 2;
+    const left = boxX + padX;
+    if (line.first && row.key) {
+      const { color, shape } = row.key;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      if (shape === 'line') ctx.fillRect(left, y - 1, 10, 2);
+      else if (shape === 'block') {
+        roundRect(ctx, left, y - 4, 10, 8, 2);
+        ctx.fill();
+      } else if (shape === 'hollow') {
+        ctx.lineWidth = 1;
+        roundRect(ctx, left + 0.5, y - 3.5, 9, 7, 2);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(left + 4, y, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
-    ctx.font = font(11, line.bold ? 600 : 400);
-    ctx.fillStyle = line.bold ? p.ink : p.ink2;
-    ctx.fillText(line.text, tx + line.indent, y);
+    if (line.first && row.strong) {
+      ctx.font = strongFont;
+      ctx.fillStyle = p.ink;
+      ctx.fillText(row.strong, left + (row.key ? KEY_W : 0), y);
+    }
+    ctx.font = textFont(row);
+    ctx.fillStyle = row.heading || row.pointed ? p.ink : p.ink2;
+    ctx.fillText(line.text, left + line.textX, y);
   });
 }
 

@@ -68,6 +68,8 @@ function surfaceBehind(el: HTMLElement, fallback: string): string {
 
 interface Props {
   station: StationName;
+  /** What the team calls this robot ("Elsa"), shown with its readings. */
+  name: string;
   /** The team's other robot on the field, to lay over this one. */
   other?: { station: StationName; name: string } | null;
 }
@@ -78,7 +80,7 @@ interface Props {
  * all on one time axis. Drag to look back, pinch or Ctrl+scroll to zoom,
  * point (or tap) for the readings at a moment.
  */
-export function TimelineChart({ station, other = null }: Props) {
+export function TimelineChart({ station, name, other = null }: Props) {
   const theme = useTheme();
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -99,7 +101,7 @@ export function TimelineChart({ station, other = null }: Props) {
   // The draw loop reads these every frame without re-subscribing.
   const view = useRef({ span, pinnedEnd });
   view.current = { span, pinnedEnd };
-  const hoverX = useRef<number | null>(null);
+  const hover = useRef<{ x: number; y: number } | null>(null);
   const dirty = useRef(true);
 
   const setSpan = useCallback((ms: number) => {
@@ -148,7 +150,7 @@ export function TimelineChart({ station, other = null }: Props) {
     const t1 = pinnedEnd ?? now;
     const t0 = t1 - span;
     const plotW = Math.max(1, width - GUTTER - PAD_RIGHT);
-    const hx = hoverX.current;
+    const at = hover.current;
     drawTimeline(ctx, {
       width,
       layout,
@@ -157,13 +159,15 @@ export function TimelineChart({ station, other = null }: Props) {
       now,
       live: pinnedEnd === null,
       primary: liveTimeline.stations[station],
+      primaryName: name,
       compare: compare ? { tracks: liveTimeline.stations[compare.station], name: compare.name } : null,
       field: liveTimeline.field,
-      hoverT: hx === null ? null : t0 + ((hx - GUTTER) / plotW) * span,
+      hoverT: at === null ? null : t0 + ((at.x - GUTTER) / plotW) * span,
+      hoverY: at?.y ?? null,
       palette,
       fontFamily: theme.typography.fontFamily ?? 'system-ui, sans-serif',
     });
-  }, [width, layout, station, compare, palette, theme.typography.fontFamily]);
+  }, [width, layout, station, name, compare, palette, theme.typography.fontFamily]);
 
   // Redraw: every frame's worth of time while live and on screen, otherwise
   // only when something changed (and a slow tick, for spans still running).
@@ -233,6 +237,7 @@ export function TimelineChart({ station, other = null }: Props) {
   } | null>(null);
 
   const localX = (e: React.PointerEvent) => e.clientX - e.currentTarget.getBoundingClientRect().left;
+  const localY = (e: React.PointerEvent) => e.clientY - e.currentTarget.getBoundingClientRect().top;
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const x = localX(e);
@@ -258,7 +263,7 @@ export function TimelineChart({ station, other = null }: Props) {
     if (!g || !pointers.current.has(e.pointerId)) {
       // Nothing held down: the crosshair follows the pointer.
       if (e.pointerType === 'mouse') {
-        hoverX.current = x >= GUTTER ? x : null;
+        hover.current = x >= GUTTER ? { x, y: localY(e) } : null;
         dirty.current = true;
       }
       return;
@@ -274,7 +279,7 @@ export function TimelineChart({ station, other = null }: Props) {
     const dx = x - g.startX;
     if (!g.moved && Math.abs(dx) < 5) return;
     g.moved = true;
-    hoverX.current = null;
+    hover.current = null;
     lookAt(g.startEnd - (dx / plotW) * view.current.span);
   };
 
@@ -287,8 +292,10 @@ export function TimelineChart({ station, other = null }: Props) {
     // A tap: put the crosshair there, or lift it if it already is.
     if (e.pointerType !== 'mouse') {
       const x = localX(e);
-      const same = hoverX.current !== null && Math.abs(hoverX.current - x) < 16;
-      hoverX.current = same || x < GUTTER ? null : x;
+      const y = localY(e);
+      const was = hover.current;
+      const same = was !== null && Math.abs(was.x - x) < 16 && Math.abs(was.y - y) < 16;
+      hover.current = same || x < GUTTER ? null : { x, y };
       dirty.current = true;
     }
   };
@@ -300,7 +307,7 @@ export function TimelineChart({ station, other = null }: Props) {
 
   const onPointerLeave = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.pointerType !== 'mouse' || gesture.current) return;
-    hoverX.current = null;
+    hover.current = null;
     dirty.current = true;
   };
 

@@ -599,6 +599,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           </Typography>
           <RadioStatusCard
             station={selectedStation}
+            robotName={robotNameOf(currentSsid)}
             otherRobot={otherRobot}
             chartMode={chartMode}
             onChartModeChange={setChartMode}
@@ -1698,6 +1699,7 @@ function StationNetwork({ station }: { station: StationName }) {
  */
 function RadioStatusCard({
   station,
+  robotName,
   otherRobot,
   chartMode,
   onChartModeChange,
@@ -1705,6 +1707,7 @@ function RadioStatusCard({
   onInternetAccessChange,
 }: {
   station: StationName;
+  robotName: string;
   otherRobot: { station: StationName; name: string } | null;
   chartMode: boolean;
   onChartModeChange: (chartMode: boolean) => void;
@@ -1811,7 +1814,7 @@ function RadioStatusCard({
         )}
 
         {chartMode && stationSsid ? (
-          <TimelineChart station={station} other={otherRobot} />
+          <TimelineChart station={station} name={robotName} other={otherRobot} />
         ) : stationSsid && isLinked ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {/* Signal Levels */}
