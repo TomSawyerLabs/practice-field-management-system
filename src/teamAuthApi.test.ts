@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { TeamAccessRequests } from './teamAccessRequests.js';
 import { TeamAuth } from './teamAuth.js';
 import { createLockPortal, createTeamAuthHandler, deviceNameOf, teamOfHost } from './teamAuthApi.js';
 
@@ -15,8 +16,9 @@ describe('team login API', () => {
   let server: Server;
   let base: string;
   let clientIp = '192.168.3.10';
-  let alerts: { team: number; address: string }[] = [];
+  let alerts: { team: number; address: string; note?: string }[] = [];
   let settled = 0;
+  let requests: TeamAccessRequests;
 
   beforeAll(async () => {
     server = createServer((req, res) => {
@@ -36,6 +38,7 @@ describe('team login API', () => {
     clientIp = '192.168.3.10';
     alerts = [];
     settled = 0;
+    requests = new TeamAccessRequests();
     handler = createTeamAuthHandler({
       auth,
       clientIp: () => clientIp,
@@ -43,8 +46,9 @@ describe('team login API', () => {
       networkSettled: async () => {
         settled++;
       },
-      alertForgot: async (team, address) => {
-        alerts.push({ team, address });
+      requests,
+      alertRequest: async ({ team, address, note }) => {
+        alerts.push({ team, address, note });
         return { slack: true, push: 1 };
       },
     });
@@ -128,11 +132,63 @@ describe('team login API', () => {
     expect((await get('/api/team-auth/1234')).status).toBe(403);
   });
 
-  test('forgot password tells admin once per ten minutes', async () => {
+  test('asking an admin tells them once per ten minutes, and waits', async () => {
     await auth.setPassword(1234, 'gearbox42!');
-    expect(await (await post('/api/team-auth/1234/forgot', {})).json()).toEqual({ ok: true, slack: true, push: 1 });
-    expect(await (await post('/api/team-auth/1234/forgot', {})).json()).toEqual({ ok: true, already: true });
-    expect(alerts).toEqual([{ team: 1234, address: clientIp }]);
+    const first = await post('/api/team-auth/1234/request', { note: 'Alex' });
+    expect(await first.json()).toMatchObject({ ok: true, slack: true, push: 1, request: { state: 'pending' } });
+    expect(first.headers.get('set-cookie')).toContain('pfms_teamreq_1234=');
+    const second = await post('/api/team-auth/1234/request', {});
+    expect(await second.json()).toMatchObject({ ok: true, already: true });
+    expect(alerts).toEqual([{ team: 1234, address: clientIp, note: 'Alex' }]);
+    // The same browser asking again replaces its request.
+    const third = await post('/api/team-auth/1234/request', {}, cookieOf(first));
+    expect(requests.pending()).toHaveLength(2);
+
+    const waiting = await get('/api/team-auth/1234', cookieOf(third));
+    expect(await waiting.json()).toMatchObject({ loggedIn: false, request: { state: 'pending' } });
+  });
+
+  test('an approved request logs in only the browser that asked, once', async () => {
+    await auth.setPassword(1234, 'gearbox42!');
+    const asked = await post('/api/team-auth/1234/request', {});
+    const secret = cookieOf(asked);
+    const [request] = requests.pending();
+    requests.decide(request.id, true);
+
+    // Another browser gets nothing.
+    expect(await (await get('/api/team-auth/1234')).json()).toMatchObject({ loggedIn: false });
+    expect(await (await get('/api/team-auth/1234', 'pfms_teamreq_1234=guess')).json()).toMatchObject({
+      loggedIn: false,
+    });
+
+    const res = await get('/api/team-auth/1234', secret);
+    expect(await res.json()).toMatchObject({ loggedIn: true, device: { name: request.deviceName } });
+    const cookies = res.headers.getSetCookie();
+    expect(cookies.some(c => c.startsWith('pfms_team_1234=') && c.includes('Max-Age=31536000'))).toBe(true);
+    expect(cookies.some(c => c.startsWith('pfms_teamreq_1234=;') && c.includes('Max-Age=0'))).toBe(true);
+    expect(auth.listDevices(1234)).toHaveLength(2);
+
+    // Collected: the same secret doesn't log in a second device.
+    expect(await (await get('/api/team-auth/1234', secret)).json()).toMatchObject({ loggedIn: false });
+    expect(auth.listDevices(1234)).toHaveLength(2);
+  });
+
+  test('a denied request says so', async () => {
+    await auth.setPassword(1234, 'gearbox42!');
+    const asked = await post('/api/team-auth/1234/request', {});
+    requests.decide(requests.pending()[0].id, false);
+    expect(await (await get('/api/team-auth/1234', cookieOf(asked))).json()).toMatchObject({
+      loggedIn: false,
+      request: { state: 'denied' },
+    });
+  });
+
+  test('a team with a password counts as here once anyone asks about it', async () => {
+    await get('/api/team-auth/5678');
+    expect(requests.recentTeams()).toEqual([]);
+    await auth.setPassword(1234, 'gearbox42!');
+    await get('/api/team-auth/1234');
+    expect(requests.recentTeams()).toEqual([1234]);
   });
 
   test('unrelated URLs are left for other handlers', async () => {

@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIPv4 } from 'node:net';
 import { readBody } from './httpApiUtils.js';
+import { REQUEST_TTL_MS, type TeamAccessRequest, type TeamAccessRequests } from './teamAccessRequests.js';
 import { MIN_TEAM_PASSWORD_LENGTH, TEAM_DEVICE_TTL_MS, type TeamAuth, type TeamDevice } from './teamAuth.js';
 import { isCrossSite } from './wsAccess.js';
 
@@ -19,9 +20,12 @@ import { isCrossSite } from './wsAccess.js';
  */
 
 const COOKIE_PREFIX = 'pfms_team_';
+/** Holds the secret of this browser's request to be let in. */
+const REQUEST_COOKIE_PREFIX = 'pfms_teamreq_';
 const COOKIE_MAX_AGE_S = Math.floor(TEAM_DEVICE_TTL_MS / 1000);
-const FORGOT_INTERVAL_MS = 10 * 60_000;
-const ROUTE = /^\/api\/team-auth\/(\d{1,5})(?:\/(login|logout|password|lock|forgot))?$/;
+/** Admins hear about a team's requests at most this often. */
+const ALERT_INTERVAL_MS = 10 * 60_000;
+const ROUTE = /^\/api\/team-auth\/(\d{1,5})(?:\/(login|logout|password|lock|request))?$/;
 
 export interface TeamAuthApiDeps {
   auth: TeamAuth;
@@ -34,8 +38,11 @@ export interface TeamAuthApiDeps {
   /** Let the firewall catch up before answering, so a page that sends the
    *  laptop on to its robot finds the way open. */
   networkSettled: () => Promise<void>;
-  /** Tell admin a team forgot its password. Resolves to what was reached. */
-  alertForgot: (team: number, address: string) => Promise<{ slack: boolean; push: number }>;
+  /** Requests to let a device in without the password, and which teams are
+   *  here trying to log in (for /admin). */
+  requests: TeamAccessRequests;
+  /** Tell admin a team asks to let a device in. Resolves to what was reached. */
+  alertRequest: (request: TeamAccessRequest) => Promise<{ slack: boolean; push: number }>;
   /** Whether this field can lock a team's network (it manages the VLANs). */
   lockAvailable?: () => boolean;
   now?: () => number;
@@ -57,6 +64,8 @@ export interface TeamAuthStatusResponse {
   devices?: TeamDevice[];
   /** The address the field sees this browser at. */
   address: string;
+  /** This browser's request to be let in, while it waits or after a no. */
+  request?: { state: 'pending' | 'denied'; createdAt: number; note?: string };
 }
 
 function cookieName(team: number) {
@@ -77,21 +86,26 @@ function isHttps(req: IncomingMessage): boolean {
 }
 
 function setCookie(req: IncomingMessage, team: number, token: string | null): string {
-  const parts = [
-    `${cookieName(team)}=${token ?? ''}`,
-    'Path=/',
-    `Max-Age=${token ? COOKIE_MAX_AGE_S : 0}`,
-    'HttpOnly',
-    'SameSite=Lax',
-  ];
+  return cookie(req, cookieName(team), token, COOKIE_MAX_AGE_S);
+}
+
+function setRequestCookie(req: IncomingMessage, team: number, secret: string | null): string {
+  return cookie(req, `${REQUEST_COOKIE_PREFIX}${team}`, secret, Math.floor(REQUEST_TTL_MS / 1000));
+}
+
+function cookie(req: IncomingMessage, name: string, value: string | null, maxAgeS: number): string {
+  const parts = [`${name}=${value ?? ''}`, 'Path=/', `Max-Age=${value ? maxAgeS : 0}`, 'HttpOnly', 'SameSite=Lax'];
   // http://pfms.tsl is plain HTTP: a Secure cookie would never come back there.
   if (isHttps(req)) parts.push('Secure');
   return parts.join('; ');
 }
 
-function send(res: ServerResponse, status: number, body: unknown, cookie?: string): void {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
-  if (cookie) headers['Set-Cookie'] = cookie;
+function send(res: ServerResponse, status: number, body: unknown, cookies?: string | string[]): void {
+  const headers: Record<string, string | string[]> = {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+  };
+  if (cookies?.length) headers['Set-Cookie'] = cookies;
   res.writeHead(status, headers);
   res.end(JSON.stringify(body));
 }
@@ -128,7 +142,7 @@ export function deviceNameOf(userAgent: string | undefined, given?: unknown): st
 export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
   const { auth } = deps;
   const now = deps.now ?? Date.now;
-  const lastForgot = new Map<number, number>();
+  const lastAlert = new Map<number, number>();
 
   /** Where the firewall should know this browser at: IPv4 only. */
   async function bindableAddress(ip: string): Promise<string | undefined> {
@@ -143,7 +157,13 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
     if (auth.isLocked(team)) await deps.networkSettled();
   }
 
-  function status(team: number, ip: string, device: TeamDevice | null, token?: string): TeamAuthStatusResponse {
+  function status(
+    team: number,
+    ip: string,
+    device: TeamDevice | null,
+    token?: string,
+    request?: TeamAccessRequest,
+  ): TeamAuthStatusResponse {
     const s = auth.status(team);
     return {
       team,
@@ -156,6 +176,10 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
       token: device ? token : undefined,
       devices: device ? auth.listDevices(team) : undefined,
       address: ip,
+      request:
+        !device && request && request.state !== 'approved'
+          ? { state: request.state, createdAt: request.createdAt, note: request.note }
+          : undefined,
     };
   }
 
@@ -181,12 +205,28 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
 
       const token = readCookie(req, cookieName(team));
       const device = auth.validate(team, token);
+      const requestSecret = readCookie(req, `${REQUEST_COOKIE_PREFIX}${team}`);
+      // For /admin's "here now": someone at the field is using this login.
+      if (auth.hasPassword(team)) deps.requests.noteActivity(team);
 
       if (!action) {
         if (req.method !== 'GET') return send(res, 405, { error: 'GET only' });
-        if (device) await bind(team, device, ip);
-        // Each visit starts the cookie's year again, as it does the device's.
-        return send(res, 200, status(team, ip, device, token), device ? setCookie(req, team, token!) : undefined);
+        if (device) {
+          await bind(team, device, ip);
+          // Each visit starts the cookie's year again, as it does the device's.
+          return send(res, 200, status(team, ip, device, token), setCookie(req, team, token!));
+        }
+        // An admin let this browser in: the page waiting on it asks here.
+        const approved = deps.requests.collect(team, requestSecret);
+        const granted = approved && auth.grantDevice(team, approved.deviceName);
+        if (granted) {
+          await bind(team, granted.device, ip);
+          return send(res, 200, status(team, ip, granted.device, granted.token), [
+            setCookie(req, team, granted.token),
+            setRequestCookie(req, team, null),
+          ]);
+        }
+        return send(res, 200, status(team, ip, null, undefined, deps.requests.get(team, requestSecret)));
       }
 
       // Everything else changes something: a form on another site mustn't
@@ -249,15 +289,25 @@ export function createTeamAuthHandler(deps: TeamAuthApiDeps) {
           return send(res, 200, status(team, ip, device, token));
         }
 
-        case 'forgot': {
+        case 'request': {
           if (!auth.hasPassword(team)) return send(res, 400, { error: `Team ${team} has no password` });
-          const last = lastForgot.get(team) ?? 0;
-          if (now() - last < FORGOT_INTERVAL_MS) {
-            return send(res, 200, { ok: true, already: true });
+          if (device) return send(res, 400, { error: 'This device is already logged in' });
+          const note = typeof input.note === 'string' ? input.note : undefined;
+          const made = deps.requests.create(team, name, ip, note, requestSecret);
+          if (!made) {
+            return send(res, 429, {
+              error: `Too many devices are already waiting for Team ${team}. Find a field admin.`,
+            });
           }
-          lastForgot.set(team, now());
-          const reached = await deps.alertForgot(team, ip);
-          return send(res, 200, { ok: true, ...reached });
+          const cookies = setRequestCookie(req, team, made.secret);
+          const answer = { ...status(team, ip, null, undefined, made.request), ok: true };
+          // One alert covers a burst: several laptops of one team asking at once.
+          if (now() - (lastAlert.get(team) ?? 0) < ALERT_INTERVAL_MS) {
+            return send(res, 200, { ...answer, already: true }, cookies);
+          }
+          lastAlert.set(team, now());
+          const reached = await deps.alertRequest(made.request);
+          return send(res, 200, { ...answer, ...reached }, cookies);
         }
       }
     })().catch(err => {

@@ -112,6 +112,7 @@ import {
   isOperatorRevokeDevice,
   isTeamAuthPresent,
   isTeamAuthAdminGet,
+  isTeamAuthDecide,
   isTeamAuthReset,
   isTeamAuthRevokeDevice,
   isTeamAuthSetLock,
@@ -191,6 +192,7 @@ import {
   type MessageAccess,
 } from './wsAccess.js';
 import type { TeamAuth } from './teamAuth.js';
+import type { TeamAccessRequests } from './teamAccessRequests.js';
 import type { AdminPushStore } from './adminPushStore.js';
 import { accessCookieOf } from './externalAccessAuth.js';
 import { LoginLimiter } from './loginLimiter.js';
@@ -312,6 +314,8 @@ export interface SetupWebSocketOptions {
   operatorAuth?: OperatorAuth;
   /** Optional per-team passwords; see src/teamAuth.ts. */
   teamAuth?: TeamAuth;
+  /** Devices asking an admin to be let in, and teams here trying to log in. */
+  teamRequests?: TeamAccessRequests;
   /** For /admin's team login card: how long a laptop stays let through with
    *  no traffic, and whether this field can lock networks at all. */
   teamLockInfo?: () => { idleMs: number; available: boolean };
@@ -414,6 +418,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     adminAuth,
     operatorAuth,
     teamAuth,
+    teamRequests,
     teamLockInfo,
     adminPush,
     externalAccessStore,
@@ -2225,6 +2230,14 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         sendTeamAuthAdmin(ws);
       } else if (isTeamAuthReset(data)) {
         if (teamAuth?.reset(data.team)) console.log(`Team ${data.team}'s password was reset by ${whoIs(clientIp)}`);
+        teamRequests?.clearTeam(data.team);
+      } else if (isTeamAuthDecide(data)) {
+        const r = teamRequests?.decide(data.id, data.approve);
+        if (r) {
+          console.log(
+            `Team ${r.team}'s request to let ${r.deviceName} at ${r.address} in was ${data.approve ? 'approved' : 'denied'} by ${whoIs(clientIp)}`,
+          );
+        }
       } else if (isTeamAuthRevokeDevice(data)) {
         teamAuth?.removeDevice(data.team, data.deviceId);
       } else if (isTeamAuthSetLock(data)) {
@@ -2501,6 +2514,15 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       teams: Object.entries(teamAuth.allStatus())
         .map(([team, s]) => ({ team: Number(team), lock: s.lock, devices: teamAuth.listDevices(Number(team)) }))
         .sort((a, b) => a.team - b.team),
+      hereNow: teamsHereNow(),
+      requests: (teamRequests?.pending() ?? []).map(({ id, team, deviceName, address, note, createdAt }) => ({
+        id,
+        team,
+        deviceName,
+        address,
+        note,
+        createdAt,
+      })),
       idleMs: info.idleMs,
       lockAvailable: info.available,
       pushDevices: (adminPush?.store.list() ?? []).map(({ endpoint, label, addedAt }) => ({
@@ -2514,8 +2536,23 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     ws.send(JSON.stringify(state));
   }
 
+  /** Teams with a password that are at the field: asking for a login,
+   *  asked about lately, or on a station. Newest activity first. */
+  function teamsHereNow(): number[] {
+    if (!teamAuth) return [];
+    const teams = [
+      ...(teamRequests?.pending() ?? []).map(r => r.team),
+      ...(teamRequests?.recentTeams() ?? []),
+      ...StationNameList.flatMap(s => radioManager.getTeamForStation(s) ?? []),
+    ];
+    return [...new Set(teams)].filter(t => teamAuth.hasPassword(t));
+  }
+
   teamAuth?.onChange(() => {
     broadcast(teamAuthStatusMessage());
+    for (const ws of adminConnections) sendTeamAuthAdmin(ws);
+  });
+  teamRequests?.onChange(() => {
     for (const ws of adminConnections) sendTeamAuthAdmin(ws);
   });
 

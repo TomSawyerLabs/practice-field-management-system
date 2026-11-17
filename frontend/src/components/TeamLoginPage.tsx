@@ -65,7 +65,8 @@ function AskTeam({ onTeam }: { onTeam: (team: number) => void }) {
 }
 
 function LoginForTeam({ team, rawReturn }: { team: number; rawReturn: string | null }) {
-  const { status, loadError, act } = useTeamLogin(team);
+  const login = useTeamLogin(team);
+  const { status, loadError } = login;
   const back = useMemo(() => safeReturnUrl(team, rawReturn, window.location.origin), [team, rawReturn]);
   const teamPage = `/${team}`;
 
@@ -136,7 +137,7 @@ function LoginForTeam({ team, rawReturn }: { team: number; rawReturn: string | n
                   ? `Team ${team} only lets its own laptops reach its robots. Log in with the team's password to get through. This laptop stays logged in for a year.`
                   : `Log in with Team ${team}'s password. This device stays logged in for a year.`}
               </Typography>
-              <TeamLoginForm team={team} autoFocus onLogin={password => act('login', { password })} />
+              <TeamLoginForm team={team} autoFocus login={login} />
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                 Not on Team {team}? This laptop can&apos;t reach Team {team}&apos;s robots. Wrong team?{' '}
                 <Link href="/">Find yours</Link>.

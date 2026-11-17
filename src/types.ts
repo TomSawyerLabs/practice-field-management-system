@@ -306,10 +306,9 @@ export interface SetupSettings {
    *  already set up keeps the game it was set up with. */
   game?: string;
   /** DHCP lease time of the guest/laptop network, in hours. A team's network
-   *  lock lets a logged-in laptop's address through until half of this has
-   *  passed with no traffic from it: a client renews at half its lease, so no
-   *  other device can be handed the address sooner. Absent = 24 (UniFi's
-   *  default). */
+   *  lock lets a logged-in laptop's address through until this long has
+   *  passed with no traffic from it, the longest the router holds the address
+   *  for it. Absent = 24 (UniFi's default). */
   guestLeaseHours?: number;
 }
 
@@ -5704,6 +5703,18 @@ export interface TeamAuthAdminState {
       addressSeenAt?: number;
     }[];
   }[];
+  /** Teams with a password that are here now: on a station, or someone
+   *  asked about their login in the last few hours. Newest first. */
+  hereNow: number[];
+  /** Devices asking to be let in without the password, oldest first. */
+  requests: {
+    id: string;
+    team: number;
+    deviceName: string;
+    address: string;
+    note?: string;
+    createdAt: number;
+  }[];
   /** How long a laptop stays let through with no traffic, in ms. */
   idleMs: number;
   /** Whether this field can lock networks at all (it manages the VLANs). */
@@ -5776,6 +5787,18 @@ export interface TeamAuthRevokeDevice {
 export function isTeamAuthRevokeDevice(msg: unknown): msg is TeamAuthRevokeDevice {
   const m = msg as TeamAuthRevokeDevice;
   return m?.type === 'teamAuthRevokeDevice' && isTeamNumber(m.team) && typeof m.deviceId === 'string';
+}
+
+/** /admin: let a device in that asked without the password, or turn it away. */
+export interface TeamAuthDecide {
+  type: 'teamAuthDecide';
+  id: string;
+  approve: boolean;
+}
+
+export function isTeamAuthDecide(msg: unknown): msg is TeamAuthDecide {
+  const m = msg as TeamAuthDecide;
+  return m?.type === 'teamAuthDecide' && typeof m.id === 'string' && typeof m.approve === 'boolean';
 }
 
 /** /admin: turn a team's network lock off (or back on). */

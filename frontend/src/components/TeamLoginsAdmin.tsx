@@ -9,9 +9,11 @@ import Divider from '@mui/material/Divider';
 import InputAdornment from '@mui/material/InputAdornment';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import type { TeamAuthAdminState } from '../../../src/types';
 import {
   sendAdminPushSubscribe,
   sendAdminPushUnsubscribe,
+  sendTeamAuthDecide,
   sendTeamAuthReset,
   sendTeamAuthRevokeDevice,
   sendTeamAuthSetLock,
@@ -35,8 +37,15 @@ export function TeamLoginsSection() {
   const [leaseText, setLeaseText] = useState(String(lease));
   useEffect(() => setLeaseText(String(lease)), [lease]);
 
+  const [showAll, setShowAll] = useState(false);
+  const [search, setSearch] = useState('');
+
   if (!state) return null;
   const idleHours = state.idleMs / 3600_000;
+  // Teams at the field first, so nobody scrolls the whole list to find them.
+  const byTeam = new Map(state.teams.map(t => [t.team, t]));
+  const hereNow = state.hereNow.flatMap(team => byTeam.get(team) ?? []);
+  const others = state.teams.filter(t => !state.hereNow.includes(t.team));
 
   return (
     <Card sx={{ mt: 2 }}>
@@ -47,8 +56,10 @@ export function TeamLoginsSection() {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           A team may set a password on its page (Network tab). Then only its logged-in devices can change its Wi-Fi and
           settings, and it can lock its robots&apos; network to its own laptops. Devices stay logged in for a year after
-          their last visit. Reset a forgotten password here, and the team sets a new one.
+          their last visit. A team that forgot its password asks to be let in, and the request shows up here.
         </Typography>
+
+        <AccessRequests requests={state.requests} />
 
         {state.teams.length === 0 && (
           <Typography variant="body2" color="text.secondary">
@@ -56,69 +67,48 @@ export function TeamLoginsSection() {
           </Typography>
         )}
 
-        {state.teams.map(t => (
-          <Box key={t.team} sx={{ mb: 2 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 0.5 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                <a href={`/${t.team}`} target="_blank" rel="noreferrer">
-                  Team {t.team}
-                </a>
-              </Typography>
-              {t.lock && <Chip size="small" color="primary" label="Network locked" />}
-              <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
-                {t.lock && (
-                  <Button size="small" onClick={() => sendTeamAuthSetLock(t.team, false)}>
-                    Unlock network
-                  </Button>
-                )}
-                {confirmReset === t.team ? (
-                  <>
-                    <Button
-                      size="small"
-                      color="error"
-                      variant="contained"
-                      onClick={() => {
-                        sendTeamAuthReset(t.team);
-                        setConfirmReset(null);
-                      }}
-                    >
-                      Reset: forget password, devices and lock
-                    </Button>
-                    <Button size="small" onClick={() => setConfirmReset(null)}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <Button size="small" color="warning" onClick={() => setConfirmReset(t.team)}>
-                    Reset password
-                  </Button>
-                )}
-              </Box>
-            </Box>
-            {t.devices.length === 0 && (
-              <Typography variant="body2" color="text.secondary">
-                No devices logged in.
-              </Typography>
-            )}
-            {t.devices.map(d => (
-              <Box key={d.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}>
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>
-                  {d.name}
-                  <Typography component="span" variant="body2" color="text.secondary">
-                    {' · '}
-                    {d.address
-                      ? `${d.address}${d.addressSeenAt ? `, traffic ${seenText(d.addressSeenAt)}` : ''}`
-                      : 'not let through anywhere'}
-                    {' · '}visited {seenText(d.lastSeenAt)}
-                  </Typography>
-                </Typography>
-                <Button size="small" onClick={() => sendTeamAuthRevokeDevice(t.team, d.id)}>
-                  Log out
-                </Button>
-              </Box>
+        {hereNow.length > 0 && (
+          <>
+            <Typography variant="subtitle1" sx={{ mb: 1 }}>
+              Here now
+            </Typography>
+            {hereNow.map(t => (
+              <TeamRow key={t.team} team={t} confirmReset={confirmReset} setConfirmReset={setConfirmReset} />
             ))}
-          </Box>
-        ))}
+          </>
+        )}
+
+        {others.length > 0 && (
+          <>
+            {!showAll ? (
+              <Button size="small" onClick={() => setShowAll(true)}>
+                {hereNow.length ? `Other teams with a password (${others.length})` : `Show all ${others.length} teams`}
+              </Button>
+            ) : (
+              <>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <Typography variant="subtitle1">{hereNow.length ? 'Other teams' : 'All teams'}</Typography>
+                  <TextField
+                    size="small"
+                    placeholder="Team number"
+                    value={search}
+                    onChange={e => setSearch(e.target.value.replace(/\D/g, ''))}
+                    inputProps={{ inputMode: 'numeric' }}
+                    sx={{ width: 140 }}
+                  />
+                  <Button size="small" sx={{ ml: 'auto' }} onClick={() => setShowAll(false)}>
+                    Hide
+                  </Button>
+                </Box>
+                {others
+                  .filter(t => !search || String(t.team).includes(search))
+                  .map(t => (
+                    <TeamRow key={t.team} team={t} confirmReset={confirmReset} setConfirmReset={setConfirmReset} />
+                  ))}
+              </>
+            )}
+          </>
+        )}
 
         <Divider sx={{ my: 2 }} />
 
@@ -146,9 +136,9 @@ export function TeamLoginsSection() {
           />
           <Typography variant="body2" color="text.secondary" sx={{ flex: 1, minWidth: 240 }}>
             A locked team&apos;s laptop is let through at its current address until{' '}
-            {Number.isInteger(idleHours) ? idleHours : idleHours.toFixed(1)} hours (half the lease) pass with no traffic
-            from it. A device renews at half its lease, so no other device can get the address sooner. Set this to the
-            lease your guest network&apos;s router hands out.
+            {Number.isInteger(idleHours) ? idleHours : idleHours.toFixed(1)} hours (the lease) pass with no traffic from
+            it: as long as the router keeps that address for it. Set this to the lease your guest network&apos;s router
+            hands out.
           </Typography>
         </Box>
 
@@ -161,6 +151,118 @@ export function TeamLoginsSection() {
         />
       </CardContent>
     </Card>
+  );
+}
+
+type AdminTeam = TeamAuthAdminState['teams'][number];
+
+/** Devices asking to be let in without the password: approve or deny. */
+function AccessRequests({ requests }: { requests: TeamAuthAdminState['requests'] }) {
+  if (!requests.length) return null;
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Typography variant="subtitle1" sx={{ mb: 1 }}>
+        Asking to be let in
+      </Typography>
+      {requests.map(r => (
+        <Alert
+          key={r.id}
+          severity="warning"
+          sx={{ mb: 1, alignItems: 'center' }}
+          action={
+            <Box sx={{ display: 'flex', gap: 1 }}>
+              <Button size="small" variant="contained" color="success" onClick={() => sendTeamAuthDecide(r.id, true)}>
+                Let in
+              </Button>
+              <Button size="small" color="inherit" onClick={() => sendTeamAuthDecide(r.id, false)}>
+                Deny
+              </Button>
+            </Box>
+          }
+        >
+          <strong>
+            <a href={`/${r.team}`} target="_blank" rel="noreferrer">
+              Team {r.team}
+            </a>
+          </strong>
+          {r.note ? ` · "${r.note}"` : ''} · {r.deviceName} at {r.address} · {seenText(r.createdAt)}
+        </Alert>
+      ))}
+    </Box>
+  );
+}
+
+function TeamRow({
+  team: t,
+  confirmReset,
+  setConfirmReset,
+}: {
+  team: AdminTeam;
+  confirmReset: number | null;
+  setConfirmReset: (team: number | null) => void;
+}) {
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 0.5 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+          <a href={`/${t.team}`} target="_blank" rel="noreferrer">
+            Team {t.team}
+          </a>
+        </Typography>
+        {t.lock && <Chip size="small" color="primary" label="Network locked" />}
+        <Box sx={{ ml: 'auto', display: 'flex', gap: 1 }}>
+          {t.lock && (
+            <Button size="small" onClick={() => sendTeamAuthSetLock(t.team, false)}>
+              Unlock network
+            </Button>
+          )}
+          {confirmReset === t.team ? (
+            <>
+              <Button
+                size="small"
+                color="error"
+                variant="contained"
+                onClick={() => {
+                  sendTeamAuthReset(t.team);
+                  setConfirmReset(null);
+                }}
+              >
+                Reset: forget password, devices and lock
+              </Button>
+              <Button size="small" onClick={() => setConfirmReset(null)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button size="small" color="warning" onClick={() => setConfirmReset(t.team)}>
+              Reset password
+            </Button>
+          )}
+        </Box>
+      </Box>
+      {t.devices.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          No devices logged in.
+        </Typography>
+      )}
+      {t.devices.map(d => (
+        <Box key={d.id} sx={{ display: 'flex', alignItems: 'center', gap: 1, pl: 1 }}>
+          <Typography variant="body2" sx={{ flexGrow: 1 }}>
+            {d.name}
+            <Typography component="span" variant="body2" color="text.secondary">
+              {' · '}
+              {d.address
+                ? `${d.address}${d.addressSeenAt ? `, traffic ${seenText(d.addressSeenAt)}` : ''}`
+                : 'not let through anywhere'}
+              {' · '}visited {seenText(d.lastSeenAt)}
+            </Typography>
+          </Typography>
+          <Button size="small" onClick={() => sendTeamAuthRevokeDevice(t.team, d.id)}>
+            Log out
+          </Button>
+        </Box>
+      ))}
+    </Box>
   );
 }
 
@@ -226,8 +328,9 @@ function ForgotPasswordAlerts({
         &quot;Forgot password&quot; alerts
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        When a team presses Forgot password, the field tells admins in the Slack support channel
-        {slackConfigured ? '' : ' (not set up)'} and with a push notification to each device below.
+        When a team asks to be let in (Forgot password), the field tells admins in the Slack support channel
+        {slackConfigured ? '' : ' (not set up)'} and with a push notification to each device below. The request shows up
+        at the top of this card.
         {!slackConfigured && pushDevices.length === 0 && ' Right now nobody would hear: the team is told to find you.'}
       </Typography>
       {pushDevices.map(d => (

@@ -223,11 +223,10 @@ filter  INPUT -p tcp --dport <portal> -m conntrack --ctstate DNAT -j ACCEPT   (p
   `LAN_URL`, it uses the address and port the laptop just reached the host at.
 - **A laptop is let through** whenever its logged-in browser asks pFMS about
   its team (the team page, `/login`), at the address pFMS sees it at. It stays
-  let through until **half the guest network's DHCP lease** passes with no
-  traffic from it (`/admin` → Access → Team Logins, default 24 h, so 12 h). A
-  client renews at half its lease, so no other device can be handed the
-  address sooner. Another device logging in from the same address, a log out,
-  or a reset ends it at once.
+  let through until **the guest network's DHCP lease** passes with no traffic
+  from it (`/admin` → Access → Team Logins, default 24 h): as long as the
+  router keeps that address for it. Another device logging in from the same
+  address, a log out, or a reset ends it at once.
 - Rules follow the stations: a commit, a team leaving, unlocking or a reset
   rebuilds them. A graceful reload keeps them, and nothing is changed until
   the bridges have been read back. A full stop removes them.

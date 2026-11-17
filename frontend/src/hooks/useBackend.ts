@@ -816,6 +816,11 @@ export function sendTeamAuthSetLock(team: number, lock: boolean) {
   ws?.send(JSON.stringify({ type: 'teamAuthSetLock', team, lock }));
 }
 
+/** Let in, or turn away, a device that asked without the team's password. */
+export function sendTeamAuthDecide(id: string, approve: boolean) {
+  ws?.send(JSON.stringify({ type: 'teamAuthDecide', id, approve }));
+}
+
 export function sendAdminPushSubscribe(subscription: PushSubscriptionInput, label?: string) {
   ws?.send(JSON.stringify({ type: 'adminPushSubscribe', subscription, label }));
 }

@@ -10,6 +10,7 @@ import { ExternalAccessStore } from './externalAccessStore.js';
 import { LoginLimiter } from './loginLimiter.js';
 import { OperatorAuth } from './operatorAuth.js';
 import { TeamAuth } from './teamAuth.js';
+import { TeamAccessRequests } from './teamAccessRequests.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
@@ -224,6 +225,8 @@ describe('the WebSocket gate', () => {
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
   let teamAuth = new TeamAuth(join(authDir, 'unused-team.json'));
+  // One for the server's life: it subscribes to changes once.
+  const teamRequests = new TeamAccessRequests();
   const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
   let adminLogins = new LoginLimiter();
   let context: WebSocketContext;
@@ -298,6 +301,7 @@ describe('the WebSocket gate', () => {
           return typeof member === 'function' ? member.bind(teamAuth) : member;
         },
       }),
+      teamRequests,
       externalAccessStore: externalAccess,
       strangerAdminLogins: {
         take: (address: string) => adminLogins.take(address),
@@ -738,6 +742,22 @@ describe('the WebSocket gate', () => {
       expect(await admin.send(prefs)).toEqual([]);
       await admin.send({ type: 'teamAuthReset', team: 1678 });
       expect(teamAuth.hasPassword(1678)).toBe(false);
+    });
+
+    test('letting a device in takes an admin login', async () => {
+      await claimField();
+      await teamAuth.setPassword(1678, 'gearbox42!');
+      const asked = teamRequests.create(1678, 'Chrome on Windows', DS_IP, 'Alex')!;
+      const anyone = await client(STAFF_IP);
+      const refused = await anyone.send({ type: 'teamAuthDecide', id: asked.request.id, approve: true });
+      expect(refused[0].error).toBe('Admin authentication required');
+      expect(teamRequests.get(1678, asked.secret)?.state).toBe('pending');
+
+      const admin = await client(STAFF_IP);
+      expect((await admin.adminLogin('correct horse')).authenticated).toBe(true);
+      await admin.send({ type: 'teamAuthDecide', id: asked.request.id, approve: true });
+      expect(teamRequests.get(1678, asked.secret)?.state).toBe('approved');
+      teamRequests.clearTeam(1678);
     });
 
     test('resetting a team takes an admin login', async () => {

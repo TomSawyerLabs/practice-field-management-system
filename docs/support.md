@@ -175,11 +175,18 @@ Most won't, and a team with none works exactly as before.
   anywhere: a laptop on a new address opens the team page or any robot web
   page once. **A Driver Station laptop has to be logged in too**, or it can't
   drive, matches included. See [network.md](network.md#team-network-lock).
-- **Forgot password** on the login form tells the field's admins: the Slack
-  support channel, and a push notification to each device added under
-  `/admin` → **Access** → **Team Logins** → **Notify this device** (needs the
-  https address). At most once every 10 minutes per team. If neither is set up,
-  the team is told to find an admin.
+- **Forgot password?** on the login form asks a field admin to let that
+  device in, with an optional "who's asking". The request shows at the top of
+  `/admin` → **Access** → **Team Logins**, with **Let in** and **Deny**. Let in
+  logs that one browser in (the page waiting on it carries on by itself), and
+  the team can then set a new password from its page. Admins hear about it in
+  the Slack support channel and by push on each device added under **Notify
+  this device** (needs the https address), at most once every 10 minutes per
+  team. If neither is set up, the team is told to find an admin. A request
+  lapses after 30 minutes.
+- **Here now**: the Team Logins card lists teams at the field first (on a
+  station, or someone used their login in the last 3 hours), so admins don't
+  hunt through every team that ever set a password.
 - **Admin reset**: `/admin` → **Access** → **Team Logins** → **Reset
   password** forgets the password, every device and the lock. The team sets a
   new one from its page. **Unlock network** turns just the lock off.

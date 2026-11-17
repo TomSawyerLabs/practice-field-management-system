@@ -38,7 +38,8 @@ import { TeamAuth } from './teamAuth.js';
 import { TeamLock } from './teamLock.js';
 import { createLockPortal, createTeamAuthHandler } from './teamAuthApi.js';
 import { AdminPushStore } from './adminPushStore.js';
-import { alertForgotPassword } from './teamPasswordAlert.js';
+import { alertAccessRequest } from './teamPasswordAlert.js';
+import { TeamAccessRequests } from './teamAccessRequests.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { isOnSite } from './onLink.js';
 import {
@@ -905,7 +906,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // logged-in laptops reach its robots (plans/team-password-login.md).
   const teamAuth = new TeamAuth();
   const adminPushStore = new AdminPushStore();
-  const leaseIdleMs = () => ((setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000) / 2;
+  const teamRequests = new TeamAccessRequests();
+  // As long as the router holds a quiet laptop's address for it: the lease.
+  const leaseIdleMs = () => (setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000;
   const portalPort = Number(process.env.TEAM_PORTAL_PORT) || 8180;
   const teamLock = vlanInterface
     ? new TeamLock({
@@ -946,8 +949,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     isOnSite: ip => isOnSite(ip, siteNetworksForTeams),
     networkSettled: () => teamLock?.reconcile() ?? Promise.resolve(),
     lockAvailable: () => !!teamLock,
-    alertForgot: (team, address) =>
-      alertForgotPassword(
+    requests: teamRequests,
+    alertRequest: request =>
+      alertAccessRequest(
         {
           postToSlack: text => slackBridge.postToChannel(text),
           pushStore: adminPushStore,
@@ -957,8 +961,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             return base ? `${base.replace(/\/+$/, '')}/admin` : undefined;
           },
         },
-        team,
-        address,
+        request,
       ),
   });
 
@@ -1041,6 +1044,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     adminAuth,
     operatorAuth,
     teamAuth,
+    teamRequests,
     teamLockInfo: () => ({ idleMs: leaseIdleMs(), available: !!teamLock }),
     adminPush: { store: adminPushStore, vapidPublicKey: () => pushService.publicKey },
     externalAccessStore,
