@@ -1147,6 +1147,40 @@ describe('the WebSocket gate', () => {
       while (!replies.some(r => r.type === 'castReceiverId')) await Bun.sleep(2);
       expect(replies.some(r => r.type === 'matchState')).toBe(true);
     });
+
+    describe('the queue on the public scoreboard socket', () => {
+      /** A /ws/scores page from `xff`; what it heard once a queue was broadcast. */
+      const scoresPage = async (xff: string, headers: Record<string, string> = {}) => {
+        const ws = new WebSocket(url.replace(/\/ws$/, '/ws/scores'), {
+          headers: { 'x-forwarded-for': xff, ...headers },
+        });
+        open.push(ws);
+        const heard: string[] = [];
+        ws.on('message', raw => heard.push(JSON.parse(String(raw)).type));
+        await new Promise(res => ws.once('open', res));
+        while (!heard.includes('serverInfo')) await Bun.sleep(2);
+        context.broadcast({ type: 'queueState', entries: [], line: [] });
+        context.broadcast({ type: 'matchState' });
+        while (heard.filter(t => t === 'matchState').length < 2) await Bun.sleep(2);
+        return heard;
+      };
+
+      test('reaches a display on the field network', async () => {
+        const heard = await scoresPage(STAFF_IP);
+        expect(heard).toContain('queueState');
+        expect(heard).not.toContain('queueOffSite');
+      });
+
+      test.each([
+        ['from the internet', VISITOR, {}],
+        ['forging a LAN address', FORGED, {}],
+        ["on another site's page at the field", STAFF_IP, { origin: 'https://evil.example' }],
+      ])('stays off a scoreboard %s, which is told why', async (_, xff, headers) => {
+        const heard = await scoresPage(xff, headers);
+        expect(heard).not.toContain('queueState');
+        expect(heard).toContain('queueOffSite');
+      });
+    });
   });
 
   describe('on site', () => {

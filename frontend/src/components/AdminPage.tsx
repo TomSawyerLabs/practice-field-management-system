@@ -25,7 +25,7 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 
 import type { StationName, StationControlState, ControllerPolicy } from '../../../src/types';
-import { StationNameList } from '../../../src/types';
+import { SCOREBOARD_VIEWS, StationNameList, type ScoreboardView } from '../../../src/types';
 import {
   hostTeamsInEffect,
   idleReleaseMinutes,
@@ -2002,13 +2002,15 @@ function ScoringSection() {
                     color={r.checks ? 'info' : 'default'}
                     onClick={() => sendCastReceiverChecks(r.id, !r.checks)}
                   />
-                  <Chip
-                    label={r.view === 'leaderboard' ? '🏆 leaderboard' : '📊 scoreboard'}
-                    size="small"
-                    variant={r.view === 'leaderboard' ? 'filled' : 'outlined'}
-                    color={r.view === 'leaderboard' ? 'secondary' : 'default'}
-                    onClick={() => sendCastReceiverView(r.id, r.view === 'leaderboard' ? 'scoreboard' : 'leaderboard')}
-                  />
+                  <Tooltip title="What this display shows. Tap for the next view.">
+                    <Chip
+                      label={VIEW_LABEL[r.view]}
+                      size="small"
+                      variant={r.view === 'scoreboard' ? 'outlined' : 'filled'}
+                      color={r.view === 'leaderboard' ? 'secondary' : r.view === 'queue' ? 'info' : 'default'}
+                      onClick={() => sendCastReceiverView(r.id, nextScoreboardView(r.view))}
+                    />
+                  </Tooltip>
                 </Box>
               ))}
             </Box>
@@ -2023,6 +2025,17 @@ function ScoringSection() {
       </CardContent>
     </Card>
   );
+}
+
+const VIEW_LABEL: Record<ScoreboardView, string> = {
+  scoreboard: '📊 scoreboard',
+  leaderboard: '🏆 leaderboard',
+  queue: '📋 queue',
+};
+
+/** The view after this one, for the Displays chip that cycles through them. */
+function nextScoreboardView(view: ScoreboardView): ScoreboardView {
+  return SCOREBOARD_VIEWS[(SCOREBOARD_VIEWS.indexOf(view) + 1) % SCOREBOARD_VIEWS.length];
 }
 
 function ScoreCard({ alliance, score }: { alliance: 'red' | 'blue'; score: { total: number } }) {

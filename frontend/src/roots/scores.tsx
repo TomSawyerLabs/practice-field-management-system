@@ -6,6 +6,7 @@ import { ScoreboardPage } from '../components/ScoreboardPage';
 import { MatchSummaryPage } from '../components/MatchSummaryPage';
 import { PracticeDayPage } from '../components/PracticeDayPage';
 import { LeaderboardTvPage } from '../components/LeaderboardTvPage';
+import { QueueTvPage } from '../components/QueueTvPage';
 import { SCOREBOARD_VIEW } from '../utils/scoreboardView';
 import { ReconfigureTvScreen } from '../components/ReconfigureNotice';
 import { useReconfigProgress } from '../hooks/useReconfigProgress';
@@ -49,7 +50,13 @@ createRoot(document.getElementById('root')!).render(
           <MatchSummaryPage token={summaryToken} />
         ) : (
           <>
-            {SCOREBOARD_VIEW === 'leaderboard' ? <LeaderboardTvPage /> : <ScoreboardPage />}
+            {SCOREBOARD_VIEW === 'leaderboard' ? (
+              <LeaderboardTvPage />
+            ) : SCOREBOARD_VIEW === 'queue' ? (
+              <QueueTvPage />
+            ) : (
+              <ScoreboardPage />
+            )}
             <DuringReconfigure />
           </>
         )}

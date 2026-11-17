@@ -625,6 +625,7 @@ export function ScoreboardPage() {
           />
           <ControlChip icon="⇄" label="swap" onClick={toggleSwap} />
           <ControlChip icon="🏆" label="leaderboard" onClick={() => switchScoreboardView('leaderboard')} />
+          <ControlChip icon="📋" label="queue" onClick={() => switchScoreboardView('queue')} />
           <ControlChip icon="🪶" label={LITE ? 'lite on' : 'lite'} active={LITE} onClick={toggleLite} />
           <ControlChip
             icon={muted ? '🔇' : '🔊'}

@@ -148,6 +148,7 @@ import {
   RobotEStopsState,
   QueueAdmin,
   isQueueState,
+  isQueueOffSite,
   isHostToolsInstallState,
   type HostToolsInstallState,
   isSystemdServiceInstallResult,
@@ -621,6 +622,8 @@ let currentNetworkStats: NetworkStats | null = null;
 let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
+/** The server said this page is off the field network, so no queue comes. */
+let currentQueueOffSite = false;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
 let currentRadioReconfigure: RadioReconfigureState | null = null;
@@ -1206,6 +1209,12 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isQueueOffSite(detail)) {
+    currentQueueOffSite = true;
+    events.dispatchEvent(new CustomEvent('queueOffSite'));
+    return;
+  }
+
   if (isChallengeLeaderboardState(detail)) {
     handleChallengeLeaderboard({
       tables: detail.tables,
@@ -1535,6 +1544,21 @@ export function useQueueState(): QueueState | null {
   }, []);
 
   return state;
+}
+
+/** True when the server won't send this page the queue because it is off
+ *  the field network (the public scoreboard socket says so on connecting). */
+export function useQueueOffSite(): boolean {
+  const [offSite, setOffSite] = useState(currentQueueOffSite);
+
+  useEffect(() => {
+    setOffSite(currentQueueOffSite);
+    const handler = () => setOffSite(true);
+    events.addEventListener('queueOffSite', handler);
+    return () => events.removeEventListener('queueOffSite', handler);
+  }, []);
+
+  return offSite;
 }
 
 export interface ChallengeLeaderboard {

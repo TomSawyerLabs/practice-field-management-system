@@ -3563,12 +3563,15 @@ export function isStopCast(msg: unknown): msg is StopCast {
   return (msg as StopCast).type === 'stopCast';
 }
 
-/** What a scoreboard TV shows: the match scoreboard, or the speed challenge
- *  leaderboard full screen. Chosen per display, like swap and mute. */
-export type ScoreboardView = 'scoreboard' | 'leaderboard';
+/** What a scoreboard TV shows: the match scoreboard, the speed challenge
+ *  leaderboard full screen, or the match queue (on the field network only).
+ *  Chosen per display, like swap and mute. */
+export type ScoreboardView = 'scoreboard' | 'leaderboard' | 'queue';
+
+export const SCOREBOARD_VIEWS: readonly ScoreboardView[] = ['scoreboard', 'leaderboard', 'queue'];
 
 export function isScoreboardView(value: unknown): value is ScoreboardView {
-  return value === 'scoreboard' || value === 'leaderboard';
+  return SCOREBOARD_VIEWS.includes(value as ScoreboardView);
 }
 
 /** Sent by a cast receiver (TV) to register itself with the backend. */
@@ -5503,6 +5506,18 @@ export type QueueState = {
 export function isQueueState(msg: unknown): msg is QueueState {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as QueueState).type === 'queueState';
+}
+
+/** Sent instead of the queue to a /scores page that is not on the field
+ *  network (the internet, or another site's page): the queue stays on site,
+ *  and the queue view says so rather than waiting for it. */
+export interface QueueOffSite {
+  type: 'queueOffSite';
+}
+
+export function isQueueOffSite(msg: unknown): msg is QueueOffSite {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as QueueOffSite).type === 'queueOffSite';
 }
 
 const isTeamNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
