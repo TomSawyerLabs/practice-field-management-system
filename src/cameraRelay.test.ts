@@ -93,8 +93,8 @@ class FakeResponse extends EventEmitter {
     this.chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     return true;
   }
-  end(chunk?: string) {
-    if (chunk) this.chunks.push(Buffer.from(chunk));
+  end(chunk?: string | Buffer) {
+    if (chunk) this.chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
     this.ended = true;
   }
   /** The JPEGs this viewer was sent, read back with pFMS's boundary. */
@@ -207,6 +207,50 @@ describe('relaying a camera', () => {
     expect(upstreams[0].stopped).toBe(1);
   });
 
+  test('stills: one frame, then the camera is hung up on', async () => {
+    const { relay, upstreams } = setup();
+    const got = relay.still(key);
+    upstreams[0].send(Buffer.concat([httpHead(), part(jpeg(1)), part(jpeg(2))]));
+    expect(await got).toEqual(jpeg(1));
+    expect(upstreams[0].stopped).toBe(1);
+    relay.stop();
+  });
+
+  test('stills: viewers polling together cost one fetch per interval', async () => {
+    const { relay, upstreams } = setup({ stillIntervalMs: 4_000 });
+    const a = relay.still(key);
+    const b = relay.still(key);
+    upstreams[0].send(Buffer.concat([httpHead(), part(jpeg(1))]));
+    expect([await a, await b]).toEqual([jpeg(1), jpeg(1)]);
+    expect(await relay.still(key, Date.now() + 3_000)).toEqual(jpeg(1));
+    expect(upstreams.length).toBe(1);
+    const later = relay.still(key, Date.now() + 4_100);
+    expect(upstreams.length).toBe(2);
+    upstreams[1].send(Buffer.concat([httpHead(), part(jpeg(2))]));
+    expect(await later).toEqual(jpeg(2));
+    relay.stop();
+  });
+
+  test('stills: a camera already relayed live gives its latest frame without a fetch', async () => {
+    const { relay, upstreams } = setup();
+    relay.watch(key, asResponse(new FakeResponse()));
+    upstreams[0].send(Buffer.concat([httpHead(), part(jpeg(7))]));
+    expect(await relay.still(key)).toEqual(jpeg(7));
+    expect(upstreams.length).toBe(1);
+    relay.stop();
+  });
+
+  test('stills: a dead or silent camera fails with the reason', async () => {
+    const { relay, upstreams } = setup({ stillTimeoutMs: 20 });
+    const dead = relay.still(key);
+    upstreams[0].end('Failed to connect: Connection refused');
+    await expect(dead).rejects.toThrow('Connection refused');
+    await expect(relay.still({ ...key, port: 1182 })).rejects.toThrow('no picture within');
+    await Bun.sleep(40);
+    expect(upstreams[1].stopped).toBe(1);
+    relay.stop();
+  });
+
   test('viewer and camera limits are refused, not queued', () => {
     const { relay } = setup({ maxViewers: 1, maxStreams: 1 });
     relay.watch(key, asResponse(new FakeResponse()));
@@ -228,7 +272,7 @@ describe('GET /api/camera', () => {
     const handled = handleCameraRequest(
       { url, method: 'GET' } as IncomingMessage,
       asResponse(res),
-      { watch: k => void watched.push(k) },
+      { watch: k => void watched.push(k), still: () => Promise.resolve(jpeg(9)) },
       { readRefusal: () => (refuse ? { status: 403, error: 'This only works from the field network' } : null) },
       (station, ip, port) => {
         asked.push([station, ip, port]);
@@ -245,13 +289,32 @@ describe('GET /api/camera', () => {
     expect(r.watched).toEqual([key]);
   });
 
-  test("refused with the verdict's reason, e.g. the robot's bandwidth limit", () => {
+  test("refused with the verdict's reason", () => {
     const r = call('/api/camera?station=slot1&ip=10.28.54.2&port=1181', {
       ok: false,
-      status: 409,
-      error: 'QoS BW Limit is on',
+      status: 404,
+      error: "pFMS hasn't found a camera stream there",
     });
-    expect(r).toMatchObject({ status: 409, body: { error: 'QoS BW Limit is on' }, watched: [] });
+    expect(r).toMatchObject({ status: 404, body: { error: "pFMS hasn't found a camera stream there" }, watched: [] });
+  });
+
+  test('a robot with a bandwidth limit gets stills, not the live stream', async () => {
+    const limited: CameraVerdict = { ok: true, key, stillsOnly: 'QoS BW Limit is on' };
+    const live = call('/api/camera?station=slot1&ip=10.28.54.2&port=1181', limited);
+    expect(live).toMatchObject({ status: 409, body: { error: 'QoS BW Limit is on', still: true }, watched: [] });
+
+    const res = new FakeResponse();
+    handleCameraRequest(
+      { url: '/api/camera?station=slot1&ip=10.28.54.2&port=1181&still=1', method: 'GET' } as IncomingMessage,
+      asResponse(res),
+      { watch: () => {}, still: () => Promise.resolve(jpeg(9)) },
+      { readRefusal: () => null },
+      () => limited,
+    );
+    await Bun.sleep(0);
+    expect(res.status).toBe(200);
+    expect(res.headers['Content-Type']).toBe('image/jpeg');
+    expect(Buffer.concat(res.chunks)).toEqual(jpeg(9));
   });
 
   test('bad parameters and off-site requests never reach the verdict', () => {

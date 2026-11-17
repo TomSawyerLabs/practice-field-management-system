@@ -13,6 +13,9 @@
  * and each viewer gets whole frames with pFMS's own boundary, so a viewer can
  * join mid-stream. A viewer that can't keep up skips frames rather than
  * buffering them.
+ *
+ * A robot whose radio caps its bandwidth gets stills instead (`still()`): one
+ * frame at most every few seconds per camera, however many people ask.
  */
 import { spawn } from 'node:child_process';
 import type { ServerResponse } from 'node:http';
@@ -166,10 +169,24 @@ export interface CameraRelayOptions {
   maxViewerBacklog?: number;
   /** An upstream that sends no frame for this long is given up on. */
   stallMs?: number;
+  /** A still is fetched from a camera at most this often. */
+  stillIntervalMs?: number;
+  /** A still fetch that brings no frame in this long fails. */
+  stillTimeoutMs?: number;
 }
+
+interface Still {
+  frame: Buffer | null;
+  at: number;
+  pending: Promise<Buffer> | null;
+}
+
+const idOf = (key: CameraKey) => `${key.ifname}|${key.ip}|${key.port}`;
+const streamUrl = (key: CameraKey) => `http://${key.ip}:${key.port}/?action=stream`;
 
 export class CameraRelay {
   private streams = new Map<string, Stream>();
+  private stills = new Map<string, Still>();
   private readonly opts: Required<CameraRelayOptions>;
   private stallTimer: NodeJS.Timeout | null = null;
 
@@ -181,6 +198,8 @@ export class CameraRelay {
       maxStreams: 6,
       maxViewerBacklog: 512 * 1024,
       stallMs: 10_000,
+      stillIntervalMs: 4_000,
+      stillTimeoutMs: 5_000,
       ...options,
     };
   }
@@ -194,7 +213,7 @@ export class CameraRelay {
 
   /** Streams `key`'s camera to `res` until either side goes away. */
   watch(key: CameraKey, res: ServerResponse): void {
-    const id = `${key.ifname}|${key.ip}|${key.port}`;
+    const id = idOf(key);
     let stream = this.streams.get(id);
     if (!stream) {
       if (this.streams.size >= this.opts.maxStreams) return refuse(res, 503, 'Too many cameras are being watched');
@@ -222,16 +241,80 @@ export class CameraRelay {
     });
   }
 
+  /**
+   * One recent frame from `key`'s camera. A camera is asked at most once per
+   * `stillIntervalMs` (counted from when the last frame arrived) however many
+   * viewers poll; a camera already being relayed live gives its latest frame.
+   */
+  still(key: CameraKey, now = Date.now()): Promise<Buffer> {
+    const id = idOf(key);
+    const live = this.streams.get(id)?.lastFrame;
+    if (live) return Promise.resolve(live);
+    for (const [other, s] of this.stills) {
+      if (!s.pending && now - s.at > 60_000) this.stills.delete(other);
+    }
+    let entry = this.stills.get(id);
+    if (!entry) this.stills.set(id, (entry = { frame: null, at: 0, pending: null }));
+    if (entry.pending) return entry.pending;
+    if (entry.frame && now - entry.at < this.opts.stillIntervalMs) return Promise.resolve(entry.frame);
+    const fetching = [...this.stills.values()].filter(s => s.pending).length;
+    if (fetching >= this.opts.maxStreams) return Promise.reject(new Error('Too many cameras are being watched'));
+    const current = entry;
+    current.pending = this.grabFrame(key)
+      .then(frame => {
+        current.frame = frame;
+        current.at = Date.now();
+        return frame;
+      })
+      .finally(() => (current.pending = null));
+    return current.pending;
+  }
+
+  /** Opens the stream, keeps its first frame, and hangs up. */
+  private grabFrame(key: CameraKey): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const upstream = this.opts.start(key.ifname, streamUrl(key));
+      const parser = new MjpegFrameParser();
+      let done = false;
+      const finish = (err: Error | null, frame?: Buffer) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        upstream.stop();
+        if (err) reject(err);
+        else resolve(frame!);
+      };
+      const timer = setTimeout(
+        () => finish(new Error(`The camera sent no picture within ${this.opts.stillTimeoutMs / 1000} s`)),
+        this.opts.stillTimeoutMs,
+      );
+      timer.unref?.();
+      upstream.onData(chunk => {
+        try {
+          const frames = parser.push(chunk);
+          if (parser.status !== null && parser.status !== 200) {
+            finish(new Error(`The camera answered HTTP ${parser.status}`));
+          } else if (frames.length) {
+            finish(null, frames[0]);
+          }
+        } catch (err) {
+          finish(err as Error);
+        }
+      });
+      upstream.onEnd(why => finish(new Error(why)));
+    });
+  }
+
   stop(): void {
+    this.stills.clear();
     for (const [id, stream] of [...this.streams]) this.close(id, stream);
     if (this.stallTimer) clearInterval(this.stallTimer);
     this.stallTimer = null;
   }
 
   private open(id: string, key: CameraKey): Stream {
-    const url = `http://${key.ip}:${key.port}/?action=stream`;
     const stream: Stream = {
-      upstream: this.opts.start(key.ifname, url),
+      upstream: this.opts.start(key.ifname, streamUrl(key)),
       parser: new MjpegFrameParser(),
       viewers: new Set(),
       lastFrame: null,

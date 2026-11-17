@@ -492,10 +492,12 @@ https site (the browser never fetches `http://10.TE.AM.x` itself), sends one
 copy of the stream over the robot's Wi-Fi however many people watch (up to 8
 per camera, 6 cameras at once), and is pinned to the station's bridge. It stops
 a few seconds after the last viewer leaves. pFMS relays only cameras the scan
-found, and only when the robot's radio reports its bandwidth limit (QoS BW
-Limit) off: with the limit on, an extra copy of the stream would compete with
-the robot's control packets for the capped link. Otherwise the reason shows in
-place of the picture, and the plain link still works.
+found. Live video only when the robot's radio reports its bandwidth limit
+(QoS BW Limit) off: with the limit on, or not yet read, an extra copy of the
+stream would compete with the robot's control packets for the capped link, so
+Watch shows a still every 4 s instead (`&still=1`). pFMS fetches a still by
+opening the stream, keeping the first frame and hanging up, at most once per
+4 s per camera however many people watch.
 
 The links go from your browser, not from pFMS, so they only work from a network
 routed to team subnets (the guest Wi-Fi, per the site router's static route

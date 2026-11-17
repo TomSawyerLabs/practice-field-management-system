@@ -1126,19 +1126,19 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       return { ok: false, status: 404, error: "pFMS hasn't found a camera stream there" };
     }
     // An extra copy of a stream counts against a radio's bandwidth cap, and
-    // control packets share that cap: only relay when the robot has none.
+    // control packets share that cap: the live stream only when the robot has
+    // none, otherwise stills (one frame every few seconds).
+    const key = { ifname: bridgeName(station), ip, port };
     const limited = qosEnabledFrom(latestCheckResults.get(station)?.checks);
-    if (limited !== false) {
-      return {
-        ok: false,
-        status: 409,
-        error:
-          limited === undefined
-            ? "pFMS hasn't read this robot's radio settings yet, so it can't tell whether a stream copy would slow the robot down. Open the camera directly."
-            : "This robot's radio limits its bandwidth (QoS BW Limit is on), so pFMS won't add a copy of its stream. Open the camera directly.",
-      };
-    }
-    return { ok: true, key: { ifname: bridgeName(station), ip, port } };
+    if (limited === false) return { ok: true, key };
+    return {
+      ok: true,
+      key,
+      stillsOnly:
+        limited === undefined
+          ? "pFMS hasn't read this robot's radio settings yet, so it can't tell whether live video would slow the robot down."
+          : "This robot's radio limits its bandwidth (QoS BW Limit is on), so live video could slow the robot down.",
+    };
   };
   // Driver Station laptop Wi-Fi reports: the collector script teams run, and
   // where it uploads to (see src/diagReportApi.ts). A report is tagged with

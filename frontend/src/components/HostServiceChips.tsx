@@ -97,10 +97,13 @@ function SshChip({ ip }: { ip: string }) {
   );
 }
 
+/** How often a still is asked for when the live stream isn't offered. */
+const STILL_MS = 4_000;
+
 /**
- * A camera stream, relayed by pFMS (src/cameraRelay.ts) so it shows on the
- * https site too. pFMS refuses when the robot's radio limits its bandwidth;
- * the reason is shown in place of the picture.
+ * A camera, relayed by pFMS (src/cameraRelay.ts) so it shows on the https site
+ * too. Live when the robot's radio has no bandwidth limit; otherwise pFMS
+ * offers a still every few seconds, and the reason shows under it.
  */
 function CameraView({
   station,
@@ -115,33 +118,84 @@ function CameraView({
 }) {
   const src = `/api/camera?${new URLSearchParams({ station, ip, port: String(port) })}`;
   const [problem, setProblem] = useState<string | null>(null);
+  /** Set once pFMS says only stills are offered: why. */
+  const [stillsWhy, setStillsWhy] = useState<string | null>(null);
+  const [still, setStill] = useState<string | null>(null);
+
   const onError = async () => {
     // An <img> can't say why; a refusal is a short JSON reply, so ask again for the reason
     const controller = new AbortController();
     try {
       const res = await fetch(src, { signal: controller.signal, cache: 'no-store' });
-      if (res.ok) setProblem('The stream ended.');
-      else setProblem(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
+      if (res.ok) return setProblem('The stream ended.');
+      const body = (await res.json()) as { error?: string; still?: boolean };
+      if (body.still) setStillsWhy(body.error ?? 'Live video is off for this robot.');
+      else setProblem(body.error ?? `HTTP ${res.status}`);
     } catch {
       setProblem("Couldn't reach pFMS for the stream.");
     } finally {
       controller.abort();
     }
   };
+
+  useEffect(() => {
+    if (stillsWhy === null) return;
+    let url: string | null = null;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const next = async () => {
+      if (!document.hidden) {
+        try {
+          const res = await fetch(`${src}&still=1`, { cache: 'no-store' });
+          if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
+          const fresh = URL.createObjectURL(await res.blob());
+          if (stopped) URL.revokeObjectURL(fresh);
+          else {
+            if (url) URL.revokeObjectURL(url);
+            url = fresh;
+            setStill(fresh);
+            setProblem(null);
+          }
+        } catch (err) {
+          if (!stopped) setProblem(err instanceof Error ? err.message : String(err));
+        }
+      }
+      if (!stopped) timer = setTimeout(() => void next(), STILL_MS);
+    };
+    void next();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [src, stillsWhy]);
+
+  const picture = (imgSrc: string, extra: object = {}) => (
+    <Box
+      component="img"
+      src={imgSrc}
+      alt={`Camera ${port} on ${ip}`}
+      {...extra}
+      sx={{ display: 'block', width: '100%', borderRadius: 1, bgcolor: 'black' }}
+    />
+  );
+
   return (
     <Box sx={{ mt: 0.5, position: 'relative', maxWidth: 480 }}>
-      {problem ? (
+      {stillsWhy !== null ? (
+        <>
+          {still && picture(still)}
+          <Typography variant="body2" color="text.secondary" sx={{ pr: 4, mt: 0.5 }}>
+            Camera {port}: a still every {STILL_MS / 1000} s. {stillsWhy}
+            {problem && ` Last try: ${problem}`}
+          </Typography>
+        </>
+      ) : problem ? (
         <Typography variant="body2" color="text.secondary" sx={{ pr: 4 }}>
           Camera {port}: {problem}
         </Typography>
       ) : (
-        <Box
-          component="img"
-          src={src}
-          alt={`Camera ${port} on ${ip}`}
-          onError={() => void onError()}
-          sx={{ display: 'block', width: '100%', borderRadius: 1, bgcolor: 'black' }}
-        />
+        picture(src, { onError: () => void onError() })
       )}
       <IconButton
         size="small"
