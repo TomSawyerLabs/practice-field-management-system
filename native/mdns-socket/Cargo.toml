@@ -1,8 +1,8 @@
 [package]
 name = "mdns-socket"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "pFMS: an mDNS socket pinned to one network interface (SO_BINDTODEVICE), for Node"
+description = "pFMS: mDNS and TCP sockets pinned to one network interface (SO_BINDTODEVICE), for Node"
 license = "MIT"
 publish = false
 

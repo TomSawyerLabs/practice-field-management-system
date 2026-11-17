@@ -20,6 +20,18 @@ s.sendTo(query, '10.19.67.2', 5353); // unicast, out of br-slot1
 s.close();
 ```
 
+Since 0.3 it also has `InterfaceTcp`, a TCP connection pinned the same way, for
+pFMS's read of a robot's NetworkTables (`src/robotNt.ts`):
+
+```ts
+import { openInterfaceTcp } from './mdnsSocket.js';
+const c = openInterfaceTcp('br-slot1', '10.28.54.2', 5810, 2000, (kind, data, message) => {
+  // "connect", then "data" (data)…, then "end" or "error" (message)
+});
+c.write(bytes);
+c.close();
+```
+
 Linux only. On other systems, opening a socket throws.
 
 ## How pFMS gets it

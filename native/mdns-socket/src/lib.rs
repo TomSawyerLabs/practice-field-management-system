@@ -13,6 +13,11 @@
 //! (unicast, for a host on this interface's subnet) and `close()`. Packets
 //! are delivered as `onPacket(data, address, port)` from a receive thread.
 //! Linux only; on other systems the constructor throws.
+//!
+//! `InterfaceTcp` (tcp.rs) is the same pin for a TCP connection.
+
+mod tcp;
+pub use tcp::InterfaceTcp;
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
