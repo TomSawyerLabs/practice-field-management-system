@@ -33,6 +33,10 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
 - Camera stream view: yes (user, 2026-11-16). Built as a pFMS relay (works on
   https, one copy over the robot's Wi-Fi), gated on the radio's QoS BW Limit
   being reported off.
+- Stills for limited robots: yes (user, 2026-11-16, "a 0.25Hz poll of the
+  picture"). Built `d6796db`: with QoS on or unread, Watch shows a still every 4 s.
+- NT readout: yes to all three (user, 2026-11-16): robot code running ("good
+  idea"), connected dashboards ("sure"), FMSInfo the robot received ("sure").
 
 ## Survey: Team 2854, 3:4x PM PST 2026-11-15 (TCP connect, then page titles)
 
@@ -57,7 +61,9 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
 5. [x] Inline camera view: relay `src/cameraRelay.ts`, `GET /api/camera`,
        "Watch" chip (`1a53254`). Checked with real curl against a fake MJPEG
        server on this PC (19 frames in 0.6 s, stops after the viewer leaves).
-6. [ ] ← Deploy (when the user says): `d64f6a9`, `6e992aa`, `d4a7724`, `1a53254`.
+       5b. [x] Stills every 4 s when the live stream is off (`d6796db`).
+       5c. [ ] ← NT readout. Design below ("NT readout design"). In progress.
+6. [ ] Deploy (when the user says): `d64f6a9`, `6e992aa`, `d4a7724`, `1a53254`, `d6796db`.
        After deploy, check Caddy streams the multipart reply without buffering
        (open Watch on the https site).
 7. [ ] Next team day: check chips, a CameraServer stream through Watch, the
@@ -65,6 +71,24 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
        2854 which camera app they use.
 8. [ ] Camera on the main display (temporary view). Not started.
 9. [ ] Camera for a caster. Not started; needs what "caster" means here.
+
+## NT readout design
+
+- NT4 is a WebSocket at `ws://10.TE.AM.2:5810/nt/<name>`, subprotocol
+  `v4.1.networktables.first.wpi.edu` (fall back to `networktables.first.wpi.edu`).
+  Text frames are JSON (`subscribe`, `announce`), binary frames msgpack
+  `[topicId, timestamp, type, value]`. Subscribe only to `$clients` and the
+  `/FMSInfo/` prefix, so the traffic is a few hundred bytes.
+- **Must be pinned to the station bridge** (a team on two stations has 10.TE.AM.2
+  on two bridges). Bun's sockets can't `SO_BINDTODEVICE`; curl `telnet://` mangles
+  0xFF bytes; curl's ws CLI can't send. Chosen: add a pinned TCP socket
+  (`InterfaceTcp`) to the existing Rust addon `native/mdns-socket` (repo is public,
+  so its CI release build is free), and a small WebSocket + msgpack client in TS.
+  Rejected: a python3 helper (steamboat has 3.13, but a system-python dependency).
+- Addon release needs a version bump + `mdns-socket-v<version>` tag push before
+  the deploy that uses it.
+- Server answering = robot code running. `$clients` = dashboards by name and
+  address. `/FMSInfo/*` = match number, alliance, station as the robot sees them.
 
 ## Ideas proposed, not started (need the user's go)
 
@@ -136,8 +160,7 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 ## Open questions for the user
 
 1. Main display and caster: what should they look like? (inline view is done)
-2. Build an NT readout (robot code up, dashboards, FMSInfo seen by the robot)?
-   Recommend yes, FMSInfo first: it's a real CSA check.
+2. ~~NT readout~~: answered yes, in progress.
 3. ~~mDNS evidence~~: answered yes, built (`d4a7724`).
 
 ## Things not to do
