@@ -1,10 +1,9 @@
 # Team passwords and network lock
 
 **Status: built and verified off the field (unit tests, headless browser,
-real-kernel netns test). Read-only steamboat checks passed (2026-11-16). Not
-merged or deployed: master has another thread's uncommitted work, and the user
-said merge only once that thread is done. Then the first real test needs the
-user's go-ahead.**
+real-kernel netns test). Read-only steamboat checks passed (2026-11-16). Merged
+into local master 2026-11-16 (`c2c6472`), not deployed. The deploy thread
+takes it from there; the first real lock test needs the user's go-ahead.**
 
 ## Goal
 
@@ -218,8 +217,10 @@ what it does today.
       (unit tests, headless browser: ask → admin lets in → page carries on to
       `/1234#network`)
 - [x] Read-only steamboat checks (deploy checks 1–2)
-- [ ] Merge into master, once master's other thread is done (its uncommitted
-      timeline-chart work was in the main checkout on 2026-11-16)
+- [x] Merged into local master (`c2c6472`, 2026-11-16) after the timeline
+      thread finished. Master had added `setRobotAutoConnect` (now `team`
+      tier) and re-listed saved-robot/port messages as `anyone`; the
+      duplicates were dropped so the gate holds.
 - [ ] Deploy (other thread owns deploys: `plans/deploy-log.md`)
 - [ ] First real lock test (needs the user's go-ahead)
 - [ ] Follow-up: "unlogged DS is trying to reach your robot" warning
