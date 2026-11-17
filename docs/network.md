@@ -499,6 +499,26 @@ Watch shows a still every 4 s instead (`&still=1`). pFMS fetches a still by
 opening the stream, keeping the first frame and hanging up, at most once per
 4 s per camera however many people watch.
 
+**Robot code** under each station's counters is a read-only look at the
+robot's NetworkTables 4 server (roboRIO `10.TE.AM.2:5810`, `src/robotNt.ts`,
+`GET /api/robot-nt`, on site only):
+
+- **Robot code: running** when the NT server answers, **not running** when the
+  roboRIO refuses the connection (up, but no robot program), and **can't reach
+  the roboRIO** when nothing answers.
+- **Robot sees**: the match type and number, alliance and station, and whether
+  FMS is attached, as the robot's code received them from its Driver Station
+  (`/FMSInfo/`). This checks the whole path pFMS → DS → robot code.
+- **Dashboards**: the other NT clients connected (`$clients`), by name and
+  laptop.
+
+pFMS visits only while someone has the page open, at most every 10 s per robot:
+it connects, subscribes to `$clients` and `/FMSInfo/` (a few hundred bytes),
+and hangs up, publishing nothing. It shows up in the robot's own client list
+as `pFMS` for that moment. The connection is pinned to the station's bridge
+(`InterfaceTcp` in `native/mdns-socket`, `SO_BINDTODEVICE`), so a team on two
+stations is read on the right robot.
+
 The links go from your browser, not from pFMS, so they only work from a network
 routed to team subnets (the guest Wi-Fi, per the site router's static route
 above). For a team on two stations the browser reaches whichever robot the

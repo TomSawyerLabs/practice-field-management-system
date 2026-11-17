@@ -59,6 +59,9 @@ import { SubnetScanner } from './subnetScanner.js';
 import { CameraRelay } from './cameraRelay.js';
 import { handleCameraRequest, type CameraVerdict } from './cameraRelayApi.js';
 import { handleMdnsLookupsRequest } from './mdnsLookupApi.js';
+import { openInterfaceTcp } from './mdnsSocket.js';
+import { RobotNtReader } from './robotNt.js';
+import { handleRobotNtRequest, type RobotNtTarget } from './robotNtApi.js';
 import { MdnsLookupLog } from './mdnsLookupLog.js';
 import { MdnsReflector } from './mdnsReflector.js';
 import { TeamChecker, setControllerPolicyResolver, controllerBlockReason, qosEnabledFrom } from './teamChecker.js';
@@ -1140,6 +1143,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           : "This robot's radio limits its bandwidth (QoS BW Limit is on), so live video could slow the robot down.",
     };
   };
+  // A read-only look at each robot's NetworkTables (Network page): robot code
+  // up, dashboards connected, match info the robot received
+  const robotNtReader = new RobotNtReader(openInterfaceTcp);
+  const robotNtTarget = (station: StationName): RobotNtTarget => {
+    if (!vlanInterface) return { ok: false, status: 503, error: 'The field network is not up' };
+    const team = radioManager.getTeamForStation(station);
+    if (team === null) return { ok: false, status: 404, error: 'No robot on that station' };
+    return { ok: true, team, ifname: bridgeName(station), ip: `${teamSubnet(team)}.2` };
+  };
   // Driver Station laptop Wi-Fi reports: the collector script teams run, and
   // where it uploads to (see src/diagReportApi.ts). A report is tagged with
   // the team on the station whose DS spoke from the same address.
@@ -1187,6 +1199,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       handleTeamAuthRequest,
       (req, res) => handleMdnsLookupsRequest(req, res, mdnsLookupLog, staffHttp),
       (req, res) => handleCameraRequest(req, res, cameraRelay, staffHttp, cameraVerdict),
+      (req, res) => handleRobotNtRequest(req, res, robotNtReader, staffHttp, robotNtTarget),
     ],
     onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;

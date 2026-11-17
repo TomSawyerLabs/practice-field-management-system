@@ -34,9 +34,29 @@ export function mdnsSocketAddonPath(): string {
   return bundledPath('native', 'mdns-socket', 'prebuilt', file);
 }
 
-let loaded: { ctor: InterfaceSocketCtor } | { error: string } | undefined;
+/** Connection events from the addon's thread; nothing follows "end" or "error". */
+export type TcpEvent = 'connect' | 'data' | 'end' | 'error';
+type OnTcpEvent = (kind: TcpEvent, data: Buffer | undefined, message: string) => void;
 
-function load(): { ctor: InterfaceSocketCtor } | { error: string } {
+/** A TCP connection pinned to one interface (addon 0.3+). */
+export interface InterfaceTcpConnection {
+  /** Throws when not connected, or the connection broke. */
+  write(data: Buffer): void;
+  /** Idempotent; no event follows. */
+  close(): void;
+}
+type InterfaceTcpCtor = new (
+  ifname: string,
+  address: string,
+  port: number,
+  timeoutMs: number,
+  onEvent: OnTcpEvent,
+) => InterfaceTcpConnection;
+
+type Addon = { ctor: InterfaceSocketCtor; tcp?: InterfaceTcpCtor };
+let loaded: Addon | { error: string } | undefined;
+
+function load(): Addon | { error: string } {
   if (loaded) return loaded;
   if (process.platform !== 'linux') {
     loaded = { error: 'interface-pinned mDNS sockets need Linux' };
@@ -45,8 +65,8 @@ function load(): { ctor: InterfaceSocketCtor } | { error: string } {
   const file = mdnsSocketAddonPath();
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const addon = require(file) as { InterfaceSocket: InterfaceSocketCtor };
-    loaded = { ctor: addon.InterfaceSocket };
+    const addon = require(file) as { InterfaceSocket: InterfaceSocketCtor; InterfaceTcp?: InterfaceTcpCtor };
+    loaded = { ctor: addon.InterfaceSocket, tcp: addon.InterfaceTcp };
   } catch (err) {
     loaded = { error: `can't load ${file}: ${(err as Error).message}` };
   }
@@ -69,4 +89,23 @@ export function openInterfaceSocket(ifname: string, port: number, onPacket: OnPa
   const l = load();
   if ('error' in l) throw new Error(l.error);
   return new l.ctor(ifname, port, onPacket);
+}
+
+/**
+ * Connect to `address:port` out of `ifname` only (SO_BINDTODEVICE), so a
+ * team on two stations reaches the robot on that station's bridge. Returns at
+ * once; `onEvent` says "connect", then "data"…, then "end" or "error". Throws
+ * if the addon isn't available or is too old to have TCP.
+ */
+export function openInterfaceTcp(
+  ifname: string,
+  address: string,
+  port: number,
+  timeoutMs: number,
+  onEvent: OnTcpEvent,
+): InterfaceTcpConnection {
+  const l = load();
+  if ('error' in l) throw new Error(l.error);
+  if (!l.tcp) throw new Error(`${mdnsSocketAddonPath()} is older than 0.3 and has no TCP; rebuild pFMS`);
+  return new l.tcp(ifname, address, port, timeoutMs, onEvent);
 }

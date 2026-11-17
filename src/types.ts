@@ -6071,3 +6071,38 @@ export function isRadioReconfigureState(msg: unknown): msg is RadioReconfigureSt
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as RadioReconfigureState).type === 'radioReconfigure';
 }
+
+/** The match info a robot's code received, read from its NetworkTables `/FMSInfo/`. */
+export interface RobotFmsInfo {
+  eventName?: string;
+  /** 0 none, 1 practice, 2 qualification, 3 elimination (WPILib MatchType). */
+  matchType?: number;
+  matchNumber?: number;
+  replayNumber?: number;
+  isRedAlliance?: boolean;
+  stationNumber?: number;
+  /** The DS control word bits as the robot saw them (enabled, auto, test, e-stop, FMS, DS attached). */
+  controlData?: number;
+  gameMessage?: string;
+}
+
+/** What pFMS read from a robot's NetworkTables server (src/robotNt.ts). */
+export interface RobotNtReading {
+  station: StationName;
+  team: number;
+  /** The roboRIO address read, 10.TE.AM.2. */
+  ip: string;
+  /** When it was read (ms since epoch). */
+  at: number;
+  /**
+   * `running`: the NT server answered, so robot code is up. `not running`: the
+   * roboRIO refused the connection (up, but no robot program). `unreachable`:
+   * no answer at all.
+   */
+  code: 'running' | 'not running' | 'unreachable';
+  /** Why the reading is partial or failed. */
+  error?: string;
+  /** Other NT clients (dashboards, tools) connected to the robot, by name and address. */
+  clients?: { name: string; address: string }[];
+  fms?: RobotFmsInfo;
+}

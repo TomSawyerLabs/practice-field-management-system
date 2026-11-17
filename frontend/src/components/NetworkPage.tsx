@@ -37,6 +37,7 @@ import {
 import { HostDisplay } from './HostDisplay';
 import { HostServiceChips } from './HostServiceChips';
 import { MdnsLookupsCard } from './MdnsLookupsCard';
+import { RobotNtLine } from './RobotNtLine';
 
 const PULSE_STYLES = {
   '@keyframes ds-pulse': {
@@ -162,6 +163,8 @@ export function StationNetworkCard({
             No forwarding rules
           </Typography>
         )}
+
+        {team != null && <RobotNtLine station={station} team={team} />}
 
         {/* Discovered Devices */}
         {scan && scan.hosts.length > 0 && (
