@@ -60,6 +60,9 @@ the site: an internet visitor to the same page sees a notice, not the queue.
       docs. `bun run typecheck` clean, `src/wsAccess.test.ts` 115 pass (4 new),
       full suite 1317/1318 (the one failure, `adminAuth.test.ts` scrypt timing,
       passes alone: load flake), `vite build` clean. Not looked at on a TV yet.
+- [x] Rebased onto master `3cd2b8d` (kept the Wi-Fi reconfigure overlay on
+      the queue view too) and fast-forwarded local master to `2331bda`. Not
+      pushed or deployed: the user will deploy later.
 
 ## Open questions for the user
 
