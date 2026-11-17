@@ -80,6 +80,7 @@ import { ESTIMATED_RECONFIGURATION_SECONDS, useReconfigProgress } from '../hooks
 import { DsClientNotice } from './DsClientGuard';
 import { FieldEStopControl, StopBlindSpotNote } from './FieldEStop';
 import { OperatorBar } from './OperatorAccess';
+import { RobotWifiActivityPanel } from './RobotWifiActivityPanel';
 import { HostDisplay } from './HostDisplay';
 import { TeamAvatar } from './TeamAvatar';
 import { StatusIcon } from './TeamChecksPanel';
@@ -1187,6 +1188,8 @@ export function CsaPage() {
           data.
         </Typography>
       )}
+
+      <RobotWifiActivityPanel scan={robotWifi} now={now} />
 
       {selected && (
         <StationDialog

@@ -154,6 +154,7 @@ import {
   RobotEStopsState,
   QueueAdmin,
   isQueueState,
+  isQueueOffSite,
   isHostToolsInstallState,
   type HostToolsInstallState,
   isSystemdServiceInstallResult,
@@ -175,7 +176,10 @@ import {
   isTeamAuthStatusMessage,
   isTeamAuthResult,
   isTeamAuthAdminState,
+  isRadioReconfigureState,
+  type RadioReconfigureState,
 } from '../../../src/types';
+import { isTimelineSnapshot, type TimelineSnapshot } from '../../../src/timeline/store';
 import { Message as RadioMessage } from 'syslog-server';
 
 /** Set once this tab has said a hostname match with a Driver Station is a
@@ -438,19 +442,15 @@ function processHistory(entries: StatusEntry[]) {
 
   console.log(`Received ${entries.length} history entries`);
 
-  // Delay dispatching events to allow React components to mount and register listeners
-  // This ensures charts and other UI components can receive the historical data
-  setTimeout(() => {
-    console.log(`Dispatching ${entries.length} historical updates to UI`);
+  // The timeline store takes the whole array at once, with its own timestamps.
+  events.dispatchEvent(new CustomEvent('history', { detail: entries }));
 
-    // Dispatch entries with a small stagger so Smoothie charts can properly render
-    // Smoothie is a real-time streaming library and needs time to establish viewport
-    entries.forEach((entry, index) => {
-      setTimeout(() => {
-        events.dispatchEvent(new CustomEvent('update', { detail: entry }));
-      }, index * 10); // 10ms stagger between each entry
-    });
-  }, 200); // 200ms initial delay to allow components to mount
+  // Hooks that hold the latest entry or the whole history refresh on an
+  // update. One is enough to show them all of it — a moment later, so
+  // components still mounting have their listeners in place, and with
+  // whatever is newest by then, so a live entry is not replaced by an old one.
+  if (entries.length === 0) return;
+  setTimeout(() => events.dispatchEvent(new CustomEvent('update', { detail: history[history.length - 1] })), 200);
 }
 
 /** Put a robot on a station, or release it (empty SSID). The server decides
@@ -541,6 +541,41 @@ function useEventListener(
   }, [type, cb]);
 }
 
+/** What a store outside React (the chart timeline) can listen for. */
+interface BackendEvents {
+  /** One radio status entry, live. */
+  update: StatusEntry;
+  /** The radio status history the server replays on connect. */
+  history: StatusEntry[];
+  telemetry: TelemetryUpdate;
+  matchState: MatchState;
+  radioReconfigure: RadioReconfigureState;
+  robotDropouts: RobotDropoutsState;
+  /** The server's last ten minutes, in answer to {@link useTimelineBackfill}. */
+  timelineSnapshot: TimelineSnapshot;
+}
+
+/** Listen to the socket's messages without a component. Returns the
+ *  function that stops listening. */
+export function onBackendEvent<K extends keyof BackendEvents>(
+  type: K,
+  callback: (detail: BackendEvents[K]) => void,
+): () => void {
+  const listener: EventListener = event => callback((event as CustomEvent<BackendEvents[K]>).detail);
+  events.addEventListener(type, listener);
+  return () => events.removeEventListener(type, listener);
+}
+
+/** What has already arrived, for a store that starts listening late. */
+export function backendSnapshot() {
+  return {
+    history: history as readonly StatusEntry[],
+    matchState: currentMatchState,
+    radioReconfigure: currentRadioReconfigure,
+    robotDropouts: currentRobotDropouts,
+  };
+}
+
 /**
  * One slice of a module-level state. `event` must fire after `getState` has
  * the new value. The caller re-renders only when the slice changes by value,
@@ -599,8 +634,11 @@ let currentSubnetScan: SubnetScanResults | null = null;
 let currentSavedTeams: SavedTeamsState | null = null;
 let currentTeamLinks: TeamLinksState | null = null;
 let currentQueueState: QueueState | null = null;
+/** The server said this page is off the field network, so no queue comes. */
+let currentQueueOffSite = false;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
+let currentRadioReconfigure: RadioReconfigureState | null = null;
 let currentRobotDropouts: RobotDropoutsState | null = null;
 let currentRobotEStops: RobotEStopsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
@@ -821,6 +859,11 @@ export function sendTeamAuthRevokeDevice(team: number, deviceId: string) {
 
 export function sendTeamAuthSetLock(team: number, lock: boolean) {
   ws?.send(JSON.stringify({ type: 'teamAuthSetLock', team, lock }));
+}
+
+/** Let in, or turn away, a device that asked without the team's password. */
+export function sendTeamAuthDecide(id: string, approve: boolean) {
+  ws?.send(JSON.stringify({ type: 'teamAuthDecide', id, approve }));
 }
 
 export function sendAdminPushSubscribe(subscription: PushSubscriptionInput, label?: string) {
@@ -1240,6 +1283,11 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isTimelineSnapshot(detail)) {
+    events.dispatchEvent(new CustomEvent('timelineSnapshot', { detail }));
+    return;
+  }
+
   if (isRobotEStopsState(detail)) {
     currentRobotEStops = detail;
     events.dispatchEvent(new CustomEvent('robotEStops', { detail }));
@@ -1269,6 +1317,18 @@ function receiveMessage(detail: Message) {
 
   if (isQueueState(detail)) {
     handleQueueState(detail);
+    return;
+  }
+
+  if (isRadioReconfigureState(detail)) {
+    currentRadioReconfigure = detail;
+    events.dispatchEvent(new CustomEvent('radioReconfigure', { detail }));
+    return;
+  }
+
+  if (isQueueOffSite(detail)) {
+    currentQueueOffSite = true;
+    events.dispatchEvent(new CustomEvent('queueOffSite'));
     return;
   }
 
@@ -1543,6 +1603,16 @@ export function dismissStopPress(key: string) {
 
 /** One team's saved robot configs (its SSIDs), subscribed while mounted.
  *  `null` = no team yet, nothing fetched. */
+/**
+ * Ask the server for the chart history it has kept: the last ten minutes of
+ * every robot of `team` (or of every robot, with `null`) and of the field.
+ * It arrives once per connection as a `timelineSnapshot`; the live messages
+ * carry on from there.
+ */
+export function useTimelineBackfill(team: number | null): void {
+  useTopic('timeline', team === null ? null : [team]);
+}
+
 export function useSavedTeams({ team }: { team: number | null }): SavedTeamsState | null {
   useTopic('savedTeams', team === null ? undefined : [team], team !== null);
   const [state, setState] = useState<SavedTeamsState | null>(currentSavedTeams);
@@ -1621,6 +1691,21 @@ export function useQueueState(): QueueState | null {
   return state;
 }
 
+/** True when the server won't send this page the queue because it is off
+ *  the field network (the public scoreboard socket says so on connecting). */
+export function useQueueOffSite(): boolean {
+  const [offSite, setOffSite] = useState(currentQueueOffSite);
+
+  useEffect(() => {
+    setOffSite(currentQueueOffSite);
+    const handler = () => setOffSite(true);
+    events.addEventListener('queueOffSite', handler);
+    return () => events.removeEventListener('queueOffSite', handler);
+  }, []);
+
+  return offSite;
+}
+
 export interface ChallengeLeaderboard {
   /** Ranked over `scope`'s runs only. */
   tables: ChallengeLeaderboardTables;
@@ -1633,6 +1718,20 @@ export interface ChallengeLeaderboard {
 
 /** The speed challenge leaderboard, computed by the server. Unlike
  *  `useMatchHistory`, this reaches the read-only /scores socket too. */
+/** The server's word on a radio reconfigure: whether one is running, since
+ *  when, and what it changes. Reaches the read-only /scores socket too.
+ *  Null until the server has said (an older server never does). */
+export function useRadioReconfigure(): RadioReconfigureState | null {
+  const [state, setState] = useState(currentRadioReconfigure);
+  useEffect(() => {
+    setState(currentRadioReconfigure);
+    const handler = (e: Event) => setState((e as CustomEvent<RadioReconfigureState>).detail);
+    events.addEventListener('radioReconfigure', handler);
+    return () => events.removeEventListener('radioReconfigure', handler);
+  }, []);
+  return state;
+}
+
 export function useChallengeLeaderboard(): ChallengeLeaderboard {
   const [leaderboard, setLeaderboard] = useState<ChallengeLeaderboard>(currentChallengeLeaderboard);
 
@@ -1834,6 +1933,11 @@ export function sendStationJoinAlliance(station: StationName, alliance: Alliance
 /** Save a team config to the server without assigning it to a station. */
 export function sendSaveTeam(ssid: string, wpaKey: string) {
   ws?.send(JSON.stringify({ type: 'saveSavedTeam', ssid, wpaKey }));
+}
+
+/** Whether a saved robot connects by itself when its radio is heard. */
+export function sendSetRobotAutoConnect(ssid: string, autoConnect: boolean) {
+  ws?.send(JSON.stringify({ type: 'setRobotAutoConnect', ssid, autoConnect }));
 }
 
 /** Remove a saved team config from the server. */

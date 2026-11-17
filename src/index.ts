@@ -38,7 +38,8 @@ import { TeamAuth } from './teamAuth.js';
 import { TeamLock } from './teamLock.js';
 import { createLockPortal, createTeamAuthHandler } from './teamAuthApi.js';
 import { AdminPushStore } from './adminPushStore.js';
-import { alertForgotPassword } from './teamPasswordAlert.js';
+import { alertAccessRequest } from './teamPasswordAlert.js';
+import { TeamAccessRequests } from './teamAccessRequests.js';
 import { ipv4OfNeighbor } from './neighborAlias.js';
 import { isOnSite } from './onLink.js';
 import {
@@ -55,8 +56,12 @@ import { TelemetryManager } from './telemetryManager.js';
 import { createTelemetryCoalescer } from './telemetryThrottle.js';
 import { MatchAudio } from './matchAudio.js';
 import { SubnetScanner } from './subnetScanner.js';
+import { CameraRelay } from './cameraRelay.js';
+import { handleCameraRequest, type CameraVerdict } from './cameraRelayApi.js';
+import { handleMdnsLookupsRequest } from './mdnsLookupApi.js';
+import { MdnsLookupLog } from './mdnsLookupLog.js';
 import { MdnsReflector } from './mdnsReflector.js';
-import { TeamChecker, setControllerPolicyResolver, controllerBlockReason } from './teamChecker.js';
+import { TeamChecker, setControllerPolicyResolver, controllerBlockReason, qosEnabledFrom } from './teamChecker.js';
 import { RobotTestMonitor } from './robotTestMonitor.js';
 import { RobotLinkWatch } from './robotLinkWatch.js';
 import { describeDropout, RobotDropoutTracker } from './robotDropouts.js';
@@ -74,7 +79,15 @@ import { wireGameLayer } from './game/wire.js';
 import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
-import { RobotWifiScanner, listWirelessInterfaces, type ConnectAttempt } from './robotWifiScan.js';
+import { AutoConnectBatch } from './autoConnectBatch.js';
+import { RobotWifiActivityLog } from './robotWifiActivity.js';
+import {
+  RobotWifiScanner,
+  listWirelessInterfaces,
+  type ConnectAttempt,
+  type KeyFound,
+  type SavedRobot,
+} from './robotWifiScan.js';
 import { SixGhzWatch, type FieldRadio } from './sixGhzWatch.js';
 import { WifiCardPool } from './wifiCard.js';
 import { WifiCards } from './wifiCards.js';
@@ -132,6 +145,7 @@ import {
   isStandInTeam,
   robotLabel,
   type TelemetryUpdate,
+  type RadioHoldReason,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -515,9 +529,49 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   });
   // Cards come and go (USB), and the host can take one over at any time.
   setInterval(() => wifiCards.refresh(), 10_000);
+  // Robots that connected by themselves share one field reconfiguration
+  // (src/autoConnectBatch.ts); the scoreboard counts it down.
+  // What the scan and auto-connect did, for the CSA page.
+  const robotWifiActivity = new RobotWifiActivityLog();
+  const HOLD_WORDS: Record<RadioHoldReason, string> = {
+    match: 'Wi-Fi changes are held during a match',
+    admin: 'the field admin is holding Wi-Fi changes',
+    pending: 'other changes are waiting for Apply now',
+    full: 'the field is full',
+  };
+  const autoConnectBatch = new AutoConnectBatch({
+    stillChecking: () => robotWifi?.arrivalChecks() ?? [],
+    apply: robots => {
+      const names = robots.map(r => r.ssid);
+      appInfo(`Connecting ${names.join(', ')} to the field together`);
+      radioManager
+        .enableTogether(robots.map(r => ({ ssid: r.ssid, wpaKey: r.wpaKey, internetAccess: r.internetAccess })))
+        .then(hold => {
+          const together = names.length > 1 ? `, together with ${names.length - 1} other robot(s)` : '';
+          for (const name of names)
+            robotWifiActivity.add(
+              name,
+              hold
+                ? `Waiting to go on the field: ${HOLD_WORDS[hold]}`
+                : radioManager.deferredCommit
+                  ? `Field Wi-Fi reconfigures for it once robots are disabled${together}`
+                  : `Field Wi-Fi reconfiguring to add it${together}`,
+              hold ? 'bad' : 'good',
+            );
+        })
+        .catch(err => {
+          appError(`Error connecting robots to the field: ${err.message}`);
+          for (const name of names) robotWifiActivity.add(name, `Couldn't add it to the field: ${err.message}`, 'bad');
+        })
+        .finally(() => broadcastRobotWifi(robotWifiState()));
+    },
+    onChange: () => broadcastRobotWifi(robotWifiState()),
+  });
   const robotWifiState = (): RobotWifiScanState => ({
     ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [], stalls: [] }),
     interfaces: listWirelessInterfaces(),
+    ...(autoConnectBatch.upcoming() && { upcoming: autoConnectBatch.upcoming() }),
+    activity: robotWifiActivity.list(),
   });
   // What the field is trying to connect, for spotting a robot that is taking
   // too long to join: every configured station, whether its robot is linked,
@@ -548,6 +602,50 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       return [{ station, ssid: config.ssid, wpaKey: config.wpaKey, since, linked: linkedNow[station] ?? false }];
     });
   };
+  // Robot auto-connect (plans/robot-auto-connect.md): a saved robot heard on
+  // its own network, its passphrase checked on it, goes on the field by
+  // itself — once per arrival, never during a match, unless the team turned
+  // it off for that robot. A robot "placed" is on the field or waiting to go on.
+  const robotPlaced = (ssid: string) =>
+    autoConnectBatch.has(ssid) ||
+    StationNameList.some(s => radioManager.getStationConfig(s)?.ssid === ssid) ||
+    radioManager.getPendingChanges().some(c => c.kind === 'enable' && c.ssid === ssid);
+  const enableHeardRobot = (robot: SavedRobot, why: 'arrived' | 'asked') => {
+    appInfo(
+      why === 'arrived'
+        ? `${robot.ssid} is on and its passphrase checks out — connecting it to the field`
+        : `${robot.ssid}: passphrase checked on the robot — connecting it to the field as the team asked`,
+    );
+    autoConnectBatch.add(robot);
+  };
+  // A passphrase that opens a team's robot, found among the team's others:
+  // save it on the robot (every passphrase stays in the team's history). A name the
+  // team never saved becomes a new robot, connecting by itself unless the
+  // team turned that off. A stalled robot on the field is switched to it.
+  const saveFoundKey = (f: KeyFound) => {
+    const from = f.savedSsid ? savedTeamStore.getTeam(f.savedSsid) : undefined;
+    const existing = savedTeamStore.getTeam(f.robotSsid);
+    const team = teamOfSsid(f.robotSsid);
+    const autoConnect = existing
+      ? undefined
+      : from
+        ? from.autoConnect !== false
+        : !(team !== null && savedTeamStore.robotsOfTeam(team).some(r => r.autoConnect === false));
+    appInfo(
+      existing
+        ? `${f.robotSsid}: its saved passphrase was wrong; found the right one among the team's others and saved it`
+        : `${f.robotSsid}: heard it, and one of the team's passphrases opens it — saved it as a robot of theirs`,
+    );
+    savedTeamStore.saveTeam(f.robotSsid, f.wpaKey, existing?.internetAccess ?? from?.internetAccess, { autoConnect });
+    if (!existing) robotWifiActivity.add(f.robotSsid, `Saved as a new robot of team ${team ?? '?'}`, 'good');
+    const config = f.station ? radioManager.getStationConfig(f.station) : null;
+    if (f.station && config?.ssid === f.robotSsid && config.wpaKey !== f.wpaKey) {
+      robotWifiActivity.add(f.robotSsid, 'Switching the field to the passphrase found for it');
+      radioManager
+        .configure(f.station, { ssid: f.robotSsid, wpaKey: f.wpaKey, internetAccess: config.internetAccess })
+        .catch(err => appError(`Error switching ${f.robotSsid} to its found passphrase: ${err.message}`));
+    }
+  };
   const applyRobotWifiSetting = () => {
     const iface = setupConfigStore.resolveSetting('robotWifiInterface', 'ROBOT_WIFI_INTERFACE').value || undefined;
     if ((robotWifi?.iface ?? undefined) === iface) return;
@@ -560,6 +658,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         card: wifiCardPool.get(iface),
         savedRobots: () => savedTeamStore.getTeams(),
         connectAttempts,
+        teamKeys: team => savedTeamStore.keysForTeam(team),
+        onKeyFound: saveFoundKey,
+        placed: robotPlaced,
+        canAutoConnect: () => matchEngine.getState().phase === 'idle',
+        enableRobot: enableHeardRobot,
+        note: (robot, text, tone) => robotWifiActivity.add(robot, text, tone),
         onChange: () => {
           broadcastRobotWifi(robotWifiState());
           wifiCards.refresh();
@@ -825,6 +929,12 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // saved with is that team's: link it, unless someone unlinked it today. A
   // team with a password is linked only by a device logged in as it, so
   // never automatically. Starts once teamAuth exists, below.
+  // Every passphrase each team is known by: its robots' current ones and
+  // the ones it used before (savedTeamStore keeps them all).
+  const knownKeys = (saved: { ssid: string }[]) => {
+    const teams = new Set(saved.map(c => teamOfSsid(c.ssid)).filter((t): t is number => t !== null));
+    return [...teams].flatMap(team => savedTeamStore.keysForTeam(team).map(wpaKey => ({ ssid: String(team), wpaKey })));
+  };
   const autoLinkStandIns = () => {
     const saved = savedTeamStore.getTeams();
     const today = practiceDayOf(Date.now());
@@ -832,7 +942,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       const robotTeam = teamOfSsid(config.ssid);
       if (robotTeam === null || !isStandInTeam(robotTeam)) continue;
       if (practiceDayOf(config.lastUsedAt) !== today || teamLinkStore.entryFor(robotTeam)) continue;
-      const team = autoLinkTarget(robotTeam, saved);
+      const team = autoLinkTarget(robotTeam, knownKeys(saved));
       if (team === undefined || teamAuth.hasPassword(team)) continue;
       teamLinkStore.link(robotTeam, team, 'auto');
       console.log(`Linked spare robot ${robotTeam} to team ${team} for today: same Wi-Fi passphrase`);
@@ -935,7 +1045,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   savedTeamStore.addListener(autoLinkStandIns);
   autoLinkStandIns();
   const adminPushStore = new AdminPushStore();
-  const leaseIdleMs = () => ((setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000) / 2;
+  const teamRequests = new TeamAccessRequests();
+  // As long as the router holds a quiet laptop's address for it: the lease.
+  const leaseIdleMs = () => (setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000;
   const portalPort = Number(process.env.TEAM_PORTAL_PORT) || 8180;
   const teamLock = vlanInterface
     ? new TeamLock({
@@ -976,8 +1088,9 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     isOnSite: ip => isOnSite(ip, siteNetworksForTeams),
     networkSettled: () => teamLock?.reconcile() ?? Promise.resolve(),
     lockAvailable: () => !!teamLock,
-    alertForgot: (team, address) =>
-      alertForgotPassword(
+    requests: teamRequests,
+    alertRequest: request =>
+      alertAccessRequest(
         {
           postToSlack: text => slackBridge.postToChannel(text),
           pushStore: adminPushStore,
@@ -987,8 +1100,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
             return base ? `${base.replace(/\/+$/, '')}/admin` : undefined;
           },
         },
-        team,
-        address,
+        request,
       ),
   });
 
@@ -1000,6 +1112,34 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // instead of bare IPs. `broadcast` is const-declared below; the callback only
   // fires after async resolutions, well past initialization.
   const hostnameResolver = new HostnameResolver(state => broadcast(state));
+  // What became of each .local lookup the mDNS reflector saw (Network page)
+  const mdnsLookupLog = new MdnsLookupLog({ file: process.env.MDNS_LOOKUP_LOG || 'mdns-lookups.jsonl' });
+  // Robot camera streams, relayed for an inline view on the Network page
+  const cameraRelay = new CameraRelay();
+  const cameraVerdict = (station: StationName, ip: string, port: number): CameraVerdict => {
+    if (!vlanInterface) return { ok: false, status: 503, error: 'The field network is not up' };
+    if (radioManager.getTeamForStation(station) === null) {
+      return { ok: false, status: 404, error: 'No robot on that station' };
+    }
+    const host = subnetScanner.getResults().stations[station]?.hosts.find(h => h.ip === ip && h.alive);
+    if (!host?.services?.some(s => s.kind === 'camera' && s.port === port)) {
+      return { ok: false, status: 404, error: "pFMS hasn't found a camera stream there" };
+    }
+    // An extra copy of a stream counts against a radio's bandwidth cap, and
+    // control packets share that cap: only relay when the robot has none.
+    const limited = qosEnabledFrom(latestCheckResults.get(station)?.checks);
+    if (limited !== false) {
+      return {
+        ok: false,
+        status: 409,
+        error:
+          limited === undefined
+            ? "pFMS hasn't read this robot's radio settings yet, so it can't tell whether a stream copy would slow the robot down. Open the camera directly."
+            : "This robot's radio limits its bandwidth (QoS BW Limit is on), so pFMS won't add a copy of its stream. Open the camera directly.",
+      };
+    }
+    return { ok: true, key: { ifname: bridgeName(station), ip, port } };
+  };
   // Driver Station laptop Wi-Fi reports: the collector script teams run, and
   // where it uploads to (see src/diagReportApi.ts). A report is tagged with
   // the team on the station whose DS spoke from the same address.
@@ -1045,6 +1185,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       handleTeamAvatarRequest,
       handleManifestRequest,
       handleTeamAuthRequest,
+      (req, res) => handleMdnsLookupsRequest(req, res, mdnsLookupLog, staffHttp),
+      (req, res) => handleCameraRequest(req, res, cameraRelay, staffHttp, cameraVerdict),
     ],
     onFirmwareUpdate: (wpaKey, wpaKey24, skipReconfigure) => {
       if (!robotTestMonitor) return;
@@ -1076,6 +1218,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     operatorAuth,
     teamAuth,
     teamLinks: teamLinkStore,
+    teamRequests,
     teamLockInfo: () => ({ idleMs: leaseIdleMs(), available: !!teamLock }),
     adminPush: { store: adminPushStore, vapidPublicKey: () => pushService.publicKey },
     externalAccessStore,
@@ -1119,7 +1262,13 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
-      robotWifi: { getState: robotWifiState, test: station => robotWifi?.test(station) },
+      robotWifi: {
+        getState: robotWifiState,
+        test: station => robotWifi?.test(station),
+        listening: () => !!robotWifi?.listening,
+        requestConnect: ssid => robotWifi?.requestConnect(ssid),
+        cancelRequest: ssid => robotWifi?.cancelRequest(ssid),
+      },
       sixGhzWatch: { getState: sixGhzWatchState },
       wifiCards,
       selfUpdate: {
@@ -1556,13 +1705,17 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       bridgeName,
       process.env.MDNS_EXCLUDE_REQUESTERS,
       process.env.MDNS_LISTEN_INTERFACES?.split(/[,\s]+/).filter(Boolean) ?? [],
+      undefined,
+      mdnsLookupLog,
     );
     reflector.start();
+    mdnsLookupLog.start();
     mdnsReflector = reflector;
   };
   const stopMdnsReflector = () => {
     mdnsReflector?.stop();
     mdnsReflector = undefined;
+    mdnsLookupLog.stop();
   };
   // Refresh after commit — VLAN interfaces only exist after configureNetwork completes
   radioManager.addCommitCompleteListener(() => mdnsReflector?.refreshMemberships());
@@ -2326,6 +2479,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Shutdown signal handlers
   {
     const fullCleanup = () => {
+      cameraRelay.stop();
+      mdnsLookupLog.stop();
       robotTestMonitor?.stop();
       stationTestManager?.stopAll();
       robotPacketCapture?.stop();

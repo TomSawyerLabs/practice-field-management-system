@@ -4,13 +4,14 @@ import { EventEmitter } from 'node:events';
 import {
   answerFor,
   MdnsReflector,
+  parseQuestions,
   PendingQueries,
   stationScope,
   withDnsId,
   withoutUnicastResponse,
 } from './mdnsReflector.js';
 import type { InterfaceSocket } from './mdnsSocket.js';
-import type { StationName } from './types.js';
+import type { MdnsLookupEvent, StationName } from './types.js';
 
 /**
  * The reflector's answer routing: a question forwarded to a VLAN is remembered
@@ -83,6 +84,36 @@ describe('open questions', () => {
     q.add(['radio.local'], stationScope('slot1'), laptopB, 3_000);
     q.prune(4_500);
     expect(q.match(['radio.local'], stationScope('slot1'), 4_500)).toEqual([laptopB]);
+  });
+
+  test('prune reports each question that aged out unanswered, once', () => {
+    const q = new PendingQueries(3_000);
+    q.add(['limelight.local'], stationScope('slot1'), laptopA, 1_000);
+    q.add(['radio.local'], stationScope('slot1'), laptopB, 1_000);
+    q.match(['radio.local'], stationScope('slot1'), 1_100);
+    expect(q.prune(4_500)).toEqual([
+      { name: 'limelight.local', address: laptopA.address, port: 5353, scope: stationScope('slot1') },
+    ]);
+    expect(q.prune(9_000)).toEqual([]);
+  });
+
+  test('a question cleared out by a later ask or answer is still reported', () => {
+    const q = new PendingQueries(3_000);
+    q.add(['limelight.local'], stationScope('slot1'), laptopA, 1_000);
+    q.add(['limelight.local'], stationScope('slot1'), laptopB, 5_000); // prunes laptopA's
+    expect(q.prune(5_100).map(u => u.address)).toEqual([laptopA.address]);
+  });
+});
+
+describe('reading questions', () => {
+  test('each question gives its name, record type and QU bit', () => {
+    const header = Buffer.from([0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0]);
+    const ll = Buffer.from([9, ...Buffer.from('limelight'), 5, ...Buffer.from('local'), 0, 0, 1, 0x80, 1]);
+    const ptr = Buffer.from([4, ...Buffer.from('_ssh'), 4, ...Buffer.from('_tcp'), 0xc0, 22, 0, 12, 0, 1]);
+    expect(parseQuestions(Buffer.concat([header, ll, ptr]))).toEqual([
+      { name: 'limelight.local', type: 'A', qu: true },
+      { name: '_ssh._tcp.local', type: 'PTR', qu: false },
+    ]);
   });
 });
 
@@ -199,12 +230,14 @@ describe('an optional feature must not take the field down', () => {
     excludes,
     teamForStation = (station: StationName) => (station === 'slot1' ? 1234 : null),
     stationForRequester = () => 'slot1',
+    lookups,
   }: {
     sockets?: FakeSocket[];
     listen?: string[];
     excludes?: string;
     teamForStation?: (station: StationName) => number | null;
     stationForRequester?: (ip: string) => StationName | null;
+    lookups?: MdnsLookupEvent[];
   } = {}) {
     const unused = [...sockets];
     spies.push(
@@ -235,6 +268,7 @@ describe('an optional feature must not take the field down', () => {
       excludes,
       listen,
       openSocket,
+      lookups && { record: (event: MdnsLookupEvent) => lookups.push(event) },
     );
     return {
       reflector,
@@ -383,6 +417,56 @@ describe('an optional feature must not take the field down', () => {
     broken = true;
     expect(() => robotPacket(answer)).not.toThrow();
     broken = false;
+  });
+
+  test('the lookup log: forwarded, answered back to the laptop, or why not', () => {
+    const socket = new FakeSocket();
+    const lookups: MdnsLookupEvent[] = [];
+    let placed: StationName | null = 'slot1';
+    const { reflector, robotPacket, tick } = setup({
+      sockets: [socket],
+      lookups,
+      stationForRequester: () => placed,
+    });
+    reflector.start();
+    let now = 1_000_000;
+    spies.push(spyOn(Date, 'now').mockImplementation(() => now));
+
+    socket.emit('message', query, laptop);
+    robotPacket(answer);
+    expect(lookups.map(e => e.kind)).toEqual(['forwarded', 'answered']);
+    expect(lookups[0]).toMatchObject({
+      requester: laptop.address,
+      station: 'slot1',
+      team: 1234,
+      questions: [{ name: 'radio.local', type: 'A', qu: false }],
+    });
+    expect(lookups[1]).toMatchObject({ from: '10.12.34.1', to: ['10.55.0.20:5353'] });
+    expect((lookups[1] as { records: unknown }).records).toEqual([{ name: 'radio.local', resolvedIp: '10.12.34.1' }]);
+
+    // Asked again, and nothing answers this time
+    socket.emit('message', query, laptop);
+    now += 5_000;
+    tick();
+    expect(lookups.at(-1)).toMatchObject({ kind: 'unanswered', station: 'slot1', name: 'radio.local' });
+
+    placed = null;
+    socket.emit('message', query, laptop);
+    expect(lookups.at(-1)).toMatchObject({ kind: 'dropped', reason: 'not placed', requester: laptop.address });
+  });
+
+  test('excluded requesters stay out of the lookup log', () => {
+    const socket = new FakeSocket();
+    const lookups: MdnsLookupEvent[] = [];
+    const { reflector } = setup({
+      sockets: [socket],
+      lookups,
+      excludes: '10.55.0.20',
+      stationForRequester: () => null,
+    });
+    reflector.start();
+    socket.emit('message', query, laptop);
+    expect(lookups).toEqual([]);
   });
 
   test('a bad MDNS_EXCLUDE_REQUESTERS entry is skipped, not fatal', () => {

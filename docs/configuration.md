@@ -24,22 +24,23 @@ service restart — no `systemctl daemon-reload` needed.
 
 ## Networking
 
-| Variable                  | Default  | Description                                                                                                                                                           |
-| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VLAN_INTERFACE`          | _(none)_ | Physical network interface for VLAN configuration (e.g., `eno1`). Required for routing.                                                                               |
-| `FIELD_CONTROL_INTERFACE` | _(none)_ | Where field control (`10.0.100.5/24`) lives when it isn't the trunk's untagged VLAN: `eno1.100` (created if missing) or a separate NIC. Unset: the trunk interface.   |
-| `VLAN_HOST_OCTET`         | `254`    | Host octet for the pFMS host's IP on each team VLAN (range: 220–254)                                                                                                  |
-| `FIELD_PORTS`             | _(none)_ | Physical port bridging config: `VLANID:Name,...` (e.g., `201:Port A,202:Port B`). Requires `VLAN_INTERFACE`.                                                          |
-| `IPTABLES_COMMENT_PREFIX` | `pfms-`  | Prefix for iptables rule comments (used to identify and flush rules)                                                                                                  |
-| `TEAM_PORTAL_PORT`        | `8180`   | Port of the [team network lock](network.md#team-network-lock)'s login portal, which plain HTTP to a locked team's robots is redirected to. Requires `VLAN_INTERFACE`. |
-| `KEEP_NETWORK`            | `false`  | Set to `true` to skip the startup network flush (same effect as the `/run/pfms-keep-network` flag file written by `systemctl reload`)                                 |
-| `MDNS_REFLECTOR`          | `false`  | Set to `true` to enable the mDNS reflector (bridges `.local` queries between main network and team VLANs). Requires `VLAN_INTERFACE`.                                 |
-| `ROBOT_WIFI_INTERFACE`    | _(none)_ | Spare wireless card for the robot Wi-Fi scan (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)). May be the 6 GHz watch's card. The admin page setting wins.   |
-| `SIX_GHZ_WATCH_INTERFACE` | _(none)_ | 6 GHz-capable card for the 6 GHz watch (see [robot-tester.md](robot-tester.md#6-ghz-watch)). May be the robot scan's card. The admin page setting wins.               |
-| `WIFI_COUNTRY`            | `US`     | Wi-Fi country pFMS sets as the host's regulatory domain on every card it runs (6 GHz needs one). The admin page setting wins.                                         |
-| `MDNS_EXCLUDE_REQUESTERS` | _(none)_ | Requester IPs excluded from mDNS reflection                                                                                                                           |
-| `MDNS_LISTEN_INTERFACES`  | _(none)_ | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                                                |
-| `TRUSTED_PROXIES`         | loopback | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                      |
+| Variable                  | Default              | Description                                                                                                                                                           |
+| ------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VLAN_INTERFACE`          | _(none)_             | Physical network interface for VLAN configuration (e.g., `eno1`). Required for routing.                                                                               |
+| `FIELD_CONTROL_INTERFACE` | _(none)_             | Where field control (`10.0.100.5/24`) lives when it isn't the trunk's untagged VLAN: `eno1.100` (created if missing) or a separate NIC. Unset: the trunk interface.   |
+| `VLAN_HOST_OCTET`         | `254`                | Host octet for the pFMS host's IP on each team VLAN (range: 220–254)                                                                                                  |
+| `FIELD_PORTS`             | _(none)_             | Physical port bridging config: `VLANID:Name,...` (e.g., `201:Port A,202:Port B`). Requires `VLAN_INTERFACE`.                                                          |
+| `IPTABLES_COMMENT_PREFIX` | `pfms-`              | Prefix for iptables rule comments (used to identify and flush rules)                                                                                                  |
+| `TEAM_PORTAL_PORT`        | `8180`               | Port of the [team network lock](network.md#team-network-lock)'s login portal, which plain HTTP to a locked team's robots is redirected to. Requires `VLAN_INTERFACE`. |
+| `KEEP_NETWORK`            | `false`              | Set to `true` to skip the startup network flush (same effect as the `/run/pfms-keep-network` flag file written by `systemctl reload`)                                 |
+| `MDNS_REFLECTOR`          | `false`              | Set to `true` to enable the mDNS reflector (bridges `.local` queries between main network and team VLANs). Requires `VLAN_INTERFACE`.                                 |
+| `ROBOT_WIFI_INTERFACE`    | _(none)_             | Spare wireless card for the robot Wi-Fi scan (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)). May be the 6 GHz watch's card. The admin page setting wins.   |
+| `SIX_GHZ_WATCH_INTERFACE` | _(none)_             | 6 GHz-capable card for the 6 GHz watch (see [robot-tester.md](robot-tester.md#6-ghz-watch)). May be the robot scan's card. The admin page setting wins.               |
+| `WIFI_COUNTRY`            | `US`                 | Wi-Fi country pFMS sets as the host's regulatory domain on every card it runs (6 GHz needs one). The admin page setting wins.                                         |
+| `MDNS_EXCLUDE_REQUESTERS` | _(none)_             | Requester IPs excluded from mDNS reflection                                                                                                                           |
+| `MDNS_LISTEN_INTERFACES`  | _(none)_             | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                                                |
+| `MDNS_LOOKUP_LOG`         | `mdns-lookups.jsonl` | Where the reflector logs each lookup and what became of it (rotated at 2 MB, one old copy kept as `.1`)                                                               |
+| `TRUSTED_PROXIES`         | loopback             | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                      |
 
 ## FMS Protocol
 
@@ -95,25 +96,26 @@ variables — see [support.md](support.md#slack-integration).
 
 State files are JSON, written to the working directory by default:
 
-| Variable               | Default                 | Holds                                                                                                                                                        |
-| ---------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ACTIVE_CONFIG_FILE`   | `active-config.json`    | Active radio/station configuration                                                                                                                           |
-| `STAGED_CONFIG_FILE`   | `staged-config.json`    | The pending list — Wi-Fi changes (enable/release, named by robot) waiting for staff to apply them; a release per robot is queued when a match ends           |
-| `MATCH_QUEUE_FILE`     | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
-| `TEAM_PREFS_FILE`      | `team-prefs.json`       | Per-team nudge preferences (Slack, push) and subscribed push devices                                                                                         |
-| `PUSH_KEYS_FILE`       | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
-| `ESTOP_STATE_FILE`     | `estop-state.json`      | The field E-Stop, each station's e-stop and team Stops in force, restored at startup so a restart lifts none of them                                         |
-| `SAVED_TEAMS_FILE`     | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
-| `API_KEYS_FILE`        | `api-keys.json`         | Scoring API keys                                                                                                                                             |
-| `ADMIN_AUTH_FILE`      | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |
-| `OPERATOR_AUTH_FILE`   | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
-| `TEAM_AUTH_FILE`       | `team-auth.json`        | [Team passwords](support.md#team-passwords) (scrypt hashes), each team's logged-in devices and their current addresses, and network locks                    |
-| `ADMIN_PUSH_FILE`      | `admin-push.json`       | Admin devices that get a push notification when a team forgets its password                                                                                  |
-| `EXTERNAL_ACCESS_FILE` | `external-access.json`  | External access tokens                                                                                                                                       |
-| `SUPPORT_ISSUES_FILE`  | `support-issues.json`   | Support issue reports                                                                                                                                        |
-| `SUPPORT_CHATS_FILE`   | `support-chats.json`    | Support chat sessions                                                                                                                                        |
-| `SLACK_CONFIG_FILE`    | `slack-config.json`     | Slack integration configuration                                                                                                                              |
-| `DEPLOY_ANNOUNCE_FILE` | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel, grouped by kind of change. |
+| Variable                | Default                 | Holds                                                                                                                                                        |
+| ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ACTIVE_CONFIG_FILE`    | `active-config.json`    | Active radio/station configuration                                                                                                                           |
+| `STAGED_CONFIG_FILE`    | `staged-config.json`    | The pending list — Wi-Fi changes (enable/release, named by robot) waiting for staff to apply them; a release per robot is queued when a match ends           |
+| `MATCH_QUEUE_FILE`      | `match-queue.json`      | The match queue: upcoming matches, the fill line, and the queue manager's settings                                                                           |
+| `TEAM_PREFS_FILE`       | `team-prefs.json`       | Per-team nudge preferences (Slack, push) and subscribed push devices                                                                                         |
+| `PUSH_KEYS_FILE`        | `push-keys.json`        | Web push (VAPID) key pair, generated on first run — keep it, every subscribed device is bound to the public key                                              |
+| `ESTOP_STATE_FILE`      | `estop-state.json`      | The field E-Stop, each station's e-stop and team Stops in force, restored at startup so a restart lifts none of them                                         |
+| `SAVED_TEAMS_FILE`      | `saved-teams.json`      | Saved team WiFi configs (auto-saved on configure)                                                                                                            |
+| `TEAM_PASSPHRASES_FILE` | `team-passphrases.json` | Every Wi-Fi passphrase each team has used, kept for good; tried on a robot whose saved one doesn't open it                                                   |
+| `API_KEYS_FILE`         | `api-keys.json`         | Scoring API keys                                                                                                                                             |
+| `ADMIN_AUTH_FILE`       | `admin-auth.json`       | Admin passphrase hash (scrypt; an older SHA-256 file is upgraded at its next login, one way) + session tokens                                                |
+| `OPERATOR_AUTH_FILE`    | `operator-auth.json`    | Operator code hash + remembered devices                                                                                                                      |
+| `TEAM_AUTH_FILE`        | `team-auth.json`        | [Team passwords](support.md#team-passwords) (scrypt hashes), each team's logged-in devices and their current addresses, and network locks                    |
+| `ADMIN_PUSH_FILE`       | `admin-push.json`       | Admin devices that get a push notification when a team forgets its password                                                                                  |
+| `EXTERNAL_ACCESS_FILE`  | `external-access.json`  | External access tokens                                                                                                                                       |
+| `SUPPORT_ISSUES_FILE`   | `support-issues.json`   | Support issue reports                                                                                                                                        |
+| `SUPPORT_CHATS_FILE`    | `support-chats.json`    | Support chat sessions                                                                                                                                        |
+| `SLACK_CONFIG_FILE`     | `slack-config.json`     | Slack integration configuration                                                                                                                              |
+| `DEPLOY_ANNOUNCE_FILE`  | `deploy-announced.json` | Last version announced to Slack. On startup with a new git version, commit subjects since then are posted to the support channel, grouped by kind of change. |
 
 Not configurable: `match-history.json`, `usage-data.json`,
 `audio-config.json` (fixed names in the working directory).

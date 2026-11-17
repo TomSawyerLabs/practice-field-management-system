@@ -191,6 +191,12 @@ export class TeamAuth {
     return { ok: true, ...this.addDevice(team, name) };
   }
 
+  /** Log a device in without the password: a field admin approved its
+   *  request (src/teamAccessRequests.ts). Null if the team has no password. */
+  grantDevice(team: number, name: string): { token: string; device: TeamDevice } | null {
+    return this.teams.has(team) ? this.addDevice(team, name) : null;
+  }
+
   /** The device behind a token, or null. A valid token starts its year again. */
   validate(team: number, token: string | undefined): TeamDevice | null {
     if (!token) return null;

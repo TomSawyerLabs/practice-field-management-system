@@ -1,37 +1,39 @@
 import type { AdminPushStore } from './adminPushStore.js';
 import type { PushOutcome, PushPayload } from './pushService.js';
+import type { TeamAccessRequest } from './teamAccessRequests.js';
 import type { PushSubscriptionInput } from './types.js';
 
-export interface ForgotPasswordAlertDeps {
+export interface AccessRequestAlertDeps {
   /** Post to the Slack support channel. False when Slack isn't set up. */
   postToSlack: (text: string) => Promise<boolean>;
   pushStore: AdminPushStore;
   sendPush: (subscription: PushSubscriptionInput, payload: PushPayload) => Promise<PushOutcome>;
-  /** Where admin resets a password: the field's public address, if it has one. */
+  /** Where admin answers: the field's public /admin, if it has one. */
   adminUrl: () => string | undefined;
 }
 
 /**
- * A team pressed "Forgot password": tell the field's admins everywhere they
- * can be reached, Slack and every admin device with push, and say where it
- * went so the page can tell the team whether anyone heard.
+ * A team pressed "Forgot password? Ask an admin": tell the field's admins
+ * everywhere they can be reached, Slack and every admin device with push, and
+ * say where it went so the page can tell the team whether anyone heard.
  */
-export async function alertForgotPassword(
-  deps: ForgotPasswordAlertDeps,
-  team: number,
-  address: string,
+export async function alertAccessRequest(
+  deps: AccessRequestAlertDeps,
+  request: TeamAccessRequest,
 ): Promise<{ slack: boolean; push: number }> {
+  const { team, deviceName, address, note } = request;
   const where = deps.adminUrl();
-  const reset = where ? `<${where}|/admin> → Team logins` : '/admin → Team logins';
+  const admin = where ? `<${where}|/admin> → Team logins` : '/admin → Team logins';
+  const who = note ? ` "${note.replace(/[<>&]/g, '')}"` : '';
   const slack = await deps.postToSlack(
-    `:key: Team ${team} forgot its pFMS team password (asked from ${address}). ` +
-      `Reset it on ${reset}, then they can set a new one from their team page.`,
+    `:key: Team ${team} forgot its pFMS team password and asks to let a device in:${who} ` +
+      `(${deviceName} at ${address}). Approve or deny it on ${admin}.`,
   );
 
   let push = 0;
   const payload: PushPayload = {
-    title: `Team ${team} forgot its password`,
-    body: `Reset it on /admin → Team logins. Asked from ${address}.`,
+    title: `Team ${team} asks to be let in`,
+    body: `${note ? `${note}, ` : ''}${deviceName} at ${address}. Approve or deny on /admin.`,
     url: where ?? '/admin',
     tag: `team-password-${team}`,
   };

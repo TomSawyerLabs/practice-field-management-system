@@ -114,7 +114,8 @@ function LinkForm({ robotTeam }: { robotTeam: number }) {
 
 /** The real team has a password: this device logs in as it first. */
 function LinkWithLogin({ robotTeam, team }: { robotTeam: number; team: number }) {
-  const { status, act } = useTeamLogin(team);
+  const login = useTeamLogin(team);
+  const { status } = login;
   if (!status) return null;
   if (status.loggedIn) {
     return (
@@ -128,7 +129,7 @@ function LinkWithLogin({ robotTeam, team }: { robotTeam: number; team: number })
       <Typography variant="body2" sx={{ mb: 1 }}>
         Team {team} has a password. Log in as {team} on this device to link this robot.
       </Typography>
-      <TeamLoginForm team={team} onLogin={password => act('login', { password })} />
+      <TeamLoginForm team={team} login={login} />
     </Box>
   );
 }

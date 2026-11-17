@@ -114,6 +114,7 @@ export function LeaderboardTvPage() {
           }}
         >
           <ControlChip icon="📊" label="scoreboard" onClick={() => switchScoreboardView('scoreboard')} />
+          <ControlChip icon="📋" label="queue" onClick={() => switchScoreboardView('queue')} />
           {window.__castReady && (
             <google-cast-launcher style={{ width: 24, height: 24, cursor: 'pointer', opacity: 0.5 }} />
           )}

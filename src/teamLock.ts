@@ -56,7 +56,7 @@ export interface TeamLockOptions {
   teamsOnBridges: () => Partial<Record<StationName, number>>;
   bridgeName: (station: StationName) => string;
   portalPort: number;
-  /** How long a binding lasts with no traffic: half the guest DHCP lease. */
+  /** How long a binding lasts with no traffic: the guest DHCP lease. */
   idleMs: () => number;
 }
 

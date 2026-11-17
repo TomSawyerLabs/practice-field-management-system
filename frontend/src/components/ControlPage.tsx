@@ -24,10 +24,9 @@ import {
   sendNewConfig,
   sendSaveTeam,
   sendEnableSavedRobot,
+  sendSetRobotAutoConnect,
   sendInternetToggle,
   useLatestTelemetry,
-  useUpdateCallback,
-  useTelemetryCallback,
   useNetworkStats,
   useSubnetScan,
   useMdnsActivity,
@@ -49,6 +48,7 @@ import {
   sendStationClearEmptyMatch,
   serverToBrowserTime,
   useTeamsFiledTogether,
+  useTimelineBackfill,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -77,11 +77,14 @@ import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
+import { useReconfigProgress } from '../hooks/useReconfigProgress';
 import { StationName, StationNameList, SavedTeamClientConfig, PortConfig, isStandInTeam } from '../../../src/types';
 import { createHash } from './cryptoUtils';
-import { StationChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
+import { TimelineChart } from './TimelineChart';
+import { startLiveTimeline } from '../timeline/live';
 import { CopyToClipboard } from './CopyToClipboard';
 import IconButton from '@mui/material/IconButton';
+import Link from '@mui/material/Link';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import PublicIcon from '@mui/icons-material/Public';
 import PublicOffIcon from '@mui/icons-material/PublicOff';
@@ -94,7 +97,14 @@ import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import TableHead from '@mui/material/TableHead';
 import Alert from '@mui/material/Alert';
-import { formatBytes, describeIp, formatAge, hostTeamsInEffect, idleReleaseMinutes } from '../../../src/utils';
+import {
+  formatBytes,
+  describeIp,
+  formatAge,
+  hostTeamsInEffect,
+  idleReleaseMinutes,
+  robotNameOf,
+} from '../../../src/utils';
 import { parkedHostStations } from '../utils/fieldIssues';
 
 // Helper function to format numbers with thin space as thousands separator
@@ -319,10 +329,11 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const loginTeam = useTeamsFiledTogether(teamNumber)[0] ?? teamNumber;
   const latest = useLatest();
 
-  // Collect chart data from the page root, so the charts are already full
-  // when the Radio tab is opened.
-  useUpdateCallback(handleStatusUpdate);
-  useTelemetryCallback(handleTelemetryUpdate);
+  // Collect chart data from the page root, so the chart is already full
+  // when the Radio tab is opened — starting from what the server kept of the
+  // team's robots before this page was.
+  useEffect(startLiveTimeline, []);
+  useTimelineBackfill(teamNumber);
 
   // Radio card toggles live here so they survive switching tabs.
   const [chartMode, setChartMode] = useState(true);
@@ -372,6 +383,14 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   }, [activeStations, currentSsid, showRobot]);
 
   const selectedStation = activeStations.get(currentSsid) ?? null;
+  // The team's other robot on the field, for the Radio tab's chart to lay
+  // over the selected one.
+  const otherRobot = useMemo(() => {
+    for (const [ssid, station] of activeStations) {
+      if (ssid !== currentSsid) return { station, name: robotNameOf(ssid) };
+    }
+    return null;
+  }, [activeStations, currentSsid]);
 
   // Route preference: which robot this device's traffic (and .local lookups)
   // goes to. Driving is separate — a drive session for this laptop, which
@@ -433,6 +452,11 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
     tabChoice && !(CONTROL_TABS.find(t => t.id === tabChoice)!.needsRobot && !selectedStation) ? tabChoice : 'robots';
   const selectedLinked = selectedStation ? !!latest?.radioUpdate?.stationStatuses[selectedStation]?.isLinked : false;
   const checkResults = useTeamCheckResults(selectedStation);
+
+  // While the radio reconfigures every robot drops off. Point the team at
+  // the Radio tab's dot, which turns green when theirs is back.
+  const { isConfiguring } = useReconfigProgress();
+  const radioCallout = isConfiguring && !!selectedStation;
 
   // Status dots on the tabs, so a dropped link or an equipment problem shows from any tab
   const tabDot = (id: ControlTab): string | null => {
@@ -532,7 +556,25 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           <Tab
             key={t.id}
             value={t.id}
-            label={t.label}
+            label={
+              t.id === 'radio' ? (
+                <Tooltip
+                  open={radioCallout}
+                  arrow
+                  placement="top"
+                  slotProps={{ popper: { sx: { zIndex: 'appBar' } } }}
+                  title={
+                    <Box onClick={() => selectTab('radio')} sx={{ cursor: 'pointer', fontSize: '0.8rem', p: 0.25 }}>
+                      👀 Watch here: this dot turns green when your robot is on the field Wi-Fi
+                    </Box>
+                  }
+                >
+                  <span>{t.label}</span>
+                </Tooltip>
+              ) : (
+                t.label
+              )
+            }
             disabled={t.needsRobot && !selectedStation}
             icon={(() => {
               const dot = tabDot(t.id);
@@ -575,6 +617,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           </Typography>
           <RadioStatusCard
             station={selectedStation}
+            robotName={robotNameOf(currentSsid)}
+            otherRobot={otherRobot}
             chartMode={chartMode}
             onChartModeChange={setChartMode}
             internetAccess={internetAccess[selectedStation] ?? false}
@@ -666,6 +710,8 @@ function RobotList({
     teamConfigs.map(c => [c.ssid, robotRowWifi(scan, c.ssid, activeStations.get(c.ssid) ?? null)]),
   );
   const anyOnAir = [...rowWifi.values()].some(w => w?.onAir);
+  // Robots connect by themselves only while pFMS can hear them.
+  const listening = scan?.status === 'running' && !scan.problem;
 
   // Passphrase verification state
   const [showVerifyField, setShowVerifyField] = useState(false);
@@ -792,6 +838,7 @@ function RobotList({
                 wifi={rowWifi.get(config.ssid) ?? null}
                 quietEnable={anyOnAir && !rowWifi.get(config.ssid)?.onAir}
                 onFixPassphrase={() => openAddForm(suffixOf(config.ssid), true)}
+                listening={listening}
               />
             ))}
           </Box>
@@ -897,6 +944,7 @@ function RobotRow({
   wifi,
   quietEnable,
   onFixPassphrase,
+  listening,
 }: {
   config: SavedTeamClientConfig;
   isActive: boolean;
@@ -916,6 +964,8 @@ function RobotRow({
   quietEnable: boolean;
   /** Open the form to re-enter this robot's passphrase */
   onFixPassphrase: () => void;
+  /** The robot Wi-Fi scan is listening, so robots connect by themselves */
+  listening: boolean;
 }) {
   const [pendingDrive, setPendingDrive] = useState(false);
   const [showEnableHint, setShowEnableHint] = useState(false);
@@ -1157,6 +1207,24 @@ function RobotRow({
           </Box>
           <Typography variant="caption" color="text.secondary">
             Last used {formatAge(config.lastUsedAt)}
+            {listening && (
+              <>
+                {' · '}
+                {config.autoConnect === false ? "Doesn't connect by itself" : 'Connects by itself when turned on'}
+                {' · '}
+                <Link
+                  component="button"
+                  variant="caption"
+                  sx={{ verticalAlign: 'baseline' }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    sendSetRobotAutoConnect(config.ssid, config.autoConnect === false);
+                  }}
+                >
+                  {config.autoConnect === false ? 'Turn on' : 'Turn off'}
+                </Link>
+              </>
+            )}
           </Typography>
           {wifi?.line && (
             <Typography variant="caption" sx={{ display: 'block', color: `${wifi.line.severity}.main` }}>
@@ -1239,13 +1307,14 @@ function RobotRow({
             </>
           ) : (
             // With the field full this puts the robot in line (see FieldFullAlert).
+            // Waiting for its passphrase check: enabling skips the check.
             <Button
               size="small"
-              variant={quietEnable ? 'outlined' : 'contained'}
+              variant={quietEnable || wifi?.awaiting ? 'outlined' : 'contained'}
               disabled={configCooldown}
               onClick={e => handleEnable(e)}
             >
-              Enable Robot
+              {wifi?.awaiting ? 'Enable anyway' : 'Enable Robot'}
             </Button>
           )}
         </Box>
@@ -1390,6 +1459,8 @@ function AddRobotForm({
   const [suffix, setSuffix] = useState(initialSuffix);
   const [passphrase, setPassphrase] = useState('');
   const allActiveSSIDs = useAllActiveSSIDs();
+  const scan = useRobotWifiScan();
+  const checksFirst = scan?.status === 'running' && !scan.problem;
 
   const ssid = suffix ? `${teamNumber}-${suffix}` : `${teamNumber}`;
   const passphraseRegex = /^[a-zA-Z0-9]{8,16}$/;
@@ -1463,10 +1534,18 @@ function AddRobotForm({
         error={!!passphrase && !isValid}
         sx={{ mb: 2 }}
       />
-      {fixing && (
+      {fixing ? (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           Save, and pFMS tries it on your robot within a few seconds — its row says whether it works.
         </Typography>
+      ) : (
+        checksFirst &&
+        !duplicateStation && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            pFMS checks the passphrase on your robot first and connects it as soon as it works, so turn the robot on.
+            Next time, it connects by itself when you turn it on.
+          </Typography>
+        )
       )}
       <Box sx={{ display: 'flex', gap: 1 }}>
         {fixing && !duplicateStation ? (
@@ -1675,12 +1754,16 @@ function StationNetwork({ station }: { station: StationName }) {
  */
 function RadioStatusCard({
   station,
+  robotName,
+  otherRobot,
   chartMode,
   onChartModeChange,
   internetAccess,
   onInternetAccessChange,
 }: {
   station: StationName;
+  robotName: string;
+  otherRobot: { station: StationName; name: string } | null;
   chartMode: boolean;
   onChartModeChange: (chartMode: boolean) => void;
   internetAccess: boolean;
@@ -1786,19 +1869,7 @@ function RadioStatusCard({
         )}
 
         {chartMode && stationSsid ? (
-          <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-            <StationChart station={station} metric="signalLevels" height="60px" />
-            <StationChart station={station} metric="snr" height="60px" />
-            <StationChart station={station} metric="rates" height="60px" />
-            <StationChart station={station} metric="packets" height="60px" />
-            <StationChart station={station} metric="bytes" height="60px" />
-            <StationChart station={station} metric="bandwidth" height="60px" />
-            <StationChart station={station} metric="dataAge" height="60px" />
-            <StationChart station={station} metric="quality" height="60px" />
-            <StationChart station={station} metric="batteryVoltage" height="60px" />
-            <StationChart station={station} metric="dsCpuPercent" height="60px" />
-            <StationChart station={station} metric="robotStatus" height="60px" />
-          </Box>
+          <TimelineChart station={station} name={robotName} other={otherRobot} />
         ) : stationSsid && isLinked ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {/* Signal Levels */}

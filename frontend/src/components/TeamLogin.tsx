@@ -5,6 +5,7 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Stack from '@mui/material/Stack';
@@ -26,6 +27,8 @@ export interface TeamLoginStatus {
   token?: string;
   devices?: TeamDeviceInfo[];
   address: string;
+  /** This browser's request to be let in by an admin, while it waits or after a no. */
+  request?: { state: 'pending' | 'denied'; createdAt: number; note?: string };
 }
 
 interface TeamDeviceInfo {
@@ -105,6 +108,15 @@ export function useTeamLogin(team: number) {
   }, [refresh, publicKey]);
   useTeamAuthRejected(team, () => void refresh());
 
+  // Waiting for an admin to let this browser in: look every few seconds.
+  // The answer, a login cookie, only comes back through this API.
+  const waiting = status?.request?.state === 'pending';
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => void refresh(), 3000);
+    return () => clearInterval(timer);
+  }, [waiting, refresh]);
+
   const act = useCallback(
     async (action: string, body?: object): Promise<string | null> => {
       const r = await call(team, action, body);
@@ -115,77 +127,118 @@ export function useTeamLogin(team: number) {
     [team, apply],
   );
 
-  return { status, loadError, refresh, act };
+  return { status, loadError, refresh, act, apply };
 }
 
-/** The password box, with "Forgot password". */
-export function TeamLoginForm({
-  team,
-  onLogin,
-  autoFocus,
-}: {
-  team: number;
-  onLogin: (password: string) => Promise<string | null>;
-  autoFocus?: boolean;
-}) {
+export type TeamLoginHook = ReturnType<typeof useTeamLogin>;
+
+/** The password box, with "Forgot password?": ask a field admin to let this
+ *  device in instead. */
+export function TeamLoginForm({ team, login, autoFocus }: { team: number; login: TeamLoginHook; autoFocus?: boolean }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [forgot, setForgot] = useState<string | null>(null);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [reached, setReached] = useState<string | null>(null);
+  const request = login.status?.request;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setError(await onLogin(password));
+    setError(await login.act('login', { password }));
     setBusy(false);
   };
 
-  const askAdmin = async () => {
-    setForgot('Asking…');
+  const askAdmin = async (e: FormEvent) => {
+    e.preventDefault();
+    setAsking(true);
+    setError(null);
     try {
-      const res = await fetch(`/api/team-auth/${team}/forgot`, {
+      const res = await fetch(`/api/team-auth/${team}/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        credentials: 'same-origin',
+        body: JSON.stringify({ note }),
       });
       const json = await res.json();
-      if (!res.ok) setForgot(json.error ?? 'Could not reach the field admins');
-      else if (json.already) setForgot('The field admins were already told. Find one if nobody has answered.');
-      else if (json.slack || json.push > 0)
-        setForgot('The field admins have been told. One of them can reset the password; then set a new one here.');
-      else setForgot("The field can't message its admins. Find one in person to reset the password.");
+      if (!res.ok) {
+        setError(json.error ?? 'Could not reach the field admins');
+        return;
+      }
+      login.apply(json);
+      setReached(
+        json.already
+          ? 'The field admins were told a few minutes ago and can see this request too.'
+          : json.slack || json.push > 0
+            ? 'The field admins have been told.'
+            : "The field can't message its admins, so find one: they'll see this request on their page.",
+      );
     } catch {
-      setForgot('Could not reach the field. Find a field admin in person.');
+      setError('Could not reach the field. Find a field admin in person.');
+    } finally {
+      setAsking(false);
     }
   };
 
+  if (request?.state === 'pending') {
+    return (
+      <Alert severity="info" icon={<CircularProgress size={20} />}>
+        Waiting for a field admin to let this device in{request.note ? ` (asked as "${request.note}")` : ''}.{' '}
+        {reached ?? 'The field admins have been asked.'} This page carries on by itself once they say yes.
+      </Alert>
+    );
+  }
+
   return (
-    <Box component="form" onSubmit={submit}>
-      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'flex-start' } }}>
-        <TextField
-          type="password"
-          label={`Team ${team} password`}
-          size="small"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          autoFocus={autoFocus}
-          autoComplete="current-password"
-          error={!!error}
-          helperText={error ?? ' '}
-          sx={{ flexGrow: 1 }}
-        />
-        <Button type="submit" variant="contained" disabled={busy || !password}>
-          Log in
-        </Button>
-        <Button onClick={askAdmin} disabled={forgot === 'Asking…'}>
-          Forgot password
-        </Button>
-      </Stack>
-      {forgot && forgot !== 'Asking…' && (
-        <Alert severity="info" sx={{ mt: 1 }}>
-          {forgot}
+    <Box>
+      {request?.state === 'denied' && (
+        <Alert severity="warning" sx={{ mb: 1.5 }}>
+          A field admin turned down this device&apos;s request. If that&apos;s a mistake, find one in person.
         </Alert>
       )}
+      <Box component="form" onSubmit={submit}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'flex-start' } }}>
+          <TextField
+            type="password"
+            label={`Team ${team} password`}
+            size="small"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            autoFocus={autoFocus}
+            autoComplete="current-password"
+            error={!!error}
+            helperText={error ?? ' '}
+            sx={{ flexGrow: 1 }}
+          />
+          <Button type="submit" variant="contained" disabled={busy || !password}>
+            Log in
+          </Button>
+          {!forgotOpen && <Button onClick={() => setForgotOpen(true)}>Forgot password?</Button>}
+        </Stack>
+      </Box>
+      <Collapse in={forgotOpen}>
+        <Box component="form" onSubmit={askAdmin} sx={{ mt: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            A field admin can let this device in without the password. Once in, you can set a new one from the team
+            page.
+          </Typography>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ alignItems: { sm: 'flex-start' } }}>
+            <TextField
+              label="Who's asking? (optional)"
+              placeholder="Your name and role"
+              size="small"
+              value={note}
+              onChange={e => setNote(e.target.value.slice(0, 120))}
+              sx={{ flexGrow: 1 }}
+            />
+            <Button type="submit" variant="outlined" disabled={asking}>
+              {request?.state === 'denied' ? 'Ask again' : 'Ask an admin to let me in'}
+            </Button>
+          </Stack>
+        </Box>
+      </Collapse>
     </Box>
   );
 }
@@ -261,7 +314,8 @@ function NewPasswordForm({
  * isn't logged in: the settings won't work until it is. Stops still do.
  */
 export function TeamLoginBanner({ team }: { team: number }) {
-  const { status, act } = useTeamLogin(team);
+  const login = useTeamLogin(team);
+  const { status } = login;
   const [open, setOpen] = useState(false);
   if (!status?.passwordSet || status.loggedIn) return null;
   return (
@@ -281,7 +335,7 @@ export function TeamLoginBanner({ team }: { team: number }) {
       {status.lock ? ', and to reach your robots' : ''}. Stop buttons work either way.
       <Collapse in={open}>
         <Box sx={{ mt: 1.5 }}>
-          <TeamLoginForm team={team} autoFocus onLogin={password => act('login', { password })} />
+          <TeamLoginForm team={team} autoFocus login={login} />
         </Box>
       </Collapse>
     </Alert>
@@ -308,7 +362,8 @@ export function TeamLoginChip({ team }: { team: number }) {
  * team page's Network tab. Optional: most teams never set one.
  */
 export function TeamPasswordCard({ team }: { team: number }) {
-  const { status, loadError, act } = useTeamLogin(team);
+  const login = useTeamLogin(team);
+  const { status, loadError, act } = login;
   const [changing, setChanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lockBusy, setLockBusy] = useState(false);
@@ -361,7 +416,7 @@ export function TeamPasswordCard({ team }: { team: number }) {
               Log in to change Team {team}&apos;s settings from this device
               {status.lock ? ' and reach its robots' : ''}.
             </Typography>
-            <TeamLoginForm team={team} onLogin={password => run('login', { password })} />
+            <TeamLoginForm team={team} login={login} />
           </>
         )}
 
@@ -451,7 +506,9 @@ export function TeamPasswordCard({ team }: { team: number }) {
         )}
         {status.passwordSet && (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-            This device is at {status.address}. Forgot the password? A field admin can reset it.
+            This device is at {status.address}.
+            {!status.loggedIn &&
+              ' Forgot the password? A field admin can let this device in, and then you can change it here.'}
           </Typography>
         )}
       </CardContent>

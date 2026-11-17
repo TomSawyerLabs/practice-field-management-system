@@ -223,11 +223,10 @@ filter  INPUT -p tcp --dport <portal> -m conntrack --ctstate DNAT -j ACCEPT   (p
   `LAN_URL`, it uses the address and port the laptop just reached the host at.
 - **A laptop is let through** whenever its logged-in browser asks pFMS about
   its team (the team page, `/login`), at the address pFMS sees it at. It stays
-  let through until **half the guest network's DHCP lease** passes with no
-  traffic from it (`/admin` → Access → Team Logins, default 24 h, so 12 h). A
-  client renews at half its lease, so no other device can be handed the
-  address sooner. Another device logging in from the same address, a log out,
-  or a reset ends it at once.
+  let through until **the guest network's DHCP lease** passes with no traffic
+  from it (`/admin` → Access → Team Logins, default 24 h): as long as the
+  router keeps that address for it. Another device logging in from the same
+  address, a log out, or a reset ends it at once.
 - Rules follow the stations: a commit, a team leaving, unlocking or a reset
   rebuilds them. A graceful reload keeps them, and nothing is changed until
   the bridges have been read back. A full stop removes them.
@@ -468,14 +467,40 @@ first/last-seen timestamps, and broadcast to frontend clients. Results
 appear in the **Discovered Devices** section on the Network page and are
 cleared when station config is cleared.
 
-Each device is also asked whether it serves a web page on port 80 (`curl
-http://<ip>/`, any HTTP status counts) when it first appears or comes back,
-then once a minute while it stays up. Those that answer get a **Web** link on
-the Network page that opens `http://<ip>/` in a new tab: the radio's and
-roboRIO's status pages, a coprocessor's camera UI. The link goes from your
-browser, so it only works from a network routed to team subnets (the guest
-Wi-Fi, per the site router's static route above). For a team on two stations
-the browser reaches whichever robot the routing table picks.
+Each team device is also asked what it offers when it first appears or comes
+back, then once a minute while it stays up (`src/deviceServices.ts`). The
+probes run beside the sweeps, at most 24 curls at a time, so a slow device
+never holds up the 10-second scan. Each one shows on the Network page as a
+chip next to the device:
+
+| Chip                      | Found by                                                    | Tap it to                     |
+| ------------------------- | ----------------------------------------------------------- | ----------------------------- |
+| **Radio**, **roboRIO**, … | Any HTTP reply on port 80, named from the page title/server | Open `http://<ip>/`           |
+| **PhotonVision**          | An HTML page on 5800 (not asked of a Limelight)             | Open `http://<ip>:5800/`      |
+| **Camera 1181**…**1190**  | A TCP connection only; a stream is never requested          | Open that CameraServer stream |
+| **SSH**                   | A TCP connection to 22                                      | Copy `ssh <ip>`               |
+
+A Limelight serves its UI on 80 (and 5801), and its 5800 is the camera stream,
+so 5800 is skipped once port 80 says "Limelight". Page probes stop after
+64 KB (`--max-filesize`), so a stream answering where a page was expected costs
+a moment of video, no more. 443 isn't probed: on a roboRIO it is the same page
+behind a self-signed certificate.
+
+**Watch** beside a camera chip shows the stream inline, relayed by pFMS
+(`GET /api/camera`, `src/cameraRelay.ts`, on site only). The relay works on the
+https site (the browser never fetches `http://10.TE.AM.x` itself), sends one
+copy of the stream over the robot's Wi-Fi however many people watch (up to 8
+per camera, 6 cameras at once), and is pinned to the station's bridge. It stops
+a few seconds after the last viewer leaves. pFMS relays only cameras the scan
+found, and only when the robot's radio reports its bandwidth limit (QoS BW
+Limit) off: with the limit on, an extra copy of the stream would compete with
+the robot's control packets for the capped link. Otherwise the reason shows in
+place of the picture, and the plain link still works.
+
+The links go from your browser, not from pFMS, so they only work from a network
+routed to team subnets (the guest Wi-Fi, per the site router's static route
+above). For a team on two stations the browser reaches whichever robot the
+routing table picks.
 
 Each sweep is pinned to the station's bridge (`fping -I br-slotN`), and so is
 the HTTP in the team checks (`curl --interface br-slotN`). A team on two
@@ -546,6 +571,22 @@ It is a per-laptop bridge, not a flood:
   (`-m addrtype ! --src-type LOCAL`). Masquerading them did nothing useful,
   and conntrack then dropped a pinned socket's query (EPERM) when the same
   flow had already gone out the other bridge of a two-robot team.
+
+### Lookup Log
+
+Every lookup the reflector sees is logged with what became of it: asked of a
+station's robot, answered (by which device, and to which laptops), unanswered
+after 3 s, not sent (the device isn't tied to a robot, the station has no
+robot, or its socket isn't open), or an answer that couldn't be delivered. The
+Network page shows the newest under **Name lookups (.local)**, from
+`GET /api/mdns-lookups` (on site only). Lookups from devices pFMS can't tie to
+a robot, mostly the site router's own mDNS proxy, are hidden there by default.
+
+The same lookup repeated within 30 s is counted rather than written again, and
+the next one written carries the count. The log is `mdns-lookups.jsonl`
+(`MDNS_LOOKUP_LOG`), rotated at 2 MB with one old copy, and read back at start,
+so a deploy doesn't lose it. Requesters in `MDNS_EXCLUDE_REQUESTERS` are left
+out.
 
 The reflector is optional, so it never takes pFMS down with it. A port it
 can't bind or a multicast group it can't join (a host with no default route

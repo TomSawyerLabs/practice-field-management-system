@@ -8,7 +8,7 @@ import Container from '@mui/material/Container';
 import { StationNameList } from '../../../src/types';
 
 createRoot(document.getElementById('root')!).render(
-  <WrapAll>
+  <WrapAll reconfigBanner>
     <Container maxWidth="xl" sx={{ py: 2 }}>
       <DsClientNotice />
       <OperatorBar />

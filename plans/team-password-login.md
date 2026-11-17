@@ -1,8 +1,9 @@
 # Team passwords and network lock
 
 **Status: built and verified off the field (unit tests, headless browser,
-real-kernel netns test). Not deployed. Waiting on the user for the deploy
-checks below.**
+real-kernel netns test). Read-only steamboat checks passed (2026-11-16). Merged
+into local master 2026-11-16 (`c2c6472`), not deployed. The deploy thread
+takes it from there; the first real lock test needs the user's go-ahead.**
 
 ## Goal
 
@@ -77,8 +78,7 @@ what it does today.
   redirect, no typing.
 - A binding ends when: another device logs in from that address, the device is
   logged out or reset, or no traffic from that address has hit its rule for
-  half the guest DHCP lease (read from the rule's packet counters every
-  minute).
+  the guest DHCP lease (read from the rule's packet counters every minute).
 - Chain layout (custom chains, so order is fixed and a rebuild is one flush):
   `pfms-lock-<team>`: reply packets of robot-initiated flows return
   (`--ctdir REPLY`), the team's own subnet returns, each bound address returns
@@ -102,13 +102,24 @@ what it does today.
 - `/login/1234`: password box, "Forgot password", and the return URL.
 - `/admin` teams table: password set? lock on? devices; **Reset password**.
 
-### Forgot password
+### Forgot password: ask an admin to let this device in
 
-- Button on the login page and the team card. One alert per team per 10 min.
-- Sent to Slack (support channel) and to every admin push device, whichever are
-  set up. Text: team, time, requesting address, link to `/admin`.
-- New: `/admin` can subscribe its device to push (admin push devices list).
-  If neither channel is set up, the button says to find a field admin in person.
+- "Forgot password?" on the login form opens "Who's asking? (optional)" and
+  **Ask an admin to let me in** (`POST /api/team-auth/<team>/request`). The
+  request is in memory (`src/teamAccessRequests.ts`), 30 min, at most 5
+  waiting per team. Its secret is an HttpOnly cookie `pfms_teamreq_<team>`,
+  so only the asking browser can collect the login.
+- `/admin` → Team Logins shows it at the top, **Let in** / **Deny**
+  (`teamAuthDecide`, admin tier). The waiting page polls its status every 3 s;
+  the GET that sees the approval mints a device for that browser once
+  (`TeamAuth.grantDevice`), sets the login cookie and lets its address through.
+  Then the team changes the password from its page if it wants.
+- Admins are told by Slack (support channel) and every admin push device, at
+  most once per team per 10 min. `/admin` can subscribe its device to push.
+  If neither channel is set up, the page says to find a field admin.
+- **Here now** (user, 2026-11-16): the card lists teams at the field first
+  (pending request, any use of their login in the last 3 h, or on a station),
+  then "Other teams with a password (N)" collapsed, with a team-number search.
 
 ## What it won't do
 
@@ -129,10 +140,17 @@ what it does today.
   team, or admin. Stops, queue, ready, joining a match and viewing stay open.
 - **An address binding follows the guest network's DHCP lease** (the user,
   2026-11-16: visits run 8 h, sometimes to 2 AM, so 4 h is too short). A
-  binding ends after **half the lease time** with no traffic from it. Reason: a
-  client renews at half its lease, so an address seen in use at time T can't be
-  handed to another device before T + lease/2. The lease time is a setting
-  (default 24 h, UniFi's default), so the default idle limit is 12 h.
+  binding ends after **the full lease** with no traffic from it (the user,
+  2026-11-16: "why half? make it until the end?"). Half was the strict bound (a
+  client renews at half its lease, so its lease may end lease/2 after it was
+  last seen); the full lease accepts that small window, which is within the
+  "address can be borrowed" limit the user already accepted. Setting default
+  24 h (UniFi's default).
+- **Forgot password = a request an admin approves**, not a reset (the user,
+  2026-11-16). Reset stays for when a team wants everything wiped.
+- **The address-based limit is accepted** (the user, 2026-11-16: hardening it
+  would take a lot). So is a DS laptop needing a login when locked.
+- **Merge only when master's other thread is done** (the user, 2026-11-16).
 
 ## Open questions for the user
 
@@ -168,12 +186,12 @@ what it does today.
 - Frontend `eslint` is broken repo-wide (`typescript-eslint` not installed),
   pre-existing and not in the commit hooks.
 
-## Deploy checks (need the user)
+## Deploy checks
 
-1. Read-only on steamboat: `iptables --version`, and that the INPUT policy or
-   any host firewall allows the portal port (pFMS adds an INPUT accept for
-   redirected traffic only, `pfms-lockportal`).
-2. `LAN_URL` is set on steamboat (`http://pfms.tsl/`), so the portal sends
+1. Done 2026-11-16 (read-only): steamboat has `iptables v1.8.11 (nf_tables)`,
+   the same flavour as the WSL test; `-P INPUT ACCEPT`; port 8180 free.
+2. Done: `/etc/pfms/environment` has `LAN_URL=http://pfms.tsl/` and
+   `VLAN_INTERFACE=eno1`, so the lock is available and the portal sends
    laptops to the right place.
 3. First real use: a test team on a station, lock on, one laptop logged in and
    one not. Needs the user's go-ahead (real field hardware).
@@ -194,8 +212,17 @@ what it does today.
 - [x] Headless browser check (sandboxed backend, fake radio): set password,
       banner, wrong password, forgot, login + return, open-redirect refused,
       `/admin` card
+- [x] Full lease instead of half (user, 2026-11-16)
+- [x] Ask-an-admin requests with Let in / Deny, and "Here now" on `/admin`
+      (unit tests, headless browser: ask → admin lets in → page carries on to
+      `/1234#network`)
+- [x] Read-only steamboat checks (deploy checks 1–2)
+- [x] Merged into local master (`c2c6472`, 2026-11-16) after the timeline
+      thread finished. Master had added `setRobotAutoConnect` (now `team`
+      tier) and re-listed saved-robot/port messages as `anyone`; the
+      duplicates were dropped so the gate holds.
 - [ ] Deploy (other thread owns deploys: `plans/deploy-log.md`)
-- [ ] Deploy checks above
+- [ ] First real lock test (needs the user's go-ahead)
 - [ ] Follow-up: "unlogged DS is trying to reach your robot" warning
 
 ## Things not to do

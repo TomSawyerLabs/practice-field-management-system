@@ -143,6 +143,9 @@ export interface RobotRowWifi {
    *  network: fix it first rather than spend a field reconfiguration
    *  finding out. */
   passphraseWrong: boolean;
+  /** The team asked to enable it with a passphrase not checked yet: the
+   *  field switches once the check on the robot passes. */
+  awaiting: boolean;
 }
 
 const KEY_CHIP: Partial<Record<NonNullable<RobotWifiStall['keyCheck']>['result'], RobotWifiLine>> = {
@@ -150,6 +153,8 @@ const KEY_CHIP: Partial<Record<NonNullable<RobotWifiStall['keyCheck']>['result']
   ok: { severity: 'success', text: 'Passphrase OK' },
   wrongKey: { severity: 'error', text: 'Passphrase wrong' },
 };
+
+const SEARCH_CHIP: RobotWifiLine = { severity: 'info', text: 'Trying other passphrases…' };
 
 /** The row marks for saved robot `ssid`, on the field at `station` (null
  *  when it isn't). Off the field: whether it is on the air, and what its
@@ -172,16 +177,40 @@ export function robotRowWifi(
   let line: RobotWifiLine | undefined;
   const onAir = !!exact && !station;
   const passphraseWrong = !station && keyCheck?.result === 'wrongKey';
+  const awaiting = !station && !!scan.awaiting?.includes(ssid);
+  const searching = !station && exact?.keySearch === 'searching';
   if (onAir) {
     chips.push({ severity: 'success', text: 'Radio on' });
-    line = passphraseWrong
+    line = searching
       ? {
-          severity: 'error',
-          text:
-            `The saved passphrase doesn't open ${exact.ssid}, so the field won't connect — fix it before you ` +
-            `enable. (We check the robot's 2.4 GHz network; if you gave that its own passphrase, enable anyway.)`,
+          severity: 'warning',
+          text: `The saved passphrase doesn't open ${exact.ssid}. Trying the other passphrases we have for your team…`,
         }
-      : { severity: 'success', text: `We can hear it as ${exact.ssid} (${exact.signal} dBm).` };
+      : passphraseWrong
+        ? {
+            severity: 'error',
+            text:
+              `The saved passphrase doesn't open ${exact.ssid}` +
+              (exact.keySearch === 'exhausted' ? ", and neither do your team's other ones we know" : '') +
+              `, so the field won't connect — fix it before you enable. (We check the robot's 2.4 GHz network; ` +
+              `if you gave that its own passphrase, enable anyway.)`,
+          }
+        : keyCheck?.result === 'ok' && keyCheck.recovered
+          ? {
+              severity: 'success',
+              text: `We found the passphrase that opens ${exact.ssid} among your team's and saved it.`,
+            }
+          : awaiting && keyCheck?.result === 'checking'
+            ? { severity: 'info', text: 'Checking the passphrase on your robot before the field switches to it…' }
+            : { severity: 'success', text: `We can hear it as ${exact.ssid} (${exact.signal} dBm).` };
+  } else if (awaiting && !caseOnly) {
+    chips.push({ severity: 'info', text: 'Waiting for robot' });
+    line = {
+      severity: 'info',
+      text:
+        `Turn the robot on: we check the passphrase on its own Wi-Fi (FRC-${ssid}) and connect it as soon as ` +
+        `it works. The field isn't changed until then.`,
+    };
   } else if (caseOnly) {
     chips.push({ severity: 'error', text: 'Name differs' });
     line = {
@@ -191,9 +220,9 @@ export function robotRowWifi(
         `Capitals must match, so the field won't connect to this one.`,
     };
   }
-  const key = keyCheck && KEY_CHIP[keyCheck.result];
+  const key = searching ? SEARCH_CHIP : keyCheck && KEY_CHIP[keyCheck.result];
   if (key) chips.push(key);
-  return chips.length ? { chips, line, onAir, passphraseWrong } : null;
+  return chips.length ? { chips, line, onAir, passphraseWrong, awaiting } : null;
 }
 
 /** Stalled connections for one team. */
@@ -293,7 +322,9 @@ export function robotWifiStaffIssues(
         severity: 'warning',
         team: b.team,
         title: `Team ${b.team}'s saved passphrase for ${b.match.savedSsid} doesn't open their robot`,
-        detail: `${heard} The field won't connect until it's fixed — unless the team gave the 2.4 GHz network its own passphrase.`,
+        detail:
+          `${heard} The field won't connect until it's fixed — unless the team gave the 2.4 GHz network its own passphrase.` +
+          (b.keySearch === 'exhausted' ? " None of the team's other saved passphrases opens it either." : ''),
         fix: 'The team presses Fix passphrase on their page and re-enters it, capitals included.',
       });
     } else if (b.match.kind === 'unknown') {

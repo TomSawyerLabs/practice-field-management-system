@@ -14,6 +14,7 @@ debug.log
 active-config.json
 staged-config.json
 saved-teams.json
+team-passphrases.json
 admin-auth.json
 admin-auth.json.tmp
 operator-auth.json
@@ -30,6 +31,9 @@ estop-state.json.tmp
 match-history.json
 usage-data.json
 deploy-announced.json
+# What became of each .local lookup (src/mdnsLookupLog.ts)
+mdns-lookups.jsonl
+mdns-lookups.jsonl.1
 
 # Append-only work log that concurrent Claude sessions use to coordinate.
 /.agent.status

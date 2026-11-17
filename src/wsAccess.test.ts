@@ -11,9 +11,11 @@ import { LoginLimiter } from './loginLimiter.js';
 import { OperatorAuth } from './operatorAuth.js';
 import { TeamAuth } from './teamAuth.js';
 import { TeamLinkStore } from './teamLinkStore.js';
+import { TeamAccessRequests } from './teamAccessRequests.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
+import type { TimelineSnapshot } from './timeline/store.js';
 import { setupWebSocket, type WebSocketContext } from './websocketServer.js';
 import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, messageTypes, teamsOfMessage } from './wsAccess.js';
 
@@ -225,6 +227,8 @@ describe('the WebSocket gate', () => {
   let adminAuth = new AdminAuth(join(authDir, 'unused.json'), CHEAP_HASH);
   let operatorAuth = new OperatorAuth(join(authDir, 'unused-operator.json'));
   let teamAuth = new TeamAuth(join(authDir, 'unused-team.json'));
+  // One for the server's life: it subscribes to changes once.
+  const teamRequests = new TeamAccessRequests();
   const externalAccess = new ExternalAccessStore(join(authDir, 'external-access.json'));
   let adminLogins = new LoginLimiter();
   let context: WebSocketContext;
@@ -259,9 +263,11 @@ describe('the WebSocket gate', () => {
     addStatusListener() {},
     addPendingCommitListener() {},
     addLastLinkedListener() {},
+    addReconfigureListener() {},
     getStatusHistory: () => [],
     getPendingState: () => ({}),
     getLastLinkedTimestamps: () => ({}),
+    getReconfigureState: () => ({ type: 'radioReconfigure', active: false, expectedMs: 40_000, changes: [] }),
     getTeamForStation: () => null,
     getStationConfig: () => undefined,
     applyPendingChanges: async () => {},
@@ -301,6 +307,7 @@ describe('the WebSocket gate', () => {
           return typeof member === 'function' ? member.bind(teamAuth) : member;
         },
       }),
+      teamRequests,
       externalAccessStore: externalAccess,
       strangerAdminLogins: {
         take: (address: string) => adminLogins.take(address),
@@ -461,6 +468,39 @@ describe('the WebSocket gate', () => {
     expect(staff.dsState()).toEqual({ type: 'dsClientState', station: null });
     expect(await staff.send({ type: 'matchCreate' })).toEqual([]);
     expect(engineCalls).toEqual(['createMatch']);
+  });
+
+  test("a page asking for the chart timeline is sent what was broadcast before it opened, its team's only", async () => {
+    const t = Date.now();
+    const linked = (ssid: string) => ({
+      ssid,
+      isLinked: true,
+      signalDbm: -52,
+      noiseDbm: -95,
+      connectionQuality: 'good',
+    });
+    const stationStatuses = { slot1: linked('1967-Elsa'), slot2: null, slot3: null, slot4: linked('254') };
+    context.broadcast({ timestamp: t - 1_000, radioUpdate: { status: 'ACTIVE', stationStatuses } });
+    context.broadcast({ type: 'telemetry', station: 'slot1', timestamp: t - 500, batteryVoltage: 12.4 });
+    context.broadcast({ type: 'telemetry', station: 'slot4', timestamp: t - 500, batteryVoltage: 11.9 });
+
+    const page = await client(STAFF_IP);
+    const answer = await page.send({ type: 'subscribe', topic: 'timeline', teams: [1967] });
+    const snapshot = answer[0] as unknown as TimelineSnapshot;
+    expect(snapshot.type).toBe('timelineSnapshot');
+    expect(Object.keys(snapshot.stations)).toEqual(['slot1']);
+    expect(snapshot.stations.slot1).toMatchObject({
+      ssid: '1967-Elsa',
+      numeric: { battery: { t: [t - 500], v: [12.4] }, signalDbm: { v: [-52] } },
+      wifi: { v: ['good'] },
+    });
+
+    // Sent once: what follows is the ordinary live messages.
+    const before = page.heard.length;
+    context.broadcast({ type: 'telemetry', station: 'slot1', timestamp: t, batteryVoltage: 12.3 });
+    await page.send({ type: 'dsClientDismiss' });
+    expect(page.heard.slice(before)).toContain('telemetry');
+    expect(page.heard.slice(before)).not.toContain('timelineSnapshot');
   });
 
   test("a laptop's other interface is refused until it says it isn't the DS", async () => {
@@ -762,6 +802,22 @@ describe('the WebSocket gate', () => {
       expect(teamAuth.hasPassword(1678)).toBe(false);
     });
 
+    test('letting a device in takes an admin login', async () => {
+      await claimField();
+      await teamAuth.setPassword(1678, 'gearbox42!');
+      const asked = teamRequests.create(1678, 'Chrome on Windows', DS_IP, 'Alex')!;
+      const anyone = await client(STAFF_IP);
+      const refused = await anyone.send({ type: 'teamAuthDecide', id: asked.request.id, approve: true });
+      expect(refused[0].error).toBe('Admin authentication required');
+      expect(teamRequests.get(1678, asked.secret)?.state).toBe('pending');
+
+      const admin = await client(STAFF_IP);
+      expect((await admin.adminLogin('correct horse')).authenticated).toBe(true);
+      await admin.send({ type: 'teamAuthDecide', id: asked.request.id, approve: true });
+      expect(teamRequests.get(1678, asked.secret)?.state).toBe('approved');
+      teamRequests.clearTeam(1678);
+    });
+
     test('resetting a team takes an admin login', async () => {
       await claimField();
       await teamAuth.setPassword(1678, 'gearbox42!');
@@ -998,6 +1054,7 @@ describe('the WebSocket gate', () => {
         'routePreferenceState',
         'dsClientState',
         'pendingCommitState',
+        'radioReconfigure',
         'lastLinkedState',
         'serverInfo',
         'teamLinksState',
@@ -1248,6 +1305,40 @@ describe('the WebSocket gate', () => {
       ws.send(JSON.stringify({ type: 'castReceiverRegister', name: 'TV', swapped: false }));
       while (!replies.some(r => r.type === 'castReceiverId')) await Bun.sleep(2);
       expect(replies.some(r => r.type === 'matchState')).toBe(true);
+    });
+
+    describe('the queue on the public scoreboard socket', () => {
+      /** A /ws/scores page from `xff`; what it heard once a queue was broadcast. */
+      const scoresPage = async (xff: string, headers: Record<string, string> = {}) => {
+        const ws = new WebSocket(url.replace(/\/ws$/, '/ws/scores'), {
+          headers: { 'x-forwarded-for': xff, ...headers },
+        });
+        open.push(ws);
+        const heard: string[] = [];
+        ws.on('message', raw => heard.push(JSON.parse(String(raw)).type));
+        await new Promise(res => ws.once('open', res));
+        while (!heard.includes('serverInfo')) await Bun.sleep(2);
+        context.broadcast({ type: 'queueState', entries: [], line: [] });
+        context.broadcast({ type: 'matchState' });
+        while (heard.filter(t => t === 'matchState').length < 2) await Bun.sleep(2);
+        return heard;
+      };
+
+      test('reaches a display on the field network', async () => {
+        const heard = await scoresPage(STAFF_IP);
+        expect(heard).toContain('queueState');
+        expect(heard).not.toContain('queueOffSite');
+      });
+
+      test.each([
+        ['from the internet', VISITOR, {}],
+        ['forging a LAN address', FORGED, {}],
+        ["on another site's page at the field", STAFF_IP, { origin: 'https://evil.example' }],
+      ])('stays off a scoreboard %s, which is told why', async (_, xff, headers) => {
+        const heard = await scoresPage(xff, headers);
+        expect(heard).not.toContain('queueState');
+        expect(heard).toContain('queueOffSite');
+      });
     });
   });
 

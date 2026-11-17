@@ -21,6 +21,7 @@ api-keys.json
 external-access.json
 slack-config.json
 saved-teams.json
+team-passphrases.json
 active-config.json
 staged-config.json
 audio-config.json

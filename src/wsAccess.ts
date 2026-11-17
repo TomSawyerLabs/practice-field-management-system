@@ -33,6 +33,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   internetToggle: 'team',
   saveSavedTeam: 'team',
   enableSavedRobot: 'team',
+  setRobotAutoConnect: 'team',
   portBridge: 'team',
   teamPrefsSet: 'team',
   pushSubscribe: 'team',
@@ -178,6 +179,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   teamAuthReset: 'admin',
   teamAuthRevokeDevice: 'admin',
   teamAuthSetLock: 'admin',
+  teamAuthDecide: 'admin',
 
   // ── Always a login, even before the field has a passphrase ──────────
   saveSlackConfig: 'adminOnly',

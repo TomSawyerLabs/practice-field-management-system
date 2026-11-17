@@ -3,7 +3,7 @@ import { UsagePage } from '../components/UsagePage';
 import { WrapAll } from './wrap';
 
 createRoot(document.getElementById('root')!).render(
-  <WrapAll showReconfigOverlay={false}>
+  <WrapAll>
     <UsagePage />
   </WrapAll>,
 );

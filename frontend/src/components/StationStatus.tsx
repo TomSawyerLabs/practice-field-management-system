@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { TeamAvatar } from './TeamAvatar';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -21,9 +21,8 @@ import { StationName, SavedWiFiSetting } from '../../../src/types';
 import {
   sendNewConfig,
   sendInternetToggle,
-  useUpdateCallback,
   useLatestTelemetry,
-  useTelemetryCallback,
+  useTimelineBackfill,
   useRoutePreferenceState,
   useMyDriveStation,
   sendDrive,
@@ -54,7 +53,9 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ClearIcon from '@mui/icons-material/Clear';
 import PublicIcon from '@mui/icons-material/Public';
 import PublicOffIcon from '@mui/icons-material/PublicOff';
-import { GroupedChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
+import { TimelineChart } from './TimelineChart';
+import { startLiveTimeline } from '../timeline/live';
+import { robotNameOf } from '../../../src/utils';
 import { TeamChecksPanel } from './TeamChecksPanel';
 import { WaitingForRobot } from './WaitingForRobot';
 import { InlineTestPortMode } from './InlineTestPortMode';
@@ -143,10 +144,10 @@ export function StationStatus({ station }: { station: StationName }) {
   const stagedChange = useStationStagedChange(station);
   const hasStagedChange = stagedChange !== undefined;
 
-  // Always register the chart data collection handler, even if charts aren't visible
-  // This ensures chart data is collected from page load, not just when charts are first shown
-  useUpdateCallback(handleStatusUpdate);
-  useTelemetryCallback(handleTelemetryUpdate);
+  // Chart data is collected from page load, not from when a chart is first
+  // shown, and starts from the ten minutes the server kept of every robot.
+  useEffect(startLiveTimeline, []);
+  useTimelineBackfill(null);
 
   const telemetry = useLatestTelemetry(station);
   const fwd = useStationNetworkStats(station);
@@ -471,34 +472,7 @@ export function StationStatus({ station }: { station: StationName }) {
                 />
               ) : chartMode && stationSsid ? (
                 <Box sx={{ overflowY: 'auto', height: 'calc(22em - 95px + 5px)' }}>
-                  <GroupedChart
-                    station={station}
-                    metrics={['snr', 'signalLevels']}
-                    height="60px"
-                    defaultMetricIndex={0}
-                    marginBottom={0.5}
-                  />
-                  <GroupedChart
-                    station={station}
-                    metrics={['rates', 'packets', 'bytes']}
-                    height="60px"
-                    defaultMetricIndex={0}
-                    marginBottom={0.5}
-                  />
-                  <GroupedChart
-                    station={station}
-                    metrics={['quality', 'bandwidth', 'dataAge']}
-                    height="60px"
-                    defaultMetricIndex={0}
-                    marginBottom={0.5}
-                  />
-                  <GroupedChart
-                    station={station}
-                    metrics={['batteryVoltage', 'dsCpuPercent', 'robotStatus']}
-                    height="60px"
-                    defaultMetricIndex={0}
-                    marginBottom={0.5}
-                  />
+                  <TimelineChart station={station} name={robotNameOf(stationSsid)} compact />
                 </Box>
               ) : (
                 <>
