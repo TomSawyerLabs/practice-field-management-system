@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { bucketize, EventSeries, NumericSeries, StateSeries, type NumericBucket } from './series';
+import { bucketize, EventSeries, NumericSeries, StateSeries, type NumericBucket } from './series.js';
 
 const T = 1_700_000_000_000;
 

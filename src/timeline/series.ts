@@ -48,6 +48,38 @@ export interface NumericBucket {
   hi: number;
 }
 
+/** A numeric series as it is sent to a page: times as the first one and
+ *  then the gaps between them (ms), values to three decimals, `null` for a
+ *  gap. `lo`/`hi` are left out when no reading has a spread. */
+export interface NumericDump {
+  seen: number;
+  t: number[];
+  v: (number | null)[];
+  lo?: (number | null)[];
+  hi?: (number | null)[];
+}
+
+/** A state series as it is sent to a page (times as in {@link NumericDump}). */
+export interface StateDump<V> {
+  seen: number;
+  t: number[];
+  v: (V | null)[];
+}
+
+const round3 = (v: number): number | null => (Number.isNaN(v) ? null : Math.round(v * 1000) / 1000);
+
+/** Times as the first one, then the gap to each next one. */
+function toDeltas(times: ArrayLike<number>, from: number, to: number): number[] {
+  const out: number[] = [];
+  let previous = 0;
+  for (let i = from; i < to; i++) {
+    const t = Math.round(times[i]);
+    out.push(i === from ? t : t - previous);
+    previous = t;
+  }
+  return out;
+}
+
 const INITIAL_CAPACITY = 256;
 
 export class NumericSeries {
@@ -128,6 +160,34 @@ export class NumericSeries {
     this.head = 0;
     this.tail = 0;
     this.seen = -Infinity;
+  }
+
+  /** Everything in the series, small enough to send to a page. */
+  dump(): NumericDump {
+    const v: (number | null)[] = [];
+    const lo: (number | null)[] = [];
+    const hi: (number | null)[] = [];
+    let spread = false;
+    for (let i = this.head; i < this.tail; i++) {
+      v.push(round3(this.values[i]));
+      lo.push(round3(this.lows[i]));
+      hi.push(round3(this.highs[i]));
+      if (lo[lo.length - 1] !== v[v.length - 1] || hi[hi.length - 1] !== v[v.length - 1]) spread = true;
+    }
+    const t = toDeltas(this.times, this.head, this.tail);
+    return spread ? { seen: this.seen, t, v, lo, hi } : { seen: this.seen, t, v };
+  }
+
+  /** Replace what is here with a dump. */
+  load(d: NumericDump): void {
+    this.clear();
+    let t = 0;
+    for (let i = 0; i < d.t.length; i++) {
+      t = i === 0 ? d.t[0] : t + d.t[i];
+      const v = d.v[i] ?? NaN;
+      this.append(t, v, d.lo?.[i] ?? v, d.hi?.[i] ?? v);
+    }
+    this.seen = Number.isFinite(d.seen) ? d.seen : d.t.length > 0 ? t : -Infinity;
   }
 
   /** Forget everything before `t`, keeping the one sample that says what the
@@ -296,6 +356,22 @@ export class StateSeries<V extends string | boolean> {
     this.seen = -Infinity;
   }
 
+  dump(): StateDump<V> {
+    return { seen: this.seen, t: toDeltas(this.times, 0, this.times.length), v: [...this.values] };
+  }
+
+  /** Replace what is here with a dump. */
+  load(d: StateDump<V>): void {
+    this.times = [];
+    this.values = [...d.v];
+    let t = 0;
+    for (let i = 0; i < d.t.length; i++) {
+      t = i === 0 ? d.t[0] : t + d.t[i];
+      this.times.push(t);
+    }
+    this.seen = Number.isFinite(d.seen) ? d.seen : d.t.length > 0 ? t : -Infinity;
+  }
+
   /** The value in force at `t`, or null when unknown. */
   valueAt(t: number): V | null {
     const i = this.indexAt(t);
@@ -419,6 +495,17 @@ export class EventSeries {
   clear(): void {
     this.items = [];
     this.byId.clear();
+  }
+
+  /** Every event, oldest first, as plain objects. */
+  dump(): TimelineEvent[] {
+    return this.items.map(e => ({ ...e }));
+  }
+
+  /** Replace what is here with a dump. */
+  load(events: readonly TimelineEvent[]): void {
+    this.clear();
+    for (const e of events) this.upsert(e);
   }
 
   /** Events that touch the time range, oldest first. */

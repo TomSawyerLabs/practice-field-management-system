@@ -168,6 +168,7 @@ import {
   isRadioReconfigureState,
   type RadioReconfigureState,
 } from '../../../src/types';
+import { isTimelineSnapshot, type TimelineSnapshot } from '../../../src/timeline/store';
 import { Message as RadioMessage } from 'syslog-server';
 
 /** Set once this tab has said a hostname match with a Driver Station is a
@@ -542,6 +543,8 @@ interface BackendEvents {
   matchState: MatchState;
   radioReconfigure: RadioReconfigureState;
   robotDropouts: RobotDropoutsState;
+  /** The server's last ten minutes, in answer to {@link useTimelineBackfill}. */
+  timelineSnapshot: TimelineSnapshot;
 }
 
 /** Listen to the socket's messages without a component. Returns the
@@ -1171,6 +1174,11 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isTimelineSnapshot(detail)) {
+    events.dispatchEvent(new CustomEvent('timelineSnapshot', { detail }));
+    return;
+  }
+
   if (isRobotEStopsState(detail)) {
     currentRobotEStops = detail;
     events.dispatchEvent(new CustomEvent('robotEStops', { detail }));
@@ -1468,6 +1476,16 @@ export function dismissStopPress(key: string) {
 
 /** One team's saved robot configs (its SSIDs), subscribed while mounted.
  *  `null` = no team yet, nothing fetched. */
+/**
+ * Ask the server for the chart history it has kept: the last ten minutes of
+ * every robot of `team` (or of every robot, with `null`) and of the field.
+ * It arrives once per connection as a `timelineSnapshot`; the live messages
+ * carry on from there.
+ */
+export function useTimelineBackfill(team: number | null): void {
+  useTopic('timeline', team === null ? null : [team]);
+}
+
 export function useSavedTeams({ team }: { team: number | null }): SavedTeamsState | null {
   useTopic('savedTeams', team === null ? undefined : [team], team !== null);
   const [state, setState] = useState<SavedTeamsState | null>(currentSavedTeams);

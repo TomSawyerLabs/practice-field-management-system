@@ -173,6 +173,7 @@ import {
   type ChallengeLeaderboardState,
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
+import { FieldTimeline } from './timeline/store.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
 import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, type MessageAccess } from './wsAccess.js';
 import { accessCookieOf } from './externalAccessAuth.js';
@@ -577,6 +578,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
    *  timelapse). Those go only to subscribers, not to every page. */
   const topicSubs = new TopicSubscriptions<WebSocket>();
 
+  /** The last ten minutes of what the charts draw, kept from the very
+   *  messages broadcast to the pages, so a page that opens now can be sent
+   *  what it missed (the `timeline` topic) instead of starting empty. */
+  const fieldTimeline = new FieldTimeline();
+  setInterval(() => fieldTimeline.trim(Date.now()), 5000).unref();
+
   /** The current state of a topic, for a new subscriber. */
   function topicState(topic: Topic): unknown {
     switch (topic) {
@@ -590,6 +597,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         return setup?.timelapse?.getState();
       case 'savedTeams':
         return savedTeamStore?.getState();
+      case 'timeline':
+        return fieldTimeline.snapshot(Date.now());
     }
   }
 
@@ -616,6 +625,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   }
 
   function broadcast(msg: unknown) {
+    fieldTimeline.ingestMessage(msg, Date.now());
     if (topicOfMessage(msg)) {
       for (const [client, data] of topicSubs.route(msg)) {
         if (client.readyState !== WebSocket.OPEN || isStranger(client)) continue;
