@@ -51,6 +51,10 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 - A 99xx number can never have a team password (the user, 2026-11-16): it
   only borrows the password of the team it joins. `TeamAuth.setPassword` and
   the `password` API refuse 99xx; the team page hides the password card.
+- A linked spare's own settings need the real team's login (the user,
+  2026-11-16). The `team` tier maps each team `teamsOfMessage` names through
+  today's link before checking passwords; the spare's page shows the real
+  team's login banner.
 - `linkTeam` and `unlinkTeam` are `team` tier; `teamsOfMessage` reads `team`
   (the real team), so its login is needed when it has a password. `unlinkTeam`
   names the team it's linked to for that reason.
@@ -72,15 +76,13 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 - [x] Rebased onto `t3/team-password-login`; guard is the team login
 - [x] "5940 B" on `/match`, its history, and the public match summary
 - [x] Docs (`docs/match-system.md`), typecheck, 1380 tests, vite build
+- [x] Linked spare's settings gated by the real team's login; 99xx can't have a password
 - [ ] Merge after `t3/team-password-login` lands
 - [ ] Try it on the field: link by hand, and auto-link on enable
 
 ## Open questions for the user
 
-1. Should a linked spare's own settings (Wi-Fi, internet, ports, recording)
-   also need the real team's login while it's linked? Today only the link
-   itself does, so anyone can still change 9940's Wi-Fi when 5940 has a
-   password. Recommendation: yes, while linked.
+- (none)
 
 ## Things not to do
 
