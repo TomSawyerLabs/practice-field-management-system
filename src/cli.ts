@@ -19,6 +19,7 @@ const OTHER_CONFIG_FILES: [file: string, holds: string][] = [
   ['external-access.json', 'external access tokens'],
   ['slack-config.json', 'Slack integration'],
   ['saved-teams.json', 'saved team WiFi configs'],
+  ['team-passphrases.json', 'every Wi-Fi passphrase each team has used'],
   ['active-config.json', 'current station assignments'],
   ['staged-config.json', 'staged station assignments'],
   ['audio-config.json', 'selected audio output device'],

@@ -60,10 +60,12 @@ import {
   isCastReceiverView,
   isScoreboardView,
   type ScoreboardView,
+  type QueueOffSite,
   isPlayGetReady,
   isRadioConfigureRequest,
   isRemoveSavedTeam,
   isSaveSavedTeam,
+  isSetRobotAutoConnect,
   isEnableSavedRobot,
   isCreateApiKey,
   isRevokeApiKey,
@@ -182,6 +184,7 @@ import {
   type ChallengeLeaderboardState,
 } from './types.js';
 import { TopicSubscriptions, payloadFor, topicOfMessage } from './topicSubscriptions.js';
+import { FieldTimeline } from './timeline/store.js';
 import { getRealClientIp, normalizeIp } from './utils.js';
 import {
   accessOf,
@@ -375,6 +378,12 @@ export interface SetupWebSocketOptions {
       getState: () => RobotWifiScanState;
       /** "Test connection" for a stalled station (rate-limited in the scanner) */
       test: (station: StationName) => void;
+      /** Listening for robots, so a new passphrase can be checked on the
+       *  robot before the field switches to it */
+      listening: () => boolean;
+      /** Put saved robot `ssid` on the field once its passphrase checks out */
+      requestConnect: (ssid: string) => void;
+      cancelRequest: (ssid: string) => void;
     };
     /** Other access points using teams' network names on 6 GHz
      *  (src/sixGhzWatch.ts). */
@@ -569,7 +578,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     'queueState',
     'stationChecks',
     'challengeLeaderboard',
+    // The scoreboard TVs show a reconfigure to the teams waiting on it.
+    // Station and SSID only.
+    'radioReconfigure',
   ]);
+
+  /** Of those, the ones that stay on the field network: the queue's TV view
+   *  is a /scores view, but who is lined up for the field is not for the
+   *  internet. Sent only to the public sockets in `publicOnSite`. */
+  const PUBLIC_ON_SITE_TYPES = new Set(['queueState']);
+
+  /** Public connections from the field network, judged like a field socket:
+   *  an on-site address and not another site's page. The read-only socket
+   *  takes no logins, so a credential doesn't count here. */
+  const publicOnSite = new Set<WebSocket>();
 
   /** Track which WebSocket connections are in which chat sessions */
   const wsToChatSession = new Map<WebSocket, string>();
@@ -593,6 +615,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
    *  timelapse). Those go only to subscribers, not to every page. */
   const topicSubs = new TopicSubscriptions<WebSocket>();
 
+  /** The last ten minutes of what the charts draw, kept from the very
+   *  messages broadcast to the pages, so a page that opens now can be sent
+   *  what it missed (the `timeline` topic) instead of starting empty. */
+  const fieldTimeline = new FieldTimeline();
+  setInterval(() => fieldTimeline.trim(Date.now()), 5000).unref();
+
   /** The current state of a topic, for a new subscriber. */
   function topicState(topic: Topic): unknown {
     switch (topic) {
@@ -606,6 +634,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         return setup?.timelapse?.getState();
       case 'savedTeams':
         return savedTeamStore?.getState();
+      case 'timeline':
+        return fieldTimeline.snapshot(Date.now());
     }
   }
 
@@ -632,6 +662,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   }
 
   function broadcast(msg: unknown) {
+    fieldTimeline.ingestMessage(msg, Date.now());
     if (topicOfMessage(msg)) {
       for (const [client, data] of topicSubs.route(msg)) {
         if (client.readyState !== WebSocket.OPEN || isStranger(client)) continue;
@@ -649,8 +680,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
     wss.clients.forEach(client => {
       if (client.readyState !== WebSocket.OPEN) return;
-      // Public connections only receive whitelisted message types
-      if (publicConnections.has(client) && !isPublicSafe) return;
+      // Public connections only receive whitelisted message types, and the
+      // field-network ones only on site
+      if (publicConnections.has(client)) {
+        if (!isPublicSafe) return;
+        if (PUBLIC_ON_SITE_TYPES.has(msgType as string) && !publicOnSite.has(client)) return;
+      }
       // Nothing that's broadcast is for a login page
       if (isStranger(client)) return;
       try {
@@ -731,6 +766,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   radioManager.addPendingCommitListener(() => {
     broadcast({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState);
   });
+
+  // Broadcast radio reconfigures (start, end) to every page and the TVs
+  radioManager.addReconfigureListener(broadcast);
 
   // Broadcast last-linked timestamp changes to all clients
   radioManager.addLastLinkedListener(timestamps => {
@@ -1179,6 +1217,9 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       JSON.stringify({ type: 'pendingCommitState', ...radioManager.getPendingState() } satisfies PendingCommitState),
     );
 
+    // Whether the radio is reconfiguring, and what that changes
+    ws.send(JSON.stringify(radioManager.getReconfigureState()));
+
     // Send initial last-linked timestamps
     ws.send(
       JSON.stringify({
@@ -1270,10 +1311,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // Handle them separately to avoid leaking sensitive state.
     if (req.url?.startsWith('/ws/scores')) {
       publicConnections.add(ws);
-      console.log('Public scores client connected');
+      const publicIp = normalizeIp(getRealClientIp(req.socket.remoteAddress, req.headers, trustedProxyMatcher));
+      const onSite = !isCrossSite(req.headers) && isOnSite(publicIp, siteNetworks);
+      if (onSite) publicOnSite.add(ws);
+      console.log(`Public scores client connected: ${publicIp} (${onSite ? 'on site' : 'off site'})`);
       ws.send(JSON.stringify(matchEngine.getState()));
       if (leaderboardJson) ws.send(leaderboardJson);
       ws.send(serverInfoMessage());
+      ws.send(JSON.stringify(radioManager.getReconfigureState()));
+      // The queue view: the queue on site, a notice that says why not off it
+      if (onSite) {
+        if (setup?.queue) ws.send(JSON.stringify(setup.queue.store.getState()));
+      } else {
+        ws.send(JSON.stringify({ type: 'queueOffSite' } satisfies QueueOffSite));
+      }
       // Cast receivers (Chromecast TVs) load the public scores page, so their
       // registration arrives on this socket. Accept ONLY that message here —
       // everything else on the read-only socket stays ignored.
@@ -1299,6 +1350,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       });
       ws.on('close', () => {
         publicConnections.delete(ws);
+        publicOnSite.delete(ws);
         if (castReceivers.delete(ws)) {
           broadcastReceiverList();
         }
@@ -1422,6 +1474,27 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
               appError('Error toggling internet access: ' + err.message);
               ws.send(JSON.stringify({ error: 'Failed to toggle internet access', details: err.message }));
             });
+          } else if (
+            data.ssid &&
+            !current?.ssid &&
+            savedTeamStore &&
+            setup?.robotWifi?.listening() &&
+            savedTeamStore.getTeam(data.ssid)?.wpaKey !== data.wpaKey &&
+            !StationNameList.some(s => radioManager.getStationConfig(s)?.ssid === data.ssid)
+          ) {
+            // A passphrase pFMS doesn't know yet, for a robot not on the
+            // field: check it on the robot's own network before the field
+            // reconfigures (a wrong one would cost everyone a reconfigure to
+            // find out). Saved now; on the field once it checks out.
+            savedTeamStore.saveTeam(data.ssid, data.wpaKey, data.internetAccess);
+            setup.robotWifi.requestConnect(data.ssid);
+            ws.send(
+              JSON.stringify({
+                info:
+                  `Saved ${data.ssid}. pFMS checks the passphrase on your robot first, and connects it as soon ` +
+                  `as it works — make sure the robot is on.`,
+              }),
+            );
           } else {
             // Everything else goes through the pending list, which decides
             // whether it is a no-op, a kept robot, a wait, or an apply.
@@ -1741,6 +1814,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isRemoveSavedTeam(data)) {
         if (savedTeamStore) {
           savedTeamStore.removeTeam(data.ssid);
+          setup?.robotWifi?.cancelRequest(data.ssid);
         }
         // Also release any radio slot currently configured with this SSID
         // so the team can re-add the robot without it appearing "already active".
@@ -1755,6 +1829,13 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       } else if (isSaveSavedTeam(data)) {
         if (savedTeamStore) {
           savedTeamStore.saveTeam(data.ssid, data.wpaKey);
+        }
+      } else if (isSetRobotAutoConnect(data)) {
+        if (!savedTeamStore?.setAutoConnect(data.ssid, data.autoConnect)) {
+          ws.send(JSON.stringify({ error: `No saved robot "${data.ssid}"` }));
+        } else if (!data.autoConnect) {
+          // Off also withdraws a connect still waiting for its check.
+          setup?.robotWifi?.cancelRequest(data.ssid);
         }
       } else if (isEnableSavedRobot(data)) {
         // Enable a previously-saved robot by SSID — server looks up the passphrase

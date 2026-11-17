@@ -188,6 +188,75 @@ field reconfiguration to find out.
 A robot on the field whose connection stalled (below) gets the same chips
 for the field's passphrase.
 
+**Connecting by itself.** A saved robot heard while it isn't on the field,
+whose saved passphrase checks out on its network, is put on the field
+automatically — as if the team had pressed **Enable Robot**: a free
+station, or in line when the field is full. Arrive, turn the robot on, and
+it joins. The rules:
+
+- **Once per arrival.** It happens the first time the robot is heard after
+  being off the air (about 90 seconds unheard). A robot that leaves the
+  field while still on — the team's **Release**, the idle release, the
+  release after a match — is not put back; power-cycling it is a new
+  arrival. A robot already on the field when first heard counts as
+  connected.
+- **Not while a match is set up, running or just over.** It waits until the
+  field is idle, so it never lands on the match admin's pending list.
+- **Per robot opt-out.** Each robot's row says _Connects by itself when
+  turned on_ with **Turn off** (stored as `autoConnect: false` in
+  `saved-teams.json`). Shown only while the scan is listening.
+- Each arrival re-checks the passphrase (results are forgotten when the
+  network drops off), so a radio reconfigured since last time is caught.
+- **One reconfiguration for robots that arrive together.** Every
+  reconfiguration drops all robots for ~30 seconds, so a robot that
+  connects by itself waits 5 seconds for others, and longer — up to a minute
+  in all — while another robot heard is still having its passphrase
+  checked. Then they all go on in one radio change. That change still waits
+  for enabled robots to be disabled, and for **Apply now** when Wi-Fi
+  changes are held.
+- **The scoreboard says so.** A strip along its bottom edge counts down
+  ("Field Wi-Fi reconfiguration in 4 s, once robots are disabled"), names
+  the robots, and any robot still being waited for. It also shows a
+  reconfiguration waiting for robots to be disabled, and Wi-Fi changes held
+  by the admin, a match, or waiting for staff.
+- **The CSA page shows what happened.** Its **Robot Wi-Fi: connecting by
+  themselves** panel lists what is under way (passphrase checks, searches,
+  a robot that didn't answer and when it is tried again, team requests, a
+  reconfiguration coming up) and, newest first, what the scan did over the
+  last few hours: robots heard and gone quiet, each check's result, a
+  search started, found or exhausted, why a robot isn't joining by itself
+  (opted out, a match on), and whether its reconfiguration went ahead or is
+  held. In memory only (`src/robotWifiActivity.ts`).
+
+**Forgotten passphrases.** When a robot's saved passphrase (or, for a
+stalled robot, the field's) doesn't open its network, pFMS tries the
+others it has for that team, one at a time: the passphrases of the team's
+other saved robots, then every passphrase the team has ever used here
+(newest first), then the team number twice (`12341234`). Every passphrase a
+team uses is kept for good in `team-passphrases.json` (server-side only,
+`TEAM_PASSPHRASES_FILE`) — removing a robot or changing its passphrase
+forgets none, and teams reuse them from year to year; the first run seeds
+it from the saved robots. The row shows **Trying other passphrases…**.
+One that works is saved on the robot (the row says so), and the robot then
+connects by itself as above; a stalled robot on the field is switched to it.
+A heard name the team never saved (another suffix), or one that differs
+only in capitals, is tried the same way, and one that opens it is saved as
+a new robot under the name the radio broadcasts — so a capitals mistake
+fixes itself. It inherits the opt-out from the capitals-only match; a new
+suffix starts opted out if any of the team's robots is. A robot that
+doesn't answer a check is tried again after 2 minutes.
+
+**A new passphrase is checked before the field changes.** While the scan is
+listening, a team adding a robot (or re-entering a passphrase with **Save
+and enable**) whose name and passphrase pFMS hasn't saved together, for a
+robot not on the field, no longer reconfigures the field to find out: the
+robot is saved, its row says **Waiting for robot** ("turn it on"), and the
+field switches only once the passphrase opens the robot's network. A wrong
+one leaves the field alone and the row offers **Fix passphrase** (and the
+search above runs). **Enable anyway** on the row skips the check. The wait
+lasts 30 minutes, after which an opted-out robot needs **Enable Robot**
+again. With the scan off, the field is reconfigured straight away as before.
+
 **A robot taking too long to join.** When a station is set up for a team's
 robot, the radio is up, and the robot still hasn't linked after **60
 seconds** (counted from the latest of: the team taking the station, the
@@ -215,7 +284,8 @@ failing with) on the robot's **2.4 GHz** network, which can be given its
 own passphrase when the radio is configured. A team that did that sees
 "wrong" even though the field's 6 GHz passphrase may be fine; the wording
 says so. The same goes for the saved-passphrase check above, which is why
-**Enable anyway** stays. A result is kept per (network heard, passphrase),
+**Enable anyway** stays. (No team has been seen doing this.) A result is
+kept per (network heard, passphrase) while the network stays on the air,
 so a stall on a robot already checked before Enable reuses that answer.
 
 **What CSAs see:** `/csa` lists a robot taking too long to join — critical

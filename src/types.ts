@@ -2080,6 +2080,12 @@ export interface TelemetryUpdate {
    *  coalescing window's envelope so battery charts can still show them.
    *  Omitted when it equals batteryVoltage. */
   batteryVoltageMin?: number;
+  /** Highest batteryVoltage observed since the previous broadcast. Omitted
+   *  when it equals batteryVoltage. */
+  batteryVoltageMax?: number;
+  /** Mean of every batteryVoltage reading since the previous broadcast.
+   *  Omitted when this one reading is all there was. */
+  batteryVoltageAvg?: number;
   /** Trip time the Driver Station reports (ms). Only while the DS is under
    *  FMS control — it reports to the field only then. */
   rttMs?: number;
@@ -2292,9 +2298,17 @@ export interface DiscoveredHost {
   onlineSince: number;
   /** How this host was discovered: 'fping' (team subnet scan) or 'conntrack' (guest network flow) */
   source?: 'fping' | 'conntrack';
-  /** Answered HTTP on port 80 when last asked (team-subnet devices only). */
-  web?: boolean;
+  /** What it offered when last asked (team-subnet devices only). */
+  services?: HostService[];
 }
+
+/** Something on a team-subnet device a person can open from the Network page. */
+export type HostService =
+  /** A web page on `port`, named for what serves it ("Limelight", "roboRIO"). */
+  | { kind: 'web'; port: number; label: string }
+  /** A robot-code (CameraServer) MJPEG stream. */
+  | { kind: 'camera'; port: number }
+  | { kind: 'ssh' };
 
 export interface StationSubnetScan {
   team: number;
@@ -2603,6 +2617,9 @@ export interface SavedTeamConfig {
   internetAccess?: boolean;
   createdAt: number;
   lastUsedAt: number;
+  /** Put on the field by itself when the robot scan hears it and its
+   *  passphrase checks out. Absent = on; the team can turn it off per robot. */
+  autoConnect?: boolean;
 }
 
 /** Client-facing saved team config — wpaKey stripped so passphrases stay server-side. */
@@ -2652,6 +2669,14 @@ export function isEnableSavedRobot(msg: unknown): msg is EnableSavedRobot {
   );
 }
 
+/** Client request: a saved robot connects by itself when heard, or not. */
+export type SetRobotAutoConnect = { type: 'setRobotAutoConnect'; ssid: string; autoConnect: boolean };
+export function isSetRobotAutoConnect(msg: unknown): msg is SetRobotAutoConnect {
+  if (typeof msg !== 'object' || !msg) return false;
+  const m = msg as SetRobotAutoConnect;
+  return m.type === 'setRobotAutoConnect' && typeof m.ssid === 'string' && typeof m.autoConnect === 'boolean';
+}
+
 // ── Robot Wi-Fi Scan ────────────────────────────────────────────────
 
 /** Whether a passphrase — the field's for a stalled connection, or the
@@ -2666,6 +2691,11 @@ export interface RobotWifiKeyCheck {
   /** The SSID whose passphrase was tried: what the field is set up to join,
    *  or the saved robot's. */
   fieldSsid: string;
+  /** The saved passphrase didn't open the robot; this one, found among the
+   *  team's other passphrases, did — and pFMS saved it. */
+  recovered?: boolean;
+  /** `unreachable`: when it is tried again (server epoch ms) */
+  retryAt?: number;
 }
 
 /** A robot radio's 2.4 GHz network, heard by pFMS. */
@@ -2686,6 +2716,10 @@ export interface RobotWifiBroadcast {
   /** The saved robot's passphrase, tried on this network once it is heard
    *  (and again whenever the saved passphrase changes). */
   keyCheck?: RobotWifiKeyCheck;
+  /** The saved passphrase didn't open it (or it isn't saved under this
+   *  name), so the team's other passphrases are being tried; `exhausted`
+   *  once none of them worked. */
+  keySearch?: 'searching' | 'exhausted';
 }
 
 /** A team trying to connect whose robot has not joined the field for a
@@ -2721,6 +2755,28 @@ export interface RobotWifiScanState {
   broadcasts: RobotWifiBroadcast[];
   /** Connections that are taking too long, with the robot on the air */
   stalls: RobotWifiStall[];
+  /** Saved robots a team asked to enable with a passphrase not checked yet:
+   *  the field switches to one once the check on the robot passes. */
+  awaiting?: string[];
+  /** Robots that connected by themselves, gathered for one field Wi-Fi
+   *  reconfiguration: it starts at `at` (server epoch ms) — later while
+   *  `waitingFor` robots are still being checked, so they join the same one. */
+  upcoming?: { at: number; robots: string[]; waitingFor: string[] };
+  /** What the scan and auto-connect did lately, newest first, for the CSA
+   *  page (src/robotWifiActivity.ts). */
+  activity?: RobotWifiActivity[];
+}
+
+/** One thing the robot Wi-Fi scan or auto-connect did: a robot heard, a
+ *  passphrase checked or found, a robot put on the field, a retry. */
+export interface RobotWifiActivity {
+  /** Server epoch ms */
+  at: number;
+  /** The robot it is about: the name broadcast minus `FRC-`, or a saved name */
+  robot: string;
+  text: string;
+  /** `good`: it worked; `bad`: it didn't, and may need a person */
+  tone: 'info' | 'good' | 'bad';
 }
 
 export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {
@@ -2920,6 +2976,43 @@ export function isMdnsActivity(msg: unknown): msg is MdnsActivity {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as MdnsActivity).type === 'mdnsActivity';
 }
+
+/** One question of a lookup: the name, the record type ("A", "PTR"…) and
+ *  whether the laptop asked for a unicast answer (the QU bit). */
+export interface MdnsQuestion {
+  name: string;
+  type: string;
+  qu: boolean;
+}
+
+/** Why the reflector didn't forward a laptop's lookup. */
+export type MdnsDropReason = 'not placed' | 'no team on station' | 'station socket not open';
+
+/** What became of a `.local` lookup (src/mdnsLookupLog.ts). `t` is epoch ms;
+ *  `repeatsBefore` counts identical events folded into this one's predecessor. */
+export type MdnsLookupEvent = { t: number; repeatsBefore?: number } & (
+  | {
+      kind: 'forwarded';
+      requester: string;
+      port: number;
+      station: StationName;
+      team: number;
+      questions: MdnsQuestion[];
+    }
+  | { kind: 'dropped'; requester: string; port: number; reason: MdnsDropReason; questions: MdnsQuestion[] }
+  | {
+      kind: 'answered';
+      station: StationName;
+      team: number;
+      /** The robot-side device that answered. */
+      from: string;
+      records: MdnsResolvedName[];
+      /** The laptops it went back to, as "ip:port". */
+      to: string[];
+    }
+  | { kind: 'unanswered'; requester: string; port: number; station: StationName; name: string }
+  | { kind: 'send failed'; to: string; error: string }
+);
 
 // ── Team Checks ─────────────────────────────────────────────────────
 
@@ -3482,12 +3575,15 @@ export function isStopCast(msg: unknown): msg is StopCast {
   return (msg as StopCast).type === 'stopCast';
 }
 
-/** What a scoreboard TV shows: the match scoreboard, or the speed challenge
- *  leaderboard full screen. Chosen per display, like swap and mute. */
-export type ScoreboardView = 'scoreboard' | 'leaderboard';
+/** What a scoreboard TV shows: the match scoreboard, the speed challenge
+ *  leaderboard full screen, or the match queue (on the field network only).
+ *  Chosen per display, like swap and mute. */
+export type ScoreboardView = 'scoreboard' | 'leaderboard' | 'queue';
+
+export const SCOREBOARD_VIEWS: readonly ScoreboardView[] = ['scoreboard', 'leaderboard', 'queue'];
 
 export function isScoreboardView(value: unknown): value is ScoreboardView {
-  return value === 'scoreboard' || value === 'leaderboard';
+  return SCOREBOARD_VIEWS.includes(value as ScoreboardView);
 }
 
 /** Sent by a cast receiver (TV) to register itself with the backend. */
@@ -4962,11 +5058,14 @@ export const TOPIC_MESSAGE_TYPES = {
   usage: 'usageState',
   timelapse: 'timelapseState',
   savedTeams: 'savedTeamsState',
+  /** The last ten minutes of chart data (src/timeline/store.ts): sent once,
+   *  on subscribe. What follows comes from the ordinary live messages. */
+  timeline: 'timelineSnapshot',
 } as const;
 export type Topic = keyof typeof TOPIC_MESSAGE_TYPES;
 
 /** Topics that can be narrowed to some teams' entries. */
-export const TEAM_FILTERED_TOPICS: readonly Topic[] = ['matchHistory', 'practiceRecording', 'savedTeams'];
+export const TEAM_FILTERED_TOPICS: readonly Topic[] = ['matchHistory', 'practiceRecording', 'savedTeams', 'timeline'];
 
 /**
  * Start (or change) a subscription; the server answers with the current
@@ -5424,6 +5523,18 @@ export function isQueueState(msg: unknown): msg is QueueState {
   return (msg as QueueState).type === 'queueState';
 }
 
+/** Sent instead of the queue to a /scores page that is not on the field
+ *  network (the internet, or another site's page): the queue stays on site,
+ *  and the queue view says so rather than waiting for it. */
+export interface QueueOffSite {
+  type: 'queueOffSite';
+}
+
+export function isQueueOffSite(msg: unknown): msg is QueueOffSite {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as QueueOffSite).type === 'queueOffSite';
+}
+
 const isTeamNumber = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0;
 const isTeamList = (v: unknown): v is number[] => Array.isArray(v) && v.length <= 3 && v.every(isTeamNumber);
 
@@ -5811,4 +5922,34 @@ export interface TeamAuthSetLock {
 export function isTeamAuthSetLock(msg: unknown): msg is TeamAuthSetLock {
   const m = msg as TeamAuthSetLock;
   return m?.type === 'teamAuthSetLock' && isTeamNumber(m.team) && typeof m.lock === 'boolean';
+}
+
+/** One station a radio reconfigure changes: the robot it had (`from`) and
+ *  the one it will have (`to`). Either may be absent — a robot joining an
+ *  empty station has no `from`; one leaving has no `to`. SSIDs only: this
+ *  goes to the public scoreboard socket. */
+export interface ReconfigureStationChange {
+  station: StationName;
+  from?: string;
+  to?: string;
+}
+
+/** Whether the field radio is reconfiguring right now, and what it changes.
+ *  Public: the scoreboard TVs show it to the teams waiting on their robots. */
+export interface RadioReconfigureState {
+  type: 'radioReconfigure';
+  active: boolean;
+  /** Server epoch ms the configuration was sent to the radio. Set while active. */
+  since?: number;
+  /** How long a reconfigure takes on this radio, ms: the median of recent
+   *  ones, or a default before there are any. */
+  expectedMs: number;
+  /** Stations whose robot changes. Empty when it only re-applies what the
+   *  radio should already have (after a radio reboot, a settings change). */
+  changes: ReconfigureStationChange[];
+}
+
+export function isRadioReconfigureState(msg: unknown): msg is RadioReconfigureState {
+  if (typeof msg !== 'object' || !msg) return false;
+  return (msg as RadioReconfigureState).type === 'radioReconfigure';
 }

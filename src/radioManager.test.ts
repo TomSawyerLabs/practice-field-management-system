@@ -963,3 +963,69 @@ describe('releasing a robot off the Wi-Fi for a team in line', () => {
     expect(rm.getStationConfig('slot2')?.ssid).toBe('1234-Comp');
   });
 });
+
+describe('robots that connected by themselves', () => {
+  test('go on together, in one radio change, on separate stations', async () => {
+    const rm = manager();
+    const commit = spyOn(rm, 'commitConfiguration');
+    await rm.enableTogether([robot, other]);
+    expect(commit).toHaveBeenCalledTimes(1);
+    expect(rm.getStationConfig('slot1')?.ssid).toBe('1234-Comp');
+    expect(rm.getStationConfig('slot2')?.ssid).toBe('5678');
+  });
+
+  test('wait like any request when a hold is on', async () => {
+    const rm = manager();
+    rm.setShouldHold(() => 'admin');
+    await rm.enableTogether([robot]);
+    expect(rm.getStationConfig('slot1')).toBeNull();
+    expect(rm.getPendingState().hold).toBe('admin');
+  });
+
+  test('a robot already on the field is left alone', async () => {
+    const rm = manager();
+    await rm.configure('slot1', robot);
+    const commit = spyOn(rm, 'commitConfiguration');
+    await rm.enableTogether([robot]);
+    expect(commit).not.toHaveBeenCalled();
+  });
+});
+
+describe('what a reconfigure tells the teams', () => {
+  let mod: {
+    reconfigureChanges: typeof import('./radioManager.js').reconfigureChanges;
+    expectedReconfigureMs: typeof import('./radioManager.js').expectedReconfigureMs;
+    DEFAULT_RECONFIGURE_MS: number;
+  };
+  beforeAll(async () => {
+    const { reconfigureChanges, expectedReconfigureMs, DEFAULT_RECONFIGURE_MS } = await import('./radioManager.js');
+    mod = { reconfigureChanges, expectedReconfigureMs, DEFAULT_RECONFIGURE_MS };
+  });
+
+  test('only stations whose robot changes are listed', () => {
+    const changes = mod.reconfigureChanges(
+      { slot1: { ssid: '1234' }, slot2: { ssid: '5678' }, slot4: { ssid: '9999-beta' } },
+      { slot1: { ssid: '1234' }, slot2: { ssid: '4321' }, slot3: { ssid: '254' }, slot5: { ssid: '' } },
+    );
+    expect(changes).toEqual([
+      { station: 'slot2', from: '4321', to: '5678' },
+      { station: 'slot3', from: '254' },
+      { station: 'slot4', to: '9999-beta' },
+    ]);
+  });
+
+  test('a radio that has not reported yet reads as empty', () => {
+    expect(mod.reconfigureChanges({ slot6: { ssid: '1234' } }, undefined)).toEqual([{ station: 'slot6', to: '1234' }]);
+  });
+
+  test('the countdown is the median of recent reconfigures, 40 s before any', () => {
+    expect(mod.expectedReconfigureMs([])).toBe(mod.DEFAULT_RECONFIGURE_MS);
+    expect(mod.expectedReconfigureMs([30_000, 90_000, 32_000])).toBe(32_000);
+    expect(mod.expectedReconfigureMs([30_000, 34_000])).toBe(32_000);
+  });
+
+  test('a manager starts idle with the default countdown', () => {
+    const state = manager().getReconfigureState();
+    expect(state).toEqual({ type: 'radioReconfigure', active: false, expectedMs: 40_000, changes: [] });
+  });
+});

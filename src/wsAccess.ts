@@ -33,6 +33,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   internetToggle: 'team',
   saveSavedTeam: 'team',
   enableSavedRobot: 'team',
+  setRobotAutoConnect: 'team',
   portBridge: 'team',
   teamPrefsSet: 'team',
   pushSubscribe: 'team',

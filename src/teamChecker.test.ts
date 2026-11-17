@@ -7,6 +7,7 @@ import {
   controllerBlockReason,
   evaluateControllerPolicy,
   evaluateQosLimit,
+  qosEnabledFrom,
   evaluateSystemCore,
   parseMdnsAnswers,
 } from './teamChecker.js';
@@ -255,6 +256,14 @@ describe('radio bandwidth limit', () => {
     const over = evaluateQosLimit({ qosEnabled: false }, 5.2);
     expect(over.status).toBe('warn');
     expect(over.message).toContain('at an event');
+  });
+
+  test('the setting can be read back from the checks, warnings included', () => {
+    expect(qosEnabledFrom([evaluateQosLimit({ qosEnabled: true }, 3.9)])).toBe(true);
+    expect(qosEnabledFrom([evaluateQosLimit({ qosEnabled: false }, 5.2)])).toBe(false);
+    expect(qosEnabledFrom([evaluateQosLimit({ qosEnabled: false })])).toBe(false);
+    expect(qosEnabledFrom([evaluateQosLimit({})])).toBeUndefined();
+    expect(qosEnabledFrom(undefined)).toBeUndefined();
   });
 
   test('firmware that does not report the setting is not a failure', () => {

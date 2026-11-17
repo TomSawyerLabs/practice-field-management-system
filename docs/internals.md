@@ -242,7 +242,10 @@ Team WiFi configs (SSID + WPA key) are auto-saved on radio configure,
 keyed by SSID (`src/savedTeamStore.ts`, persisted to the
 `SAVED_TEAMS_FILE` JSON). Clients receive the saved list with WPA keys
 stripped; a hash lets the UI offer a "check passphrase" flow without
-exposing the key.
+exposing the key. Every passphrase a team has used is also kept, for good,
+in `TEAM_PASSPHRASES_FILE` (`team-passphrases.json`, never sent to
+clients): the robot Wi-Fi scan tries them on a robot whose saved passphrase
+doesn't open it (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)).
 
 ## WebSocket Topic Subscriptions
 

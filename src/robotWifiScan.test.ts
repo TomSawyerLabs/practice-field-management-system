@@ -16,7 +16,10 @@ import {
   robotOfBroadcast,
   RobotWifiScanner,
   STALL_MS,
+  candidateKeys,
   type ConnectAttempt,
+  type KeyFound,
+  type RobotWifiScannerOptions,
   type WifiRunner,
   type WpaEvent,
 } from './robotWifiScan.js';
@@ -189,7 +192,19 @@ class FakeRunner implements WifiRunner {
     '\n',
   );
   outcome: JoinOutcome = 'connect';
+  /** When set, only this passphrase opens a robot (outcome is ignored) */
+  rightKey: string | null = null;
   private onLine: (line: string) => void = () => {};
+
+  /** The passphrases tried, in order (recovered from the PSKs sent) */
+  triedKeys(candidates: string[]): string[] {
+    const psks = this.calls.filter(c => c[0] === 'set_network' && c[2] === 'psk').map(c => c[3]);
+    const ssids = this.calls.filter(c => c[0] === 'set_network' && c[2] === 'ssid').map(c => c[3]);
+    return psks.map((psk, i) => {
+      const ssid = Buffer.from(ssids[i], 'hex').toString('utf8');
+      return candidates.find(k => pskHex(k, ssid) === psk) ?? '?';
+    });
+  }
 
   async start(onLine: (line: string) => void): Promise<void> {
     this.onLine = onLine;
@@ -208,8 +223,14 @@ class FakeRunner implements WifiRunner {
         return 'wpa_state=SCANNING\n';
       case 'select_network':
         setTimeout(() => {
-          if (this.outcome === 'connect') this.onLine('wlp0s20f3: CTRL-EVENT-CONNECTED - Connection to x completed');
-          if (this.outcome === 'wrongKey')
+          const outcome =
+            this.rightKey === null
+              ? this.outcome
+              : this.triedKeys([this.rightKey]).at(-1) === this.rightKey
+                ? 'connect'
+                : 'wrongKey';
+          if (outcome === 'connect') this.onLine('wlp0s20f3: CTRL-EVENT-CONNECTED - Connection to x completed');
+          if (outcome === 'wrongKey')
             this.onLine(
               'wlp0s20f3: CTRL-EVENT-SSID-TEMP-DISABLED id=0 ssid="x" auth_failures=1 duration=10 reason=WRONG_KEY',
             );
@@ -287,7 +308,9 @@ async function flush() {
 
 function setup(
   attempts: ConnectAttempt[],
-  overrides: { now?: () => number; keyCheckTimeoutMs?: number; saved?: (string | SavedRobot)[] } = {},
+  overrides: Partial<Omit<RobotWifiScannerOptions, 'card' | 'savedRobots' | 'connectAttempts' | 'onChange'>> & {
+    saved?: (string | SavedRobot)[];
+  } = {},
 ) {
   const { saved, ...rest } = overrides;
   const runner = new FakeRunner();
@@ -506,5 +529,403 @@ describe('the scanner', () => {
     t += 60_000;
     await scanner.scanOnce();
     expect(state().broadcasts).toHaveLength(0);
+  });
+});
+
+describe("trying a team's other passphrases", () => {
+  test('every known passphrase first, then the team number twice; distinct and valid', () => {
+    expect(candidateKeys(1234, ['passphrase1', 'passphrase2', 'passphrase1'])).toEqual([
+      'passphrase1',
+      'passphrase2',
+      '12341234',
+    ]);
+    expect(candidateKeys(1234, ['short', '12341234'])).toEqual(['12341234']);
+    // A 3-digit team's pattern is too short for WPA
+    expect(candidateKeys(254, ['passphrase1'])).toEqual(['passphrase1']);
+    const many = ['key00001', 'key00002', 'key00003', 'key00004', 'key00005', 'key00006', 'key00007'];
+    expect(candidateKeys(1234, many)).toEqual([...many, '12341234']);
+  });
+});
+
+describe('recovering a forgotten passphrase', () => {
+  const KEYS = ['passphrase1', 'otherkey1', 'otherkey2', '12341234'];
+
+  test("a saved robot its own passphrase doesn't open: the team's others are tried until one works", async () => {
+    const found: KeyFound[] = [];
+    const saved: SavedRobot[] = [{ ssid: '1234-Comp', wpaKey: 'passphrase1' }];
+    const { runner, scanner, state } = setup([], {
+      saved,
+      teamKeys: () => ['passphrase1', 'otherkey1', 'otherkey2'],
+      onKeyFound: f => {
+        found.push(f);
+        saved[0] = { ssid: f.robotSsid, wpaKey: f.wpaKey };
+      },
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.rightKey = 'otherkey2';
+    await scanner.start();
+    await flush();
+    // Stops at the one that works
+    expect(runner.triedKeys(KEYS)).toEqual(['passphrase1', 'otherkey1', 'otherkey2']);
+    expect(found).toEqual([
+      { heardSsid: 'FRC-1234-Comp', robotSsid: '1234-Comp', savedSsid: '1234-Comp', wpaKey: 'otherkey2' },
+    ]);
+    expect(state().broadcasts[0].keyCheck).toMatchObject({ result: 'ok', recovered: true });
+    expect(state().broadcasts[0].keySearch).toBeUndefined();
+    expect(JSON.stringify(state())).not.toContain('otherkey');
+  });
+
+  test('the team number twice is tried last', async () => {
+    const found: KeyFound[] = [];
+    const { runner, scanner } = setup([], { teamKeys: () => ['passphrase1'], onKeyFound: f => found.push(f) });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.rightKey = '12341234';
+    await scanner.start();
+    await flush();
+    expect(runner.triedKeys(KEYS)).toEqual(['passphrase1', '12341234']);
+    expect(found[0].wpaKey).toBe('12341234');
+  });
+
+  test('when none works, the search says so and stops', async () => {
+    const { runner, scanner, state } = setup([], { teamKeys: () => ['passphrase1', 'otherkey1'] });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.rightKey = 'nobodyknows';
+    await scanner.start();
+    await flush();
+    expect(runner.joins()).toBe(3);
+    expect(state().broadcasts[0]).toMatchObject({ keyCheck: { result: 'wrongKey' }, keySearch: 'exhausted' });
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(3);
+  });
+
+  test('a name the team never saved is searched, and found under the name it broadcasts', async () => {
+    const found: KeyFound[] = [];
+    const { runner, scanner } = setup([], {
+      teamKeys: () => ['passphrase1'],
+      onKeyFound: f => found.push(f),
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Practice')].join('\n');
+    await scanner.start();
+    await flush();
+    expect(found).toEqual([{ heardSsid: 'FRC-1234-Practice', robotSsid: '1234-Practice', wpaKey: 'passphrase1' }]);
+  });
+
+  test('a team pFMS has no passphrases for is left alone', async () => {
+    const { runner, scanner } = setup([], { teamKeys: () => [] });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-5678')].join('\n');
+    await scanner.start();
+    await flush();
+    expect(runner.joins()).toBe(0);
+  });
+
+  test('a name differing only in capitals, opened by the saved passphrase, is found under the name it uses', async () => {
+    const found: KeyFound[] = [];
+    const { runner, scanner } = setup([], {
+      saved: ['1234-comp'],
+      teamKeys: () => ['passphrase1'],
+      onKeyFound: f => found.push(f),
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    await scanner.start();
+    await flush();
+    expect(found).toEqual([
+      { heardSsid: 'FRC-1234-Comp', robotSsid: '1234-Comp', savedSsid: '1234-comp', wpaKey: 'passphrase1' },
+    ]);
+    expect(runner.joins()).toBe(1);
+  });
+
+  test('a stalled connection whose field passphrase is wrong: found for that station', async () => {
+    const found: KeyFound[] = [];
+    const { runner, scanner } = setup([stalled()], {
+      teamKeys: () => ['passphrase1', 'otherkey1'],
+      onKeyFound: f => found.push(f),
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.rightKey = 'otherkey1';
+    await scanner.start();
+    await flush();
+    expect(found).toEqual([
+      {
+        heardSsid: 'FRC-1234-Comp',
+        robotSsid: '1234-Comp',
+        savedSsid: '1234-Comp',
+        station: 'slot3',
+        wpaKey: 'otherkey1',
+      },
+    ]);
+  });
+
+  test("a robot that doesn't answer is tried again after a while", async () => {
+    let t = NOW;
+    const { runner, scanner, state } = setup([], {
+      now: () => t,
+      keyCheckTimeoutMs: 20,
+      retryUnreachableMs: 120_000,
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'silent';
+    await scanner.start();
+    await flush();
+    await flush();
+    expect(state().broadcasts[0].keyCheck?.result).toBe('unreachable');
+    // No answer is not a wrong passphrase: nothing else is tried
+    expect(state().broadcasts[0].keySearch).toBeUndefined();
+
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(1);
+    t += 120_000;
+    runner.outcome = 'connect';
+    await scanner.scanOnce();
+    await flush();
+    expect(runner.joins()).toBe(2);
+    expect(state().broadcasts[0].keyCheck?.result).toBe('ok');
+  });
+});
+
+describe('putting a robot on the field by itself', () => {
+  function arrival(over: Parameters<typeof setup>[1] = {}) {
+    const enabled: [string, string][] = [];
+    const placed = new Set<string>();
+    const s = setup([], {
+      placed: ssid => placed.has(ssid),
+      enableRobot: (r, why) => {
+        enabled.push([r.ssid, why]);
+        placed.add(r.ssid);
+      },
+      ...over,
+    });
+    s.runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    return { ...s, enabled, placed };
+  }
+
+  test('a saved robot heard, its passphrase checked: on the field once', async () => {
+    const { scanner, enabled } = arrival();
+    await scanner.start();
+    await flush();
+    expect(enabled).toEqual([['1234-Comp', 'arrived']]);
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toHaveLength(1);
+  });
+
+  test('not with a wrong passphrase', async () => {
+    const { runner, scanner, enabled } = arrival();
+    runner.outcome = 'wrongKey';
+    await scanner.start();
+    await flush();
+    expect(enabled).toEqual([]);
+  });
+
+  test('not when the team turned it off for that robot', async () => {
+    const { scanner, enabled } = arrival({ saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }] });
+    await scanner.start();
+    await flush();
+    expect(enabled).toEqual([]);
+  });
+
+  test('not during a match: it goes on once the match is over', async () => {
+    let matchOn = true;
+    const { scanner, enabled } = arrival({ canAutoConnect: () => !matchOn });
+    await scanner.start();
+    await flush();
+    expect(enabled).toEqual([]);
+    matchOn = false;
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toEqual([['1234-Comp', 'arrived']]);
+  });
+
+  test('a robot released while still on is not put back; powered off and on again, it is', async () => {
+    let t = NOW;
+    const { runner, scanner, enabled, placed } = arrival({ now: () => t });
+    await scanner.start();
+    await flush();
+    expect(enabled).toHaveLength(1);
+
+    placed.delete('1234-Comp'); // released (by the team, idle release, after a match)
+    t += 20_000;
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toHaveLength(1);
+
+    runner.scanText = HEADER; // powered off
+    t += 100_000;
+    await scanner.scanOnce();
+    expect(scanner.getState().broadcasts).toEqual([]);
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    t += 20_000;
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toEqual([
+      ['1234-Comp', 'arrived'],
+      ['1234-Comp', 'arrived'],
+    ]);
+    expect(runner.joins()).toBe(2); // checked afresh on its return
+  });
+
+  test('gone quiet while on the field is not leaving', async () => {
+    let t = NOW;
+    const { runner, scanner, enabled, placed } = arrival({ now: () => t });
+    await scanner.start();
+    await flush();
+    runner.scanText = HEADER; // stops broadcasting while on the field
+    t += 100_000;
+    await scanner.scanOnce();
+    placed.delete('1234-Comp'); // released, broadcasting again
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    t += 20_000;
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toHaveLength(1);
+  });
+
+  test('a robot already on the field when first heard counts as connected', async () => {
+    const { scanner, enabled, placed } = arrival();
+    placed.add('1234-Comp');
+    await scanner.start();
+    await flush();
+    placed.delete('1234-Comp');
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toEqual([]);
+  });
+
+  test("a team's request waits for the check, even with auto-connect off", async () => {
+    const { runner, scanner, enabled, state } = arrival({
+      saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }],
+    });
+    runner.scanText = HEADER; // not on yet
+    await scanner.start();
+    await flush();
+    scanner.requestConnect('1234-Comp');
+    await flush();
+    expect(state().awaiting).toEqual(['1234-Comp']);
+    expect(enabled).toEqual([]);
+
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    await scanner.scanOnce();
+    await flush();
+    expect(enabled).toEqual([['1234-Comp', 'asked']]);
+    expect(state().awaiting).toBeUndefined();
+  });
+
+  test("a team's request with the wrong passphrase never reaches the field", async () => {
+    const { runner, scanner, enabled, state } = arrival();
+    runner.outcome = 'wrongKey';
+    await scanner.start();
+    scanner.requestConnect('1234-Comp');
+    await flush();
+    expect(enabled).toEqual([]);
+    expect(state().awaiting).toEqual(['1234-Comp']);
+    expect(state().broadcasts[0].keyCheck?.result).toBe('wrongKey');
+  });
+
+  test('a recovered passphrase is saved, and then the robot goes on', async () => {
+    const saved: SavedRobot[] = [{ ssid: '1234-Comp', wpaKey: 'passphrase1' }];
+    const { runner, scanner, enabled } = arrival({
+      saved,
+      teamKeys: () => ['passphrase1', 'otherkey1'],
+      onKeyFound: f => (saved[0] = { ssid: f.robotSsid, wpaKey: f.wpaKey }),
+    });
+    runner.rightKey = 'otherkey1';
+    await scanner.start();
+    await flush();
+    expect(enabled).toEqual([['1234-Comp', 'arrived']]);
+  });
+});
+
+describe('robots still being checked', () => {
+  test('are named while their check runs, so a reconfiguration can wait for them', async () => {
+    const { runner, scanner } = setup([], { keyCheckTimeoutMs: 30 });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'silent';
+    await scanner.start();
+    await Bun.sleep(5);
+    expect(scanner.arrivalChecks()).toEqual(['1234-Comp']);
+    await flush();
+    expect(scanner.arrivalChecks()).toEqual([]);
+  });
+
+  test('but not a robot whose team turned auto-connect off', async () => {
+    const { runner, scanner } = setup([], {
+      keyCheckTimeoutMs: 30,
+      saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }],
+    });
+    runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    runner.outcome = 'silent';
+    await scanner.start();
+    await Bun.sleep(5);
+    expect(scanner.arrivalChecks()).toEqual([]);
+    await flush();
+  });
+});
+
+describe('what the CSA page is told', () => {
+  function noting(over: Parameters<typeof setup>[1] = {}) {
+    const notes: string[] = [];
+    const s = setup([], { note: (robot, text, tone = 'info') => notes.push(`${tone} ${robot}: ${text}`), ...over });
+    s.runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    return { ...s, notes };
+  }
+
+  test('a robot heard, its passphrase checked, and joining the field by itself', async () => {
+    const { scanner, notes } = noting();
+    await scanner.start();
+    await flush();
+    expect(notes).toEqual([
+      'info 1234-Comp: Heard on the air (a saved robot, -50 dBm)',
+      'good 1234-Comp: Saved passphrase checked on the robot: it works',
+      'good 1234-Comp: Passphrase works: joining the field by itself',
+    ]);
+  });
+
+  test('a search: started once, then the find — not every wrong passphrase', async () => {
+    const saved: SavedRobot[] = [{ ssid: '1234-Comp', wpaKey: 'passphrase1' }];
+    const { runner, scanner, notes } = noting({
+      saved,
+      teamKeys: () => ['passphrase1', 'otherkey1', 'otherkey2'],
+      onKeyFound: f => (saved[0] = { ssid: f.robotSsid, wpaKey: f.wpaKey }),
+    });
+    runner.rightKey = 'otherkey2';
+    await scanner.start();
+    await flush();
+    expect(notes.slice(1, 4)).toEqual([
+      'bad 1234-Comp: Saved passphrase is wrong',
+      "info 1234-Comp: Trying the team's other passphrases (3 of them)",
+      "good 1234-Comp: Found its passphrase among the team's others (2 of 3) and saved it",
+    ]);
+  });
+
+  test('a search that finds nothing says the team must check its radio', async () => {
+    const { runner, scanner, notes } = noting({ teamKeys: () => ['passphrase1', 'otherkey1'] });
+    runner.rightKey = 'nobodyknows';
+    await scanner.start();
+    await flush();
+    expect(notes.at(-1)).toBe(
+      "bad 1234-Comp: None of the team's 2 other passphrases open it: the team needs to check its radio",
+    );
+  });
+
+  test('no answer: says when it tries again', async () => {
+    const { runner, scanner, notes } = noting({ keyCheckTimeoutMs: 30 });
+    runner.outcome = 'silent';
+    await scanner.start();
+    await flush();
+    expect(notes).toContain(
+      'bad 1234-Comp: No answer from the robot checking its saved passphrase; trying again in 2 min',
+    );
+  });
+
+  test('why a robot whose passphrase works is not joining, said once', async () => {
+    const { scanner, notes } = noting({ saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }] });
+    await scanner.start();
+    await flush();
+    await scanner.scanOnce();
+    await flush();
+    expect(notes.filter(n => n.includes('Not joining'))).toEqual([
+      'info 1234-Comp: Not joining the field by itself: the team turned that off for this robot',
+    ]);
   });
 });

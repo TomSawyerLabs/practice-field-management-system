@@ -14,8 +14,7 @@
     "html2canvas": "^1.4.1",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-smoothie": "^0.13.1"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.55",

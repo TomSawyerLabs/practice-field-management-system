@@ -26,6 +26,11 @@ export function createTelemetryCoalescer(
      *  would otherwise be dropped by latest-wins coalescing, and the sag
      *  floor is the main thing the battery charts exist to show. */
     pendingMin: number;
+    /** Highest, and the sum and count for the mean: with the lowest, what a
+     *  chart needs to draw the window honestly from one sample of it. */
+    pendingMax: number;
+    pendingSum: number;
+    pendingCount: number;
   }
   const stations = new Map<string, StationState>();
 
@@ -35,28 +40,42 @@ export function createTelemetryCoalescer(
     st.latest = null;
     st.lastSentAt = Date.now();
     if (update.dsStatus !== undefined) st.lastStatusKey = statusKey(update);
-    if (
-      update.batteryVoltage !== undefined &&
-      Number.isFinite(st.pendingMin) &&
-      st.pendingMin < update.batteryVoltage
-    ) {
-      update = { ...update, batteryVoltageMin: st.pendingMin };
+    if (update.batteryVoltage !== undefined && st.pendingCount > 0) {
+      const extra: Partial<TelemetryUpdate> = {};
+      if (st.pendingMin < update.batteryVoltage) extra.batteryVoltageMin = st.pendingMin;
+      if (st.pendingMax > update.batteryVoltage) extra.batteryVoltageMax = st.pendingMax;
+      if (st.pendingCount > 1) extra.batteryVoltageAvg = Math.round((st.pendingSum / st.pendingCount) * 1000) / 1000;
+      update = { ...update, ...extra };
     }
     st.pendingMin = NaN;
+    st.pendingMax = NaN;
+    st.pendingSum = 0;
+    st.pendingCount = 0;
     send(update);
   };
 
   return update => {
     let st = stations.get(update.station);
     if (!st) {
-      st = { latest: null, lastSentAt: 0, lastStatusKey: '', timer: null, pendingMin: NaN };
+      st = {
+        latest: null,
+        lastSentAt: 0,
+        lastStatusKey: '',
+        timer: null,
+        pendingMin: NaN,
+        pendingMax: NaN,
+        pendingSum: 0,
+        pendingCount: 0,
+      };
       stations.set(update.station, st);
     }
 
     if (update.batteryVoltage !== undefined) {
-      if (!Number.isFinite(st.pendingMin) || update.batteryVoltage < st.pendingMin) {
-        st.pendingMin = update.batteryVoltage;
-      }
+      const v = update.batteryVoltage;
+      if (st.pendingCount === 0 || v < st.pendingMin) st.pendingMin = v;
+      if (st.pendingCount === 0 || v > st.pendingMax) st.pendingMax = v;
+      st.pendingSum += v;
+      st.pendingCount++;
     }
 
     const now = Date.now();

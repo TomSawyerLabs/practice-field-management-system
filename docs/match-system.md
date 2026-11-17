@@ -407,8 +407,8 @@ matches, when nobody is driving.
 If the radio and pFMS disagree about what is configured, pFMS pushes its
 config again after 15 seconds, then backs off (1, 2, 4, 8 minutes, capped
 at 10) until the radio agrees, logging both sides' SSIDs each time. Every
-push shows "Reconfiguration in progress" on every page and drops each
-robot's Wi-Fi, which is why it does not retry faster. For a field that is
+push shows "Field Wi-Fi is updating" on every page and the scoreboard TVs
+and drops each robot's Wi-Fi, which is why it does not retry faster. For a field that is
 stuck anyway, the admin page has a **Field reset** card: **Clear all robots
 from the radio** empties every station and drops waiting requests (teams
 press Enable Robot again), and **Restart pFMS** restarts the backend the
@@ -517,7 +517,29 @@ no-show that came from the line goes to the back of it).
 
 Teams see where they stand at the top of their page: "You're in Match 12
 on the Red alliance — next up", "3rd in line", or the Play next button.
-The queue is broadcast to the scoreboard socket too, so a TV can show it.
+
+### The queue on a TV
+
+The scoreboard page has a **queue view**: the queue full screen, for a TV in
+the pits or by the field. It shows the match playing now, the one on deck
+(no-shows struck through), the next five, and the fill line in order with
+each team's alliance color if it asked for one.
+
+- **In a browser:** the **📋 queue** chip on the scoreboard, or the **Queue
+  display** link on `/queue`, which opens `/scores?view=queue`. The choice
+  is remembered per browser, like the leaderboard view.
+- **On a Cast TV:** switch to the queue view before casting, or tap the
+  display's view chip under **Admin → Scoring → Displays** until it reads
+  **📋 queue** (it cycles scoreboard → leaderboard → queue).
+
+**The queue stays on the field network.** `/scores` is public, but pFMS
+sends the queue only to a scoreboard page on an on-site address (the same
+rule as the field's own pages, and never another site's page). Anywhere
+else the queue view says it is only shown on the field network. A TV at the
+field that loads the public name gets the queue as long as that name
+resolves to the field's host on site (split DNS); a Chromecast that skips
+the network's DNS and goes through the internet reads as off site. pFMS
+logs each scoreboard connection's address with `on site` or `off site`.
 
 ### Nudges: Slack and push
 

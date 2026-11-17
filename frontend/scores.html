@@ -18,6 +18,8 @@
         s.onload = function () {
           var ctx = cast.framework.CastReceiverContext.getInstance();
           var NAMESPACE = (window.__PFMS_CAST && window.__PFMS_CAST.namespace) || 'urn:x-cast:com.tomsawyerlabs.pfms';
+          // SCOREBOARD_VIEWS in src/types.ts
+          var VIEWS = ['scoreboard', 'leaderboard', 'queue'];
           ctx.addCustomMessageListener(NAMESPACE, function (event) {
             try {
               var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
@@ -30,7 +32,7 @@
                 // senders.
                 var settings = { 'scoreboard-swap': data.swap ? '1' : '0', 'scoreboard-muted': data.mute ? '1' : '0' };
                 if (data.checks !== undefined) settings['scoreboard-checks'] = data.checks ? '1' : '0';
-                if (data.view === 'scoreboard' || data.view === 'leaderboard') settings['scoreboard-view'] = data.view;
+                if (VIEWS.indexOf(data.view) >= 0) settings['scoreboard-view'] = data.view;
                 var changed = false;
                 for (var key in settings) {
                   if (localStorage.getItem(key) !== settings[key]) changed = true;
@@ -46,7 +48,7 @@
               } else if (data && data.checks !== undefined) {
                 localStorage.setItem('scoreboard-checks', data.checks ? '1' : '0');
                 window.location.reload();
-              } else if (data && (data.view === 'scoreboard' || data.view === 'leaderboard')) {
+              } else if (data && VIEWS.indexOf(data.view) >= 0) {
                 localStorage.setItem('scoreboard-view', data.view);
                 window.location.reload();
               }
