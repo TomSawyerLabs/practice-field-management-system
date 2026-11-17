@@ -62,10 +62,16 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
        "Watch" chip (`1a53254`). Checked with real curl against a fake MJPEG
        server on this PC (19 frames in 0.6 s, stops after the viewer leaves).
        5b. [x] Stills every 4 s when the live stream is off (`d6796db`).
-       5c. [ ] ← NT readout. Design below ("NT readout design"). In progress.
-6. [ ] Deploy (when the user says): `d64f6a9`, `6e992aa`, `d4a7724`, `1a53254`, `d6796db`.
+       5c. [x] NT readout: addon `InterfaceTcp` (`5052de5`), reader + Network page
+       "Robot code" lines (`64e8ccf`). Checked in WSL against real ntcore 2026.2.2
+       with a dashboard connected (114 ms). Not checked on a robot.
+6. [ ] ← Deploy (when the user says). **Order matters**: the crate is now 0.3.0,
+       so `bun run build` on steamboat fails until the release exists. First
+       push master, then `git tag mdns-socket-v0.3.0 && git push origin
+mdns-socket-v0.3.0`, wait for the workflow's release (public repo, free CI),
+       then `update.sh`.
        After deploy, check Caddy streams the multipart reply without buffering
-       (open Watch on the https site).
+       (open Watch on the https site), and that the NT lines appear.
 7. [ ] Next team day: check chips, a CameraServer stream through Watch, the
        lookup log while a team uses an app that finds devices by name, and ask
        2854 which camera app they use.
@@ -155,6 +161,7 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 - [x] Port survey of 2854's devices.
 - [x] Steps 1–3 (2026-11-15 evening PST), `d64f6a9` fix + feature commit.
 - [x] Steps 4–5 (2026-11-16 early AM PST).
+- [x] Stills (`d6796db`) and NT readout (`5052de5`, `64e8ccf`), 2026-11-16.
 - [ ] Steps 6–9.
 
 ## Open questions for the user
@@ -162,6 +169,13 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 1. Main display and caster: what should they look like? (inline view is done)
 2. ~~NT readout~~: answered yes, in progress.
 3. ~~mDNS evidence~~: answered yes, built (`d4a7724`).
+
+- WSL test rig for the addon: `unshare -rn` gives CAP*NET_RAW for
+  SO_BINDTODEVICE on `lo` without sudo; pyntcore via `uv` in `~/ntvenv`. The
+  ntcore server writes `networktables.json` into its cwd (delete it). A Python
+  ntcore \_client* never connected inside the namespace; a Bun WebSocket did.
+- NT4 meta topics (`$clients`) have type `msgpack`: the value is a msgpack
+  bin holding packed msgpack, decoded twice.
 
 ## Things not to do
 
