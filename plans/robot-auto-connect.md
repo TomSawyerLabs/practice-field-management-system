@@ -147,6 +147,7 @@ Current step: **8 — deploy and verify on a real robot** (implementation done, 
       +2, store rewritten (5). Scoreboard strip not looked at in a browser.
 - [x] Round 3: CSA page robot Wi-Fi activity panel. Tests: scanner +5,
       activity log 1, under-way lines 3. Panel not looked at in a browser.
+- [x] Merged into local master (`8f4f25c`, 2026-11-16); not pushed or deployed.
 - [ ] Verify on a real robot at steamboat (needs a deploy + a team)
 
 ## Open questions for the user
