@@ -1,7 +1,8 @@
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isDryRun, skippedInDryRunOnce } from './dryRun.js';
-import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost } from './types.js';
+import { probeServices } from './deviceServices.js';
+import type { StationName, SubnetScanResults, StationSubnetScan, DiscoveredHost, HostService } from './types.js';
 import { FIELD_CONTROL_ADDRESS, StationNameList } from './types.js';
 import { teamSubnet } from './utils.js';
 
@@ -19,30 +20,25 @@ export function fpingArgs(rangeStart: string, rangeEnd: string, ifname?: string)
   return [...(ifname ? ['-I', ifname] : []), '-a', '-r', '0', '-t', '200', '-q', '-g', rangeStart, rangeEnd];
 }
 
-/** How often a host that stays up is asked again whether it serves a web page. */
-export const WEB_RECHECK_MS = 60_000;
+/** How often a host that stays up is asked again what it offers. */
+export const SERVICES_RECHECK_MS = 60_000;
+/** curls in flight at once, across all stations: each host takes about a dozen. */
+const MAX_PROBES = 24;
 
-/**
- * curl arguments asking whether `ip` answers HTTP on port 80, pinned to the
- * station's bridge for the same reason as the fping sweep. Only the status
- * code is printed; "000" means nothing answered.
- */
-export function webProbeArgs(ip: string, ifname?: string): string[] {
-  return [
-    ...(ifname ? ['--interface', ifname] : []),
-    '--silent',
-    '--noproxy',
-    '*',
-    '--connect-timeout',
-    '1',
-    '--max-time',
-    '2',
-    '--output',
-    '/dev/null',
-    '--write-out',
-    '%{http_code}',
-    `http://${ip}/`,
-  ];
+/** `run`, with at most `limit` calls in flight. */
+function limited(run: RunTool, limit: number): RunTool {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async (tool, args, options) => {
+    if (active >= limit) await new Promise<void>(resolve => waiting.push(resolve));
+    active++;
+    try {
+      return await run(tool, args, options);
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
+  };
 }
 
 interface HostState {
@@ -53,10 +49,10 @@ interface HostState {
   onlineSince: number;
   /** How this host was discovered */
   source: 'fping' | 'conntrack';
-  /** Answered HTTP on port 80 when last asked. */
-  web?: boolean;
+  /** What it offered when last asked (web pages, camera streams, SSH). */
+  services?: HostService[];
   /** When it was last asked. */
-  webCheckedAt?: number;
+  servicesCheckedAt?: number;
 }
 
 export class SubnetScanner {
@@ -64,6 +60,10 @@ export class SubnetScanner {
   private lastScanTime = new Map<StationName, number>();
   private interval: NodeJS.Timeout | null = null;
   private scanning = false;
+  /** Service probes in flight, by host. They run beside the sweeps, not in them:
+   *  a full round takes seconds, and a sweep every 10 s must not wait for it. */
+  private probing = new Map<string, Promise<void>>();
+  private readonly probeRun: RunTool;
 
   constructor(
     private readonly getTeamForStation: TeamLookup,
@@ -76,7 +76,14 @@ export class SubnetScanner {
      *  field network must not sweep real team subnets. */
     private readonly dryRun = isDryRun(),
     private readonly run: RunTool = execFile,
-  ) {}
+  ) {
+    this.probeRun = limited(run, MAX_PROBES);
+  }
+
+  /** Resolves once every service probe started so far has finished. */
+  async probesSettled(): Promise<void> {
+    while (this.probing.size) await Promise.all(this.probing.values());
+  }
 
   start(intervalMs = 10_000): void {
     this.stop();
@@ -123,7 +130,7 @@ export class SubnetScanner {
           lastSeen: state.lastSeen,
           onlineSince: state.onlineSince,
           source: state.source,
-          ...(state.web ? { web: true } : {}),
+          ...(state.services?.length ? { services: state.services } : {}),
         });
       }
 
@@ -190,61 +197,49 @@ export class SubnetScanner {
     }
     const hostMap = this.state.get(station)!;
 
-    // Mark all fping-sourced hosts as down (conntrack hosts handled separately)
-    for (const host of hostMap.values()) {
-      if (host.source === 'fping') host.alive = false;
+    // Up or down by this sweep (conntrack hosts handled separately). A host
+    // that stays up keeps its onlineSince; only down → up restarts it.
+    for (const [ip, host] of hostMap) {
+      if (host.source !== 'fping') continue;
+      const up = aliveIps.has(ip);
+      if (up && !host.alive) host.onlineSince = now;
+      if (up) host.lastSeen = now;
+      host.alive = up;
     }
 
-    // Update alive hosts
+    // New hosts
     for (const ip of aliveIps) {
-      const existing = hostMap.get(ip);
-      if (existing) {
-        // Reset onlineSince when transitioning from down → up
-        if (!existing.alive) existing.onlineSince = now;
-        existing.alive = true;
-        existing.lastSeen = now;
-      } else {
-        hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'fping' });
-      }
+      if (hostMap.has(ip)) continue;
+      hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'fping' });
     }
 
-    await this.probeWeb(station, hostMap, now);
+    this.probeServicesOf(station, hostMap, now);
     this.lastScanTime.set(station, now);
   }
 
   /**
-   * Ask the station's devices whether they serve a web page (the radio's and
-   * roboRIO's status pages, a coprocessor's camera UI), so the Network page
-   * can link to them. A device is asked when it appears or comes back, then
-   * once a minute while it stays up.
+   * Ask the station's devices what they offer (web pages, camera streams,
+   * SSH), so the Network page can link to them. A device is asked when it
+   * appears or comes back, then once a minute while it stays up. Results show
+   * up in the next scan's broadcast.
    */
-  private async probeWeb(station: StationName, hostMap: Map<string, HostState>, now: number): Promise<void> {
-    const due = [...hostMap].filter(
-      ([, h]) =>
-        h.source === 'fping' &&
-        h.alive &&
-        (h.webCheckedAt === undefined || h.webCheckedAt < h.onlineSince || now - h.webCheckedAt >= WEB_RECHECK_MS),
-    );
+  private probeServicesOf(station: StationName, hostMap: Map<string, HostState>, now: number): void {
     const ifname = this.bridgeOf?.(station);
-    await Promise.all(
-      due.map(async ([ip, host]) => {
-        host.web = await this.answersHttp(ip, ifname);
-        host.webCheckedAt = now;
-      }),
-    );
-  }
-
-  private async answersHttp(ip: string, ifname?: string): Promise<boolean> {
-    let stdout: string | undefined;
-    try {
-      ({ stdout } = await this.run('curl', webProbeArgs(ip, ifname), { timeout: 5_000 }));
-    } catch (err) {
-      // Refused (7) prints "000"; a slow page that timed out (28) after
-      // answering still prints its status.
-      stdout = (err as { stdout?: string }).stdout;
+    for (const [ip, host] of hostMap) {
+      if (host.source !== 'fping' || !host.alive) continue;
+      const key = `${station} ${ip}`;
+      if (this.probing.has(key)) continue;
+      const checked = host.servicesCheckedAt;
+      if (checked !== undefined && checked >= host.onlineSince && now - checked < SERVICES_RECHECK_MS) continue;
+      const probe = probeServices(this.probeRun, ip, ifname)
+        .then(services => {
+          host.services = services;
+          host.servicesCheckedAt = now;
+        })
+        .catch(err => console.error(`SubnetScanner: probing ${ip} on ${station} failed:`, err))
+        .finally(() => this.probing.delete(key));
+      this.probing.set(key, probe);
     }
-    const status = stdout?.trim() ?? '';
-    return /^\d{3}$/.test(status) && status !== '000';
   }
 
   private async runFping(station: StationName, rangeStart: string, rangeEnd: string): Promise<Set<string> | null> {
@@ -350,30 +345,27 @@ export class SubnetScanner {
       const hostMap = this.state.get(station);
       if (!hostMap) continue;
 
-      // Mark all conntrack-sourced hosts as down, and prune stale ones.
-      // Conntrack entries expire from the kernel naturally (UDP ~30s, TCP varies),
-      // so hosts not seen for 60s are removed from the map entirely.
+      // Up or down by this scan, and prune stale ones. Conntrack entries
+      // expire from the kernel naturally (UDP ~30s, TCP varies), so hosts not
+      // seen for 60s are removed from the map entirely. A host that stays up
+      // keeps its onlineSince.
+      const guests = activeGuests.get(station) ?? new Set<string>();
       for (const [ip, host] of hostMap) {
         if (host.source !== 'conntrack') continue;
-        if (now - host.lastSeen > 60_000) {
+        const up = guests.has(ip);
+        if (!up && now - host.lastSeen > 60_000) {
           hostMap.delete(ip);
-        } else {
-          host.alive = false;
+          continue;
         }
+        if (up && !host.alive) host.onlineSince = now;
+        if (up) host.lastSeen = now;
+        host.alive = up;
       }
 
-      // Update active guest hosts
-      const guests = activeGuests.get(station);
-      if (!guests) continue;
+      // New guest hosts
       for (const ip of guests) {
-        const existing = hostMap.get(ip);
-        if (existing) {
-          if (!existing.alive) existing.onlineSince = now;
-          existing.alive = true;
-          existing.lastSeen = now;
-        } else {
-          hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'conntrack' });
-        }
+        if (hostMap.has(ip)) continue;
+        hostMap.set(ip, { firstSeen: now, lastSeen: now, alive: true, onlineSince: now, source: 'conntrack' });
       }
     }
   }

@@ -40,7 +40,16 @@
  */
 import dgram from 'node:dgram';
 import { mdnsSocketUnavailable, openInterfaceSocket, type InterfaceSocket } from './mdnsSocket.js';
-import { MdnsActivity, MdnsResolvedName, StationMdnsActivity, StationName, StationNameList } from './types.js';
+import type { MdnsLookupLog } from './mdnsLookupLog.js';
+import {
+  MdnsActivity,
+  MdnsDropReason,
+  MdnsQuestion,
+  MdnsResolvedName,
+  StationMdnsActivity,
+  StationName,
+  StationNameList,
+} from './types.js';
 
 const MDNS_ADDR = '224.0.0.251';
 const MDNS_PORT = 5353;
@@ -86,20 +95,39 @@ function readDnsName(buf: Buffer, offset: number): { name: string; bytesRead: nu
   return { name: labels.join('.'), bytesRead };
 }
 
-/** Extract all question names from an mDNS packet (header is 12 bytes). */
-function parseQuestionNames(buf: Buffer): string[] {
+const RECORD_TYPES: Record<number, string> = {
+  1: 'A',
+  12: 'PTR',
+  16: 'TXT',
+  28: 'AAAA',
+  33: 'SRV',
+  47: 'NSEC',
+  255: 'ANY',
+};
+
+/** Extract every question from an mDNS packet (header is 12 bytes): its name,
+ *  record type, and whether it asks for a unicast answer (the QU bit). */
+export function parseQuestions(buf: Buffer): MdnsQuestion[] {
   if (buf.length < 12) return [];
   const qdCount = buf.readUInt16BE(4);
-  const names: string[] = [];
+  const questions: MdnsQuestion[] = [];
   let offset = 12;
 
   for (let i = 0; i < qdCount && offset < buf.length; i++) {
     const { name, bytesRead } = readDnsName(buf, offset);
-    if (name) names.push(name);
-    offset += bytesRead + 4; // skip QTYPE (2) + QCLASS (2)
+    const typeAt = offset + bytesRead;
+    if (name && typeAt + 4 <= buf.length) {
+      const type = buf.readUInt16BE(typeAt);
+      questions.push({
+        name,
+        type: RECORD_TYPES[type] ?? `TYPE${type}`,
+        qu: (buf.readUInt16BE(typeAt + 2) & 0x8000) !== 0,
+      });
+    }
+    offset = typeAt + 4; // QTYPE (2) + QCLASS (2)
   }
 
-  return names;
+  return questions;
 }
 
 /** Extract answer records from an mDNS packet, including A record IPs. */
@@ -253,6 +281,16 @@ interface PendingEntry extends Requester {
   /** Where the question went (stationScope). */
   scope: string;
   expires: number;
+  /** An answer has been sent back for it. */
+  answered: boolean;
+}
+
+/** A question that aged out with no answer. */
+export interface UnansweredQuery {
+  name: string;
+  address: string;
+  port: number;
+  scope: string;
 }
 
 /** Scope of a question forwarded to a station's robot. */
@@ -276,11 +314,12 @@ export class PendingQueries {
     for (const raw of names) {
       const name = normalizeName(raw);
       const entries = this.byName.get(name) ?? [];
+      this.noteExpired(name, entries, now);
       // A re-ask from the same laptop replaces its earlier entry rather than stacking
       const kept = entries.filter(
         e => e.expires > now && !(e.address === requester.address && e.port === requester.port && e.scope === scope),
       );
-      kept.push({ ...requester, scope, expires });
+      kept.push({ ...requester, scope, expires, answered: false });
       this.byName.set(name, kept);
     }
   }
@@ -292,11 +331,13 @@ export class PendingQueries {
       const name = normalizeName(raw);
       const entries = this.byName.get(name);
       if (!entries) continue;
+      this.noteExpired(name, entries, now);
       const live = entries.filter(e => e.expires > now);
       if (live.length === 0) this.byName.delete(name);
       else if (live.length !== entries.length) this.byName.set(name, live);
       for (const e of live) {
         if (e.scope !== scope) continue;
+        e.answered = true;
         const key = `${e.address}:${e.port}`;
         if (!seen.has(key)) seen.set(key, { address: e.address, port: e.port, id: e.id });
       }
@@ -304,12 +345,30 @@ export class PendingQueries {
     return [...seen.values()];
   }
 
-  /** Drop everything that has aged out (the match path prunes lazily; this is for the timer). */
-  prune(now = Date.now()): void {
+  /** Drop everything that has aged out (the match path prunes lazily; this is
+   *  for the timer). Returns the questions that aged out with no answer since
+   *  the last call, including ones `add` or `match` pruned. */
+  prune(now = Date.now()): UnansweredQuery[] {
     for (const [name, entries] of this.byName) {
+      this.noteExpired(name, entries, now);
       const live = entries.filter(e => e.expires > now);
       if (live.length === 0) this.byName.delete(name);
       else if (live.length !== entries.length) this.byName.set(name, live);
+    }
+    const unanswered = this.expiredUnanswered;
+    this.expiredUnanswered = [];
+    return unanswered;
+  }
+
+  /** Questions that aged out unanswered since the last prune, wherever they were dropped. */
+  private expiredUnanswered: UnansweredQuery[] = [];
+
+  private noteExpired(name: string, entries: PendingEntry[], now: number): void {
+    for (const e of entries) {
+      if (e.expires <= now && !e.answered) {
+        e.answered = true; // reported once
+        this.expiredUnanswered.push({ name, address: e.address, port: e.port, scope: e.scope });
+      }
     }
   }
 
@@ -414,6 +473,8 @@ export class MdnsReflector {
     private readonly listenInterfaces: string[] = [],
     /** Opens a station's pinned socket; the native addon in production. */
     private readonly openSocket: typeof openInterfaceSocket = openInterfaceSocket,
+    /** Where each lookup's fate is written (src/mdnsLookupLog.ts). */
+    private readonly lookupLog?: Pick<MdnsLookupLog, 'record'>,
   ) {
     this.excludedRequesters = excludeRequesters ? parseExcludeList(excludeRequesters) : [];
     if (this.excludedRequesters.length > 0) {
@@ -435,7 +496,7 @@ export class MdnsReflector {
 
     this.openLaptopSocket();
     this.pruneTimer = setInterval(() => {
-      this.pending.prune();
+      this.logUnanswered(this.pending.prune());
       this.retryLaptopSocket();
       this.reopenFailedSockets();
     }, PENDING_QUERY_TTL_MS);
@@ -632,6 +693,15 @@ export class MdnsReflector {
     if (targets.length === 0) return; // an announcement nobody asked for
     const names: MdnsResolvedName[] = records.map(r => ({ name: r.name.toLowerCase(), resolvedIp: r.resolvedIp }));
     this.incrementCounter(station, team, 'responsesForwarded', names);
+    this.lookupLog?.record({
+      t: Date.now(),
+      kind: 'answered',
+      station,
+      team,
+      from: address,
+      records: names,
+      to: targets.map(t => `${t.address}:${t.port}`),
+    });
     for (const target of targets) {
       this.enqueueSend({
         packet: answerFor(msg, target),
@@ -653,18 +723,41 @@ export class MdnsReflector {
     if (sourceTeam !== null && this.activeTeams.has(sourceTeam)) return;
     if ((msg[2] & 0x80) !== 0) return; // answers from laptops aren't ours to forward
 
+    const questions = parseQuestions(msg);
+    if (questions.length === 0) return;
+    const excluded = isExcluded(rinfo.address, this.excludedRequesters);
+    const drop = (reason: MdnsDropReason) => {
+      if (excluded) return;
+      this.lookupLog?.record({
+        t: Date.now(),
+        kind: 'dropped',
+        requester: rinfo.address,
+        port: rinfo.port,
+        reason,
+        questions,
+      });
+    };
+
     const station = this.getStationForRequester(rinfo.address);
-    if (!station) return; // Laptop hasn't selected a robot — nowhere to forward
+    if (!station) return drop('not placed'); // Laptop hasn't selected a robot — nowhere to forward
     const team = this.getTeamForStation(station);
+    if (team === null) return drop('no team on station');
     const entry = this.stationSockets.get(station);
-    if (team === null || entry?.kind !== 'open') return;
+    if (entry?.kind !== 'open') return drop('station socket not open');
 
-    const queryNames = parseQuestionNames(msg);
-    if (queryNames.length === 0) return;
-
-    if (!isExcluded(rinfo.address, this.excludedRequesters)) {
+    const queryNames = questions.map(q => q.name);
+    if (!excluded) {
       const names: MdnsResolvedName[] = queryNames.map(n => ({ name: n.toLowerCase(), requester: rinfo.address }));
       this.incrementCounter(station, team, 'queriesForwarded', names);
+      this.lookupLog?.record({
+        t: Date.now(),
+        kind: 'forwarded',
+        requester: rinfo.address,
+        port: rinfo.port,
+        station,
+        team,
+        questions,
+      });
     }
 
     // Remember who asked so the answer can come back to them alone
@@ -694,14 +787,36 @@ export class MdnsReflector {
     const entry = this.sendQueue.shift()!;
     try {
       this.socket.send(entry.packet, 0, entry.packet.length, entry.port, entry.address, err => {
-        if (err) console.error(`mDNS: failed to send (${entry.label}):`, err);
+        if (err) {
+          console.error(`mDNS: failed to send (${entry.label}):`, err);
+          this.logSendFailed(entry, err);
+        }
         this.sendInFlight = false;
         this.flushSendQueue();
       });
     } catch (err) {
       console.error(`mDNS: failed to send (${entry.label}):`, err);
+      this.logSendFailed(entry, err);
       this.sendInFlight = false;
       this.flushSendQueue();
+    }
+  }
+
+  private logSendFailed(entry: Outbound, err: unknown): void {
+    this.lookupLog?.record({
+      t: Date.now(),
+      kind: 'send failed',
+      to: `${entry.address}:${entry.port}`,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  private logUnanswered(questions: UnansweredQuery[]): void {
+    if (!this.lookupLog) return;
+    const now = Date.now();
+    for (const q of questions) {
+      const station = q.scope.replace(/^station:/, '') as StationName;
+      this.lookupLog.record({ t: now, kind: 'unanswered', requester: q.address, port: q.port, station, name: q.name });
     }
   }
 

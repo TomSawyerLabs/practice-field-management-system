@@ -399,8 +399,19 @@ const QOS_NEAR_FRACTION = 0.9;
  *    the cap means nothing. Warn only once it is over: the same robot gets
  *    shaped at an event.
  */
+const QOS_CHECK_NAME = 'Radio QoS BW Limit';
+
+/** Whether a station's radio limits its bandwidth, from its latest checks;
+ *  undefined when the radio didn't say (or hasn't been checked). */
+export function qosEnabledFrom(checks: readonly CheckResult[] | undefined): boolean | undefined {
+  const actual = checks?.find(c => c.name === QOS_CHECK_NAME)?.actual;
+  if (actual?.startsWith('enabled')) return true;
+  if (actual?.startsWith('disabled')) return false;
+  return undefined;
+}
+
 export function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: number): CheckResult {
-  const name = 'Radio QoS BW Limit';
+  const name = QOS_CHECK_NAME;
   if (data.qosEnabled === undefined) {
     return { name, status: 'pass', message: 'Not reported by firmware' };
   }
@@ -414,6 +425,7 @@ export function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: numb
     return {
       name,
       status: 'warn',
+      actual: `${limiter}, using ${used} Mbps`,
       message:
         `The robot is using ${used} Mbps of the ~${QOS_CAP_MBPS} Mbps cap its own radio is enforcing — it is being ` +
         `throttled right now, which is what causes the lag and the NetworkTables/Driver Station dropouts. Cut what the ` +
@@ -427,6 +439,7 @@ export function evaluateQosLimit(data: { qosEnabled?: boolean }, usedMbps?: numb
     return {
       name,
       status: 'warn',
+      actual: `${limiter}, using ${used} Mbps`,
       message:
         `The robot is using ${used} Mbps, over the ~${QOS_CAP_MBPS} Mbps per-team cap. Nothing is throttling it here, ` +
         `but at an event this traffic gets shaped — expect lag and dropouts unless what the robot streams comes down ` +

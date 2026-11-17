@@ -39,6 +39,8 @@ import {
   ConfigureResult,
   IdleRelease,
   isPendingChange,
+  ReconfigureStationChange,
+  RadioReconfigureState,
 } from './types.js';
 import { randomUUID } from 'node:crypto';
 
@@ -72,6 +74,36 @@ export type IdleReleasePolicy = {
   /** Robots never released this way (the host team's). */
   exempt: (ssid: string) => boolean;
 };
+
+/** The reconfigure countdown before any has been timed on this radio. */
+export const DEFAULT_RECONFIGURE_MS = 40_000;
+/** How many recent reconfigures the countdown is estimated from. */
+const RECONFIGURE_SAMPLES = 5;
+
+/** The stations a push of `active` changes, against what the radio reports
+ *  having now. Stations that keep their robot are left out. */
+export function reconfigureChanges(
+  active: Partial<Record<StationName, { ssid: string }>>,
+  onRadio: Partial<Record<StationName, { ssid?: string } | null | undefined>> | undefined,
+): ReconfigureStationChange[] {
+  const changes: ReconfigureStationChange[] = [];
+  for (const station of StationNameList) {
+    const to = active[station]?.ssid || undefined;
+    const from = onRadio?.[station]?.ssid || undefined;
+    if (to === from) continue;
+    changes.push({ station, ...(from && { from }), ...(to && { to }) });
+  }
+  return changes;
+}
+
+/** The reconfigure countdown: the median of recent durations, so one slow
+ *  six-station change doesn't stretch every countdown after it. */
+export function expectedReconfigureMs(recent: number[]): number {
+  if (recent.length === 0) return DEFAULT_RECONFIGURE_MS;
+  const sorted = [...recent].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return Math.round(sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2);
+}
 
 /** How long a release for a waiting team is remembered, for the released
  *  team's page. */
@@ -123,6 +155,11 @@ class RadioManager {
   /** True when an applied change's commit was deferred because shouldDefer() returned true. */
   private _deferredCommit = false;
   private pendingCommitListeners: ((pending: boolean) => void)[] = [];
+  /** The reconfigure in flight, for the teams' pages and the scoreboard. */
+  private reconfigure: { since: number; changes: ReconfigureStationChange[] } | null = null;
+  /** Durations of recent successful reconfigures, ms, oldest first. */
+  private reconfigureDurations: number[] = [];
+  private reconfigureListeners: ((state: RadioReconfigureState) => void)[] = [];
   /** Per-station timestamp of last time a robot was linked (isLinked=true). */
   private lastLinked = new Map<StationName, number>();
   /** Previous isLinked state per station — used to detect transitions and avoid chatty broadcasts. */
@@ -1226,7 +1263,9 @@ class RadioManager {
     await this.enqueueRadioPush(() => startDHCPServers(teamsOnBridges(), trunk));
   }
 
-  private async configureRadio(config: any): Promise<void> {
+  /** `changes` is what the push changes, for the teams watching; computed
+   *  against the radio's report when not given. */
+  private async configureRadio(config: any, changes?: ReconfigureStationChange[]): Promise<void> {
     if (
       skippedInDryRunUnlessLocal(
         this.apiBaseUrl,
@@ -1250,9 +1289,12 @@ class RadioManager {
     ) {
       console.log('No configurations are active, tricking radio to clear all configurations');
       // Direct syslog-only POST (not setSyslogIP, which refuses to wipe stations)
-      return this.configureRadio({
-        syslogIpAddress: this.entries[this.entries.length - 1]?.radioUpdate?.syslogIpAddress ?? '10.0.100.40',
-      });
+      return this.configureRadio(
+        {
+          syslogIpAddress: this.entries[this.entries.length - 1]?.radioUpdate?.syslogIpAddress ?? '10.0.100.40',
+        },
+        changes,
+      );
     }
 
     // Unreachable while every caller goes through enqueueRadioPush(). Fail
@@ -1262,8 +1304,14 @@ class RadioManager {
     }
 
     let isConfiguring: Promise<void> | undefined;
+    let succeeded = false;
     try {
       this.configuring = true;
+      this.setReconfigure({
+        since: Date.now(),
+        changes:
+          changes ?? reconfigureChanges(this.activeConfig, this.lastBroadcastEntry?.radioUpdate?.stationStatuses),
+      });
 
       const body = JSON.stringify(config);
 
@@ -1304,13 +1352,51 @@ class RadioManager {
         }).join(', ');
         console.log(`Radio ACTIVE after configure — reports ${summary}`);
       }
+      succeeded = true;
     } catch (err) {
       // Suppress the isConfiguring rejection if we're bailing out before awaiting it
       isConfiguring?.catch(() => {});
       throw err;
     } finally {
       this.configuring = false;
+      // Only a full reconfigure is a fair sample for the countdown: a failed
+      // one may have timed out, or never started.
+      if (succeeded && this.reconfigure) {
+        this.reconfigureDurations = [...this.reconfigureDurations, Date.now() - this.reconfigure.since].slice(
+          -RECONFIGURE_SAMPLES,
+        );
+      }
+      this.setReconfigure(null);
     }
+  }
+
+  private setReconfigure(value: { since: number; changes: ReconfigureStationChange[] } | null) {
+    this.reconfigure = value;
+    const state = this.getReconfigureState();
+    for (const listener of this.reconfigureListeners) {
+      try {
+        listener(state);
+      } catch (err) {
+        console.error('Error in reconfigure listener:', err);
+      }
+    }
+  }
+
+  /** Whether the radio is being reconfigured right now, what that changes,
+   *  and how long it is expected to take. */
+  getReconfigureState(): RadioReconfigureState {
+    return {
+      type: 'radioReconfigure',
+      active: this.reconfigure !== null,
+      ...(this.reconfigure && { since: this.reconfigure.since }),
+      expectedMs: expectedReconfigureMs(this.reconfigureDurations),
+      changes: this.reconfigure?.changes ?? [],
+    };
+  }
+
+  addReconfigureListener(listener: (state: RadioReconfigureState) => void): () => void {
+    this.reconfigureListeners.push(listener);
+    return () => this.reconfigureListeners.splice(this.reconfigureListeners.indexOf(listener), 1);
   }
 
   async toggleInternetAccess(stationId: StationName, enabled: boolean): Promise<void> {

@@ -27,8 +27,6 @@ import {
   sendSetRobotAutoConnect,
   sendInternetToggle,
   useLatestTelemetry,
-  useUpdateCallback,
-  useTelemetryCallback,
   useNetworkStats,
   useSubnetScan,
   useMdnsActivity,
@@ -75,9 +73,11 @@ import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
 import { StationNetworkCard } from './NetworkPage';
 import { HostDisplay } from './HostDisplay';
+import { useReconfigProgress } from '../hooks/useReconfigProgress';
 import { StationName, StationNameList, SavedTeamClientConfig, PortConfig } from '../../../src/types';
 import { createHash } from './cryptoUtils';
-import { StationChart, handleStatusUpdate, handleTelemetryUpdate } from './StationChart';
+import { TimelineChart } from './TimelineChart';
+import { startLiveTimeline } from '../timeline/live';
 import { CopyToClipboard } from './CopyToClipboard';
 import IconButton from '@mui/material/IconButton';
 import Link from '@mui/material/Link';
@@ -93,7 +93,14 @@ import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import TableHead from '@mui/material/TableHead';
 import Alert from '@mui/material/Alert';
-import { formatBytes, describeIp, formatAge, hostTeamsInEffect, idleReleaseMinutes } from '../../../src/utils';
+import {
+  formatBytes,
+  describeIp,
+  formatAge,
+  hostTeamsInEffect,
+  idleReleaseMinutes,
+  robotNameOf,
+} from '../../../src/utils';
 import { parkedHostStations } from '../utils/fieldIssues';
 
 // Helper function to format numbers with thin space as thousands separator
@@ -316,10 +323,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   const [currentSsid, setCurrentSsid] = useState(selectedSsid);
   const latest = useLatest();
 
-  // Collect chart data from the page root, so the charts are already full
+  // Collect chart data from the page root, so the chart is already full
   // when the Radio tab is opened.
-  useUpdateCallback(handleStatusUpdate);
-  useTelemetryCallback(handleTelemetryUpdate);
+  useEffect(startLiveTimeline, []);
 
   // Radio card toggles live here so they survive switching tabs.
   const [chartMode, setChartMode] = useState(true);
@@ -369,6 +375,14 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
   }, [activeStations, currentSsid, showRobot]);
 
   const selectedStation = activeStations.get(currentSsid) ?? null;
+  // The team's other robot on the field, for the Radio tab's chart to lay
+  // over the selected one.
+  const otherRobot = useMemo(() => {
+    for (const [ssid, station] of activeStations) {
+      if (ssid !== currentSsid) return { station, name: robotNameOf(ssid) };
+    }
+    return null;
+  }, [activeStations, currentSsid]);
 
   // Route preference: which robot this device's traffic (and .local lookups)
   // goes to. Driving is separate — a drive session for this laptop, which
@@ -430,6 +444,11 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
     tabChoice && !(CONTROL_TABS.find(t => t.id === tabChoice)!.needsRobot && !selectedStation) ? tabChoice : 'robots';
   const selectedLinked = selectedStation ? !!latest?.radioUpdate?.stationStatuses[selectedStation]?.isLinked : false;
   const checkResults = useTeamCheckResults(selectedStation);
+
+  // While the radio reconfigures every robot drops off. Point the team at
+  // the Radio tab's dot, which turns green when theirs is back.
+  const { isConfiguring } = useReconfigProgress();
+  const radioCallout = isConfiguring && !!selectedStation;
 
   // Status dots on the tabs, so a dropped link or an equipment problem shows from any tab
   const tabDot = (id: ControlTab): string | null => {
@@ -521,7 +540,25 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           <Tab
             key={t.id}
             value={t.id}
-            label={t.label}
+            label={
+              t.id === 'radio' ? (
+                <Tooltip
+                  open={radioCallout}
+                  arrow
+                  placement="top"
+                  slotProps={{ popper: { sx: { zIndex: 'appBar' } } }}
+                  title={
+                    <Box onClick={() => selectTab('radio')} sx={{ cursor: 'pointer', fontSize: '0.8rem', p: 0.25 }}>
+                      👀 Watch here: this dot turns green when your robot is on the field Wi-Fi
+                    </Box>
+                  }
+                >
+                  <span>{t.label}</span>
+                </Tooltip>
+              ) : (
+                t.label
+              )
+            }
             disabled={t.needsRobot && !selectedStation}
             icon={(() => {
               const dot = tabDot(t.id);
@@ -564,6 +601,8 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
           </Typography>
           <RadioStatusCard
             station={selectedStation}
+            robotName={robotNameOf(currentSsid)}
+            otherRobot={otherRobot}
             chartMode={chartMode}
             onChartModeChange={setChartMode}
             internetAccess={internetAccess[selectedStation] ?? false}
@@ -1697,12 +1736,16 @@ function StationNetwork({ station }: { station: StationName }) {
  */
 function RadioStatusCard({
   station,
+  robotName,
+  otherRobot,
   chartMode,
   onChartModeChange,
   internetAccess,
   onInternetAccessChange,
 }: {
   station: StationName;
+  robotName: string;
+  otherRobot: { station: StationName; name: string } | null;
   chartMode: boolean;
   onChartModeChange: (chartMode: boolean) => void;
   internetAccess: boolean;
@@ -1808,19 +1851,7 @@ function RadioStatusCard({
         )}
 
         {chartMode && stationSsid ? (
-          <Box sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-            <StationChart station={station} metric="signalLevels" height="60px" />
-            <StationChart station={station} metric="snr" height="60px" />
-            <StationChart station={station} metric="rates" height="60px" />
-            <StationChart station={station} metric="packets" height="60px" />
-            <StationChart station={station} metric="bytes" height="60px" />
-            <StationChart station={station} metric="bandwidth" height="60px" />
-            <StationChart station={station} metric="dataAge" height="60px" />
-            <StationChart station={station} metric="quality" height="60px" />
-            <StationChart station={station} metric="batteryVoltage" height="60px" />
-            <StationChart station={station} metric="dsCpuPercent" height="60px" />
-            <StationChart station={station} metric="robotStatus" height="60px" />
-          </Box>
+          <TimelineChart station={station} name={robotName} other={otherRobot} />
         ) : stationSsid && isLinked ? (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {/* Signal Levels */}

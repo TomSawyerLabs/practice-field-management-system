@@ -7,6 +7,16 @@ import { MatchSummaryPage } from '../components/MatchSummaryPage';
 import { PracticeDayPage } from '../components/PracticeDayPage';
 import { LeaderboardTvPage } from '../components/LeaderboardTvPage';
 import { SCOREBOARD_VIEW } from '../utils/scoreboardView';
+import { ReconfigureTvScreen } from '../components/ReconfigureNotice';
+import { useReconfigProgress } from '../hooks/useReconfigProgress';
+
+/** While the radio reconfigures, the TV shows that instead: teams look up
+ *  at it when their robot drops off. The scoreboard stays mounted under it,
+ *  so its video stream and settings carry on. */
+function DuringReconfigure() {
+  const progress = useReconfigProgress();
+  return progress.isConfiguring ? <ReconfigureTvScreen progress={progress} /> : null;
+}
 
 // `/matches/<token>` is the post-match summary a team scanned off the TV. It
 // shares this bundle (the server maps that path to scores.html); the older
@@ -37,10 +47,11 @@ createRoot(document.getElementById('root')!).render(
           <PracticeDayPage token={practiceToken} />
         ) : summaryToken ? (
           <MatchSummaryPage token={summaryToken} />
-        ) : SCOREBOARD_VIEW === 'leaderboard' ? (
-          <LeaderboardTvPage />
         ) : (
-          <ScoreboardPage />
+          <>
+            {SCOREBOARD_VIEW === 'leaderboard' ? <LeaderboardTvPage /> : <ScoreboardPage />}
+            <DuringReconfigure />
+          </>
         )}
       </ThemeProvider>
     </ErrorBoundary>

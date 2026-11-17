@@ -31,6 +31,9 @@ estop-state.json.tmp
 match-history.json
 usage-data.json
 deploy-announced.json
+# What became of each .local lookup (src/mdnsLookupLog.ts)
+mdns-lookups.jsonl
+mdns-lookups.jsonl.1
 
 # Append-only work log that concurrent Claude sessions use to coordinate.
 /.agent.status

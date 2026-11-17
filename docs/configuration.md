@@ -24,21 +24,22 @@ service restart — no `systemctl daemon-reload` needed.
 
 ## Networking
 
-| Variable                  | Default  | Description                                                                                                                                                         |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VLAN_INTERFACE`          | _(none)_ | Physical network interface for VLAN configuration (e.g., `eno1`). Required for routing.                                                                             |
-| `FIELD_CONTROL_INTERFACE` | _(none)_ | Where field control (`10.0.100.5/24`) lives when it isn't the trunk's untagged VLAN: `eno1.100` (created if missing) or a separate NIC. Unset: the trunk interface. |
-| `VLAN_HOST_OCTET`         | `254`    | Host octet for the pFMS host's IP on each team VLAN (range: 220–254)                                                                                                |
-| `FIELD_PORTS`             | _(none)_ | Physical port bridging config: `VLANID:Name,...` (e.g., `201:Port A,202:Port B`). Requires `VLAN_INTERFACE`.                                                        |
-| `IPTABLES_COMMENT_PREFIX` | `pfms-`  | Prefix for iptables rule comments (used to identify and flush rules)                                                                                                |
-| `KEEP_NETWORK`            | `false`  | Set to `true` to skip the startup network flush (same effect as the `/run/pfms-keep-network` flag file written by `systemctl reload`)                               |
-| `MDNS_REFLECTOR`          | `false`  | Set to `true` to enable the mDNS reflector (bridges `.local` queries between main network and team VLANs). Requires `VLAN_INTERFACE`.                               |
-| `ROBOT_WIFI_INTERFACE`    | _(none)_ | Spare wireless card for the robot Wi-Fi scan (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)). May be the 6 GHz watch's card. The admin page setting wins. |
-| `SIX_GHZ_WATCH_INTERFACE` | _(none)_ | 6 GHz-capable card for the 6 GHz watch (see [robot-tester.md](robot-tester.md#6-ghz-watch)). May be the robot scan's card. The admin page setting wins.             |
-| `WIFI_COUNTRY`            | `US`     | Wi-Fi country pFMS sets as the host's regulatory domain on every card it runs (6 GHz needs one). The admin page setting wins.                                       |
-| `MDNS_EXCLUDE_REQUESTERS` | _(none)_ | Requester IPs excluded from mDNS reflection                                                                                                                         |
-| `MDNS_LISTEN_INTERFACES`  | _(none)_ | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                                              |
-| `TRUSTED_PROXIES`         | loopback | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                    |
+| Variable                  | Default              | Description                                                                                                                                                         |
+| ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VLAN_INTERFACE`          | _(none)_             | Physical network interface for VLAN configuration (e.g., `eno1`). Required for routing.                                                                             |
+| `FIELD_CONTROL_INTERFACE` | _(none)_             | Where field control (`10.0.100.5/24`) lives when it isn't the trunk's untagged VLAN: `eno1.100` (created if missing) or a separate NIC. Unset: the trunk interface. |
+| `VLAN_HOST_OCTET`         | `254`                | Host octet for the pFMS host's IP on each team VLAN (range: 220–254)                                                                                                |
+| `FIELD_PORTS`             | _(none)_             | Physical port bridging config: `VLANID:Name,...` (e.g., `201:Port A,202:Port B`). Requires `VLAN_INTERFACE`.                                                        |
+| `IPTABLES_COMMENT_PREFIX` | `pfms-`              | Prefix for iptables rule comments (used to identify and flush rules)                                                                                                |
+| `KEEP_NETWORK`            | `false`              | Set to `true` to skip the startup network flush (same effect as the `/run/pfms-keep-network` flag file written by `systemctl reload`)                               |
+| `MDNS_REFLECTOR`          | `false`              | Set to `true` to enable the mDNS reflector (bridges `.local` queries between main network and team VLANs). Requires `VLAN_INTERFACE`.                               |
+| `ROBOT_WIFI_INTERFACE`    | _(none)_             | Spare wireless card for the robot Wi-Fi scan (see [robot-tester.md](robot-tester.md#robot-wi-fi-scan)). May be the 6 GHz watch's card. The admin page setting wins. |
+| `SIX_GHZ_WATCH_INTERFACE` | _(none)_             | 6 GHz-capable card for the 6 GHz watch (see [robot-tester.md](robot-tester.md#6-ghz-watch)). May be the robot scan's card. The admin page setting wins.             |
+| `WIFI_COUNTRY`            | `US`                 | Wi-Fi country pFMS sets as the host's regulatory domain on every card it runs (6 GHz needs one). The admin page setting wins.                                       |
+| `MDNS_EXCLUDE_REQUESTERS` | _(none)_             | Requester IPs excluded from mDNS reflection                                                                                                                         |
+| `MDNS_LISTEN_INTERFACES`  | _(none)_             | Extra interfaces the mDNS reflector listens on (comma/space separated)                                                                                              |
+| `MDNS_LOOKUP_LOG`         | `mdns-lookups.jsonl` | Where the reflector logs each lookup and what became of it (rotated at 2 MB, one old copy kept as `.1`)                                                             |
+| `TRUSTED_PROXIES`         | loopback             | Comma-separated trusted proxy IPs/CIDRs for real client IP detection (see below)                                                                                    |
 
 ## FMS Protocol
 

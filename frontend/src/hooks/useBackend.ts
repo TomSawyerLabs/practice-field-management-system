@@ -164,6 +164,8 @@ import {
   isTeamPrefsState,
   NudgeChannels,
   PushSubscriptionInput,
+  isRadioReconfigureState,
+  type RadioReconfigureState,
 } from '../../../src/types';
 import { Message as RadioMessage } from 'syslog-server';
 
@@ -423,6 +425,9 @@ function processHistory(entries: StatusEntry[]) {
 
   console.log(`Received ${entries.length} history entries`);
 
+  // The timeline store takes the whole array at once, with its own timestamps.
+  events.dispatchEvent(new CustomEvent('history', { detail: entries }));
+
   // Delay dispatching events to allow React components to mount and register listeners
   // This ensures charts and other UI components can receive the historical data
   setTimeout(() => {
@@ -526,6 +531,39 @@ function useEventListener(
   }, [type, cb]);
 }
 
+/** What a store outside React (the chart timeline) can listen for. */
+interface BackendEvents {
+  /** One radio status entry, live. */
+  update: StatusEntry;
+  /** The radio status history the server replays on connect. */
+  history: StatusEntry[];
+  telemetry: TelemetryUpdate;
+  matchState: MatchState;
+  radioReconfigure: RadioReconfigureState;
+  robotDropouts: RobotDropoutsState;
+}
+
+/** Listen to the socket's messages without a component. Returns the
+ *  function that stops listening. */
+export function onBackendEvent<K extends keyof BackendEvents>(
+  type: K,
+  callback: (detail: BackendEvents[K]) => void,
+): () => void {
+  const listener: EventListener = event => callback((event as CustomEvent<BackendEvents[K]>).detail);
+  events.addEventListener(type, listener);
+  return () => events.removeEventListener(type, listener);
+}
+
+/** What has already arrived, for a store that starts listening late. */
+export function backendSnapshot() {
+  return {
+    history: history as readonly StatusEntry[],
+    matchState: currentMatchState,
+    radioReconfigure: currentRadioReconfigure,
+    robotDropouts: currentRobotDropouts,
+  };
+}
+
 /**
  * One slice of a module-level state. `event` must fire after `getState` has
  * the new value. The caller re-renders only when the slice changes by value,
@@ -585,6 +623,7 @@ let currentSavedTeams: SavedTeamsState | null = null;
 let currentQueueState: QueueState | null = null;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
+let currentRadioReconfigure: RadioReconfigureState | null = null;
 let currentRobotDropouts: RobotDropoutsState | null = null;
 let currentRobotEStops: RobotEStopsState | null = null;
 let currentMdnsActivity: MdnsActivity | null = null;
@@ -1161,6 +1200,12 @@ function receiveMessage(detail: Message) {
     return;
   }
 
+  if (isRadioReconfigureState(detail)) {
+    currentRadioReconfigure = detail;
+    events.dispatchEvent(new CustomEvent('radioReconfigure', { detail }));
+    return;
+  }
+
   if (isChallengeLeaderboardState(detail)) {
     handleChallengeLeaderboard({
       tables: detail.tables,
@@ -1504,6 +1549,20 @@ export interface ChallengeLeaderboard {
 
 /** The speed challenge leaderboard, computed by the server. Unlike
  *  `useMatchHistory`, this reaches the read-only /scores socket too. */
+/** The server's word on a radio reconfigure: whether one is running, since
+ *  when, and what it changes. Reaches the read-only /scores socket too.
+ *  Null until the server has said (an older server never does). */
+export function useRadioReconfigure(): RadioReconfigureState | null {
+  const [state, setState] = useState(currentRadioReconfigure);
+  useEffect(() => {
+    setState(currentRadioReconfigure);
+    const handler = (e: Event) => setState((e as CustomEvent<RadioReconfigureState>).detail);
+    events.addEventListener('radioReconfigure', handler);
+    return () => events.removeEventListener('radioReconfigure', handler);
+  }, []);
+  return state;
+}
+
 export function useChallengeLeaderboard(): ChallengeLeaderboard {
   const [leaderboard, setLeaderboard] = useState<ChallengeLeaderboard>(currentChallengeLeaderboard);
 
