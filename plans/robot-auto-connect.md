@@ -51,6 +51,15 @@ treated as the truth, with "Enable anyway" kept as the escape hatch.
   (`FieldWifiNote`, `utils/fieldWifiNotice.ts`): live countdown "in N s, once
   robots are disabled", then "once robots are disabled"; also shows a
   deferred reconfiguration and held changes (admin / match / staff).
+- (Round 3, user 2026-11-16) Wider recovery (unknown / capitals-only names,
+  saved as new robots) OK — but **never try capitalization variants**; only
+  the name as broadcast is joined (true already: checks join the heard SSID).
+- (Round 3) 2-minute retry after no answer OK, and **the CSA page must show
+  what is happening**: `RobotWifiActivityLog` (in memory, 100 entries / 4 h)
+  fed by the scanner's `note` option and the batch apply in index.ts;
+  `RobotWifiActivityPanel` on the CSA page with "under way" lines
+  (`utils/robotWifiActivity.ts`) and the activity list. Unreachable key
+  checks carry `retryAt`. `enableTogether` returns its hold reason.
 
 ## Design (my calls — flag to user if they disagree)
 
@@ -136,6 +145,8 @@ Current step: **8 — deploy and verify on a real robot** (implementation done, 
       shared reconfiguration (`AutoConnectBatch`, `enableTogether`),
       scoreboard note. Tests: batch 4, notice 6, radioManager +3, scanner
       +2, store rewritten (5). Scoreboard strip not looked at in a browser.
+- [x] Round 3: CSA page robot Wi-Fi activity panel. Tests: scanner +5,
+      activity log 1, under-way lines 3. Panel not looked at in a browser.
 - [ ] Verify on a real robot at steamboat (needs a deploy + a team)
 
 ## Open questions for the user

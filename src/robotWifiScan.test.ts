@@ -861,3 +861,71 @@ describe('robots still being checked', () => {
     await flush();
   });
 });
+
+describe('what the CSA page is told', () => {
+  function noting(over: Parameters<typeof setup>[1] = {}) {
+    const notes: string[] = [];
+    const s = setup([], { note: (robot, text, tone = 'info') => notes.push(`${tone} ${robot}: ${text}`), ...over });
+    s.runner.scanText = [HEADER, row('aa:bb:cc:dd:ee:01', 'FRC-1234-Comp')].join('\n');
+    return { ...s, notes };
+  }
+
+  test('a robot heard, its passphrase checked, and joining the field by itself', async () => {
+    const { scanner, notes } = noting();
+    await scanner.start();
+    await flush();
+    expect(notes).toEqual([
+      'info 1234-Comp: Heard on the air (a saved robot, -50 dBm)',
+      'good 1234-Comp: Saved passphrase checked on the robot: it works',
+      'good 1234-Comp: Passphrase works: joining the field by itself',
+    ]);
+  });
+
+  test('a search: started once, then the find — not every wrong passphrase', async () => {
+    const saved: SavedRobot[] = [{ ssid: '1234-Comp', wpaKey: 'passphrase1' }];
+    const { runner, scanner, notes } = noting({
+      saved,
+      teamKeys: () => ['passphrase1', 'otherkey1', 'otherkey2'],
+      onKeyFound: f => (saved[0] = { ssid: f.robotSsid, wpaKey: f.wpaKey }),
+    });
+    runner.rightKey = 'otherkey2';
+    await scanner.start();
+    await flush();
+    expect(notes.slice(1, 4)).toEqual([
+      'bad 1234-Comp: Saved passphrase is wrong',
+      "info 1234-Comp: Trying the team's other passphrases (3 of them)",
+      "good 1234-Comp: Found its passphrase among the team's others (2 of 3) and saved it",
+    ]);
+  });
+
+  test('a search that finds nothing says the team must check its radio', async () => {
+    const { runner, scanner, notes } = noting({ teamKeys: () => ['passphrase1', 'otherkey1'] });
+    runner.rightKey = 'nobodyknows';
+    await scanner.start();
+    await flush();
+    expect(notes.at(-1)).toBe(
+      "bad 1234-Comp: None of the team's 2 other passphrases open it: the team needs to check its radio",
+    );
+  });
+
+  test('no answer: says when it tries again', async () => {
+    const { runner, scanner, notes } = noting({ keyCheckTimeoutMs: 30 });
+    runner.outcome = 'silent';
+    await scanner.start();
+    await flush();
+    expect(notes).toContain(
+      'bad 1234-Comp: No answer from the robot checking its saved passphrase; trying again in 2 min',
+    );
+  });
+
+  test('why a robot whose passphrase works is not joining, said once', async () => {
+    const { scanner, notes } = noting({ saved: [{ ssid: '1234-Comp', wpaKey: 'passphrase1', autoConnect: false }] });
+    await scanner.start();
+    await flush();
+    await scanner.scanOnce();
+    await flush();
+    expect(notes.filter(n => n.includes('Not joining'))).toEqual([
+      'info 1234-Comp: Not joining the field by itself: the team turned that off for this robot',
+    ]);
+  });
+});

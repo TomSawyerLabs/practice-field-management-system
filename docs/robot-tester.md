@@ -219,6 +219,14 @@ it joins. The rules:
   the robots, and any robot still being waited for. It also shows a
   reconfiguration waiting for robots to be disabled, and Wi-Fi changes held
   by the admin, a match, or waiting for staff.
+- **The CSA page shows what happened.** Its **Robot Wi-Fi: connecting by
+  themselves** panel lists what is under way (passphrase checks, searches,
+  a robot that didn't answer and when it is tried again, team requests, a
+  reconfiguration coming up) and, newest first, what the scan did over the
+  last few hours: robots heard and gone quiet, each check's result, a
+  search started, found or exhausted, why a robot isn't joining by itself
+  (opted out, a match on), and whether its reconfiguration went ahead or is
+  held. In memory only (`src/robotWifiActivity.ts`).
 
 **Forgotten passphrases.** When a robot's saved passphrase (or, for a
 stalled robot, the field's) doesn't open its network, pFMS tries the

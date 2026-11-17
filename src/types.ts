@@ -2674,6 +2674,8 @@ export interface RobotWifiKeyCheck {
   /** The saved passphrase didn't open the robot; this one, found among the
    *  team's other passphrases, did — and pFMS saved it. */
   recovered?: boolean;
+  /** `unreachable`: when it is tried again (server epoch ms) */
+  retryAt?: number;
 }
 
 /** A robot radio's 2.4 GHz network, heard by pFMS. */
@@ -2740,6 +2742,21 @@ export interface RobotWifiScanState {
    *  reconfiguration: it starts at `at` (server epoch ms) — later while
    *  `waitingFor` robots are still being checked, so they join the same one. */
   upcoming?: { at: number; robots: string[]; waitingFor: string[] };
+  /** What the scan and auto-connect did lately, newest first, for the CSA
+   *  page (src/robotWifiActivity.ts). */
+  activity?: RobotWifiActivity[];
+}
+
+/** One thing the robot Wi-Fi scan or auto-connect did: a robot heard, a
+ *  passphrase checked or found, a robot put on the field, a retry. */
+export interface RobotWifiActivity {
+  /** Server epoch ms */
+  at: number;
+  /** The robot it is about: the name broadcast minus `FRC-`, or a saved name */
+  robot: string;
+  text: string;
+  /** `good`: it worked; `bad`: it didn't, and may need a person */
+  tone: 'info' | 'good' | 'bad';
 }
 
 export function isRobotWifiScanState(msg: unknown): msg is RobotWifiScanState {

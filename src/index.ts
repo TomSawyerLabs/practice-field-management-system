@@ -67,6 +67,7 @@ import { handleScoringRequest } from './scoringApi.js';
 import { handleMatchReviewRequest } from './matchReviewApi.js';
 import { SavedTeamStore } from './savedTeamStore.js';
 import { AutoConnectBatch } from './autoConnectBatch.js';
+import { RobotWifiActivityLog } from './robotWifiActivity.js';
 import {
   RobotWifiScanner,
   listWirelessInterfaces,
@@ -128,6 +129,7 @@ import {
   WifiCardsState,
   FIELD_CONTROL_ADDRESS,
   type TelemetryUpdate,
+  type RadioHoldReason,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { maybeRunCli } from './cli.js';
@@ -513,13 +515,39 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   setInterval(() => wifiCards.refresh(), 10_000);
   // Robots that connected by themselves share one field reconfiguration
   // (src/autoConnectBatch.ts); the scoreboard counts it down.
+  // What the scan and auto-connect did, for the CSA page.
+  const robotWifiActivity = new RobotWifiActivityLog();
+  const HOLD_WORDS: Record<RadioHoldReason, string> = {
+    match: 'Wi-Fi changes are held during a match',
+    admin: 'the field admin is holding Wi-Fi changes',
+    pending: 'other changes are waiting for Apply now',
+    full: 'the field is full',
+  };
   const autoConnectBatch = new AutoConnectBatch({
     stillChecking: () => robotWifi?.arrivalChecks() ?? [],
     apply: robots => {
-      appInfo(`Connecting ${robots.map(r => r.ssid).join(', ')} to the field together`);
+      const names = robots.map(r => r.ssid);
+      appInfo(`Connecting ${names.join(', ')} to the field together`);
       radioManager
         .enableTogether(robots.map(r => ({ ssid: r.ssid, wpaKey: r.wpaKey, internetAccess: r.internetAccess })))
-        .catch(err => appError(`Error connecting robots to the field: ${err.message}`));
+        .then(hold => {
+          const together = names.length > 1 ? `, together with ${names.length - 1} other robot(s)` : '';
+          for (const name of names)
+            robotWifiActivity.add(
+              name,
+              hold
+                ? `Waiting to go on the field: ${HOLD_WORDS[hold]}`
+                : radioManager.deferredCommit
+                  ? `Field Wi-Fi reconfigures for it once robots are disabled${together}`
+                  : `Field Wi-Fi reconfiguring to add it${together}`,
+              hold ? 'bad' : 'good',
+            );
+        })
+        .catch(err => {
+          appError(`Error connecting robots to the field: ${err.message}`);
+          for (const name of names) robotWifiActivity.add(name, `Couldn't add it to the field: ${err.message}`, 'bad');
+        })
+        .finally(() => broadcastRobotWifi(robotWifiState()));
     },
     onChange: () => broadcastRobotWifi(robotWifiState()),
   });
@@ -527,6 +555,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     ...(robotWifi?.getState() ?? { type: 'robotWifiScan', status: 'off', interfaces: [], broadcasts: [], stalls: [] }),
     interfaces: listWirelessInterfaces(),
     ...(autoConnectBatch.upcoming() && { upcoming: autoConnectBatch.upcoming() }),
+    activity: robotWifiActivity.list(),
   });
   // What the field is trying to connect, for spotting a robot that is taking
   // too long to join: every configured station, whether its robot is linked,
@@ -592,8 +621,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         : `${f.robotSsid}: heard it, and one of the team's passphrases opens it — saved it as a robot of theirs`,
     );
     savedTeamStore.saveTeam(f.robotSsid, f.wpaKey, existing?.internetAccess ?? from?.internetAccess, { autoConnect });
+    if (!existing) robotWifiActivity.add(f.robotSsid, `Saved as a new robot of team ${team ?? '?'}`, 'good');
     const config = f.station ? radioManager.getStationConfig(f.station) : null;
     if (f.station && config?.ssid === f.robotSsid && config.wpaKey !== f.wpaKey) {
+      robotWifiActivity.add(f.robotSsid, 'Switching the field to the passphrase found for it');
       radioManager
         .configure(f.station, { ssid: f.robotSsid, wpaKey: f.wpaKey, internetAccess: config.internetAccess })
         .catch(err => appError(`Error switching ${f.robotSsid} to its found passphrase: ${err.message}`));
@@ -616,6 +647,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         placed: robotPlaced,
         canAutoConnect: () => matchEngine.getState().phase === 'idle',
         enableRobot: enableHeardRobot,
+        note: (robot, text, tone) => robotWifiActivity.add(robot, text, tone),
         onChange: () => {
           broadcastRobotWifi(robotWifiState());
           wifiCards.refresh();

@@ -657,9 +657,11 @@ class RadioManager {
    * reconfigure instead of one each). Each goes on the pending list as an
    * enable; then, unless something already held changes back (a match, an
    * admin hold, changes waiting for staff), they are applied together, like
-   * configure() does for one.
+   * configure() does for one. Returns why they wait, or null if applied.
    */
-  async enableTogether(robots: { ssid: string; wpaKey: string; internetAccess?: boolean }[]): Promise<void> {
+  async enableTogether(
+    robots: { ssid: string; wpaKey: string; internetAccess?: boolean }[],
+  ): Promise<RadioHoldReason | null> {
     const wait = this.waitReason();
     let added = 0;
     for (const r of robots) {
@@ -669,10 +671,11 @@ class RadioManager {
     if (added === 0 || wait) {
       if (wait && added > 0) console.log(`Holding ${added} robot(s) that connected by themselves (${wait})`);
       this.afterListChange();
-      return;
+      return wait;
     }
     this.stageIdleReleases(Date.now());
     await this.applyPendingChanges();
+    return null;
   }
 
   /** Why a new change waits instead of applying now: the hold (a match
