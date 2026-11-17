@@ -425,6 +425,9 @@ function processHistory(entries: StatusEntry[]) {
 
   console.log(`Received ${entries.length} history entries`);
 
+  // The timeline store takes the whole array at once, with its own timestamps.
+  events.dispatchEvent(new CustomEvent('history', { detail: entries }));
+
   // Delay dispatching events to allow React components to mount and register listeners
   // This ensures charts and other UI components can receive the historical data
   setTimeout(() => {
@@ -526,6 +529,39 @@ function useEventListener(
     events.addEventListener(type, cb);
     return () => events.removeEventListener(type, cb);
   }, [type, cb]);
+}
+
+/** What a store outside React (the chart timeline) can listen for. */
+interface BackendEvents {
+  /** One radio status entry, live. */
+  update: StatusEntry;
+  /** The radio status history the server replays on connect. */
+  history: StatusEntry[];
+  telemetry: TelemetryUpdate;
+  matchState: MatchState;
+  radioReconfigure: RadioReconfigureState;
+  robotDropouts: RobotDropoutsState;
+}
+
+/** Listen to the socket's messages without a component. Returns the
+ *  function that stops listening. */
+export function onBackendEvent<K extends keyof BackendEvents>(
+  type: K,
+  callback: (detail: BackendEvents[K]) => void,
+): () => void {
+  const listener: EventListener = event => callback((event as CustomEvent<BackendEvents[K]>).detail);
+  events.addEventListener(type, listener);
+  return () => events.removeEventListener(type, listener);
+}
+
+/** What has already arrived, for a store that starts listening late. */
+export function backendSnapshot() {
+  return {
+    history: history as readonly StatusEntry[],
+    matchState: currentMatchState,
+    radioReconfigure: currentRadioReconfigure,
+    robotDropouts: currentRobotDropouts,
+  };
 }
 
 /**
