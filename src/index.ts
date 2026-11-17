@@ -1075,6 +1075,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
     adminAuth,
     operatorAuth,
     teamAuth,
+    teamLinks: teamLinkStore,
     teamLockInfo: () => ({ idleMs: leaseIdleMs(), available: !!teamLock }),
     adminPush: { store: adminPushStore, vapidPublicKey: () => pushService.publicKey },
     externalAccessStore,
@@ -1138,7 +1139,6 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         store: practiceStore,
         countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
       },
-      teamLinks: { store: teamLinkStore },
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose
       // rather than what was on the command line.

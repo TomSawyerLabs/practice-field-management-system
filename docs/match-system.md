@@ -1023,7 +1023,9 @@ again.
 **Team passwords are respected.** If 5940 has set a team password, linking
 (and unlinking) takes a device logged in as 5940, so the 9940 page offers
 5940's login right there. A 99xx number can never have a password of its
-own: it only ever borrows the team it joins. An admin can link anything. A
+own: it only ever borrows the team it joins. While linked, 9940's settings
+(Wi-Fi, internet, ports, recording, and so on) are 5940's too: they need
+5940's login, and 9940's page offers it. An admin can link anything. A
 team without a password can be linked from the spare's page by anyone, the
 same trust as the rest of the team page.
 

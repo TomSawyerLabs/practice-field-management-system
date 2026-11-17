@@ -316,6 +316,8 @@ export interface SetupWebSocketOptions {
   operatorAuth?: OperatorAuth;
   /** Optional per-team passwords; see src/teamAuth.ts. */
   teamAuth?: TeamAuth;
+  /** 99xx spare robots linked to their real team for the day. */
+  teamLinks?: TeamLinkStore;
   /** For /admin's team login card: how long a laptop stays let through with
    *  no traffic, and whether this field can lock networks at all. */
   teamLockInfo?: () => { idleMs: number; available: boolean };
@@ -355,8 +357,6 @@ export interface SetupWebSocketOptions {
       /** Recordings a team's day link lists right now (matches + runs). */
       countItems: (teamNumber: number, day: string) => number;
     };
-    /** 99xx spare robots linked to their real team for the day. */
-    teamLinks?: { store: TeamLinkStore };
     /** "Restart pFMS" on the admin page: exit gracefully (network rules
      *  kept) and let systemd bring the service back. */
     restart?: () => void;
@@ -420,6 +420,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     adminAuth,
     operatorAuth,
     teamAuth,
+    teamLinks,
     teamLockInfo,
     adminPush,
     externalAccessStore,
@@ -725,7 +726,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
   savedTeamStore?.addListener(broadcast);
 
   // Today's stand-in links: a handful of team numbers, for every page.
-  setup?.teamLinks?.store.addListener(broadcast);
+  teamLinks?.addListener(broadcast);
 
   // Broadcast the match queue (team numbers and positions only; also goes
   // to public connections so a TV can show "next up")
@@ -895,9 +896,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         return null;
       case 'team': {
         if (!teamAuth || adminConnections.has(ws)) return null;
-        const locked = teamsOfMessage(data, s => radioManager.getTeamForStation(s)).filter(
-          t => teamAuth.hasPassword(t) && !loggedInAsTeam(ws, t),
-        );
+        // A 99xx spare linked to its team today is that team's robot: its
+        // settings take the team's login (spares never have their own).
+        const owner = (t: number) => teamLinks?.teamFor(t) ?? t;
+        const teams = [...new Set(teamsOfMessage(data, s => radioManager.getTeamForStation(s)).map(owner))];
+        const locked = teams.filter(t => teamAuth.hasPassword(t) && !loggedInAsTeam(ws, t));
         if (!locked.length) return null;
         return `Team ${locked.join(' and ')} has a password. Log in on the team's page first.`;
       }
@@ -1197,8 +1200,8 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // Saved team configs are a topic: a team page subscribes to its own.
 
     // Today's stand-in (99xx) robot links
-    if (setup?.teamLinks) {
-      ws.send(JSON.stringify(setup.teamLinks.store.getState()));
+    if (teamLinks) {
+      ws.send(JSON.stringify(teamLinks.getState()));
     }
 
     // Send the match queue
@@ -2504,13 +2507,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           ws.send(JSON.stringify(reply));
         }
       } else if (isLinkTeam(data)) {
-        // Gated in the `team` tier: a device logged in as each of the two
-        // teams that has a password (src/wsAccess.ts teamsOfMessage), or an
-        // admin.
-        const links = setup?.teamLinks;
-        if (links) {
+        // Gated in the `team` tier: a device logged in as the real team when
+        // it has a password (src/wsAccess.ts teamsOfMessage), or an admin.
+        if (teamLinks) {
           const via = adminConnections.has(ws) ? 'staff' : teamAuth?.hasPassword(data.team) ? 'login' : 'open';
-          links.store.link(data.robotTeam, data.team, via);
+          teamLinks.link(data.robotTeam, data.team, via);
           console.log(
             `Linked spare robot ${data.robotTeam} to team ${data.team} for today (${via}, ${whoIs(clientIp)})`,
           );
@@ -2524,7 +2525,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         }
       } else if (isUnlinkTeam(data)) {
         // Names the team it's linked to, so that team's login is checked too.
-        const store = setup?.teamLinks?.store;
+        const store = teamLinks;
         if (store && store.entryFor(data.robotTeam)?.team === data.team) {
           store.unlink(data.robotTeam);
           console.log(`Unlinked spare robot ${data.robotTeam} from team ${data.team} for today (${whoIs(clientIp)})`);

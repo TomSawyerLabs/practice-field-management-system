@@ -10,6 +10,7 @@ import { ExternalAccessStore } from './externalAccessStore.js';
 import { LoginLimiter } from './loginLimiter.js';
 import { OperatorAuth } from './operatorAuth.js';
 import { TeamAuth } from './teamAuth.js';
+import { TeamLinkStore } from './teamLinkStore.js';
 import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
@@ -272,6 +273,8 @@ describe('the WebSocket gate', () => {
     track() {},
   } as unknown as HostnameResolver;
 
+  const teamLinks = new TeamLinkStore({ filePath: join(authDir, 'team-links.json') });
+
   beforeAll(async () => {
     const timers = spyOn(globalThis, 'setInterval');
     context = setupWebSocket({
@@ -304,6 +307,7 @@ describe('the WebSocket gate', () => {
         clear: (address: string) => adminLogins.clear(address),
       } as LoginLimiter,
       hostnameResolver,
+      teamLinks,
     });
     heartbeat = timers.mock.calls.find(([, ms]) => ms === 10_000)![0] as () => void;
     timers.mockRestore();
@@ -721,6 +725,24 @@ describe('the WebSocket gate', () => {
       expect((await ds.send(prefs))[0].error).toContain('Team 1678 has a password');
     });
 
+    test("a 99xx spare linked to a team takes that team's login for its settings", async () => {
+      const set = await teamAuth.setPassword(1678, 'gearbox42!');
+      if (!set || !('token' in set)) throw new Error('set failed');
+      const sparePrefs = { type: 'teamPrefsSet', team: 9978, nudge: { slack: true } };
+      // Not linked: the spare is its own (password-less) team.
+      expect(await (await client(DS_IP)).send(sparePrefs)).toEqual([]);
+
+      teamLinks.link(9978, 1678, 'staff');
+      try {
+        const ds = await client(DS_IP);
+        expect((await ds.send(sparePrefs))[0].error).toContain('Team 1678 has a password');
+        await ds.send({ type: 'teamAuth', team: 1678, token: set.token });
+        expect(await ds.send(sparePrefs)).toEqual([]);
+      } finally {
+        teamLinks.unlink(9978);
+      }
+    });
+
     test('a wrong token logs nothing in', async () => {
       await teamAuth.setPassword(1678, 'gearbox42!');
       const ds = await client(DS_IP);
@@ -978,6 +1000,7 @@ describe('the WebSocket gate', () => {
         'pendingCommitState',
         'lastLinkedState',
         'serverInfo',
+        'teamLinksState',
         'externalAccessState',
         'addedByIndexTs',
       ];

@@ -48,6 +48,7 @@ import {
   getServerTime,
   sendStationClearEmptyMatch,
   serverToBrowserTime,
+  useTeamsFiledTogether,
 } from '../hooks/useBackend';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
@@ -314,6 +315,8 @@ function tabFromHash(): ControlTab | null {
  */
 export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; selectedSsid: string }) {
   const [currentSsid, setCurrentSsid] = useState(selectedSsid);
+  // Whose login this page's settings need: a linked spare's team's.
+  const loginTeam = useTeamsFiledTogether(teamNumber)[0] ?? teamNumber;
   const latest = useLatest();
 
   // Collect chart data from the page root, so the charts are already full
@@ -446,7 +449,7 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
         <Typography variant="h4" sx={{ fontWeight: 700 }}>
           Team {teamNumber}
         </Typography>
-        <TeamLoginChip team={teamNumber} />
+        <TeamLoginChip team={loginTeam} />
         {selectedStation && (
           <Box sx={{ ml: 'auto' }}>
             <FreeplayStopButton station={selectedStation} />
@@ -470,8 +473,9 @@ export function ControlPage({ teamNumber, selectedSsid }: { teamNumber: number; 
       {/* Where this team stands in the match queue, or "Play next" when the line is open */}
       <QueueBanner teamNumber={teamNumber} />
 
-      {/* A team with a password: its settings need this device logged in */}
-      <TeamLoginBanner team={teamNumber} />
+      {/* A team with a password: its settings need this device logged in.
+          A 99xx spare linked today uses its team's login. */}
+      <TeamLoginBanner team={loginTeam} />
 
       {/* What this laptop drives, or which robot its traffic goes to */}
       {drivenSsid ? (
