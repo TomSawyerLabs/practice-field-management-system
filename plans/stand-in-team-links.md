@@ -77,7 +77,7 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 - [x] "5940 B" on `/match`, its history, and the public match summary
 - [x] Docs (`docs/match-system.md`), typecheck, 1380 tests, vite build
 - [x] Linked spare's settings gated by the real team's login; 99xx can't have a password
-- [ ] Merge after `t3/team-password-login` lands
+- [x] Merged into local master (`5749ed5`), after team passwords and robot auto-connect; auto-link also matches each team's passphrase history
 - [ ] Try it on the field: link by hand, and auto-link on enable
 
 ## Open questions for the user
@@ -88,4 +88,3 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 
 - Don't touch radio, SSID, subnet, DHCP or routing for 99xx teams.
 - Don't rewrite stored team numbers in runs or match history.
-- Don't merge this before `t3/team-password-login`.
