@@ -60,6 +60,7 @@ import {
   isCastReceiverView,
   isScoreboardView,
   type ScoreboardView,
+  type QueueOffSite,
   isPlayGetReady,
   isRadioConfigureRequest,
   isRemoveSavedTeam,
@@ -537,6 +538,16 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     'radioReconfigure',
   ]);
 
+  /** Of those, the ones that stay on the field network: the queue's TV view
+   *  is a /scores view, but who is lined up for the field is not for the
+   *  internet. Sent only to the public sockets in `publicOnSite`. */
+  const PUBLIC_ON_SITE_TYPES = new Set(['queueState']);
+
+  /** Public connections from the field network, judged like a field socket:
+   *  an on-site address and not another site's page. The read-only socket
+   *  takes no logins, so a credential doesn't count here. */
+  const publicOnSite = new Set<WebSocket>();
+
   /** Track which WebSocket connections are in which chat sessions */
   const wsToChatSession = new Map<WebSocket, string>();
 
@@ -615,8 +626,12 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
 
     wss.clients.forEach(client => {
       if (client.readyState !== WebSocket.OPEN) return;
-      // Public connections only receive whitelisted message types
-      if (publicConnections.has(client) && !isPublicSafe) return;
+      // Public connections only receive whitelisted message types, and the
+      // field-network ones only on site
+      if (publicConnections.has(client)) {
+        if (!isPublicSafe) return;
+        if (PUBLIC_ON_SITE_TYPES.has(msgType as string) && !publicOnSite.has(client)) return;
+      }
       // Nothing that's broadcast is for a login page
       if (isStranger(client)) return;
       try {
@@ -1225,11 +1240,20 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // Handle them separately to avoid leaking sensitive state.
     if (req.url?.startsWith('/ws/scores')) {
       publicConnections.add(ws);
-      console.log('Public scores client connected');
+      const publicIp = normalizeIp(getRealClientIp(req.socket.remoteAddress, req.headers, trustedProxyMatcher));
+      const onSite = !isCrossSite(req.headers) && isOnSite(publicIp, siteNetworks);
+      if (onSite) publicOnSite.add(ws);
+      console.log(`Public scores client connected: ${publicIp} (${onSite ? 'on site' : 'off site'})`);
       ws.send(JSON.stringify(matchEngine.getState()));
       if (leaderboardJson) ws.send(leaderboardJson);
       ws.send(serverInfoMessage());
       ws.send(JSON.stringify(radioManager.getReconfigureState()));
+      // The queue view: the queue on site, a notice that says why not off it
+      if (onSite) {
+        if (setup?.queue) ws.send(JSON.stringify(setup.queue.store.getState()));
+      } else {
+        ws.send(JSON.stringify({ type: 'queueOffSite' } satisfies QueueOffSite));
+      }
       // Cast receivers (Chromecast TVs) load the public scores page, so their
       // registration arrives on this socket. Accept ONLY that message here —
       // everything else on the read-only socket stays ignored.
@@ -1255,6 +1279,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       });
       ws.on('close', () => {
         publicConnections.delete(ws);
+        publicOnSite.delete(ws);
         if (castReceivers.delete(ws)) {
           broadcastReceiverList();
         }

@@ -704,6 +704,11 @@ export function QueuePage() {
         <Link href="/admin" underline="hover" variant="body2">
           Admin
         </Link>
+        <Tooltip title="The queue full screen, for a TV. Cast it from that page, or open it on any screen at the field. It only shows on the field network.">
+          <Link href="/scores?view=queue" target="_blank" rel="noopener" underline="hover" variant="body2">
+            Queue display
+          </Link>
+        </Tooltip>
       </Box>
       {!queue ? (
         <Typography variant="body2" sx={{ color: 'text.secondary' }}>
