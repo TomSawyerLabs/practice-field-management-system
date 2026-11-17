@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TeamLinkStore, autoLinkTarget, linkAuthorization } from './teamLinkStore.js';
-import { isStandInTeam } from './types.js';
+import { TeamLinkStore, autoLinkTarget } from './teamLinkStore.js';
+import { isStandInTeam, robotLabel } from './types.js';
 
 const dirs: string[] = [];
 function tempFile(): string {
@@ -82,10 +82,10 @@ describe('TeamLinkStore', () => {
   test('persists across restarts', () => {
     const file = tempFile();
     const now = () => at(2026, 11, 16);
-    new TeamLinkStore({ filePath: file, now }).link(9940, 5940, 'passphrase');
+    new TeamLinkStore({ filePath: file, now }).link(9940, 5940, 'login');
     const reloaded = new TeamLinkStore({ filePath: file, now });
     expect(reloaded.teamFor(9940)).toBe(5940);
-    expect(reloaded.entryFor(9940)?.via).toBe('passphrase');
+    expect(reloaded.entryFor(9940)?.via).toBe('login');
   });
 
   test('tells listeners', () => {
@@ -95,39 +95,6 @@ describe('TeamLinkStore', () => {
     store.link(9940, 5940, 'open');
     store.unlink(9940);
     expect(seen).toEqual([1, 0]);
-  });
-});
-
-describe('linkAuthorization', () => {
-  test('a team with no saved passphrase is open to link', () => {
-    expect(linkAuthorization({ teamKeys: [], robotKeys: [] })).toEqual({ ok: true, via: 'open' });
-  });
-
-  test('a saved passphrase must be given', () => {
-    const teamKeys = ['secret-5940'];
-    expect(linkAuthorization({ teamKeys, robotKeys: [] })).toEqual({ ok: false, error: 'passphraseRequired' });
-    expect(linkAuthorization({ teamKeys, robotKeys: [], passphrase: 'nope' })).toEqual({
-      ok: false,
-      error: 'wrongPassphrase',
-    });
-    expect(linkAuthorization({ teamKeys, robotKeys: [], passphrase: 'secret-5940' })).toEqual({
-      ok: true,
-      via: 'passphrase',
-    });
-  });
-
-  test('a stand-in robot already set up with the passphrase needs nothing more', () => {
-    expect(linkAuthorization({ teamKeys: ['secret-5940'], robotKeys: ['secret-5940'] })).toEqual({
-      ok: true,
-      via: 'auto',
-    });
-  });
-
-  test('staff may link without it', () => {
-    expect(linkAuthorization({ teamKeys: ['secret-5940'], robotKeys: [], staff: true })).toEqual({
-      ok: true,
-      via: 'staff',
-    });
   });
 });
 
@@ -229,5 +196,28 @@ describe('practice runs follow the link', () => {
     expect(practice.isOptedIn(9940)).toBe(true);
     links.link(9940, 5940, 'open');
     expect(practice.isOptedIn(9940)).toBe(false);
+  });
+});
+
+describe('robotLabel', () => {
+  test('a linked spare reads as its team with a letter, on the day it was linked', () => {
+    const now = at(2026, 11, 16);
+    const store = new TeamLinkStore({ filePath: tempFile(), now: () => now });
+    store.link(9941, 5940, 'open');
+    store.link(9940, 5940, 'open');
+    const state = store.getState();
+    expect(robotLabel(9940, now, state)).toBe('5940 B');
+    expect(robotLabel(9941, now, state)).toBe('5940 C');
+    expect(robotLabel(5940, now, state)).toBe('5940');
+    expect(robotLabel(9940, at(2026, 11, 15), state)).toBe('9940');
+  });
+
+  test('earlier days keep their labels', () => {
+    let now = at(2026, 11, 15);
+    const store = new TeamLinkStore({ filePath: tempFile(), now: () => now });
+    store.link(9940, 5940, 'open');
+    now = at(2026, 11, 16);
+    expect(robotLabel(9940, at(2026, 11, 15), store.getState())).toBe('5940 B');
+    expect(robotLabel(9940, now, store.getState())).toBe('9940');
   });
 });

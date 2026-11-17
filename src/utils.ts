@@ -67,11 +67,20 @@ type TeamEntry = { teamNumber: number | null | undefined; robot?: string | null 
  * How to name a team among the others on the field (or in a match): its
  * number, plus the robot's name when another entry has the same team — one
  * team running two robots, where the number alone can't say which robot.
- * Null when the entry has no team.
+ * A linked spare robot is named for its real team instead. Null when the
+ * entry has no team.
  */
-export function teamLabelAmong(entry: TeamEntry, all: Iterable<TeamEntry | undefined>): string | null {
+export function teamLabelAmong(
+  entry: TeamEntry,
+  all: Iterable<TeamEntry | undefined>,
+  /** A spare robot's name for the day, when it is linked to its real team
+   *  ("5940 B" for 9940; see teamLinkStore.ts). Wins over the rest. */
+  spare?: (team: number) => string | undefined,
+): string | null {
   const team = entry.teamNumber;
   if (!team) return null;
+  const spareName = spare?.(team);
+  if (spareName) return spareName;
   let sameTeam = 0;
   for (const e of all) if (e?.teamNumber === team) sameTeam++;
   if (sameTeam < 2 || !entry.robot) return String(team);

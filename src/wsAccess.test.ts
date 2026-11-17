@@ -14,7 +14,7 @@ import type { HostnameResolver } from './hostnameResolver.js';
 import type { MatchEngine } from './matchEngine.js';
 import type RadioManager from './radioManager.js';
 import { setupWebSocket, type WebSocketContext } from './websocketServer.js';
-import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, messageTypes } from './wsAccess.js';
+import { accessOf, dsClientMatch, isCrossSite, isOpenToOutsiders, messageTypes, teamsOfMessage } from './wsAccess.js';
 
 const SRC = __dirname;
 const FRONTEND = join(SRC, '..', 'frontend', 'src');
@@ -1280,5 +1280,22 @@ describe('the WebSocket gate', () => {
         expect(engineCalls).toEqual([]);
       },
     );
+  });
+});
+
+describe('teamsOfMessage for spare robot links', () => {
+  test('linking needs both teams’ logins, where they have passwords', () => {
+    expect(teamsOfMessage({ type: 'linkTeam', robotTeam: 9940, team: 5940 }, () => null).sort()).toEqual([5940, 9940]);
+  });
+
+  test('unlinking names the team it is linked to', () => {
+    expect(teamsOfMessage({ type: 'unlinkTeam', robotTeam: 9940, team: 5940 }, () => null).sort()).toEqual([
+      5940, 9940,
+    ]);
+  });
+
+  test('both are in the team tier', () => {
+    expect(accessOf('linkTeam')).toBe('team');
+    expect(accessOf('unlinkTeam')).toBe('team');
   });
 });

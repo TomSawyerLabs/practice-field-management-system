@@ -130,6 +130,7 @@ import {
   WifiCardsState,
   FIELD_CONTROL_ADDRESS,
   isStandInTeam,
+  robotLabel,
   type TelemetryUpdate,
 } from './types.js';
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -820,8 +821,10 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   const teamLinkStore = new TeamLinkStore();
   practiceStore.setTeamResolver((team, day) => teamLinkStore.teamFor(team, day));
   teamLinkStore.addListener(state => practiceStore.refile(state.day));
-  // A stand-in robot enabled with a passphrase only one real team is saved
-  // with is that team's: link it, unless someone unlinked it today.
+  // A spare robot enabled with a Wi-Fi passphrase only one real team is
+  // saved with is that team's: link it, unless someone unlinked it today. A
+  // team with a password is linked only by a device logged in as it, so
+  // never automatically. Starts once teamAuth exists, below.
   const autoLinkStandIns = () => {
     const saved = savedTeamStore.getTeams();
     const today = practiceDayOf(Date.now());
@@ -830,13 +833,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       if (robotTeam === null || !isStandInTeam(robotTeam)) continue;
       if (practiceDayOf(config.lastUsedAt) !== today || teamLinkStore.entryFor(robotTeam)) continue;
       const team = autoLinkTarget(robotTeam, saved);
-      if (team === undefined) continue;
+      if (team === undefined || teamAuth.hasPassword(team)) continue;
       teamLinkStore.link(robotTeam, team, 'auto');
-      console.log(`Linked stand-in robot ${robotTeam} to team ${team} for today: same Wi-Fi passphrase`);
+      console.log(`Linked spare robot ${robotTeam} to team ${team} for today: same Wi-Fi passphrase`);
     }
   };
-  savedTeamStore.addListener(autoLinkStandIns);
-  autoLinkStandIns();
   const practiceRecorder = new PracticeRecorder({
     directory: matchRecorder.recordingsDirectory,
     ffmpegPath: matchRecorder.ffmpegPath,
@@ -931,6 +932,8 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
   // Optional team passwords, and the network lock that lets only a team's
   // logged-in laptops reach its robots (plans/team-password-login.md).
   const teamAuth = new TeamAuth();
+  savedTeamStore.addListener(autoLinkStandIns);
+  autoLinkStandIns();
   const adminPushStore = new AdminPushStore();
   const leaseIdleMs = () => ((setupConfigStore.get().settings.guestLeaseHours ?? 24) * 3600_000) / 2;
   const portalPort = Number(process.env.TEAM_PORTAL_PORT) || 8180;
@@ -1024,7 +1027,11 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       (req, res) => handleScoringRequest(req, res, scoringEngine, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleMatchReviewRequest(req, res, matchHistoryStore, apiKeyStore, trustedProxyMatcher),
       (req, res) => handleRecordingsRequest(req, res, matchRecorder),
-      (req, res) => handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder),
+      (req, res) =>
+        handlePublicMatchRequest(req, res, matchHistoryStore, matchRecorder, (team, at) => {
+          const label = robotLabel(team, at, teamLinkStore.getState());
+          return label === String(team) ? undefined : label;
+        }),
       (req, res) => handlePracticeRequest(req, res, practiceApi),
       (req, res) =>
         handleTimelapseRequest(req, res, fieldTimelapse, {
@@ -1131,10 +1138,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
         store: practiceStore,
         countItems: (team, day) => countPracticeDayItems(practiceApi, team, day),
       },
-      teamLinks: {
-        store: teamLinkStore,
-        savedTeams: savedTeamStore,
-      },
+      teamLinks: { store: teamLinkStore },
       // Settings saved in the wizard win over the env vars this process
       // started with, so the probe reflects what the operator just chose
       // rather than what was on the command line.

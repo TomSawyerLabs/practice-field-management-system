@@ -207,7 +207,7 @@ import CIDRMatcher from 'cidr-matcher';
 import { appError, appWarn } from './appLogger.js';
 import { healthReport, MatchEngine } from './matchEngine.js';
 import type { SavedTeamStore } from './savedTeamStore.js';
-import { linkAuthorization, type TeamLinkStore } from './teamLinkStore.js';
+import type { TeamLinkStore } from './teamLinkStore.js';
 import type { MatchQueue } from './matchQueue.js';
 import type { SetupMode, SetupResult } from './matchSetup.js';
 import type { TeamPrefsStore } from './teamPrefsStore.js';
@@ -355,12 +355,8 @@ export interface SetupWebSocketOptions {
       /** Recordings a team's day link lists right now (matches + runs). */
       countItems: (teamNumber: number, day: string) => number;
     };
-    /** 99xx stand-in robots linked to their real team for the day. */
-    teamLinks?: {
-      store: TeamLinkStore;
-      /** Where each team's saved Wi-Fi passphrases are: the link's guard. */
-      savedTeams: SavedTeamStore;
-    };
+    /** 99xx spare robots linked to their real team for the day. */
+    teamLinks?: { store: TeamLinkStore };
     /** "Restart pFMS" on the admin page: exit gracefully (network rules
      *  kept) and let systemd bring the service back. */
     restart?: () => void;
@@ -2493,7 +2489,10 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           const day = practiceDayOf(Date.now());
           // A stand-in robot linked to its team gets that team's link.
           const filedUnder = setup.practice.store.teamOf(data.teamNumber, day);
-          const entry = setup.practice.store.findDay(filedUnder, day);
+          // ...but only to a page that may see that team's: logged in as it
+          // when it has a password.
+          const allowed = filedUnder === data.teamNumber || refusal(ws, 'team', { team: filedUnder }) === null;
+          const entry = allowed ? setup.practice.store.findDay(filedUnder, day) : undefined;
           const reply: PracticeDayLink = {
             type: 'practiceDayLink',
             teamNumber: data.teamNumber,
@@ -2505,36 +2504,30 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
           ws.send(JSON.stringify(reply));
         }
       } else if (isLinkTeam(data)) {
+        // Gated in the `team` tier: a device logged in as each of the two
+        // teams that has a password (src/wsAccess.ts teamsOfMessage), or an
+        // admin.
         const links = setup?.teamLinks;
         if (links) {
-          const keys = (team: number) => links.savedTeams.configsForTeam(team).map(c => c.wpaKey);
-          const auth = linkAuthorization({
-            teamKeys: keys(data.team),
-            robotKeys: keys(data.robotTeam),
-            passphrase: data.passphrase,
-            // Logged-in field staff can vouch for a team. Without a login
-            // every phone on site counts as "staff", so that isn't enough.
-            staff: adminConnections.has(ws) || (operatorConnections.has(ws) && dsRefusal(ws) === null),
-          });
-          if (auth.ok) {
-            links.store.link(data.robotTeam, data.team, auth.via);
-            console.log(`Linked stand-in robot ${data.robotTeam} to team ${data.team} for today (${auth.via})`);
-          } else {
-            appWarn(`Refused to link ${data.robotTeam} to team ${data.team}: ${auth.error} (${whoIs(clientIp)})`);
-          }
+          const via = adminConnections.has(ws) ? 'staff' : teamAuth?.hasPassword(data.team) ? 'login' : 'open';
+          links.store.link(data.robotTeam, data.team, via);
+          console.log(
+            `Linked spare robot ${data.robotTeam} to team ${data.team} for today (${via}, ${whoIs(clientIp)})`,
+          );
           const reply: TeamLinkResult = {
             type: 'teamLinkResult',
             robotTeam: data.robotTeam,
             team: data.team,
-            ok: auth.ok,
-            error: auth.ok ? undefined : auth.error,
+            ok: true,
           };
           ws.send(JSON.stringify(reply));
         }
       } else if (isUnlinkTeam(data)) {
-        if (setup?.teamLinks) {
-          setup.teamLinks.store.unlink(data.robotTeam);
-          console.log(`Unlinked stand-in robot ${data.robotTeam} for today (${whoIs(clientIp)})`);
+        // Names the team it's linked to, so that team's login is checked too.
+        const store = setup?.teamLinks?.store;
+        if (store && store.entryFor(data.robotTeam)?.team === data.team) {
+          store.unlink(data.robotTeam);
+          console.log(`Unlinked spare robot ${data.robotTeam} from team ${data.team} for today (${whoIs(clientIp)})`);
         }
       } else {
         appWarn('Unknown message type from client: ' + JSON.stringify(redactForLog(data)));

@@ -1003,30 +1003,34 @@ subnets apart. pFMS could (see [Duplicate Team Handling](network.md#duplicate-te
 but on the field the robot stays exactly what it was set up as: 9940's own
 SSID, `10.99.40.x`, station and routes. Nothing on the network changes.
 
-What changes is where its records go. Team numbers 9900–9999 are reserved
-for this, so 9940's team page asks which team the robot is for today. Once
-linked, 9940's practice runs, and the matches it played that day, are filed
-under 5940's practice day: they are on 5940's day link and in its zip, both
-team pages show both robots' videos (marked with the robot's number), and
-the mentors' Slack message covers them. Runs and match history keep the
-robot's own number; the link is applied when reading, so it covers the
-whole day whenever it is made, and **Unlink** (on either page) puts it all
-back. A link lasts one practice day (`team-links.json`,
-`src/teamLinkStore.ts`); the next day the page asks again.
+What changes is where its records go, and what it's called. Team numbers
+9900–9999 are reserved for this, so 9940's team page asks which team the
+robot is for today. Once linked:
 
-The real team's saved robot Wi-Fi passphrase guards the link. If 5940 has
-one, linking needs it, so a stranger can't file their robot under 5940.
-Two ways past that:
+- 9940's practice runs, and the matches it played that day, are filed under
+  5940's practice day: on 5940's day link and in its zip, in the mentors'
+  Slack message, and in both team pages' video lists.
+- `/match`, its match history and the public match summary call it
+  **5940 B** (a second spare that day is 5940 C). Past days keep the name
+  they had.
 
-- **Automatically.** When a 99xx robot is enabled with a passphrase that
-  only one real team's saved robots use, pFMS links it to that team for the
-  day. A passphrase two teams share decides nothing. Once someone unlinks a
-  robot, it isn't re-linked automatically until the next day.
-- **Field staff.** An admin, or a device logged in as an operator, can link
-  without the passphrase (`linkTeam` over the WebSocket).
+Runs and match history keep the robot's own number; the link is applied
+when reading, so it covers the whole day whenever it is made, and
+**Unlink** (on either page) puts it all back. A link lasts one practice day
+(`team-links.json`, `src/teamLinkStore.ts`); the next day the page asks
+again.
 
-With no saved passphrase, anyone on the team page can link, the same trust
-as the rest of the team page.
+**Team passwords are respected.** If 5940 has set a team password, linking
+(and unlinking) takes a device logged in as 5940, so the 9940 page offers
+5940's login right there. The same goes for 9940, if it has one. An admin
+can link anything. A team without a password can be linked from the spare's
+page by anyone, the same trust as the rest of the team page.
+
+**Automatically.** When a 99xx robot is enabled with a Wi-Fi passphrase
+that only one real team's saved robots use, pFMS links it to that team for
+the day. A passphrase two teams share decides nothing, a team with a
+password is never linked automatically, and a robot someone unlinked isn't
+re-linked until the next day.
 
 ### Sending the link to the team's mentors
 

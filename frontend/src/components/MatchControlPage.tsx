@@ -75,6 +75,7 @@ import {
   useSetupConfig,
   sendMatchHoldWifi,
   useOperatorLocked,
+  useSpareLabel,
 } from '../hooks/useBackend';
 import { MatchTimeline } from './MatchTimeline';
 import { QueueNextUp } from './QueueNextUp';
@@ -131,8 +132,9 @@ function getPageBg(matchState: MatchState): string {
 function teamLabel(
   state: StationControlState | undefined,
   all: Partial<Record<StationName, StationControlState>> | undefined,
+  spare?: (team: number) => string | undefined,
 ): string {
-  return (state && teamLabelAmong(state, Object.values(all ?? {}))) ?? '(no team)';
+  return (state && teamLabelAmong(state, Object.values(all ?? {}), spare)) ?? '(no team)';
 }
 
 // ── Progress computation ────────────────────────────────────────────
@@ -458,6 +460,7 @@ function HoldToStartButton({ canStart, holdDisabledReason }: { canStart: boolean
 }
 
 export function MatchControlPage() {
+  const spare = useSpareLabel();
   const matchState = useMatchState();
   const matchHistory = useMatchHistory();
   const leaderboard = useChallengeLeaderboard();
@@ -496,7 +499,11 @@ export function MatchControlPage() {
         cooldownLeftMs={cooldownLeftMs}
         cancelledByLabel={
           matchState.restartCooldown?.cancelledBy
-            ? teamLabel(matchState.stationStates[matchState.restartCooldown.cancelledBy], matchState.stationStates)
+            ? teamLabel(
+                matchState.stationStates[matchState.restartCooldown.cancelledBy],
+                matchState.stationStates,
+                spare,
+              )
             : null
         }
       />
@@ -646,6 +653,7 @@ function CreatedView({
   /** Restart cooldown left after a cancelled countdown; starting is refused until 0. */
   cooldownLeftMs: number;
 }) {
+  const spare = useSpareLabel();
   const { config, stationStates, readyRequested, staffStates } = matchState;
 
   const joinedStations = (Object.entries(stationStates) as [StationName, StationControlState | undefined][])
@@ -669,7 +677,7 @@ function CreatedView({
     .filter(s => !stationStates[s]?.ready)
     .map(
       s =>
-        `${teamLabel(stationStates[s], stationStates)}${stationStates[s]?.dsAttached === false ? ' (DS offline)' : ''}`,
+        `${teamLabel(stationStates[s], stationStates, spare)}${stationStates[s]?.dsAttached === false ? ' (DS offline)' : ''}`,
     );
   // Spell out exactly who or what is holding the start, right under the button.
   const holdDisabledReason = !readyRequested
@@ -938,6 +946,7 @@ function ParticipantRow({
    *  wrong (it was, for every DS, in July 2026). */
   onForceReady: () => void;
 }) {
+  const spare = useSpareLabel();
   const allStates = useMatchState()?.stationStates;
   const dsOffline = state?.dsAttached === false;
   return (
@@ -956,7 +965,7 @@ function ParticipantRow({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <TeamAvatar teamNumber={state?.teamNumber} size={22} />
         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-          {teamLabel(state, allStates)}
+          {teamLabel(state, allStates, spare)}
         </Typography>
         {state?.ready && <Chip label="Ready" color="success" size="small" sx={{ height: 20, fontSize: '0.7rem' }} />}
         {/* The team's Ready button is greyed while this shows: the field has
@@ -1279,6 +1288,7 @@ function ClearEStopButton({ station, state }: { station: StationName; state: Sta
 /** Robots with their own e-stop and no participant row: the team pressed E-Stop,
  *  then Leave Match. Not behind the operator code, like every clear. */
 function EStopsOutsideMatch({ stationStates }: { stationStates: MatchState['stationStates'] }) {
+  const spare = useSpareLabel();
   const stopped = StationNameList.filter(s => stationStates[s]?.eStopBy && !stationStates[s]?.joined);
   if (stopped.length === 0) return null;
   const waiting = stopped.filter(s => stationStates[s]?.stopWaiting).length;
@@ -1288,7 +1298,7 @@ function EStopsOutsideMatch({ stationStates }: { stationStates: MatchState['stat
       {stopped.map(s => (
         <Box key={s} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 0.5 }}>
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {teamLabel(stationStates[s], stationStates)}
+            {teamLabel(stationStates[s], stationStates, spare)}
           </Typography>
           <ClearEStopButton station={s} state={stationStates[s]} />
         </Box>
@@ -1340,6 +1350,7 @@ function CancelMatchButton() {
 
 /** A participant row during an active match, with per-station disable/e-stop controls */
 function ActiveParticipantRow({ station, state }: { station: StationName; state: StationControlState | undefined }) {
+  const spare = useSpareLabel();
   const allStates = useMatchState()?.stationStates;
   const phase = useMatchState()?.phase;
   const locked = useOperatorLocked();
@@ -1372,7 +1383,7 @@ function ActiveParticipantRow({ station, state }: { station: StationName; state:
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <TeamAvatar teamNumber={state?.teamNumber} size={22} />
           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-            {teamLabel(state, allStates)}
+            {teamLabel(state, allStates, spare)}
           </Typography>
           {isEStopped && (
             <Chip
@@ -1442,6 +1453,7 @@ const ESTOP_BY_LABEL: Record<EStopSource, string> = { ds: 'its DS', team: 'team 
 // ── Post-match view ─────────────────────────────────────────────────
 
 function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<typeof useMatchState>> }) {
+  const spare = useSpareLabel();
   const { remainingTime, totalMatchTime, config, stationStates, endReason, autoWinnerAlliance } = matchState;
 
   const isCounting = remainingTime > 0;
@@ -1532,7 +1544,7 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
                       >
                         <TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {teamLabel(stationStates[s], stationStates)}
+                          {teamLabel(stationStates[s], stationStates, spare)}
                         </Typography>
                       </Box>
                     ))}
@@ -1561,7 +1573,7 @@ function PostMatchView({ matchState }: { matchState: NonNullable<ReturnType<type
                       >
                         <TeamAvatar teamNumber={stationStates[s]?.teamNumber} size={20} />
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {teamLabel(stationStates[s], stationStates)}
+                          {teamLabel(stationStates[s], stationStates, spare)}
                         </Typography>
                       </Box>
                     ))}
@@ -1734,16 +1746,21 @@ function EndReasonIcon({ reason }: { reason: string }) {
 function HistoryTeams({
   teams,
   all,
+  at,
   color,
   align,
 }: {
   teams: MatchHistoryTeam[];
+  /** When the match started. */
+  at: number;
   /** Every team in the match, both alliances: a team that ran two robots is
    *  named with the robot's name. */
   all: MatchHistoryTeam[];
   color: string;
   align: 'left' | 'right';
 }) {
+  // Named as on the day of the match.
+  const spare = useSpareLabel(at);
   return (
     <Box
       sx={{
@@ -1758,7 +1775,7 @@ function HistoryTeams({
         <Box key={t.station} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, whiteSpace: 'nowrap' }}>
           <TeamAvatar teamNumber={t.teamNumber} size={16} />
           <Typography variant="body2" sx={{ fontWeight: 500, color }}>
-            {teamLabelAmong(t, all)}
+            {teamLabelAmong(t, all, spare)}
           </Typography>
         </Box>
       ))}
@@ -1879,7 +1896,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
       <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.secondary' }}>
         #{index}
       </Typography>
-      <HistoryTeams teams={redTeams} all={match.teams} color="error.main" align="right" />
+      <HistoryTeams teams={redTeams} all={match.teams} at={match.startedAt} color="error.main" align="right" />
       <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
         {redChallenge !== null ? (
           <ChallengeResult label={redChallenge} color="error.main" align="right" />
@@ -1915,7 +1932,7 @@ function MatchHistoryRow({ match, index }: { match: MatchHistoryEntry; index: nu
           />
         )}
       </Box>
-      <HistoryTeams teams={blueTeams} all={match.teams} color="info.main" align="left" />
+      <HistoryTeams teams={blueTeams} all={match.teams} at={match.startedAt} color="info.main" align="left" />
       <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {formatDuration(match.durationSeconds)}
       </Typography>

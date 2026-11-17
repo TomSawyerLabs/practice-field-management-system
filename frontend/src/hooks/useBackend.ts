@@ -15,6 +15,7 @@ import {
   TeamLinkResult,
   TeamLinksState,
   isStandInTeam,
+  robotLabel,
   isTeamLinkResult,
   isTeamLinksState,
   SubnetScanResults,
@@ -3515,12 +3516,26 @@ export function useTeamsFiledTogether(team: number | null): number[] {
   return [real, ...standIns.sort((a, b) => a - b)];
 }
 
-export function sendLinkTeam(robotTeam: number, team: number, passphrase?: string) {
-  sendWhenOpen({ type: 'linkTeam', robotTeam, team, passphrase: passphrase || undefined });
+export function sendLinkTeam(robotTeam: number, team: number) {
+  sendWhenOpen({ type: 'linkTeam', robotTeam, team });
 }
 
-export function sendUnlinkTeam(robotTeam: number) {
-  sendWhenOpen({ type: 'unlinkTeam', robotTeam });
+/** `team` is the one it's linked to now (its login is checked too). */
+export function sendUnlinkTeam(robotTeam: number, team: number) {
+  sendWhenOpen({ type: 'unlinkTeam', robotTeam, team });
+}
+
+/** A linked spare robot's name on match pages ("5940 B" for 9940), as of
+ *  `at` (default now); undefined for every other robot. */
+export function useSpareLabel(at?: number): (team: number) => string | undefined {
+  const links = useTeamLinks();
+  return useCallback(
+    (team: number) => {
+      const label = robotLabel(team, at ?? Date.now(), links);
+      return label === String(team) ? undefined : label;
+    },
+    [links, at],
+  );
 }
 
 /** The answer to this page's last link request for a stand-in robot. */

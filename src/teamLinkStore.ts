@@ -12,9 +12,10 @@
  * it covers the whole day whenever it is made, and undoing it puts
  * everything back.
  *
- * The real team's saved robot Wi-Fi passphrase guards a link: with one saved,
- * linking needs it, or a stand-in robot already set up with it (which is
- * also how a link is made automatically). See plans/stand-in-team-links.md.
+ * A team with a password (src/teamAuth.ts) is linked only from a device
+ * logged in as it (the `team` tier, src/wsAccess.ts). One without is linked
+ * from the spare's page, or automatically when the spare is enabled with the
+ * team's Wi-Fi passphrase. See plans/stand-in-team-links.md.
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { practiceDayOf } from './practiceStore.js';
@@ -80,10 +81,12 @@ export class TeamLinkStore {
 
   getState(): TeamLinksState {
     const day = this.today();
+    const live = this.links.filter((l): l is TeamLink & { team: number } => l.team !== null);
     return {
       type: 'teamLinksState',
       day,
-      links: this.links.filter((l): l is TeamLink & { team: number } => l.day === day && l.team !== null),
+      links: live.filter(l => l.day === day),
+      earlier: live.filter(l => l.day !== day),
     };
   }
 
@@ -141,28 +144,6 @@ export class TeamLinkStore {
 
 /** A saved robot: its SSID and Wi-Fi passphrase. */
 export type SavedKey = { ssid: string; wpaKey: string };
-
-/**
- * May a stand-in be linked to `team`?
- *
- * - `open`: the team has no saved passphrase, so there is nothing to check.
- * - `passphrase`: the one given is one of the team's saved robots'.
- * - `auto`: the stand-in robot is already saved with one of them.
- * - `staff`: field staff asked; they don't need it.
- * - otherwise refused: `passphraseRequired` (none given) or `wrongPassphrase`.
- */
-export function linkAuthorization(opts: {
-  teamKeys: readonly string[];
-  robotKeys: readonly string[];
-  passphrase?: string;
-  staff?: boolean;
-}): { ok: true; via: TeamLinkVia } | { ok: false; error: 'passphraseRequired' | 'wrongPassphrase' } {
-  if (opts.teamKeys.length === 0) return { ok: true, via: 'open' };
-  if (opts.passphrase && opts.teamKeys.includes(opts.passphrase)) return { ok: true, via: 'passphrase' };
-  if (opts.robotKeys.some(k => opts.teamKeys.includes(k))) return { ok: true, via: 'auto' };
-  if (opts.staff) return { ok: true, via: 'staff' };
-  return { ok: false, error: opts.passphrase ? 'wrongPassphrase' : 'passphraseRequired' };
-}
 
 /**
  * The real team a stand-in robot belongs to, judged by its passphrase: the

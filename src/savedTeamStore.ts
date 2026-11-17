@@ -90,12 +90,6 @@ export class SavedTeamStore {
     return best;
   }
 
-  /** Every saved robot of a team number ("{team}" and "{team}-{suffix}"). */
-  configsForTeam(team: number): SavedTeamConfig[] {
-    const prefix = String(team);
-    return this.getTeams().filter(c => c.ssid === prefix || c.ssid.startsWith(prefix + '-'));
-  }
-
   /** Look up the most recently used WPA key for a team number across all saved SSIDs. */
   getWpaKeyForTeam(team: number): string | undefined {
     return this.bestForTeam(team)?.wpaKey;

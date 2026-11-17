@@ -27,6 +27,8 @@ export function handlePublicMatchRequest(
   res: ServerResponse,
   historyStore: MatchHistoryStore,
   recorder: MatchRecorder,
+  /** A spare robot's name on the match's day ("5940 B"), when linked. */
+  spareLabel?: (team: number, at: number) => string | undefined,
 ): boolean {
   const [path] = (req.url ?? '').split('?');
   const m = /^\/api\/public\/match\/([^/]+)(?:\/(video|avatar)\/([^/]+))?\/?$/.exec(path);
@@ -54,7 +56,7 @@ export function handlePublicMatchRequest(
 
   if (!m[2]) {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    json(res, 200, summarize(entry, token));
+    json(res, 200, summarize(entry, token, spareLabel));
     return true;
   }
 
@@ -101,7 +103,11 @@ export function isShareToken(token: string): boolean {
   return /^[A-Za-z0-9_-]{20,64}$/.test(token);
 }
 
-function summarize(entry: MatchHistoryEntry, token: string): PublicMatchSummary {
+function summarize(
+  entry: MatchHistoryEntry,
+  token: string,
+  spareLabel?: (team: number, at: number) => string | undefined,
+): PublicMatchSummary {
   const base = `/api/public/match/${encodeURIComponent(token)}`;
   return {
     matchNumber: entry.matchNumber,
@@ -111,7 +117,11 @@ function summarize(entry: MatchHistoryEntry, token: string): PublicMatchSummary 
     endReason: entry.endReason,
     autoWinner: entry.autoWinner,
     game: entry.game,
-    teams: entry.teams.map(t => ({ ...t, avatarUrl: `${base}/avatar/${t.teamNumber}.png` })),
+    teams: entry.teams.map(t => ({
+      ...t,
+      label: spareLabel?.(t.teamNumber, entry.startedAt),
+      avatarUrl: `${base}/avatar/${t.teamNumber}.png`,
+    })),
     redScore: entry.redScore,
     blueScore: entry.blueScore,
     review: entry.review,

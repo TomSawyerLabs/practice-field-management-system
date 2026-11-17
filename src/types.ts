@@ -1,5 +1,6 @@
 // Type-only import — game/types imports types back, but both are erased at runtime
 import type { GameCatalogEntry, GameDefinition } from './game/types.js';
+import { practiceDayOf } from './utils.js';
 
 export interface StationDetails {
   ssid: string;
@@ -4394,7 +4395,8 @@ export interface PublicMatchSummary {
   endReason: MatchEndReason;
   autoWinner: Alliance | null;
   game?: MatchHistoryGame;
-  teams: (MatchHistoryTeam & { avatarUrl: string })[];
+  /** `label`: a linked spare robot's name that day ("5940 B"). */
+  teams: (MatchHistoryTeam & { avatarUrl: string; label?: string })[];
   redScore: number;
   blueScore: number;
   review?: Partial<Record<Alliance, MatchReviewResult>>;
@@ -4970,13 +4972,14 @@ export function isLinkableTeam(team: unknown): team is number {
 }
 
 /**
- * How a link was made: `open` — the real team has no saved Wi-Fi
- * passphrase; `passphrase` — whoever linked typed it; `auto` — the stand-in
- * robot was enabled with that team's passphrase; `staff` — field staff.
+ * How a link was made: `open` — the real team has no password; `login` — by
+ * a device logged in as the real team; `auto` — the spare robot was enabled
+ * with the real team's Wi-Fi passphrase (only for a team with no password);
+ * `staff` — by an admin.
  */
-export type TeamLinkVia = 'open' | 'passphrase' | 'auto' | 'staff';
+export type TeamLinkVia = 'open' | 'login' | 'auto' | 'staff';
 
-/** One practice day's link from a stand-in robot to its real team.
+/** One practice day's link from a spare robot to its real team.
  *  `team: null` means someone unlinked it that day: keep it apart, and don't
  *  auto-link it again until tomorrow. */
 export interface TeamLink {
@@ -4988,11 +4991,13 @@ export interface TeamLink {
   via: TeamLinkVia | 'unlinked';
 }
 
-/** Server → all clients: today's links (tombstones left out). */
+/** Server → all clients: the links (tombstones left out). `links` is today's;
+ *  `earlier` holds past days', so match history can still say "5940 B". */
 export interface TeamLinksState {
   type: 'teamLinksState';
   day: string;
   links: (TeamLink & { team: number })[];
+  earlier: (TeamLink & { team: number })[];
 }
 
 export function isTeamLinksState(msg: unknown): msg is TeamLinksState {
@@ -5000,55 +5005,67 @@ export function isTeamLinksState(msg: unknown): msg is TeamLinksState {
   return (msg as TeamLinksState).type === 'teamLinksState';
 }
 
-/** Client → Server: file a stand-in robot's day under a real team.
- *  `passphrase` is that team's saved robot Wi-Fi passphrase, needed when it
- *  has one. */
+/** Client → Server: file a spare robot's day under its real team. Needs a
+ *  login for each of the two that has a password. */
 export interface LinkTeam {
   type: 'linkTeam';
   robotTeam: number;
   team: number;
-  passphrase?: string;
 }
 
 export function isLinkTeam(msg: unknown): msg is LinkTeam {
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as LinkTeam;
-  return (
-    m.type === 'linkTeam' &&
-    Number.isInteger(m.robotTeam) &&
-    isStandInTeam(m.robotTeam) &&
-    isLinkableTeam(m.team) &&
-    (m.passphrase === undefined || typeof m.passphrase === 'string')
-  );
+  return m.type === 'linkTeam' && isStandInTeam(m.robotTeam) && isLinkableTeam(m.team);
 }
 
-/** Client → Server: keep a stand-in robot's day apart again. */
+/** Client → Server: keep a spare robot's day apart again. Names the team it
+ *  is linked to, whose login (if it has a password) it needs too. */
 export interface UnlinkTeam {
   type: 'unlinkTeam';
   robotTeam: number;
+  team: number;
 }
 
 export function isUnlinkTeam(msg: unknown): msg is UnlinkTeam {
   if (typeof msg !== 'object' || !msg) return false;
   const m = msg as UnlinkTeam;
-  return m.type === 'unlinkTeam' && isStandInTeam(m.robotTeam);
+  return m.type === 'unlinkTeam' && isStandInTeam(m.robotTeam) && isLinkableTeam(m.team);
 }
 
-/** Why a link was refused. */
-export type TeamLinkError = 'passphraseRequired' | 'wrongPassphrase';
-
-/** Server → the client that asked: how a link request went. */
+/** Server → the client that asked: the link was made. (A refusal comes back
+ *  as the usual `{ error }`.) */
 export interface TeamLinkResult {
   type: 'teamLinkResult';
   robotTeam: number;
   team: number;
   ok: boolean;
-  error?: TeamLinkError;
 }
 
 export function isTeamLinkResult(msg: unknown): msg is TeamLinkResult {
   if (typeof msg !== 'object' || !msg) return false;
   return (msg as TeamLinkResult).type === 'teamLinkResult';
+}
+
+/**
+ * How a robot is named on match pages: a spare linked to its team that day
+ * reads "5940 B" (the next spare "5940 C"), everything else its own number.
+ */
+export function robotLabel(
+  team: number,
+  at: number,
+  links: Pick<TeamLinksState, 'links' | 'earlier'> | null | undefined,
+): string {
+  if (!links || !isStandInTeam(team)) return String(team);
+  const day = practiceDayOf(at);
+  const all = [...links.links, ...links.earlier].filter(l => l.day === day);
+  const link = all.find(l => l.robotTeam === team);
+  if (!link) return String(team);
+  const spares = all
+    .filter(l => l.team === link.team)
+    .map(l => l.robotTeam)
+    .sort((a, b) => a - b);
+  return `${link.team} ${String.fromCharCode(66 + spares.indexOf(team))}`;
 }
 
 // ── Topic subscriptions ─────────────────────────────────────────────

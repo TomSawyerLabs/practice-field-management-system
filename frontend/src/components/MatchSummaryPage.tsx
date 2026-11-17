@@ -281,7 +281,7 @@ function AllianceColumn({ summary, alliance, won }: { summary: PublicMatchSummar
               style={{ borderRadius: 4 }}
               onError={e => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
             />
-            <Typography sx={{ fontWeight: 600 }}>{t.teamNumber}</Typography>
+            <Typography sx={{ fontWeight: 600 }}>{t.label ?? t.teamNumber}</Typography>
           </Box>
         ))}
       </Box>
