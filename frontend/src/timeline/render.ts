@@ -295,35 +295,44 @@ function drawNumericLane(
   ctx.beginPath();
   ctx.rect(plotX, box.plotY, plotW, box.plotH);
   ctx.clip();
+  const bottom = box.plotY + box.plotH;
   // The other robot first, so the selected one draws over it.
   if (scene.compare) {
     for (const s of lane.series) {
       if (s.compare)
-        drawSeries(ctx, scene, scene.compare.tracks.numeric[s.key], p.compare, 1.5, false, box, xOf, yOf, plotW);
+        drawSeries(ctx, scene, scene.compare.tracks.numeric[s.key], p.compare, 1.5, false, bottom, xOf, yOf, plotW);
     }
   }
   // Second measure under the first.
   for (const s of [...lane.series].reverse()) {
-    drawSeries(ctx, scene, scene.primary.numeric[s.key], p[s.color], 2, !!s.fillBelow, box, xOf, yOf, plotW);
+    drawSeries(ctx, scene, scene.primary.numeric[s.key], p[s.color], 2, !!s.fillBelow, bottom, xOf, yOf, plotW);
   }
   ctx.restore();
 }
 
+/** The stretch of time being drawn, and the present. */
+interface TimeWindow {
+  t0: number;
+  t1: number;
+  now: number;
+}
+
 function drawSeries(
   ctx: CanvasRenderingContext2D,
-  scene: Scene,
+  window: TimeWindow,
   series: NumericSeries,
   color: string,
   lineWidth: number,
   fillBelow: boolean,
-  box: LaneBox,
+  /** Where a fill below the line stops. */
+  bottom: number,
   xOf: (t: number) => number,
   yOf: (v: number) => number,
   plotW: number,
+  bandColor = withAlpha(color, 0.28),
 ): void {
   if (series.length === 0) return;
-  const { t0, t1, now } = scene;
-  const bottom = box.plotY + box.plotH;
+  const { t0, t1, now } = window;
 
   /** One unbroken stretch: the line, and the lowest and highest readings
    *  either side of it. */
@@ -347,7 +356,7 @@ function drawSeries(
         for (let i = 2; i < high.length; i += 2) ctx.lineTo(high[i], high[i + 1]);
         for (let i = low.length - 2; i >= 0; i -= 2) ctx.lineTo(low[i], low[i + 1]);
         ctx.closePath();
-        ctx.fillStyle = withAlpha(color, 0.28);
+        ctx.fillStyle = bandColor;
         ctx.fill();
       }
       ctx.beginPath();
@@ -571,6 +580,37 @@ export function formatValue(v: number, decimals: number): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
   const negative = v < 0 && Number(fixed) !== 0;
   return `${negative ? '−' : ''}${grouped}${frac ? `.${frac}` : ''}`;
+}
+
+/**
+ * One series on its own, edge to edge: no axes, no labels. For a reading
+ * that sits beside its own number (the scoreboard's battery cards).
+ */
+export function drawSparkline(
+  ctx: CanvasRenderingContext2D,
+  series: NumericSeries,
+  o: TimeWindow & {
+    width: number;
+    height: number;
+    /** The scale, fixed, so every card reads the same. */
+    min: number;
+    max: number;
+    color: string;
+    /** The band between the lowest and highest readings. */
+    bandColor: string;
+    /** A faint line across the middle. */
+    gridColor?: string;
+  },
+): void {
+  ctx.clearRect(0, 0, o.width, o.height);
+  if (o.gridColor) {
+    ctx.fillStyle = o.gridColor;
+    ctx.fillRect(0, Math.round(o.height / 2), o.width, 1);
+  }
+  ctx.lineJoin = 'round';
+  const xOf = (t: number) => ((t - o.t0) / (o.t1 - o.t0)) * o.width;
+  const yOf = (v: number) => 2 + (1 - (v - o.min) / (o.max - o.min)) * (o.height - 4);
+  drawSeries(ctx, o, series, o.color, 1.5, false, o.height, xOf, yOf, o.width, o.bandColor);
 }
 
 // ── State lanes ─────────────────────────────────────────────────────
@@ -1030,14 +1070,20 @@ function drawCrosshair(
     for (const e of scene.compare.tracks.events.inRange(scene.t0, scene.t1, now)) if (within(e)) near.push({ e, who });
   }
   const MAX_EVENTS = 3;
-  for (const { e, who } of near.slice(0, MAX_EVENTS)) {
+  // A match phase and the robot's mode can share a name: say it once.
+  const said = new Set<string>();
+  const happened: DetailRow[] = [];
+  for (const { e, who } of near) {
     const length = e.end !== undefined && e.end > e.t ? ` (${formatSpan(e.end - e.t)})` : e.open ? ' (so far)' : '';
-    rows.push({
-      key: { color: toneColor(p, e.tone), shape: 'dot' },
-      text: `${who ? `${who}: ` : ''}${e.label}${e.detail ? `: ${e.detail}` : ''}${length}`,
-    });
+    const text = `${who ? `${who}: ` : ''}${e.label}${e.detail ? `: ${e.detail}` : ''}${length}`;
+    if (said.has(text)) continue;
+    said.add(text);
+    happened.push({ key: { color: toneColor(p, e.tone), shape: 'dot' }, text });
   }
-  if (near.length > MAX_EVENTS) rows.push({ text: `and ${near.length - MAX_EVENTS} more: zoom in to tell them apart` });
+  rows.push(...happened.slice(0, MAX_EVENTS));
+  if (happened.length > MAX_EVENTS) {
+    rows.push({ text: `and ${happened.length - MAX_EVENTS} more: zoom in to tell them apart` });
+  }
 
   // Lay the rows out, wrapping to the chart's width so a long one is not
   // cut off on a phone.

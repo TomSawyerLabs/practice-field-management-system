@@ -7,7 +7,6 @@ import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import { TeamAvatar } from './TeamAvatar';
-import SmoothieComponent from 'react-smoothie';
 
 import {
   useScoreState,
@@ -36,7 +35,7 @@ import { challengeScore, isCountUpTiming } from '../../../src/types';
 import { MatchTimeline } from './MatchTimeline';
 import { ChallengeLeaderboard } from './ChallengeLeaderboard';
 import { MatchTimer, getActiveColor } from './MatchTimer';
-import { handleTelemetryUpdate, stationTimeSeries, batteryMinState } from './StationChart';
+import { BatterySparkline, lowestBatteryInView } from './BatterySparkline';
 import { MatchAudioBridge, stopAllSounds } from '../hooks/useMatchAudio';
 import { FieldWifiNote } from './FieldWifiNote';
 import { useCastReceiverRegistration } from '../hooks/useCastReceiverRegistration';
@@ -328,12 +327,12 @@ export function ScoreboardPage() {
   const left: Alliance = swapped ? 'blue' : 'red';
   const right: Alliance = swapped ? 'red' : 'blue';
 
-  // Feed telemetry into the chart TimeSeries and the module-level battery
-  // store WITHOUT touching page state — the battery components subscribe to
-  // the store themselves, so per-packet telemetry never re-renders the page.
+  // Feed telemetry into the module-level battery store WITHOUT touching page
+  // state — the battery components subscribe to the store themselves, so
+  // per-packet telemetry never re-renders the page. (The sparklines read the
+  // chart timeline, which listens for itself.)
   useTelemetryCallback(
     useCallback((entry: TelemetryUpdate) => {
-      handleTelemetryUpdate(entry);
       if (entry.batteryVoltage !== undefined) batteryStore.note(entry.station, entry.batteryVoltage);
     }, []),
   );
@@ -1426,18 +1425,6 @@ function useRobotAlerts(alertsKey: string): Partial<Record<StationName, RobotAle
   return useMemo(() => JSON.parse(alertsKey) as Partial<Record<StationName, RobotAlert>>, [alertsKey]);
 }
 
-// Static chart options hoisted so each render doesn't rebuild them
-const BATTERY_CHART_GRID = {
-  borderVisible: false,
-  fillStyle: 'transparent',
-  strokeStyle: 'rgba(255,255,255,0.05)',
-  verticalSections: 1,
-  millisPerLine: 0,
-};
-const BATTERY_CHART_LABELS = { disabled: true };
-const BATTERY_CHART_TITLE = { text: '' };
-const emptyChartLabel = () => '';
-
 const ALLIANCE_COLOR: Record<Alliance, string> = { red: '#ef5350', blue: '#42a5f5' };
 
 /** Colours for check verdicts and in-match alerts. */
@@ -1498,27 +1485,10 @@ function BatteryCard({
   // Open, the column's border says how the robot is doing overall
   const showChecks = expanded && opened && checks !== undefined;
   const borderColor = showChecks ? LEVEL_COLOR[checksTone(checks)] : alert ? ALERT_COLOR[alert.tone].fg : color;
-  const ts = stationTimeSeries[robot.station];
-  const minFloor = batteryMinState[robot.station]?.floor;
+  // The lowest point the sparkline below is showing, sags included.
+  const lowest = lowestBatteryInView(robot.station);
   const chartHeight = compact ? 40 : 52;
   const transition = (props: string[]) => (LITE ? 'none' : props.map(p => `${p} ${SETUP_TRANSITION}`).join(', '));
-
-  const series = useMemo(
-    () => [
-      {
-        data: ts.batteryVoltage,
-        strokeStyle: color,
-        lineWidth: 1.5,
-      },
-      {
-        data: ts.batteryMinVoltage,
-        strokeStyle: 'rgba(244, 67, 54, 0.6)',
-        fillStyle: 'rgba(244, 67, 54, 0.08)',
-        lineWidth: 1,
-      },
-    ],
-    [ts, color],
-  );
 
   return (
     <Box
@@ -1604,24 +1574,7 @@ function BatteryCard({
           />
         </Box>
       ) : (
-        <Box sx={{ '& canvas': { display: 'block', height: `${chartHeight}px !important` } }}>
-          <SmoothieComponent
-            responsive
-            height={chartHeight}
-            streamDelay={-1000}
-            millisPerPixel={200}
-            minValue={5}
-            maxValue={14}
-            limitFPS={15}
-            grid={BATTERY_CHART_GRID}
-            labels={BATTERY_CHART_LABELS}
-            title={BATTERY_CHART_TITLE}
-            yMinFormatter={emptyChartLabel}
-            yMaxFormatter={emptyChartLabel}
-            yIntermediateFormatter={emptyChartLabel}
-            series={series}
-          />
-        </Box>
+        <BatterySparkline station={robot.station} color={color} height={chartHeight} />
       )}
       <Box
         sx={{
@@ -1645,7 +1598,7 @@ function BatteryCard({
         >
           {robot.battery ? `${robot.battery.current.toFixed(1)}V` : '—'}
         </Typography>
-        {robot.battery && !isNaN(minFloor) && (
+        {robot.battery && lowest !== undefined && (
           <Typography
             sx={{
               fontFamily: 'monospace',
@@ -1657,7 +1610,7 @@ function BatteryCard({
               '@container (max-width: 110px)': { display: 'none' },
             }}
           >
-            ↓{minFloor.toFixed(1)}V
+            ↓{lowest.toFixed(1)}V
           </Typography>
         )}
       </Box>

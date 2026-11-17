@@ -25,11 +25,14 @@ Replace it with one purpose-built realtime chart:
   lefthook.
 - Team page: `/<ssid>` → `roots/control.tsx` → `ControlPage.tsx`; the chart
   lives in `RadioStatusCard` (Radio tab), which keeps its chart/table toggle.
-- New code: `frontend/src/timeline/` (model, store, lanes, renderer) and
-  `frontend/src/components/TimelineChart.tsx` (React wrapper).
-- Old code still in use elsewhere: `StationChart.tsx` (`GroupedChart` on
-  `/overview` via `StationStatus.tsx`; `stationTimeSeries` +
-  `batteryMinState` on the scoreboard's battery cards).
+- The model is shared: `src/timeline/series.ts` (the three track kinds) and
+  `src/timeline/store.ts` (`FieldTimeline`: ingest, snapshot, hydrate). The
+  server runs one (`websocketServer.ts`, fed from `broadcast()`); each page
+  runs one (`frontend/src/timeline/live.ts`).
+- Drawing is frontend-only: `frontend/src/timeline/lanes.ts`, `render.ts`;
+  `components/TimelineChart.tsx` (full, or `compact` for a card) and
+  `components/BatterySparkline.tsx` (the scoreboard).
+- `react-smoothie` and `StationChart.tsx` are gone.
 - Headless visual check: a fake backend on :3000 (`scripts/fake-timeline.ts`,
   no radio — see "Things not to do"), vite on :5173, Playwright from the
   scratchpad.
@@ -78,6 +81,16 @@ Replace it with one purpose-built realtime chart:
   its own floor until it is migrated.
 - A station's tracks are cleared when a different robot (SSID) takes the
   station, not when the SSID merely blanks during a reconfigure.
+- (2026-11-16, user) **4 Hz is the right rate for battery**, as long as each
+  4 Hz sample carries min / max / average so nothing aliases away. No
+  packet-rate stream.
+- (2026-11-16, user) **On page load, replay whatever the server has** about
+  the team's robots and the field (events, states), not just 60 s of radio.
+- (2026-11-16, user) Hovering shows more: whose data it is (the robot's
+  name), which measure, the value.
+- (2026-11-16, user) `/overview` and the scoreboard battery cards move to the
+  new chart, provided it is no heavier and shows the data better.
+- (2026-11-16, user) Default lanes are fine for now; tune later.
 
 ## Plan / steps
 
@@ -88,15 +101,21 @@ Replace it with one purpose-built realtime chart:
    - [x] `timeline/lanes.ts`, `timeline/render.ts`
    - [x] `TimelineChart.tsx`; swapped into `RadioStatusCard`
    - [x] Headless check (dark + light, phone width, two robots), commit
-3. [ ] **Phase 2 — full-rate feed with backfill.** A subscribed, per-team
-       `timeline` stream from the server: its own ring buffer per station fed
-       before the coalescer (battery at packet rate, capture timestamps),
-       batched ~10 Hz, with the last 10 min sent on subscribe. The store
-       (`store.ts`) knows nothing about the socket (`live.ts` wires it), so
-       only the source changes. **Next step.**
-4. [ ] **Phase 3 — retire Smoothie.** `/overview` (`StationStatus`
-       `GroupedChart`) and the scoreboard battery cards move to the new
-       engine; drop `react-smoothie` and `StationChart.tsx`.
+3. [x] **Hover detail**: the lane under the pointer lists each robot's
+       reading by name, the nearest one in bold with a ring on its line;
+       state lanes say how long the state has lasted.
+4. [x] **Phase 2 — server-side timeline with backfill.**
+   - [x] Model moved to `src/timeline/`; the server's copy is fed from
+         `broadcast()`.
+   - [x] Coalescer adds battery max and average; the chart draws the average
+         with a min–max band.
+   - [x] `timeline` topic (team-filtered): one `timelineSnapshot` on
+         subscribe, then the ordinary live messages.
+5. [x] **Phase 3 — Smoothie retired.** `/overview` cards use a compact
+       `TimelineChart` (all robots' history via `useTimelineBackfill(null)`),
+       the scoreboard uses `BatterySparkline`, `react-smoothie` removed.
+6. [ ] **First look on the field** with a real robot and radio (current —
+       needs a deploy by the deploy thread and someone at the field).
 
 ## Findings / gotchas
 
@@ -117,6 +136,26 @@ Replace it with one purpose-built realtime chart:
   ~2/s) — unverified. State tracks treat 3 s of silence as "unknown".
 - Radio status is change-driven with a 15 s heartbeat, so an idle unlinked
   station is only confirmed every 15 s: radio tracks go unknown after 20 s.
+- A snapshot is uncompressed JSON: 473 kB for two robots and a full ten
+  minutes with the fake backend (its data-age register moves ten times a
+  second, which is the worst case). `/overview` asks for every robot, so up
+  to ~1.5 MB there. Times go as deltas and values to three decimals; if it
+  ever matters, the next step is sharing one time column between the five
+  telemetry series, or `perMessageDeflate` for large frames.
+- The scoreboard's socket (`/ws/scores`) takes no subscriptions, so its
+  sparklines still start empty and fill over 40 s, as the old ones did.
+- The scoreboard's "↓" figure changed meaning: it was a floor that relaxed
+  towards the current voltage over ~5 s; it is now the lowest reading in the
+  40 s the sparkline shows.
+- `processHistory` used to replay the radio history as up to 600 staggered
+  `update` events ("so Smoothie can render"), each re-rendering every
+  `useLatest` user. It now sends one.
+- The fake backend must send `version: 'unknown'` in `serverInfo`: any other
+  version that differs from the frontend build makes the page reload itself
+  (up to its cap), which looked like four sockets opening at start.
+- A module imported with `import('/src/timeline/live.ts')` from Playwright's
+  `page.evaluate` is a second instance, not the page's: useless for
+  inspecting the live store.
 
 ## Progress log
 
@@ -126,19 +165,21 @@ Replace it with one purpose-built realtime chart:
       team, a 90 s looping story): dark and light at 900 px, a 390 px phone
       with a tap crosshair, look-back by drag, the 30 s window, and all twelve
       lanes on. No console errors. Not yet seen with a real robot or radio.
-- [ ] Phase 2: server-side full-rate feed with backfill.
-- [ ] Phase 3: `/overview` and scoreboard battery cards; remove Smoothie.
+- [x] 2026-11-16: hover detail with robot names (`3cd2b8d`). Headless: desktop
+      hover on each lane kind and on the other robot's line and strip; phone tap.
+- [x] 2026-11-16: phase 2 (`5cfeec0`). Unit tests for dump/load, snapshot →
+      hydrate → live, the team filter and the coalescer; one test against the
+      real `setupWebSocket` (subscribe returns the team's snapshot, once).
+      Headless: chart full 2.5 s after opening the page.
+- [x] 2026-11-16: phase 3. Headless: `/overview` with three robots' compact
+      charts and hover; `/scores` with three sparklines. Production
+      `vite build` and the full suite (1415) pass.
 - [ ] First look on the field with a real robot (lane defaults, scales,
       how busy the flags get in a real match).
 
 ## Open questions for the user
 
-1. Phase 2 (server-side full-rate feed + 10 min backfill): recommended, and
-   planned next. Until then battery is 4 Hz with its min envelope, and the
-   chart starts with 60 s of radio history and no telemetry history.
-2. Lanes on by default: Wi-Fi, Comms, Robot, Battery, Signal, Round trip,
-   Bandwidth. Off: Link rate, Packets/s, Data age, DS CPU. Say if the split
-   is wrong.
+(none: the first two were answered 2026-11-16, see Decisions)
 
 ### How to look at it without the field
 
@@ -150,13 +191,19 @@ cd frontend && bunx vite                        # proxies /ws to :3000 by defaul
 
 `vite.config.ts` proxies to :3000; for other ports use a throwaway config
 that `mergeConfig`s it (kept inside `frontend/` so its imports resolve, not
-committed). The chart needs real time to fill — telemetry has no history —
-so screenshots wait ~100 s after opening the page.
+committed). The fake backend starts with 300 s of story behind it
+(`HISTORY=<s>`, `START_AT=<s>` to shift where "now" is) and answers the
+`timeline` subscription, so the team page and `/overview` are full at once;
+`/scores` needs ~40 s. On `/overview` the charts are behind each card's
+chart button.
 
 ## Things not to do
 
 - Never point a test at the real radio: this PC reaches it. Visual checks use
   a fake backend only.
-- Don't broadcast full-rate telemetry to every socket.
+- Don't broadcast full-rate telemetry to every socket (and the user doesn't
+  want a packet-rate stream at all: 4 Hz with min/max/average).
+- Don't broadcast `timelineSnapshot`: it is only ever the answer to a
+  subscribe.
 - Don't add a second y-scale to a lane; a new unit gets its own lane.
 - No `title=` attributes or hover-only detail.

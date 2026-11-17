@@ -1,6 +1,7 @@
 /**
- * Fake backend for eyeballing the timeline chart on the team page's Radio tab
- * (`bun scripts/fake-timeline.ts`, then vite, then open /1967-Elsa#radio).
+ * Fake backend for eyeballing the timeline chart: the team page's Radio tab
+ * (`bun scripts/fake-timeline.ts`, then vite, then open /1967-Elsa#radio),
+ * the station cards on /overview, and the battery cards on /scores.
  * Serves /ws on :3000 (or $PORT) — the vite dev proxy target. No radio, no
  * robots: everything is made up here.
  *
@@ -24,6 +25,7 @@
  */
 import { WebSocketServer } from 'ws';
 import { MatchEngine } from '../src/matchEngine.js';
+import { ScoringEngine } from '../src/scoringEngine.js';
 import { FieldTimeline } from '../src/timeline/store.js';
 import { payloadFor } from '../src/topicSubscriptions.js';
 import { isSubscribeTopic, type MatchPhase, type StationName, type TelemetryUpdate } from '../src/types.js';
@@ -38,6 +40,8 @@ const between = (s: number, from: number, to: number) => s >= from && s < to;
 
 const ROBOTS: Partial<Record<StationName, string>> = { slot1: '1967-Elsa', slot2: '1967-Lupe', slot4: '254' };
 const engine = new MatchEngine(s => (ROBOTS[s] ? Number.parseInt(ROBOTS[s]!, 10) : null));
+
+const scoring = new ScoringEngine();
 
 const reconfiguring = (s: number) => between(s, 34, 46);
 
@@ -262,6 +266,8 @@ wss.on('connection', ws => {
   // 'unknown' keeps the page from reloading itself to match the server's build.
   send({ type: 'serverInfo', startTime: started, version: 'unknown', now });
   send({ ...engine.getState(), phase: phaseAt(storyAt(now)) });
+  // The scoreboard shows nothing until it has a score.
+  send(scoring.getState());
   // The last minute of radio status, as the real server replays it.
   const history = [];
   for (let t = Math.max(started, now - 60_000); t < now; t += 500) history.push(statusEntry(t));

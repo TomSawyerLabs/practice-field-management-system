@@ -24,7 +24,7 @@ const SPANS = [
 ];
 const MIN_SPAN_MS = 10_000;
 const PAD_RIGHT = 8;
-/** Live, the chart scrolls; this is as often as it needs redrawing. */
+/** The most often the chart is redrawn, however fast it scrolls. */
 const FRAME_MS = 33;
 
 const LANES_KEY = 'pfms.timeline.lanes';
@@ -72,7 +72,13 @@ interface Props {
   name: string;
   /** The team's other robot on the field, to lay over this one. */
   other?: { station: StationName; name: string } | null;
+  /** Just the chart, with a fixed set of lanes: for a card that shows one
+   *  among several (the overview). No controls; it still looks back and zooms. */
+  compact?: boolean;
 }
+
+/** What a compact chart shows. */
+const COMPACT_LANES: readonly string[] = ['wifi', 'comms', 'robot', 'battery', 'signal', 'bandwidth'];
 
 /**
  * The live timeline of one robot: its Wi-Fi link, comms and state as bands,
@@ -80,7 +86,7 @@ interface Props {
  * all on one time axis. Drag to look back, pinch or Ctrl+scroll to zoom,
  * point (or tap) for the readings at a moment.
  */
-export function TimelineChart({ station, name, other = null }: Props) {
+export function TimelineChart({ station, name, other = null, compact = false }: Props) {
   const theme = useTheme();
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -112,7 +118,8 @@ export function TimelineChart({ station, name, other = null }: Props) {
 
   useEffect(startLiveTimeline, []);
 
-  const lanes = useMemo(() => LANES.filter(l => laneIds.includes(l.id)), [laneIds]);
+  const shown = compact ? COMPACT_LANES : laneIds;
+  const lanes = useMemo(() => LANES.filter(l => shown.includes(l.id)), [shown]);
   const compare = other && showOther ? other : null;
   const layout = useMemo(() => layoutLanes(lanes, !!compare), [lanes, compare]);
   const palette = useMemo(() => paletteFor(theme.palette.mode, surface), [theme.palette.mode, surface]);
@@ -183,7 +190,10 @@ export function TimelineChart({ station, name, other = null }: Props) {
     const frame = (ts: number) => {
       raf = requestAnimationFrame(frame);
       if (!onScreen) return;
-      const every = view.current.pinnedEnd === null ? FRAME_MS : 500;
+      // Live, the chart moves a pixel every (span / width): drawing more
+      // often than twice that changes nothing on screen.
+      const perPixel = view.current.span / Math.max(1, width);
+      const every = view.current.pinnedEnd === null ? Math.min(250, Math.max(FRAME_MS, perPixel / 2)) : 500;
       if (!dirty.current && ts - last < every) return;
       last = ts;
       dirty.current = false;
@@ -194,7 +204,7 @@ export function TimelineChart({ station, name, other = null }: Props) {
       cancelAnimationFrame(raf);
       io.disconnect();
     };
-  }, [draw]);
+  }, [draw, width]);
   useEffect(() => {
     dirty.current = true;
   }, [span, pinnedEnd]);
@@ -352,62 +362,66 @@ export function TimelineChart({ station, name, other = null }: Props) {
 
   const live = pinnedEnd === null;
 
+  const controls = (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
+      <ToggleButtonGroup
+        size="small"
+        exclusive
+        value={SPANS.find(s => s.ms === span)?.ms ?? null}
+        onChange={(_, ms: number | null) => ms && setSpan(ms)}
+        aria-label="How much time the chart shows"
+      >
+        {SPANS.map(s => (
+          <ToggleButton key={s.ms} value={s.ms} sx={{ py: 0.25, px: 1, textTransform: 'none' }}>
+            {s.label}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+      {live ? (
+        <Chip
+          size="small"
+          variant="outlined"
+          label="Live"
+          icon={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'success.main' }} />}
+          sx={{ '& .MuiChip-icon': { ml: 1 } }}
+        />
+      ) : (
+        <Button size="small" variant="contained" onClick={() => setPinnedEnd(null)} sx={{ textTransform: 'none' }}>
+          Back to live
+        </Button>
+      )}
+      <Button size="small" onClick={e => setLanesMenu(e.currentTarget)} sx={{ textTransform: 'none' }}>
+        Lanes
+      </Button>
+      <Menu anchorEl={lanesMenu} open={!!lanesMenu} onClose={() => setLanesMenu(null)}>
+        {LANES.map(l => (
+          <MenuItem key={l.id} dense onClick={() => toggleLane(l.id)}>
+            <Checkbox edge="start" size="small" checked={laneIds.includes(l.id)} tabIndex={-1} disableRipple />
+            <ListItemText primary={l.title} secondary={l.kind === 'numeric' ? l.unit : undefined} />
+          </MenuItem>
+        ))}
+      </Menu>
+      {other && (
+        <Chip
+          size="small"
+          variant={showOther ? 'filled' : 'outlined'}
+          onClick={() => setShowOther(v => !v)}
+          label={showOther ? `Also showing ${other.name}` : `Also show ${other.name}`}
+          icon={
+            <Box
+              component="span"
+              sx={{ width: 12, height: 3, borderRadius: 1, bgcolor: palette.compare, opacity: showOther ? 1 : 0.4 }}
+            />
+          }
+          sx={{ '& .MuiChip-icon': { ml: 1 } }}
+        />
+      )}
+    </Box>
+  );
+
   return (
     <Box>
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
-        <ToggleButtonGroup
-          size="small"
-          exclusive
-          value={SPANS.find(s => s.ms === span)?.ms ?? null}
-          onChange={(_, ms: number | null) => ms && setSpan(ms)}
-          aria-label="How much time the chart shows"
-        >
-          {SPANS.map(s => (
-            <ToggleButton key={s.ms} value={s.ms} sx={{ py: 0.25, px: 1, textTransform: 'none' }}>
-              {s.label}
-            </ToggleButton>
-          ))}
-        </ToggleButtonGroup>
-        {live ? (
-          <Chip
-            size="small"
-            variant="outlined"
-            label="Live"
-            icon={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'success.main' }} />}
-            sx={{ '& .MuiChip-icon': { ml: 1 } }}
-          />
-        ) : (
-          <Button size="small" variant="contained" onClick={() => setPinnedEnd(null)} sx={{ textTransform: 'none' }}>
-            Back to live
-          </Button>
-        )}
-        <Button size="small" onClick={e => setLanesMenu(e.currentTarget)} sx={{ textTransform: 'none' }}>
-          Lanes
-        </Button>
-        <Menu anchorEl={lanesMenu} open={!!lanesMenu} onClose={() => setLanesMenu(null)}>
-          {LANES.map(l => (
-            <MenuItem key={l.id} dense onClick={() => toggleLane(l.id)}>
-              <Checkbox edge="start" size="small" checked={laneIds.includes(l.id)} tabIndex={-1} disableRipple />
-              <ListItemText primary={l.title} secondary={l.kind === 'numeric' ? l.unit : undefined} />
-            </MenuItem>
-          ))}
-        </Menu>
-        {other && (
-          <Chip
-            size="small"
-            variant={showOther ? 'filled' : 'outlined'}
-            onClick={() => setShowOther(v => !v)}
-            label={showOther ? `Also showing ${other.name}` : `Also show ${other.name}`}
-            icon={
-              <Box
-                component="span"
-                sx={{ width: 12, height: 3, borderRadius: 1, bgcolor: palette.compare, opacity: showOther ? 1 : 0.4 }}
-              />
-            }
-            sx={{ '& .MuiChip-icon': { ml: 1 } }}
-          />
-        )}
-      </Box>
+      {!compact && controls}
       <Box ref={wrapRef} sx={{ width: '100%' }}>
         <canvas
           ref={canvasRef}
@@ -432,9 +446,11 @@ export function TimelineChart({ station, name, other = null }: Props) {
           }}
         />
       </Box>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-        Drag sideways to look back, pinch or Ctrl+scroll to zoom, point or tap for the readings at a moment.
-      </Typography>
+      {!compact && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          Drag sideways to look back, pinch or Ctrl+scroll to zoom, point or tap for the readings at a moment.
+        </Typography>
+      )}
     </Box>
   );
 }

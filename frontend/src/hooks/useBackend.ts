@@ -430,19 +430,12 @@ function processHistory(entries: StatusEntry[]) {
   // The timeline store takes the whole array at once, with its own timestamps.
   events.dispatchEvent(new CustomEvent('history', { detail: entries }));
 
-  // Delay dispatching events to allow React components to mount and register listeners
-  // This ensures charts and other UI components can receive the historical data
-  setTimeout(() => {
-    console.log(`Dispatching ${entries.length} historical updates to UI`);
-
-    // Dispatch entries with a small stagger so Smoothie charts can properly render
-    // Smoothie is a real-time streaming library and needs time to establish viewport
-    entries.forEach((entry, index) => {
-      setTimeout(() => {
-        events.dispatchEvent(new CustomEvent('update', { detail: entry }));
-      }, index * 10); // 10ms stagger between each entry
-    });
-  }, 200); // 200ms initial delay to allow components to mount
+  // Hooks that hold the latest entry or the whole history refresh on an
+  // update. One is enough to show them all of it — a moment later, so
+  // components still mounting have their listeners in place, and with
+  // whatever is newest by then, so a live entry is not replaced by an old one.
+  if (entries.length === 0) return;
+  setTimeout(() => events.dispatchEvent(new CustomEvent('update', { detail: history[history.length - 1] })), 200);
 }
 
 /** Put a robot on a station, or release it (empty SSID). The server decides
