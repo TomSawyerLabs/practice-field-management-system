@@ -48,9 +48,12 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 - Unlinking leaves a tombstone for the day so auto-link doesn't re-link it.
 - Auto-link only when the spare's saved Wi-Fi passphrase matches saved robots
   of exactly one real team, and never for a team with a password.
+- A 99xx number can never have a team password (the user, 2026-11-16): it
+  only borrows the password of the team it joins. `TeamAuth.setPassword` and
+  the `password` API refuse 99xx; the team page hides the password card.
 - `linkTeam` and `unlinkTeam` are `team` tier; `teamsOfMessage` reads `team`
-  and `robotTeam`, so both teams' logins are needed where they have passwords.
-  `unlinkTeam` names the team it's linked to for that reason.
+  (the real team), so its login is needed when it has a password. `unlinkTeam`
+  names the team it's linked to for that reason.
 
 ## Findings / gotchas
 
@@ -74,7 +77,10 @@ subnets. pFMS's networking would be fine either way, so for these robots:
 
 ## Open questions for the user
 
-- (none)
+1. Should a linked spare's own settings (Wi-Fi, internet, ports, recording)
+   also need the real team's login while it's linked? Today only the link
+   itself does, so anyone can still change 9940's Wi-Fi when 5940 has a
+   password. Recommendation: yes, while linked.
 
 ## Things not to do
 
