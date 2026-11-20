@@ -1,5 +1,12 @@
 # Known Issues & Technical Debt
 
+## Flaky: savedTeamStore "its robots' own first" test
+
+`src/savedTeamStore.test.ts:22` failed once in a full `bun test` run (1:30 PM PST
+2026-11-20) and passes alone: `keysForTeam(1234)` returned `key00004` before
+`robotkey`. Looks like passphrases saved in the same millisecond tie on their
+timestamp. A flaky test makes every other thread's full run look red.
+
 ## Check per-laptop `ip rule` entries on steamboat on a day with teams
 
 The cleanup (`480bc89`) deployed in `0586d9a` with no team on the field, so two
