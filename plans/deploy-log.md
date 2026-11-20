@@ -35,14 +35,14 @@ and nothing is lost between threads.
 
 ## Deployed
 
-| What                   | State                                                                                                          |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Running on steamboat   | `64949cd` (Network page Web links), 3:41 PM PST (23:41Z) 2026-11-15, user's "deploy" from the Web-links thread |
-| `origin/master`        | `64949cd`                                                                                                      |
-| Last published release | `build-20261031-0000-8a2dd38`                                                                                  |
-| Addon                  | `mdns-socket-v0.2.0`, published 3:30 PM PDT (22:30Z) 2026-10-30                                                |
-| Release workflow       | Passed on `8a2dd38`                                                                                            |
-| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                        |
+| What                   | State                                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Running on steamboat   | `c3d0436` (52 commits incl. Network page cameras, lookup log, robot code line), 1:03 PM PST (21:03Z) 2026-11-20, user's "deploy" from the Web-links thread |
+| `origin/master`        | `c3d0436`                                                                                                                                                  |
+| Last published release | `build-20261031-0000-8a2dd38`                                                                                                                              |
+| Addon                  | `mdns-socket-v0.3.0` (pinned TCP), published 1:02 PM PST (21:02Z) 2026-11-20; steamboat fetched 0.3.0                                                      |
+| Release workflow       | Passed on `8a2dd38`                                                                                                                                        |
+| Checked after deploy   | Health, bundle, journal, NAT rules and on-site `/ws` data, listed below                                                                                    |
 
 Before the deploy, at 1:08 PM PDT (20:08Z): phase idle, no team on any slot, no DS, no
 pending radio commit, all six `eStop` false, no `fieldEStop`, no bookings. The admin
@@ -93,6 +93,13 @@ Web links (`64949cd`): pushed and deployed from the Web-links thread on the user
 within 5 s; robot traffic still flowing; no errors in the journal. From `br-slot1`,
 `10.28.54.1` answers 302 and `10.28.54.2` answers 200, so both should show **Web**.
 Not seen yet: the chip in a browser.
+
+`c3d0436`: pushed master, tagged `mdns-socket-v0.3.0`, waited for its release
+(both binaries), then `update.sh`. Deploy announcement posted (52 changes,
+`64949cd` → `c3d0436`), service active, no errors in the journal. Includes other
+threads' commits that were on local master (spare-robot links, team passwords,
+queue TV view, Radio tab timeline, auto-connect). Not seen yet: Watch through
+Caddy, stills, and the robot code line with a robot on.
 
 ## On local master only
 
