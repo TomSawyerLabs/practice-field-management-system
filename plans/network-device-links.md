@@ -35,6 +35,8 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
   being reported off.
 - Stills for limited robots: yes (user, 2026-11-16, "a 0.25Hz poll of the
   picture"). Built `d6796db`: with QoS on or unread, Watch shows a still every 4 s.
+- Main display camera: "something the scorekeeper/admin/host/manager can turn
+  on and off on the fly" (user, 2026-11-20). Built as a `staff`-tier toggle.
 - NT readout: yes to all three (user, 2026-11-16): robot code running ("good
   idea"), connected dashboards ("sure"), FMSInfo the robot received ("sure").
 
@@ -65,18 +67,18 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
        5c. [x] NT readout: addon `InterfaceTcp` (`5052de5`), reader + Network page
        "Robot code" lines (`64e8ccf`). Checked in WSL against real ntcore 2026.2.2
        with a dashboard connected (114 ms). Not checked on a robot.
-6. [ ] ← Deploy (when the user says). **Order matters**: the crate is now 0.3.0,
-       so `bun run build` on steamboat fails until the release exists. First
-       push master, then `git tag mdns-socket-v0.3.0 && git push origin
-mdns-socket-v0.3.0`, wait for the workflow's release (public repo, free CI),
-       then `update.sh`.
+6. [x] Deployed `c3d0436` 1:03 PM PST (21:03Z) 2026-11-20, with mdns-socket
+       0.3.0 released first. Not yet seen: Watch through Caddy, stills, NT line.
        After deploy, check Caddy streams the multipart reply without buffering
        (open Watch on the https site), and that the NT lines appear.
 7. [ ] Next team day: check chips, a CameraServer stream through Watch, the
        lookup log while a team uses an app that finds devices by name, and ask
        2854 which camera app they use.
-8. [ ] Camera on the main display (temporary view). Not started.
-9. [ ] Camera for a caster. Not started; needs what "caster" means here.
+8. [x] Main display camera (`8d5041b`): staff toggle under Watch, banner with
+       "Take it down", overlay on on-site `/scores`. Not deployed, not seen in a
+       browser (no camera to scan off a team day).
+9. [ ] ← Caster: user didn't follow the question (2026-11-20). Re-asked: a person
+       livestreaming (OBS source URL) or Chromecast TVs (= step 8)?
 
 ## NT readout design
 
@@ -166,7 +168,8 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 
 ## Open questions for the user
 
-1. Main display and caster: what should they look like? (inline view is done)
+1. Caster: a livestreaming person (OBS URL), or the Chromecast TVs (done as the
+   main display)? Recommend: if OBS, a copyable per-camera stream link.
 2. ~~NT readout~~: answered yes, in progress.
 3. ~~mDNS evidence~~: answered yes, built (`d4a7724`).
 
