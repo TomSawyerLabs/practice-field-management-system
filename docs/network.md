@@ -499,6 +499,14 @@ Watch shows a still every 4 s instead (`&still=1`). pFMS fetches a still by
 opening the stream, keeping the first frame and hanging up, at most once per
 4 s per camera however many people watch.
 
+**Show on the main display** under a watched camera puts it over the
+scoreboard on every on-site `/scores` screen (the TVs), with the team number,
+until someone presses it again or **Take it down** in the banner at the top
+of the Network page. Staff only (the `staff` tier, like starting a match). The
+TVs watch through the same relay, so live or stills follows the robot's radio
+as above, and the camera comes down by itself when that team leaves the
+station (`src/mainDisplayCamera.ts`).
+
 **Robot code** under each station's counters is a read-only look at the
 robot's NetworkTables 4 server (roboRIO `10.TE.AM.2:5810`, `src/robotNt.ts`,
 `GET /api/robot-nt`, on site only):

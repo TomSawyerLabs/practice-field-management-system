@@ -61,6 +61,7 @@ import { handleCameraRequest, type CameraVerdict } from './cameraRelayApi.js';
 import { handleMdnsLookupsRequest } from './mdnsLookupApi.js';
 import { openInterfaceTcp } from './mdnsSocket.js';
 import { RobotNtReader } from './robotNt.js';
+import { MainDisplayCameraControl } from './mainDisplayCamera.js';
 import { handleRobotNtRequest, type RobotNtTarget } from './robotNtApi.js';
 import { MdnsLookupLog } from './mdnsLookupLog.js';
 import { MdnsReflector } from './mdnsReflector.js';
@@ -1143,6 +1144,15 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
           : "This robot's radio limits its bandwidth (QoS BW Limit is on), so live video could slow the robot down.",
     };
   };
+  // A robot camera over the scoreboard TVs, put up and taken down by staff.
+  // The broadcast is bound once the WebSocket server exists.
+  let broadcastMainDisplay: (msg: unknown) => void = () => {};
+  const mainDisplayCamera = new MainDisplayCameraControl({
+    verdict: (station, ip, port) => cameraVerdict(station, ip, port),
+    teamFor: station => radioManager.getTeamForStation(station),
+    broadcast: state => broadcastMainDisplay(state),
+  });
+  setInterval(() => mainDisplayCamera.check(), 2_000).unref();
   // A read-only look at each robot's NetworkTables (Network page): robot code
   // up, dashboards connected, match info the robot received
   const robotNtReader = new RobotNtReader(openInterfaceTcp);
@@ -1275,6 +1285,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       // QR link. Setup UI value wins over PUBLIC_URL; both optional.
       publicUrl,
       queue: { store: matchQueue, setupNext },
+      mainDisplay: mainDisplayCamera,
       robotWifi: {
         getState: robotWifiState,
         test: station => robotWifi?.test(station),
@@ -1322,6 +1333,7 @@ const RadioClearTimezone = process.env.RADIO_CLEAR_TIMEZONE;
       },
     },
   });
+  broadcastMainDisplay = broadcast;
   setBroadcast(broadcast);
   broadcastRobotWifi = broadcast;
   broadcastSixGhzWatch = broadcast;

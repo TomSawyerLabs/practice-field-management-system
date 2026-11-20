@@ -119,6 +119,7 @@ const MESSAGE_ACCESS: Record<string, MessageAccess> = {
   staffReady: 'staff',
   staffHeartbeat: 'staff',
   playGetReady: 'staff',
+  mainDisplayCameraSet: 'staff',
   challengeLeaderboardOnTv: 'staff',
   challengeLeaderboardScope: 'staff',
   applyConfig: 'staff',

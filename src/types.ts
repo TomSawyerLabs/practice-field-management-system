@@ -6106,3 +6106,33 @@ export interface RobotNtReading {
   clients?: { name: string; address: string }[];
   fms?: RobotFmsInfo;
 }
+
+/** A robot camera shown on the scoreboard TVs (the main display). */
+export interface MainDisplayCamera {
+  station: StationName;
+  team: number;
+  ip: string;
+  port: number;
+  /** When it went up (ms since epoch). */
+  since: number;
+}
+
+/** Broadcast: what the main display shows over the scoreboard, if anything. On site only. */
+export interface MainDisplayCameraState {
+  type: 'mainDisplayCamera';
+  camera: MainDisplayCamera | null;
+}
+export function isMainDisplayCameraState(msg: unknown): msg is MainDisplayCameraState {
+  if (!msg || typeof msg !== 'object') return false;
+  return (msg as MainDisplayCameraState).type === 'mainDisplayCamera';
+}
+
+/** Staff: put a robot camera on the main display, or take it down (`camera: null`). */
+export interface MainDisplayCameraSet {
+  type: 'mainDisplayCameraSet';
+  camera: { station: StationName; ip: string; port: number } | null;
+}
+export function isMainDisplayCameraSet(msg: unknown): msg is MainDisplayCameraSet {
+  if (!msg || typeof msg !== 'object') return false;
+  return (msg as MainDisplayCameraSet).type === 'mainDisplayCameraSet';
+}

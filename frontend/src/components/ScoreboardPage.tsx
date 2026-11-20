@@ -16,6 +16,7 @@ import {
   usePublicUrl,
   matchSummaryUrl,
   useStationChecks,
+  useMainDisplayCamera,
 } from '../hooks/useBackend';
 import type {
   Alliance,
@@ -38,6 +39,7 @@ import { MatchTimer, getActiveColor } from './MatchTimer';
 import { BatterySparkline, lowestBatteryInView } from './BatterySparkline';
 import { MatchAudioBridge, stopAllSounds } from '../hooks/useMatchAudio';
 import { FieldWifiNote } from './FieldWifiNote';
+import { CameraPicture } from './CameraPicture';
 import { useCastReceiverRegistration } from '../hooks/useCastReceiverRegistration';
 import { switchScoreboardView } from '../utils/scoreboardView';
 import { ControlChip } from './ControlChip';
@@ -574,6 +576,9 @@ export function ScoreboardPage() {
       {!muted && <MatchAudioBridge />}
 
       {matchState?.fieldEStop && <FieldEStopBand />}
+
+      {/* A robot camera staff put up from the Network page */}
+      <MainDisplayCameraOverlay />
 
       {/* Field Wi-Fi about to reconfigure (every robot drops ~30 s) */}
       <FieldWifiNote />
@@ -1999,6 +2004,44 @@ function ZeroSplit({
       </Box>
       <Box component="span" ref={rightRef} sx={glyph}>
         0
+      </Box>
+    </Box>
+  );
+}
+
+/** A robot's camera over the scoreboard, while staff have one up (Network
+ *  page → Watch → Show on the main display). Under the field E-Stop band. */
+function MainDisplayCameraOverlay() {
+  const camera = useMainDisplayCamera();
+  if (!camera) return null;
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        inset: '3vh 3vw',
+        zIndex: 3,
+        display: 'flex',
+        flexDirection: 'column',
+        bgcolor: '#000',
+        borderRadius: 2,
+        overflow: 'hidden',
+        boxShadow: '0 0 4vh rgba(0,0,0,0.8)',
+      }}
+    >
+      <Typography sx={{ fontSize: '4vh', fontWeight: 800, px: '2vw', py: '1vh', color: '#fff' }}>
+        Team {camera.team}
+        <Box component="span" sx={{ ml: 2, fontWeight: 400, opacity: 0.7 }}>
+          camera {camera.port}
+        </Box>
+      </Typography>
+      <Box sx={{ flex: 1, minHeight: 0, color: '#fff' }}>
+        <CameraPicture
+          key={`${camera.station}-${camera.ip}-${camera.port}`}
+          station={camera.station}
+          ip={camera.ip}
+          port={camera.port}
+          large
+        />
       </Box>
     </Box>
   );

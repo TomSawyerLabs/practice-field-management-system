@@ -6,10 +6,10 @@ import VideocamIcon from '@mui/icons-material/Videocam';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
-import Typography from '@mui/material/Typography';
 import { Fragment, useEffect, useState } from 'react';
 
 import type { HostService, StationName } from '../../../src/types';
+import { CameraPicture } from './CameraPicture';
 
 const chipSx = { ml: 0.75, height: 18, fontSize: '0.6rem', '& .MuiChip-icon': { fontSize: '0.75rem' } } as const;
 
@@ -97,106 +97,28 @@ function SshChip({ ip }: { ip: string }) {
   );
 }
 
-/** How often a still is asked for when the live stream isn't offered. */
-const STILL_MS = 4_000;
+/** Extra controls under a watched camera, from the page showing it (the
+ *  Network page adds "Show on the main display", which team pages must not). */
+export type CameraActions = (camera: { station: StationName; ip: string; port: number }) => React.ReactNode;
 
-/**
- * A camera, relayed by pFMS (src/cameraRelay.ts) so it shows on the https site
- * too. Live when the robot's radio has no bandwidth limit; otherwise pFMS
- * offers a still every few seconds, and the reason shows under it.
- */
+/** A camera watched inline, with a close button. */
 function CameraView({
   station,
   ip,
   port,
   onClose,
+  actions,
 }: {
   station: StationName;
   ip: string;
   port: number;
   onClose: () => void;
+  actions?: CameraActions;
 }) {
-  const src = `/api/camera?${new URLSearchParams({ station, ip, port: String(port) })}`;
-  const [problem, setProblem] = useState<string | null>(null);
-  /** Set once pFMS says only stills are offered: why. */
-  const [stillsWhy, setStillsWhy] = useState<string | null>(null);
-  const [still, setStill] = useState<string | null>(null);
-
-  const onError = async () => {
-    // An <img> can't say why; a refusal is a short JSON reply, so ask again for the reason
-    const controller = new AbortController();
-    try {
-      const res = await fetch(src, { signal: controller.signal, cache: 'no-store' });
-      if (res.ok) return setProblem('The stream ended.');
-      const body = (await res.json()) as { error?: string; still?: boolean };
-      if (body.still) setStillsWhy(body.error ?? 'Live video is off for this robot.');
-      else setProblem(body.error ?? `HTTP ${res.status}`);
-    } catch {
-      setProblem("Couldn't reach pFMS for the stream.");
-    } finally {
-      controller.abort();
-    }
-  };
-
-  useEffect(() => {
-    if (stillsWhy === null) return;
-    let url: string | null = null;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const next = async () => {
-      if (!document.hidden) {
-        try {
-          const res = await fetch(`${src}&still=1`, { cache: 'no-store' });
-          if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? `HTTP ${res.status}`);
-          const fresh = URL.createObjectURL(await res.blob());
-          if (stopped) URL.revokeObjectURL(fresh);
-          else {
-            if (url) URL.revokeObjectURL(url);
-            url = fresh;
-            setStill(fresh);
-            setProblem(null);
-          }
-        } catch (err) {
-          if (!stopped) setProblem(err instanceof Error ? err.message : String(err));
-        }
-      }
-      if (!stopped) timer = setTimeout(() => void next(), STILL_MS);
-    };
-    void next();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [src, stillsWhy]);
-
-  const picture = (imgSrc: string, extra: object = {}) => (
-    <Box
-      component="img"
-      src={imgSrc}
-      alt={`Camera ${port} on ${ip}`}
-      {...extra}
-      sx={{ display: 'block', width: '100%', borderRadius: 1, bgcolor: 'black' }}
-    />
-  );
-
   return (
     <Box sx={{ mt: 0.5, position: 'relative', maxWidth: 480 }}>
-      {stillsWhy !== null ? (
-        <>
-          {still && picture(still)}
-          <Typography variant="body2" color="text.secondary" sx={{ pr: 4, mt: 0.5 }}>
-            Camera {port}: a still every {STILL_MS / 1000} s. {stillsWhy}
-            {problem && ` Last try: ${problem}`}
-          </Typography>
-        </>
-      ) : problem ? (
-        <Typography variant="body2" color="text.secondary" sx={{ pr: 4 }}>
-          Camera {port}: {problem}
-        </Typography>
-      ) : (
-        picture(src, { onError: () => void onError() })
-      )}
+      <CameraPicture station={station} ip={ip} port={port} />
+      {actions?.({ station, ip, port })}
       <IconButton
         size="small"
         aria-label={`Close camera ${port}`}
@@ -215,10 +137,12 @@ export function HostServiceChips({
   station,
   ip,
   services,
+  cameraActions,
 }: {
   station: StationName;
   ip: string;
   services: HostService[] | undefined;
+  cameraActions?: CameraActions;
 }) {
   const [watching, setWatching] = useState<number | null>(null);
   if (!services?.length) return null;
@@ -264,7 +188,14 @@ export function HostServiceChips({
         }
       })}
       {watched !== null && (
-        <CameraView key={watched} station={station} ip={ip} port={watched} onClose={() => setWatching(null)} />
+        <CameraView
+          key={watched}
+          station={station}
+          ip={ip}
+          port={watched}
+          onClose={() => setWatching(null)}
+          actions={cameraActions}
+        />
       )}
     </>
   );

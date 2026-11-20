@@ -47,6 +47,7 @@ import {
   isCastReceiverChecks,
   isCastReceiverView,
   isPlayGetReady,
+  isMainDisplayCameraState,
   isSupportState,
   isSupportChatIncoming,
   isAdminAuthResult,
@@ -115,6 +116,8 @@ import {
   CastReceiverView,
   type ScoreboardView,
   PlayGetReady,
+  type MainDisplayCamera,
+  type MainDisplayCameraSet,
   StopCast,
   RoutePreferenceState,
   RobotTestState,
@@ -638,6 +641,7 @@ let currentQueueState: QueueState | null = null;
 let currentQueueOffSite = false;
 let currentChallengeLeaderboard: ChallengeLeaderboard = { tables: {}, scope: 'today', anyRuns: false, onTv: false };
 let currentStationChecks: StationChecksState | null = null;
+let currentMainDisplayCamera: MainDisplayCamera | null = null;
 let currentRadioReconfigure: RadioReconfigureState | null = null;
 let currentRobotDropouts: RobotDropoutsState | null = null;
 let currentRobotEStops: RobotEStopsState | null = null;
@@ -1194,6 +1198,12 @@ function receiveMessage(detail: Message) {
 
   if (isPlayGetReady(detail)) {
     events.dispatchEvent(new CustomEvent('playGetReady'));
+    return;
+  }
+
+  if (isMainDisplayCameraState(detail)) {
+    currentMainDisplayCamera = detail.camera;
+    events.dispatchEvent(new CustomEvent('mainDisplayCamera', { detail: detail.camera }));
     return;
   }
 
@@ -2540,6 +2550,23 @@ export function sendChallengeLeaderboardScope(scope: LeaderboardScope) {
 /** Show or hide the speed challenge leaderboard on the scoreboard TVs. */
 export function sendChallengeLeaderboardOnTv(show: boolean) {
   ws?.send(JSON.stringify({ type: 'challengeLeaderboardOnTv', show } satisfies ChallengeLeaderboardOnTv));
+}
+
+/** The robot camera staff have put over the scoreboard TVs, if any (on site only). */
+export function useMainDisplayCamera(): MainDisplayCamera | null {
+  const [camera, setCamera] = useState<MainDisplayCamera | null>(currentMainDisplayCamera);
+  useEffect(() => {
+    setCamera(currentMainDisplayCamera);
+    const handler = (e: Event) => setCamera((e as CustomEvent<MainDisplayCamera | null>).detail);
+    events.addEventListener('mainDisplayCamera', handler);
+    return () => events.removeEventListener('mainDisplayCamera', handler);
+  }, []);
+  return camera;
+}
+
+/** Staff: put a robot camera on the main display, or take it down with null. */
+export function sendMainDisplayCamera(camera: MainDisplayCameraSet['camera']) {
+  ws?.send(JSON.stringify({ type: 'mainDisplayCameraSet', camera } satisfies MainDisplayCameraSet));
 }
 
 /** Ask the server to play the "get ready" attention sound everywhere. */

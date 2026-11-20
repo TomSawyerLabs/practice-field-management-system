@@ -75,7 +75,7 @@ import { TeamLoginBanner, TeamLoginChip, TeamPasswordCard } from './TeamLogin';
 import { MatchVideoCard } from './MatchVideoCard';
 import { LaptopWifiCheck } from './LaptopWifiCheck';
 import { TeamChecksTab, teamChecksDotColor } from './TeamChecksTab';
-import { StationNetworkCard } from './NetworkPage';
+import { StationNetworkCard } from './StationNetworkCard';
 import { HostDisplay } from './HostDisplay';
 import { useReconfigProgress } from '../hooks/useReconfigProgress';
 import { StationName, StationNameList, SavedTeamClientConfig, PortConfig, isStandInTeam } from '../../../src/types';

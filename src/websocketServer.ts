@@ -1,3 +1,4 @@
+import type { MainDisplayCameraControl } from './mainDisplayCamera.js';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { buildInfo } from './buildInfo.js';
@@ -11,6 +12,7 @@ import {
   isAdminClearAllStations,
   isAdminRestart,
   isSelfUpdateApply,
+  isMainDisplayCameraSet,
   isSelfUpdateCheck,
   type SelfUpdateStatus,
   isCancelPendingChange,
@@ -399,6 +401,8 @@ export interface SetupWebSocketOptions {
       getState: () => WifiCardsState;
       testJoin: (iface: string, ssid: string, passphrase?: string) => Promise<unknown>;
     };
+    /** A robot camera over the scoreboard TVs (src/mainDisplayCamera.ts). */
+    mainDisplay?: Pick<MainDisplayCameraControl, 'getState' | 'set'>;
     /** Software update: newest build, install it (src/updateManager.ts). */
     selfUpdate?: {
       getState: () => SelfUpdateStatus;
@@ -588,12 +592,14 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     // The scoreboard TVs show a reconfigure to the teams waiting on it.
     // Station and SSID only.
     'radioReconfigure',
+    // A robot camera over the scoreboard, put up by staff
+    'mainDisplayCamera',
   ]);
 
   /** Of those, the ones that stay on the field network: the queue's TV view
    *  is a /scores view, but who is lined up for the field is not for the
    *  internet. Sent only to the public sockets in `publicOnSite`. */
-  const PUBLIC_ON_SITE_TYPES = new Set(['queueState']);
+  const PUBLIC_ON_SITE_TYPES = new Set(['queueState', 'mainDisplayCamera']);
 
   /** Public connections from the field network, judged like a field socket:
    *  an on-site address and not another site's page. The read-only socket
@@ -1319,6 +1325,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
     if (setup?.selfUpdate) {
       ws.send(JSON.stringify(setup.selfUpdate.getState()));
     }
+    if (setup?.mainDisplay) ws.send(JSON.stringify(setup.mainDisplay.getState()));
 
     for (const listener of fieldClientListeners) listener(ws);
   }
@@ -1339,6 +1346,7 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
       // The queue view: the queue on site, a notice that says why not off it
       if (onSite) {
         if (setup?.queue) ws.send(JSON.stringify(setup.queue.store.getState()));
+        if (setup?.mainDisplay) ws.send(JSON.stringify(setup.mainDisplay.getState()));
       } else {
         ws.send(JSON.stringify({ type: 'queueOffSite' } satisfies QueueOffSite));
       }
@@ -1721,6 +1729,11 @@ export function setupWebSocket(opts: SetupWebSocketOptions): WebSocketContext {
         setup?.selfUpdate?.check().catch(err => {
           ws.send(JSON.stringify({ error: 'Could not check for updates', details: (err as Error).message }));
         });
+      } else if (isMainDisplayCameraSet(data)) {
+        const refused = setup?.mainDisplay
+          ? setup.mainDisplay.set(data.camera, clientIp)
+          : 'The main display camera is not available here';
+        if (refused) ws.send(JSON.stringify({ error: `Main display: ${refused}` }));
       } else if (isSelfUpdateApply(data)) {
         const blocked = !setup?.selfUpdate ? 'Updating is not available here' : setup.selfUpdate.refusal();
         if (blocked) {
