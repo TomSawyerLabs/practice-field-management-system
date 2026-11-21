@@ -1,3 +1,4 @@
+import LinkIcon from '@mui/icons-material/Link';
 import TvIcon from '@mui/icons-material/Tv';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -8,6 +9,7 @@ import Container from '@mui/material/Container';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import GlobalStyles from '@mui/material/GlobalStyles';
+import { useEffect, useState } from 'react';
 
 import { StationName, StationNameList, NetworkStats } from '../../../src/types';
 import {
@@ -22,6 +24,8 @@ import {
 import { MdnsLookupsCard } from './MdnsLookupsCard';
 import { PULSE_STYLES, StationNetworkCard } from './StationNetworkCard';
 import type { CameraActions } from './HostServiceChips';
+import { cameraFeedUrl } from './CameraFeedPage';
+import { copyText } from '../utils/copyText';
 
 function NeighborTableGauge({ stats }: { stats: NetworkStats['neighborTable'] }) {
   if (!stats || stats.limit === 0) return null;
@@ -64,14 +68,39 @@ function MainDisplayButton({ station, ip, port }: { station: StationName; ip: st
   const onMain = useMainDisplayCamera();
   const isOnMain = onMain?.station === station && onMain.ip === ip && onMain.port === port;
   return (
+    <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+      <Button
+        size="small"
+        variant={isOnMain ? 'contained' : 'outlined'}
+        startIcon={<TvIcon />}
+        onClick={() => sendMainDisplayCamera(isOnMain ? null : { station, ip, port })}
+      >
+        {isOnMain ? 'Take off the main display' : 'Show on the main display'}
+      </Button>
+      <CopyFeedLinkButton />
+    </Box>
+  );
+}
+
+/** Copies the livestream feed's address (`/camera-feed`, whatever is on the
+ *  main display) for an OBS Browser Source. */
+function CopyFeedLinkButton({ color }: { color?: 'inherit' }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (copied === null) return;
+    const t = setTimeout(() => setCopied(null), 2500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  const url = cameraFeedUrl();
+  return (
     <Button
       size="small"
-      variant={isOnMain ? 'contained' : 'outlined'}
-      startIcon={<TvIcon />}
-      onClick={() => sendMainDisplayCamera(isOnMain ? null : { station, ip, port })}
-      sx={{ mt: 0.5 }}
+      color={color ?? (copied ? 'success' : 'primary')}
+      startIcon={<LinkIcon />}
+      aria-label={`Copy the livestream link, ${url}`}
+      onClick={async () => setCopied(await copyText(url))}
     >
-      {isOnMain ? 'Take off the main display' : 'Show on the main display'}
+      {copied === null ? 'Copy livestream link' : copied ? 'Copied' : url}
     </Button>
   );
 }
@@ -85,12 +114,15 @@ function MainDisplayCameraBanner() {
       severity="info"
       sx={{ mb: 2 }}
       action={
-        <Button color="inherit" size="small" onClick={() => sendMainDisplayCamera(null)}>
-          Take it down
-        </Button>
+        <>
+          <CopyFeedLinkButton color="inherit" />
+          <Button color="inherit" size="small" onClick={() => sendMainDisplayCamera(null)}>
+            Take it down
+          </Button>
+        </>
       }
     >
-      The main display is showing Team {camera.team}'s camera {camera.port}.
+      The main display and the livestream feed are showing Team {camera.team}'s camera {camera.port}.
     </Alert>
   );
 }

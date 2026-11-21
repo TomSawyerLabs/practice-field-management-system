@@ -507,6 +507,13 @@ TVs watch through the same relay, so live or stills follows the robot's radio
 as above, and the camera comes down by itself when that team leaves the
 station (`src/mainDisplayCamera.ts`).
 
+For a livestream, **Copy livestream link** (next to that button, and in the
+banner) copies `/camera-feed`: the same camera, alone and filling the page,
+for an OBS Browser Source. It follows the main display toggle, is transparent
+while nothing is up (`?label=0` leaves out the team number), and works on site
+only, like Watch. The main display and the feed try a failed live stream again
+every 5 s.
+
 **Robot code** under each station's counters is a read-only look at the
 robot's NetworkTables 4 server (roboRIO `10.TE.AM.2:5810`, `src/robotNt.ts`,
 `GET /api/robot-nt`, on site only):

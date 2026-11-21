@@ -280,7 +280,7 @@ function connect() {
   // The scores page uses a public read-only WebSocket that only receives
   // scoreState and matchState — no auth required, no sensitive data.
   // (/scores.html too: from outside, /ws carries nothing a scoreboard could show.)
-  const wsPath = ['/scores', '/scores.html'].includes(window.location.pathname) ? '/ws/scores' : '/ws';
+  const wsPath = ['/scores', '/scores.html', '/camera-feed'].includes(window.location.pathname) ? '/ws/scores' : '/ws';
   const url = `${schema}://${window.location.host}${wsPath}`;
 
   console.log(`Connecting to backend: ${url}`);

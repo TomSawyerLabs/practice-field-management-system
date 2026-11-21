@@ -125,9 +125,10 @@ export function createStaticHandler(
       candidates.push(join(webRoot, 'index.html'));
     } else if (TEAM_URL.test(urlPath)) {
       candidates.push(join(webRoot, 'control.html'));
-    } else if (urlPath.startsWith('/matches/') || urlPath.startsWith('/practice/')) {
-      // Post-match summary (/matches/<token>) and a team's practice day
-      // (/practice/<token>) both live in the scores bundle
+    } else if (urlPath === '/camera-feed' || urlPath.startsWith('/matches/') || urlPath.startsWith('/practice/')) {
+      // Post-match summary (/matches/<token>), a team's practice day
+      // (/practice/<token>) and the livestream camera feed all live in the
+      // scores bundle
       candidates.push(join(webRoot, 'scores.html'));
     } else {
       const direct = resolveWithin(webRoot, urlPath);

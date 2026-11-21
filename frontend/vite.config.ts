@@ -99,7 +99,12 @@ function stationRoutes(): Plugin {
         if (url?.split('?')[0] === '/staff') {
           req.url = '/staff.html';
         }
-        if (url === '/scores' || url?.startsWith('/matches/') || url?.startsWith('/practice/')) {
+        if (
+          url === '/scores' ||
+          url?.split('?')[0] === '/camera-feed' ||
+          url?.startsWith('/matches/') ||
+          url?.startsWith('/practice/')
+        ) {
           req.url = '/scores.html';
         }
         if (url === '/overview') {

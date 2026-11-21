@@ -9,35 +9,10 @@ import IconButton from '@mui/material/IconButton';
 import { Fragment, useEffect, useState } from 'react';
 
 import type { HostService, StationName } from '../../../src/types';
+import { copyText } from '../utils/copyText';
 import { CameraPicture } from './CameraPicture';
 
 const chipSx = { ml: 0.75, height: 18, fontSize: '0.6rem', '& .MuiChip-icon': { fontSize: '0.75rem' } } as const;
-
-/** Copy to the clipboard, also on a plain-http page where navigator.clipboard is missing. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through to the old way
-  }
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.setAttribute('readonly', '');
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  area.select();
-  try {
-    return document.execCommand('copy');
-  } catch {
-    return false;
-  } finally {
-    area.remove();
-  }
-}
 
 function urlFor(ip: string, port: number): string {
   return port === 80 ? `http://${ip}/` : `http://${ip}:${port}/`;

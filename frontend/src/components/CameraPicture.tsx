@@ -6,25 +6,34 @@ import type { StationName } from '../../../src/types';
 
 /** How often a still is asked for when the live stream isn't offered. */
 const STILL_MS = 4_000;
+/** How soon a failed live stream on the main display or the feed is tried again. */
+const RETRY_MS = 5_000;
 
 /**
  * A robot camera, relayed by pFMS (src/cameraRelay.ts) so it shows on the
  * https site too. Live when the robot's radio has no bandwidth limit;
  * otherwise pFMS offers a still every few seconds, and the reason shows with
- * it. `large` is for the main display: the picture fills its box.
+ * it. `large` is for the main display: the picture fills its box, and a
+ * stream that fails is tried again every few seconds. `quiet` (the livestream
+ * feed) shows the picture and nothing else: no reasons, no errors.
  */
 export function CameraPicture({
   station,
   ip,
   port,
   large = false,
+  quiet = false,
 }: {
   station: StationName;
   ip: string;
   port: number;
   large?: boolean;
+  quiet?: boolean;
 }) {
-  const src = `/api/camera?${new URLSearchParams({ station, ip, port: String(port) })}`;
+  /** Bumped to ask for the live stream again after it failed. */
+  const [attempt, setAttempt] = useState(0);
+  const params = new URLSearchParams({ station, ip, port: String(port) });
+  const src = `/api/camera?${params}`;
   const [problem, setProblem] = useState<string | null>(null);
   /** Set once pFMS says only stills are offered: why. */
   const [stillsWhy, setStillsWhy] = useState<string | null>(null);
@@ -45,6 +54,18 @@ export function CameraPicture({
       controller.abort();
     }
   };
+
+  // On a screen nobody is standing at, a stream that ended (the robot
+  // rebooted, a Wi-Fi blip) comes back by itself
+  const retries = large || quiet;
+  useEffect(() => {
+    if (!retries || stillsWhy !== null || problem === null) return;
+    const t = setTimeout(() => {
+      setProblem(null);
+      setAttempt(n => n + 1);
+    }, RETRY_MS);
+    return () => clearTimeout(t);
+  }, [retries, stillsWhy, problem]);
 
   useEffect(() => {
     if (stillsWhy === null) return;
@@ -78,6 +99,8 @@ export function CameraPicture({
     };
   }, [src, stillsWhy]);
 
+  // A new URL per attempt, so the <img> really asks again
+  const liveSrc = attempt ? `${src}&attempt=${attempt}` : src;
   const picture = (imgSrc: string, extra: object = {}) => (
     <Box
       component="img"
@@ -92,6 +115,10 @@ export function CameraPicture({
     />
   );
 
+  if (quiet) {
+    if (stillsWhy !== null) return still ? picture(still) : null;
+    return problem ? null : picture(liveSrc, { onError: () => void onError() });
+  }
   const note = large ? { variant: 'h6' as const, sx: { p: 2 } } : { variant: 'body2' as const, sx: { pr: 4, mt: 0.5 } };
   if (stillsWhy !== null) {
     return (
@@ -111,5 +138,5 @@ export function CameraPicture({
       </Typography>
     );
   }
-  return picture(src, { onError: () => void onError() });
+  return picture(liveSrc, { onError: () => void onError() });
 }

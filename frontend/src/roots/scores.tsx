@@ -5,6 +5,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { ScoreboardPage } from '../components/ScoreboardPage';
 import { MatchSummaryPage } from '../components/MatchSummaryPage';
 import { PracticeDayPage } from '../components/PracticeDayPage';
+import { CameraFeedPage } from '../components/CameraFeedPage';
 import { LeaderboardTvPage } from '../components/LeaderboardTvPage';
 import { QueueTvPage } from '../components/QueueTvPage';
 import { SCOREBOARD_VIEW } from '../utils/scoreboardView';
@@ -32,6 +33,9 @@ const summaryToken =
 // they were part of, with videos and metadata, from the link on their station
 // page or the one posted to their mentors on Slack.
 const practiceToken = /^\/practice\/([^/?#]+)/.exec(window.location.pathname)?.[1];
+// `/camera-feed` is the robot camera staff put on the main display, alone, for
+// a livestream (OBS Browser Source)
+const cameraFeed = window.location.pathname === '/camera-feed';
 
 const theme = createTheme({
   colorSchemes: { dark: true },
@@ -44,7 +48,9 @@ createRoot(document.getElementById('root')!).render(
       <ThemeProvider theme={theme} defaultMode="dark">
         <CssBaseline />
         {/* Match audio is mounted inside ScoreboardPage so per-display mute can gate it */}
-        {practiceToken ? (
+        {cameraFeed ? (
+          <CameraFeedPage />
+        ) : practiceToken ? (
           <PracticeDayPage token={practiceToken} />
         ) : summaryToken ? (
           <MatchSummaryPage token={summaryToken} />
