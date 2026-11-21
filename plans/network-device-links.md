@@ -77,8 +77,13 @@ streams, and a copy-to-clipboard SSH hint. Requested by the user 2026-11-15
 8. [x] Main display camera (`8d5041b`): staff toggle under Watch, banner with
        "Take it down", overlay on on-site `/scores`. Not deployed, not seen in a
        browser (no camera to scan off a team day).
-9. [ ] ← Caster: user didn't follow the question (2026-11-20). Re-asked: a person
-       livestreaming (OBS source URL) or Chromecast TVs (= step 8)?
+9. [x] Caster: user answered "both" (2026-11-20). TVs = step 8. Livestream:
+       `/camera-feed` (scores bundle) shows whatever is on the main display,
+       full page, transparent when nothing is up, for an OBS Browser Source;
+       "Copy livestream link" on the Network page. A path, not a `/scores`
+       query, because the http→https redirect drops queries. On site only
+       (the relay's rule). Main display and feed retry a failed live stream
+       every 5 s. Not deployed, not seen in a browser or OBS.
 
 ## NT readout design
 
@@ -168,8 +173,7 @@ connected once given the IPs. Looked into it at 11:20 PM PST (07:20Z, Nov 16):
 
 ## Open questions for the user
 
-1. Caster: a livestreaming person (OBS URL), or the Chromecast TVs (done as the
-   main display)? Recommend: if OBS, a copyable per-camera stream link.
+1. ~~Caster~~: answered "both"; TVs = main display, livestream = `/camera-feed`.
 2. ~~NT readout~~: answered yes, in progress.
 3. ~~mDNS evidence~~: answered yes, built (`d4a7724`).
 
